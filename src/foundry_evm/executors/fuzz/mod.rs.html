@@ -1,0 +1,363 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/evm/evm/src/executors/fuzz/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-069232aa.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="foundry_evm" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (898aff704 2025-08-14)" data-channel="nightly" data-search-js="search-281b7574.js" data-settings-js="settings-5514c975.js" ><script src="../../../../static.files/storage-68b7e25d.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">foundry_evm/executors/fuzz/</div>mod.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><span class="kw">crate</span>::executors::{<a href="../mod.rs.html#64">DURATION_BETWEEN_METRICS_REPORT</a>, <a href="../mod.rs.html#88-103">Executor</a>, <a href="../mod.rs.html#1092-1095">FuzzTestTimer</a>, <a href="../mod.rs.html#814-855">RawCallResult</a>};
+<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>alloy_dyn_abi::JsonAbiExt;
+<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>alloy_json_abi::Function;
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><a href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">eyre::Result</a>;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>foundry_common::{evm::Breakpoints, sh_println};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>foundry_config::FuzzConfig;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>foundry_evm_core::{
+<a href=#9 id=9 data-nosnippet>9</a>    constants::{<a href="../../../../foundry_evm/constants/constant.CHEATCODE_ADDRESS.html">CHEATCODE_ADDRESS</a>, <a href="../../../../foundry_evm/constants/constant.MAGIC_ASSUME.html">MAGIC_ASSUME</a>},
+<a href=#10 id=10 data-nosnippet>10</a>    decode::{<a href="../../../../foundry_evm/decode/struct.RevertDecoder.html">RevertDecoder</a>, <a href="../../../../foundry_evm/decode/struct.SkipReason.html">SkipReason</a>},
+<a href=#11 id=11 data-nosnippet>11</a>};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>foundry_evm_coverage::HitMaps;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>foundry_evm_fuzz::{
+<a href=#14 id=14 data-nosnippet>14</a>    <a href="../../../../foundry_evm_fuzz/struct.BaseCounterExample.html">BaseCounterExample</a>, <a href="../../../../foundry_evm_fuzz/struct.BasicTxDetails.html">BasicTxDetails</a>, <a href="../../../../foundry_evm_fuzz/struct.CallDetails.html">CallDetails</a>, <a href="../../../../foundry_evm_fuzz/enum.CounterExample.html">CounterExample</a>, <a href="../../../../foundry_evm_fuzz/struct.FuzzCase.html">FuzzCase</a>, <a href="../../../../foundry_evm_fuzz/error/enum.FuzzError.html">FuzzError</a>,
+<a href=#15 id=15 data-nosnippet>15</a>    <a href="../../../../foundry_evm_fuzz/struct.FuzzFixtures.html">FuzzFixtures</a>, <a href="../../../../foundry_evm_fuzz/struct.FuzzTestResult.html">FuzzTestResult</a>,
+<a href=#16 id=16 data-nosnippet>16</a>    strategies::{<a href="../../../../foundry_evm_fuzz/strategies/state/struct.EvmFuzzState.html">EvmFuzzState</a>, <a href="../../../../foundry_evm_fuzz/strategies/calldata/fn.fuzz_calldata.html">fuzz_calldata</a>, <a href="../../../../foundry_evm_fuzz/strategies/calldata/fn.fuzz_calldata_from_state.html">fuzz_calldata_from_state</a>},
+<a href=#17 id=17 data-nosnippet>17</a>};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><a href="../../../../foundry_evm_traces/struct.SparsedTraceArena.html">foundry_evm_traces::SparsedTraceArena</a>;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>indicatif::ProgressBar;
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>proptest::{
+<a href=#21 id=21 data-nosnippet>21</a>    strategy::Strategy,
+<a href=#22 id=22 data-nosnippet>22</a>    test_runner::{TestCaseError, TestRunner},
+<a href=#23 id=23 data-nosnippet>23</a>};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span><a href="https://docs.rs/serde_json/1.0.142/serde_json/macro.json.html">serde_json::json</a>;
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>std::time::{<a href="https://doc.rust-lang.org/nightly/std/time/struct.Instant.html">Instant</a>, <a href="https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html">SystemTime</a>, <a href="https://doc.rust-lang.org/nightly/std/time/constant.UNIX_EPOCH.html">UNIX_EPOCH</a>};
+<a href=#26 id=26 data-nosnippet>26</a>
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">mod </span><a href="types.rs.html#1-43">types</a>;
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span><a href="../corpus.rs.html#132-150"><span class="kw">crate</span>::executors::corpus::CorpusManager</a>;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub use </span>types::{<a href="types.rs.html#11-24">CaseOutcome</a>, <a href="types.rs.html#28-35">CounterExampleOutcome</a>, <a href="types.rs.html#40-43">FuzzOutcome</a>};
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a><span class="doccomment">/// Contains data collected during fuzz test runs.
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="attr">#[derive(Default)]
+<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">struct </span><a href="../../../../foundry_evm/executors/fuzz/struct.FuzzTestData.html">FuzzTestData</a> {
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="comment">// Stores the first fuzz case.
+<a href=#35 id=35 data-nosnippet>35</a>    </span>first_case: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../../foundry_evm_fuzz/struct.FuzzCase.html">FuzzCase</a>&gt;,
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="comment">// Stored gas usage per fuzz case.
+<a href=#37 id=37 data-nosnippet>37</a>    </span>gas_by_case: <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;(<a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>)&gt;,
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="comment">// Stores the result and calldata of the last failed call, if any.
+<a href=#39 id=39 data-nosnippet>39</a>    </span>counterexample: (Bytes, <a href="../mod.rs.html#814-855">RawCallResult</a>),
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="comment">// Stores up to `max_traces_to_collect` traces.
+<a href=#41 id=41 data-nosnippet>41</a>    </span>traces: <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;<a href="../../../../foundry_evm_traces/struct.SparsedTraceArena.html">SparsedTraceArena</a>&gt;,
+<a href=#42 id=42 data-nosnippet>42</a>    <span class="comment">// Stores breakpoints for the last fuzz case.
+<a href=#43 id=43 data-nosnippet>43</a>    </span>breakpoints: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;Breakpoints&gt;,
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="comment">// Stores coverage information for all fuzz cases.
+<a href=#45 id=45 data-nosnippet>45</a>    </span>coverage: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;HitMaps&gt;,
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="comment">// Stores logs for all fuzz cases
+<a href=#47 id=47 data-nosnippet>47</a>    </span>logs: <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;Log&gt;,
+<a href=#48 id=48 data-nosnippet>48</a>    <span class="comment">// Deprecated cheatcodes mapped to their replacements.
+<a href=#49 id=49 data-nosnippet>49</a>    </span>deprecated_cheatcodes: HashMap&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;&gt;,
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="comment">// Runs performed in fuzz test.
+<a href=#51 id=51 data-nosnippet>51</a>    </span>runs: <a href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="comment">// Current assume rejects of the fuzz run.
+<a href=#53 id=53 data-nosnippet>53</a>    </span>rejects: <a href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="comment">// Test failure.
+<a href=#55 id=55 data-nosnippet>55</a>    </span>failure: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;TestCaseError&gt;,
+<a href=#56 id=56 data-nosnippet>56</a>}
+<a href=#57 id=57 data-nosnippet>57</a>
+<a href=#58 id=58 data-nosnippet>58</a><span class="doccomment">/// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
+<a href=#59 id=59 data-nosnippet>59</a>///
+<a href=#60 id=60 data-nosnippet>60</a>/// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
+<a href=#61 id=61 data-nosnippet>61</a>/// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
+<a href=#62 id=62 data-nosnippet>62</a>/// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub struct </span><a href="../../../../foundry_evm/executors/fuzz/struct.FuzzedExecutor.html">FuzzedExecutor</a> {
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// The EVM executor.
+<a href=#65 id=65 data-nosnippet>65</a>    </span>executor: <a href="../mod.rs.html#88-103">Executor</a>,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The fuzzer
+<a href=#67 id=67 data-nosnippet>67</a>    </span>runner: TestRunner,
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// The account that calls tests.
+<a href=#69 id=69 data-nosnippet>69</a>    </span>sender: Address,
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// The fuzz configuration.
+<a href=#71 id=71 data-nosnippet>71</a>    </span>config: FuzzConfig,
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// The persisted counterexample to be replayed, if any.
+<a href=#73 id=73 data-nosnippet>73</a>    </span>persisted_failure: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../../foundry_evm_fuzz/struct.BaseCounterExample.html">BaseCounterExample</a>&gt;,
+<a href=#74 id=74 data-nosnippet>74</a>}
+<a href=#75 id=75 data-nosnippet>75</a>
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">impl </span><a href="#63-74">FuzzedExecutor</a> {
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Instantiates a fuzzed executor given a testrunner
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub fn </span>new(
+<a href=#79 id=79 data-nosnippet>79</a>        executor: <a href="../mod.rs.html#88-103">Executor</a>,
+<a href=#80 id=80 data-nosnippet>80</a>        runner: TestRunner,
+<a href=#81 id=81 data-nosnippet>81</a>        sender: Address,
+<a href=#82 id=82 data-nosnippet>82</a>        config: FuzzConfig,
+<a href=#83 id=83 data-nosnippet>83</a>        persisted_failure: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../../foundry_evm_fuzz/struct.BaseCounterExample.html">BaseCounterExample</a>&gt;,
+<a href=#84 id=84 data-nosnippet>84</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="self">Self </span>{ <a href="#79">executor</a>, <a href="#80">runner</a>, <a href="#81">sender</a>, <a href="#82">config</a>, <a href="#83">persisted_failure</a> }
+<a href=#86 id=86 data-nosnippet>86</a>    }
+<a href=#87 id=87 data-nosnippet>87</a>
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Fuzzes the provided function, assuming it is available at the contract at `address`
+<a href=#89 id=89 data-nosnippet>89</a>    /// If `should_fail` is set to `true`, then it will stop only when there's a success
+<a href=#90 id=90 data-nosnippet>90</a>    /// test case.
+<a href=#91 id=91 data-nosnippet>91</a>    ///
+<a href=#92 id=92 data-nosnippet>92</a>    /// Returns a list of all the consumed gas and calldata of every fuzz case.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub fn </span>fuzz(
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#95 id=95 data-nosnippet>95</a>        func: <span class="kw-2">&amp;</span>Function,
+<a href=#96 id=96 data-nosnippet>96</a>        fuzz_fixtures: <span class="kw-2">&amp;</span><a href="../../../../foundry_evm_fuzz/struct.FuzzFixtures.html">FuzzFixtures</a>,
+<a href=#97 id=97 data-nosnippet>97</a>        deployed_libs: <span class="kw-2">&amp;</span>[Address],
+<a href=#98 id=98 data-nosnippet>98</a>        address: Address,
+<a href=#99 id=99 data-nosnippet>99</a>        rd: <span class="kw-2">&amp;</span><a href="../../../../foundry_evm/decode/struct.RevertDecoder.html">RevertDecoder</a>,
+<a href=#100 id=100 data-nosnippet>100</a>        progress: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<span class="kw-2">&amp;</span>ProgressBar&gt;,
+<a href=#101 id=101 data-nosnippet>101</a>    ) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;<a href="../../../../foundry_evm_fuzz/struct.FuzzTestResult.html">FuzzTestResult</a>&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="comment">// Stores the fuzz test execution data.
+<a href=#103 id=103 data-nosnippet>103</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>test_data = <a href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default">FuzzTestData::default</a>();
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">let </span>state = <a class="self" href="#94">self</a>.<a href="#352-362">build_fuzz_state</a>(<a href="#97">deployed_libs</a>);
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">let </span>dictionary_weight = <a class="self" href="#94">self</a>.config.dictionary.dictionary_weight.<a href="https://doc.rust-lang.org/nightly/core/cmp/trait.Ord.html#tymethod.min">min</a>(<span class="number">100</span>);
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span>strategy = <span class="macro">proptest::prop_oneof!</span>[
+<a href=#107 id=107 data-nosnippet>107</a>            <span class="number">100 </span>- dictionary_weight =&gt; fuzz_calldata(func.clone(), fuzz_fixtures),
+<a href=#108 id=108 data-nosnippet>108</a>            dictionary_weight =&gt; fuzz_calldata_from_state(func.clone(), <span class="kw-2">&amp;</span>state),
+<a href=#109 id=109 data-nosnippet>109</a>        ]
+<a href=#110 id=110 data-nosnippet>110</a>        .prop_map(<span class="kw">move </span>|calldata| <a href="../../../../foundry_evm_fuzz/struct.BasicTxDetails.html">BasicTxDetails</a> {
+<a href=#111 id=111 data-nosnippet>111</a>            sender: <a href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default">Default::default</a>(),
+<a href=#112 id=112 data-nosnippet>112</a>            call_details: <a href="../../../../foundry_evm_fuzz/struct.CallDetails.html">CallDetails</a> { target: <a href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default">Default::default</a>(), <a href="#110">calldata</a> },
+<a href=#113 id=113 data-nosnippet>113</a>        });
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="comment">// We want to collect at least one trace which will be displayed to user.
+<a href=#115 id=115 data-nosnippet>115</a>        </span><span class="kw">let </span>max_traces_to_collect = <a href="https://doc.rust-lang.org/nightly/core/cmp/fn.max.html">std::cmp::max</a>(<span class="number">1</span>, <a class="self" href="#94">self</a>.config.gas_report_samples) <span class="kw">as </span><a href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>;
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="kw-2">mut </span>corpus_manager = <a href="../corpus.rs.html#153-286">CorpusManager::new</a>(
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw-2">&amp;</span><a class="self" href="#94">self</a>.config.corpus,
+<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw-2">&amp;</span><a href="#95">func</a>.name,
+<a href=#120 id=120 data-nosnippet>120</a>            <a href="#106">strategy</a>.boxed(),
+<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw-2">&amp;</span><a class="self" href="#94">self</a>.executor,
+<a href=#122 id=122 data-nosnippet>122</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#95">func</a>),
+<a href=#123 id=123 data-nosnippet>123</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>,
+<a href=#124 id=124 data-nosnippet>124</a>        )<span class="question-mark">?</span>;
+<a href=#125 id=125 data-nosnippet>125</a>
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="comment">// Start timer for this fuzz test.
+<a href=#127 id=127 data-nosnippet>127</a>        </span><span class="kw">let </span>timer = <a href="../mod.rs.html#1098-1100">FuzzTestTimer::new</a>(<a class="self" href="#94">self</a>.config.timeout);
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_metrics_report = <a href="https://doc.rust-lang.org/nightly/std/time/struct.Instant.html#method.now">Instant::now</a>();
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>max_runs = <a class="self" href="#94">self</a>.config.runs;
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span>continue_campaign = |runs: <a href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>| {
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw">if </span><a href="#127">timer</a>.<a href="../mod.rs.html#1103-1105">is_enabled</a>() { !<a href="#127">timer</a>.<a href="../mod.rs.html#1108-1110">is_timed_out</a>() } <span class="kw">else </span>{ <a href="#130">runs</a> &lt; <a href="#129">max_runs</a> }
+<a href=#132 id=132 data-nosnippet>132</a>        };
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="lifetime">'stop</span>: <span class="kw">while </span>continue_campaign(test_data.runs) {
+<a href=#135 id=135 data-nosnippet>135</a>            <span class="comment">// If counterexample recorded, replay it first, without incrementing runs.
+<a href=#136 id=136 data-nosnippet>136</a>            </span><span class="kw">let </span>input = <span class="kw">if let </span><span class="prelude-val">Some</span>(failure) = <span class="self">self</span>.persisted_failure.take() {
+<a href=#137 id=137 data-nosnippet>137</a>                failure.calldata
+<a href=#138 id=138 data-nosnippet>138</a>            } <span class="kw">else </span>{
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="comment">// If running with progress, then increment current run.
+<a href=#140 id=140 data-nosnippet>140</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(progress) = progress {
+<a href=#141 id=141 data-nosnippet>141</a>                    progress.inc(<span class="number">1</span>);
+<a href=#142 id=142 data-nosnippet>142</a>                    <span class="comment">// Display metrics in progress bar.
+<a href=#143 id=143 data-nosnippet>143</a>                    </span><span class="kw">if </span><span class="self">self</span>.config.corpus.collect_edge_coverage() {
+<a href=#144 id=144 data-nosnippet>144</a>                        progress.set_message(<span class="macro">format!</span>(<span class="string">"{}"</span>, <span class="kw-2">&amp;</span>corpus_manager.metrics));
+<a href=#145 id=145 data-nosnippet>145</a>                    }
+<a href=#146 id=146 data-nosnippet>146</a>                } <span class="kw">else if </span><span class="self">self</span>.config.corpus.collect_edge_coverage()
+<a href=#147 id=147 data-nosnippet>147</a>                    &amp;&amp; last_metrics_report.elapsed() &gt; DURATION_BETWEEN_METRICS_REPORT
+<a href=#148 id=148 data-nosnippet>148</a>                {
+<a href=#149 id=149 data-nosnippet>149</a>                    <span class="comment">// Display metrics inline.
+<a href=#150 id=150 data-nosnippet>150</a>                    </span><span class="kw">let </span>metrics = <span class="macro">json!</span>({
+<a href=#151 id=151 data-nosnippet>151</a>                        <span class="string">"timestamp"</span>: SystemTime::now()
+<a href=#152 id=152 data-nosnippet>152</a>                            .duration_since(UNIX_EPOCH)<span class="question-mark">?
+<a href=#153 id=153 data-nosnippet>153</a>                            </span>.as_secs(),
+<a href=#154 id=154 data-nosnippet>154</a>                        <span class="string">"test"</span>: func.name,
+<a href=#155 id=155 data-nosnippet>155</a>                        <span class="string">"metrics"</span>: <span class="kw-2">&amp;</span>corpus_manager.metrics,
+<a href=#156 id=156 data-nosnippet>156</a>                    });
+<a href=#157 id=157 data-nosnippet>157</a>                    <span class="kw">let _ </span>= <span class="macro">sh_println!</span>(<span class="string">"{}"</span>, serde_json::to_string(<span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>);
+<a href=#158 id=158 data-nosnippet>158</a>                    last_metrics_report = Instant::now();
+<a href=#159 id=159 data-nosnippet>159</a>                };
+<a href=#160 id=160 data-nosnippet>160</a>
+<a href=#161 id=161 data-nosnippet>161</a>                test_data.runs += <span class="number">1</span>;
+<a href=#162 id=162 data-nosnippet>162</a>
+<a href=#163 id=163 data-nosnippet>163</a>                <span class="kw">match </span>corpus_manager.new_input(<span class="kw-2">&amp;mut </span><span class="self">self</span>.runner, <span class="kw-2">&amp;</span>state, func) {
+<a href=#164 id=164 data-nosnippet>164</a>                    <span class="prelude-val">Ok</span>(input) =&gt; input,
+<a href=#165 id=165 data-nosnippet>165</a>                    <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#166 id=166 data-nosnippet>166</a>                        test_data.failure = <span class="prelude-val">Some</span>(TestCaseError::fail(<span class="macro">format!</span>(
+<a href=#167 id=167 data-nosnippet>167</a>                            <span class="string">"failed to generate fuzzed input: {err}"
+<a href=#168 id=168 data-nosnippet>168</a>                        </span>)));
+<a href=#169 id=169 data-nosnippet>169</a>                        <span class="kw">break </span><span class="lifetime">'stop</span>;
+<a href=#170 id=170 data-nosnippet>170</a>                    }
+<a href=#171 id=171 data-nosnippet>171</a>                }
+<a href=#172 id=172 data-nosnippet>172</a>            };
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw">match </span><span class="self">self</span>.single_fuzz(address, input, <span class="kw-2">&amp;mut </span>corpus_manager) {
+<a href=#175 id=175 data-nosnippet>175</a>                <span class="prelude-val">Ok</span>(fuzz_outcome) =&gt; <span class="kw">match </span>fuzz_outcome {
+<a href=#176 id=176 data-nosnippet>176</a>                    FuzzOutcome::Case(case) =&gt; {
+<a href=#177 id=177 data-nosnippet>177</a>                        test_data.gas_by_case.push((case.case.gas, case.case.stipend));
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a>                        <span class="kw">if </span>test_data.first_case.is_none() {
+<a href=#180 id=180 data-nosnippet>180</a>                            test_data.first_case.replace(case.case);
+<a href=#181 id=181 data-nosnippet>181</a>                        }
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>(call_traces) = case.traces {
+<a href=#184 id=184 data-nosnippet>184</a>                            <span class="kw">if </span>test_data.traces.len() == max_traces_to_collect {
+<a href=#185 id=185 data-nosnippet>185</a>                                test_data.traces.pop();
+<a href=#186 id=186 data-nosnippet>186</a>                            }
+<a href=#187 id=187 data-nosnippet>187</a>                            test_data.traces.push(call_traces);
+<a href=#188 id=188 data-nosnippet>188</a>                            test_data.breakpoints.replace(case.breakpoints);
+<a href=#189 id=189 data-nosnippet>189</a>                        }
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a>                        <span class="kw">if </span><span class="self">self</span>.config.show_logs {
+<a href=#192 id=192 data-nosnippet>192</a>                            test_data.logs.extend(case.logs);
+<a href=#193 id=193 data-nosnippet>193</a>                        }
+<a href=#194 id=194 data-nosnippet>194</a>
+<a href=#195 id=195 data-nosnippet>195</a>                        HitMaps::merge_opt(<span class="kw-2">&amp;mut </span>test_data.coverage, case.coverage);
+<a href=#196 id=196 data-nosnippet>196</a>                        test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
+<a href=#197 id=197 data-nosnippet>197</a>                    }
+<a href=#198 id=198 data-nosnippet>198</a>                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+<a href=#199 id=199 data-nosnippet>199</a>                        exit_reason: status,
+<a href=#200 id=200 data-nosnippet>200</a>                        counterexample: outcome,
+<a href=#201 id=201 data-nosnippet>201</a>                        ..
+<a href=#202 id=202 data-nosnippet>202</a>                    }) =&gt; {
+<a href=#203 id=203 data-nosnippet>203</a>                        <span class="kw">let </span>reason = rd.maybe_decode(<span class="kw-2">&amp;</span>outcome.<span class="number">1</span>.result, status);
+<a href=#204 id=204 data-nosnippet>204</a>                        test_data.logs.extend(outcome.<span class="number">1</span>.logs.clone());
+<a href=#205 id=205 data-nosnippet>205</a>                        test_data.counterexample = outcome;
+<a href=#206 id=206 data-nosnippet>206</a>                        test_data.failure = <span class="prelude-val">Some</span>(TestCaseError::fail(reason.unwrap_or_default()));
+<a href=#207 id=207 data-nosnippet>207</a>                        <span class="kw">break </span><span class="lifetime">'stop</span>;
+<a href=#208 id=208 data-nosnippet>208</a>                    }
+<a href=#209 id=209 data-nosnippet>209</a>                },
+<a href=#210 id=210 data-nosnippet>210</a>                <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#211 id=211 data-nosnippet>211</a>                    <span class="kw">match </span>err {
+<a href=#212 id=212 data-nosnippet>212</a>                        TestCaseError::Fail(<span class="kw">_</span>) =&gt; {
+<a href=#213 id=213 data-nosnippet>213</a>                            test_data.failure = <span class="prelude-val">Some</span>(err);
+<a href=#214 id=214 data-nosnippet>214</a>                            <span class="kw">break </span><span class="lifetime">'stop</span>;
+<a href=#215 id=215 data-nosnippet>215</a>                        }
+<a href=#216 id=216 data-nosnippet>216</a>                        TestCaseError::Reject(<span class="kw">_</span>) =&gt; {
+<a href=#217 id=217 data-nosnippet>217</a>                            <span class="comment">// Apply max rejects only if configured, otherwise silently discard run.
+<a href=#218 id=218 data-nosnippet>218</a>                            </span><span class="kw">if </span><span class="self">self</span>.config.max_test_rejects &gt; <span class="number">0 </span>{
+<a href=#219 id=219 data-nosnippet>219</a>                                test_data.rejects += <span class="number">1</span>;
+<a href=#220 id=220 data-nosnippet>220</a>                                <span class="kw">if </span>test_data.rejects &gt;= <span class="self">self</span>.config.max_test_rejects {
+<a href=#221 id=221 data-nosnippet>221</a>                                    test_data.failure = <span class="prelude-val">Some</span>(err);
+<a href=#222 id=222 data-nosnippet>222</a>                                    <span class="kw">break </span><span class="lifetime">'stop</span>;
+<a href=#223 id=223 data-nosnippet>223</a>                                }
+<a href=#224 id=224 data-nosnippet>224</a>                            }
+<a href=#225 id=225 data-nosnippet>225</a>                        }
+<a href=#226 id=226 data-nosnippet>226</a>                    }
+<a href=#227 id=227 data-nosnippet>227</a>                }
+<a href=#228 id=228 data-nosnippet>228</a>            }
+<a href=#229 id=229 data-nosnippet>229</a>        }
+<a href=#230 id=230 data-nosnippet>230</a>
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span>(calldata, call) = <a href="#103">test_data</a>.counterexample;
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span><span class="kw-2">mut </span>traces = <a href="#103">test_data</a>.traces;
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>(last_run_traces, last_run_breakpoints) = <span class="kw">if </span><a href="#103">test_data</a>.failure.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.is_none">is_none</a>() {
+<a href=#234 id=234 data-nosnippet>234</a>            (<a href="#232">traces</a>.<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html#method.pop">pop</a>(), <a href="#103">test_data</a>.breakpoints)
+<a href=#235 id=235 data-nosnippet>235</a>        } <span class="kw">else </span>{
+<a href=#236 id=236 data-nosnippet>236</a>            (<a href="#231">call</a>.traces.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>(), <a href="#231">call</a>.cheatcodes.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.map">map</a>(|c| <a href="#236">c</a>.breakpoints))
+<a href=#237 id=237 data-nosnippet>237</a>        };
+<a href=#238 id=238 data-nosnippet>238</a>
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = <a href="../../../../foundry_evm_fuzz/struct.FuzzTestResult.html">FuzzTestResult</a> {
+<a href=#240 id=240 data-nosnippet>240</a>            first_case: <a href="#103">test_data</a>.first_case.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.unwrap_or_default">unwrap_or_default</a>(),
+<a href=#241 id=241 data-nosnippet>241</a>            gas_by_case: <a href="#103">test_data</a>.gas_by_case,
+<a href=#242 id=242 data-nosnippet>242</a>            success: <a href="#103">test_data</a>.failure.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.is_none">is_none</a>(),
+<a href=#243 id=243 data-nosnippet>243</a>            skipped: <span class="bool-val">false</span>,
+<a href=#244 id=244 data-nosnippet>244</a>            reason: <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>,
+<a href=#245 id=245 data-nosnippet>245</a>            counterexample: <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>,
+<a href=#246 id=246 data-nosnippet>246</a>            logs: <a href="#103">test_data</a>.logs,
+<a href=#247 id=247 data-nosnippet>247</a>            labels: <a href="#231">call</a>.labels,
+<a href=#248 id=248 data-nosnippet>248</a>            traces: <a href="#233">last_run_traces</a>,
+<a href=#249 id=249 data-nosnippet>249</a>            breakpoints: <a href="#233">last_run_breakpoints</a>,
+<a href=#250 id=250 data-nosnippet>250</a>            gas_report_traces: <a href="#232">traces</a>.<a href="https://doc.rust-lang.org/nightly/core/iter/traits/collect/trait.IntoIterator.html#tymethod.into_iter">into_iter</a>().<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.map">map</a>(|a| <a href="#250">a</a>.arena).<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.collect">collect</a>(),
+<a href=#251 id=251 data-nosnippet>251</a>            line_coverage: <a href="#103">test_data</a>.coverage,
+<a href=#252 id=252 data-nosnippet>252</a>            deprecated_cheatcodes: <a href="#103">test_data</a>.deprecated_cheatcodes,
+<a href=#253 id=253 data-nosnippet>253</a>            failed_corpus_replays: <a href="#117">corpus_manager</a>.<a href="../corpus.rs.html#554-556">failed_replays</a>(),
+<a href=#254 id=254 data-nosnippet>254</a>        };
+<a href=#255 id=255 data-nosnippet>255</a>
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">match </span><a href="#103">test_data</a>.failure {
+<a href=#257 id=257 data-nosnippet>257</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(TestCaseError::Fail(reason)) =&gt; {
+<a href=#258 id=258 data-nosnippet>258</a>                <span class="kw">let </span>reason = <a href="#257">reason</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/trait.ToString.html#tymethod.to_string">to_string</a>();
+<a href=#259 id=259 data-nosnippet>259</a>                <a href="#239">result</a>.reason = (!<a href="#258">reason</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html#method.is_empty">is_empty</a>()).<a href="https://doc.rust-lang.org/nightly/core/foreigntype.bool.html#method.then_some">then_some</a>(<a href="#258">reason</a>);
+<a href=#260 id=260 data-nosnippet>260</a>                <span class="kw">let </span>args = <span class="kw">if let </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(data) = <a href="#231">calldata</a>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.get">get</a>(<span class="number">4</span>..) {
+<a href=#261 id=261 data-nosnippet>261</a>                    <a href="#95">func</a>.abi_decode_input(<a href="#260">data</a>).<a href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#method.unwrap_or_default">unwrap_or_default</a>()
+<a href=#262 id=262 data-nosnippet>262</a>                } <span class="kw">else </span>{
+<a href=#263 id=263 data-nosnippet>263</a>                    <a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.vec.html">vec!</a>[]
+<a href=#264 id=264 data-nosnippet>264</a>                };
+<a href=#265 id=265 data-nosnippet>265</a>                <a href="#239">result</a>.counterexample = <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="../../../../foundry_evm_fuzz/enum.CounterExample.html#variant.Single">CounterExample::Single</a>(
+<a href=#266 id=266 data-nosnippet>266</a>                    <a href="../../../../foundry_evm_fuzz/struct.BaseCounterExample.html#method.from_fuzz_call">BaseCounterExample::from_fuzz_call</a>(<a href="#231">calldata</a>, <a href="#260">args</a>, <a href="#231">call</a>.traces),
+<a href=#267 id=267 data-nosnippet>267</a>                ));
+<a href=#268 id=268 data-nosnippet>268</a>            }
+<a href=#269 id=269 data-nosnippet>269</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(TestCaseError::Reject(reason)) =&gt; {
+<a href=#270 id=270 data-nosnippet>270</a>                <span class="kw">let </span>reason = <a href="#269">reason</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/trait.ToString.html#tymethod.to_string">to_string</a>();
+<a href=#271 id=271 data-nosnippet>271</a>                <a href="#239">result</a>.reason = (!<a href="#270">reason</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html#method.is_empty">is_empty</a>()).<a href="https://doc.rust-lang.org/nightly/core/foreigntype.bool.html#method.then_some">then_some</a>(<a href="#270">reason</a>);
+<a href=#272 id=272 data-nosnippet>272</a>            }
+<a href=#273 id=273 data-nosnippet>273</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None"><a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a> </a>=&gt; {}
+<a href=#274 id=274 data-nosnippet>274</a>        }
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">if let </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(reason) = <span class="kw-2">&amp;</span><a href="#239">result</a>.reason
+<a href=#277 id=277 data-nosnippet>277</a>            &amp;&amp; <span class="kw">let </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(reason) = SkipReason::decode_self(<a href="#276">reason</a>)
+<a href=#278 id=278 data-nosnippet>278</a>        {
+<a href=#279 id=279 data-nosnippet>279</a>            <a href="#239">result</a>.skipped = <span class="bool-val">true</span>;
+<a href=#280 id=280 data-nosnippet>280</a>            <a href="#239">result</a>.reason = <a href="#277">reason</a>.<span class="number">0</span>;
+<a href=#281 id=281 data-nosnippet>281</a>        }
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a>        <a href="#104">state</a>.<a href="../../../../foundry_evm_fuzz/strategies/state/struct.EvmFuzzState.html#method.log_stats">log_stats</a>();
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>        <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(<a href="#239">result</a>)
+<a href=#286 id=286 data-nosnippet>286</a>    }
+<a href=#287 id=287 data-nosnippet>287</a>
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="doccomment">/// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
+<a href=#289 id=289 data-nosnippet>289</a>    /// or a `CounterExampleOutcome`
+<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">fn </span>single_fuzz(
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#292 id=292 data-nosnippet>292</a>        address: Address,
+<a href=#293 id=293 data-nosnippet>293</a>        calldata: Bytes,
+<a href=#294 id=294 data-nosnippet>294</a>        coverage_metrics: <span class="kw-2">&amp;mut </span><a href="../corpus.rs.html#132-150">CorpusManager</a>,
+<a href=#295 id=295 data-nosnippet>295</a>    ) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;<a href="types.rs.html#40-43">FuzzOutcome</a>, TestCaseError&gt; {
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span><span class="kw-2">mut </span>call = <span class="self"><a href="#291">self</a>
+<a href=#297 id=297 data-nosnippet>297</a>            </span>.executor
+<a href=#298 id=298 data-nosnippet>298</a>            .<a href="../mod.rs.html#452-461">call_raw</a>(<a class="self" href="#291">self</a>.sender, <a href="#292">address</a>, <a href="#293">calldata</a>.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>(), U256::ZERO)
+<a href=#299 id=299 data-nosnippet>299</a>            .<a href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#method.map_err">map_err</a>(|e| TestCaseError::fail(<a href="#299">e</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/trait.ToString.html#tymethod.to_string">to_string</a>()))<span class="question-mark">?</span>;
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>new_coverage = <a href="#294">coverage_metrics</a>.<a href="../corpus.rs.html#559-569">merge_edge_coverage</a>(<span class="kw-2">&amp;mut </span><a href="#296">call</a>);
+<a href=#301 id=301 data-nosnippet>301</a>        <a href="#294">coverage_metrics</a>.<a href="../corpus.rs.html#291-356">process_inputs</a>(
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="kw-2">&amp;</span>[<a href="../../../../foundry_evm_fuzz/struct.BasicTxDetails.html">BasicTxDetails</a> {
+<a href=#303 id=303 data-nosnippet>303</a>                sender: <a class="self" href="#291">self</a>.sender,
+<a href=#304 id=304 data-nosnippet>304</a>                call_details: <a href="../../../../foundry_evm_fuzz/struct.CallDetails.html">CallDetails</a> { target: <a href="#292">address</a>, calldata: <a href="#293">calldata</a>.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>() },
+<a href=#305 id=305 data-nosnippet>305</a>            }],
+<a href=#306 id=306 data-nosnippet>306</a>            <a href="#300">new_coverage</a>,
+<a href=#307 id=307 data-nosnippet>307</a>        );
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="comment">// Handle `vm.assume`.
+<a href=#310 id=310 data-nosnippet>310</a>        </span><span class="kw">if </span><a href="#296">call</a>.result.<a href="https://doc.rust-lang.org/nightly/core/convert/trait.AsRef.html#tymethod.as_ref">as_ref</a>() == <a href="../../../../foundry_evm/constants/constant.MAGIC_ASSUME.html">MAGIC_ASSUME</a> {
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">return </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Err">Err</a>(TestCaseError::reject(<a href="../../../../foundry_evm_fuzz/error/enum.FuzzError.html#variant.TooManyRejects">FuzzError::TooManyRejects</a>(
+<a href=#312 id=312 data-nosnippet>312</a>                <a class="self" href="#291">self</a>.config.max_test_rejects,
+<a href=#313 id=313 data-nosnippet>313</a>            )));
+<a href=#314 id=314 data-nosnippet>314</a>        }
+<a href=#315 id=315 data-nosnippet>315</a>
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>(breakpoints, deprecated_cheatcodes) =
+<a href=#317 id=317 data-nosnippet>317</a>            <a href="#296">call</a>.cheatcodes.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.as_ref">as_ref</a>().<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.map_or_else">map_or_else</a>(<a href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default">Default::default</a>, |cheats| {
+<a href=#318 id=318 data-nosnippet>318</a>                (<a href="#317">cheats</a>.breakpoints.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>(), <a href="#317">cheats</a>.deprecated.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>())
+<a href=#319 id=319 data-nosnippet>319</a>            });
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="comment">// Consider call success if test should not fail on reverts and reverter is not the
+<a href=#322 id=322 data-nosnippet>322</a>        // cheatcode or test address.
+<a href=#323 id=323 data-nosnippet>323</a>        </span><span class="kw">let </span>success = <span class="kw">if </span>!<a class="self" href="#291">self</a>.config.fail_on_revert
+<a href=#324 id=324 data-nosnippet>324</a>            &amp;&amp; <a href="#296">call</a>
+<a href=#325 id=325 data-nosnippet>325</a>                .reverter
+<a href=#326 id=326 data-nosnippet>326</a>                .<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.is_some_and">is_some_and</a>(|reverter| <a href="#326">reverter</a> != <a href="#292">address</a> &amp;&amp; <a href="#326">reverter</a> != <a href="../../../../foundry_evm/constants/constant.CHEATCODE_ADDRESS.html">CHEATCODE_ADDRESS</a>)
+<a href=#327 id=327 data-nosnippet>327</a>        {
+<a href=#328 id=328 data-nosnippet>328</a>            <span class="bool-val">true
+<a href=#329 id=329 data-nosnippet>329</a>        </span>} <span class="kw">else </span>{
+<a href=#330 id=330 data-nosnippet>330</a>            <a class="self" href="#291">self</a>.executor.<a href="../mod.rs.html#545-557">is_raw_call_mut_success</a>(<a href="#292">address</a>, <span class="kw-2">&amp;mut </span><a href="#296">call</a>, <span class="bool-val">false</span>)
+<a href=#331 id=331 data-nosnippet>331</a>        };
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">if </span><a href="#323">success</a> {
+<a href=#334 id=334 data-nosnippet>334</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(<a href="types.rs.html#41">FuzzOutcome::Case</a>(<a href="types.rs.html#11-24">CaseOutcome</a> {
+<a href=#335 id=335 data-nosnippet>335</a>                case: <a href="../../../../foundry_evm_fuzz/struct.FuzzCase.html">FuzzCase</a> { <a href="#293">calldata</a>, gas: <a href="#296">call</a>.gas_used, stipend: <a href="#296">call</a>.stipend },
+<a href=#336 id=336 data-nosnippet>336</a>                traces: <a href="#296">call</a>.traces,
+<a href=#337 id=337 data-nosnippet>337</a>                coverage: <a href="#296">call</a>.line_coverage,
+<a href=#338 id=338 data-nosnippet>338</a>                <a href="#316">breakpoints</a>,
+<a href=#339 id=339 data-nosnippet>339</a>                logs: <a href="#296">call</a>.logs,
+<a href=#340 id=340 data-nosnippet>340</a>                <a href="#316">deprecated_cheatcodes</a>,
+<a href=#341 id=341 data-nosnippet>341</a>            }))
+<a href=#342 id=342 data-nosnippet>342</a>        } <span class="kw">else </span>{
+<a href=#343 id=343 data-nosnippet>343</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(<a href="types.rs.html#42">FuzzOutcome::CounterExample</a>(<a href="types.rs.html#28-35">CounterExampleOutcome</a> {
+<a href=#344 id=344 data-nosnippet>344</a>                exit_reason: <a href="#296">call</a>.exit_reason,
+<a href=#345 id=345 data-nosnippet>345</a>                counterexample: (<a href="#293">calldata</a>, <a href="#296">call</a>),
+<a href=#346 id=346 data-nosnippet>346</a>                <a href="#316">breakpoints</a>,
+<a href=#347 id=347 data-nosnippet>347</a>            }))
+<a href=#348 id=348 data-nosnippet>348</a>        }
+<a href=#349 id=349 data-nosnippet>349</a>    }
+<a href=#350 id=350 data-nosnippet>350</a>
+<a href=#351 id=351 data-nosnippet>351</a>    <span class="doccomment">/// Stores fuzz state for use with [fuzz_calldata_from_state]
+<a href=#352 id=352 data-nosnippet>352</a>    </span><span class="kw">pub fn </span>build_fuzz_state(<span class="kw-2">&amp;</span><span class="self">self</span>, deployed_libs: <span class="kw-2">&amp;</span>[Address]) -&gt; <a href="../../../../foundry_evm_fuzz/strategies/state/struct.EvmFuzzState.html">EvmFuzzState</a> {
+<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">if let </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(fork_db) = <a class="self" href="#352">self</a>.executor.<a href="../mod.rs.html#148-150">backend</a>().active_fork_db() {
+<a href=#354 id=354 data-nosnippet>354</a>            <a href="../../../../foundry_evm_fuzz/strategies/state/struct.EvmFuzzState.html#method.new">EvmFuzzState::new</a>(<a href="#353">fork_db</a>, <a class="self" href="#352">self</a>.config.dictionary, <a href="#352">deployed_libs</a>)
+<a href=#355 id=355 data-nosnippet>355</a>        } <span class="kw">else </span>{
+<a href=#356 id=356 data-nosnippet>356</a>            <a href="../../../../foundry_evm_fuzz/strategies/state/struct.EvmFuzzState.html#method.new">EvmFuzzState::new</a>(
+<a href=#357 id=357 data-nosnippet>357</a>                <a class="self" href="#352">self</a>.executor.<a href="../mod.rs.html#148-150">backend</a>().mem_db(),
+<a href=#358 id=358 data-nosnippet>358</a>                <a class="self" href="#352">self</a>.config.dictionary,
+<a href=#359 id=359 data-nosnippet>359</a>                <a href="#352">deployed_libs</a>,
+<a href=#360 id=360 data-nosnippet>360</a>            )
+<a href=#361 id=361 data-nosnippet>361</a>        }
+<a href=#362 id=362 data-nosnippet>362</a>    }
+<a href=#363 id=363 data-nosnippet>363</a>}</code></pre></div></section></main></body></html>

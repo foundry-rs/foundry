@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ContextError","CreateScheme","TransactionType"],"mod":["block","cfg","context","local"],"struct":["DummyHost","FrameStack","FrameToken","OutFrame"],"trait":["Block","Cfg","ContextSetters","ContextTr","DBErrorMarker","Database","Host","JournalTr","LocalContextTr","Transaction"],"type":["TransactTo"]};

@@ -1,0 +1,37 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/forge/src/cmd/tree.rs`."><title>tree.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-069232aa.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="forge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (898aff704 2025-08-14)" data-channel="nightly" data-search-js="search-281b7574.js" data-settings-js="settings-5514c975.js" ><script src="../../../static.files/storage-68b7e25d.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">forge/cmd/</div>tree.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>clap::Parser;
+<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span><a href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">eyre::Result</a>;
+<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>foundry_cli::{<a href="../../../foundry_cli/opts/build/paths/struct.ProjectPathOpts.html">opts::ProjectPathOpts</a>, <a href="../../../foundry_cli/utils/cmd/trait.LoadConfig.html">utils::LoadConfig</a>};
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>foundry_compilers::{
+<a href=#5 id=5 data-nosnippet>5</a>    Graph,
+<a href=#6 id=6 data-nosnippet>6</a>    resolver::{Charset, TreeOptions, parse::SolData},
+<a href=#7 id=7 data-nosnippet>7</a>};
+<a href=#8 id=8 data-nosnippet>8</a>
+<a href=#9 id=9 data-nosnippet>9</a><span class="doccomment">/// CLI arguments for `forge tree`.
+<a href=#10 id=10 data-nosnippet>10</a></span><span class="attr">#[derive(Clone, Debug, Parser)]
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">pub struct </span><a href="#11-24">TreeArgs</a> {
+<a href=#12 id=12 data-nosnippet>12</a>    <span class="doccomment">/// Do not de-duplicate (repeats all shared dependencies)
+<a href=#13 id=13 data-nosnippet>13</a>    </span><span class="attr">#[arg(long)]
+<a href=#14 id=14 data-nosnippet>14</a>    </span>no_dedupe: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+<a href=#15 id=15 data-nosnippet>15</a>
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Character set to use in output.
+<a href=#17 id=17 data-nosnippet>17</a>    ///
+<a href=#18 id=18 data-nosnippet>18</a>    /// [possible values: utf8, ascii]
+<a href=#19 id=19 data-nosnippet>19</a>    </span><span class="attr">#[arg(long, default_value = <span class="string">"utf8"</span>)]
+<a href=#20 id=20 data-nosnippet>20</a>    </span>charset: Charset,
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="attr">#[command(flatten)]
+<a href=#23 id=23 data-nosnippet>23</a>    </span>project_paths: <a href="../../../foundry_cli/opts/build/paths/struct.ProjectPathOpts.html">ProjectPathOpts</a>,
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="macro">foundry_config::impl_figment_convert!</span>(<a href="#11-24">TreeArgs</a>, project_paths);
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">impl </span><a href="#11-24">TreeArgs</a> {
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub fn </span>run(<span class="self">self</span>) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw">let </span>config = <a class="self" href="#29">self</a>.<a href="../../../foundry_cli/utils/cmd/trait.LoadConfig.html#tymethod.load_config">load_config</a>()<span class="question-mark">?</span>;
+<a href=#31 id=31 data-nosnippet>31</a>        <span class="kw">let </span>graph = Graph::&lt;SolData&gt;::resolve(<span class="kw-2">&amp;</span><a href="#30">config</a>.project_paths())<span class="question-mark">?</span>;
+<a href=#32 id=32 data-nosnippet>32</a>        <span class="kw">let </span>opts = TreeOptions { charset: <a class="self" href="#29">self</a>.charset, no_dedupe: <a class="self" href="#29">self</a>.no_dedupe };
+<a href=#33 id=33 data-nosnippet>33</a>        <a href="#31">graph</a>.print_with_options(<a href="#32">opts</a>);
+<a href=#34 id=34 data-nosnippet>34</a>
+<a href=#35 id=35 data-nosnippet>35</a>        <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#36 id=36 data-nosnippet>36</a>    }
+<a href=#37 id=37 data-nosnippet>37</a>}</code></pre></div></section></main></body></html>

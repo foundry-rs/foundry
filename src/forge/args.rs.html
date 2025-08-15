@@ -1,0 +1,158 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/forge/src/args.rs`."><title>args.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-069232aa.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="forge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (898aff704 2025-08-14)" data-channel="nightly" data-search-js="search-281b7574.js" data-settings-js="settings-5514c975.js" ><script src="../../static.files/storage-68b7e25d.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">forge/</div>args.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use crate</span>::{
+<a href=#2 id=2 data-nosnippet>2</a>    cmd::{<a href="cmd/cache.rs.html#19-25">cache::CacheSubcommands</a>, <a href="cmd/generate/mod.rs.html#15-18">generate::GenerateSubcommands</a>, <a href="cmd/mod.rs.html#35">watch</a>},
+<a href=#3 id=3 data-nosnippet>3</a>    opts::{<a href="opts.rs.html#24-31">Forge</a>, <a href="opts.rs.html#34-174">ForgeSubcommand</a>},
+<a href=#4 id=4 data-nosnippet>4</a>};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>clap::{CommandFactory, Parser};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>clap_complete::generate;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><a href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">eyre::Result</a>;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>foundry_cli::{<a href="../../foundry_cli/handler/index.html">handler</a>, <a href="../../foundry_cli/utils/index.html">utils</a>};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>foundry_common::shell;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>foundry_evm::inspectors::cheatcodes::{<a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext</a>, <a href="../../forge/inspectors/cheatcodes/fn.set_execution_context.html">set_execution_context</a>};
+<a href=#11 id=11 data-nosnippet>11</a>
+<a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// Run the `forge` command line interface.
+<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">pub fn </span><a href="../../forge/args/fn.run.html">run</a>() -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#14 id=14 data-nosnippet>14</a>    <a href="#23-31">setup</a>()<span class="question-mark">?</span>;
+<a href=#15 id=15 data-nosnippet>15</a>
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">let </span>args = Forge::parse();
+<a href=#17 id=17 data-nosnippet>17</a>    <a href="#16">args</a>.global.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.init">init</a>()<span class="question-mark">?</span>;
+<a href=#18 id=18 data-nosnippet>18</a>
+<a href=#19 id=19 data-nosnippet>19</a>    <a href="#34-158">run_command</a>(<a href="#16">args</a>)
+<a href=#20 id=20 data-nosnippet>20</a>}
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Setup the global logger and other utilities.
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">pub fn </span><a href="../../forge/args/fn.setup.html">setup</a>() -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#24 id=24 data-nosnippet>24</a>    <a href="../../foundry_cli/utils/fn.install_crypto_provider.html">utils::install_crypto_provider</a>();
+<a href=#25 id=25 data-nosnippet>25</a>    <a href="../../foundry_cli/handler/fn.install.html">handler::install</a>();
+<a href=#26 id=26 data-nosnippet>26</a>    <a href="../../foundry_cli/utils/fn.load_dotenv.html">utils::load_dotenv</a>();
+<a href=#27 id=27 data-nosnippet>27</a>    <a href="../../foundry_cli/utils/fn.subscriber.html">utils::subscriber</a>();
+<a href=#28 id=28 data-nosnippet>28</a>    <a href="../../foundry_cli/utils/fn.enable_paint.html">utils::enable_paint</a>();
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a>    <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#31 id=31 data-nosnippet>31</a>}
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// Run the subcommand.
+<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub fn </span><a href="../../forge/args/fn.run_command.html">run_command</a>(args: <a href="opts.rs.html#24-31">Forge</a>) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="comment">// Set the execution context based on the subcommand.
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">let </span>context = <span class="kw">match </span><span class="kw-2">&amp;</span><a href="#34">args</a>.cmd {
+<a href=#37 id=37 data-nosnippet>37</a>        <a href="opts.rs.html#37">ForgeSubcommand::Test</a>(<span class="kw">_</span>) =&gt; <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::Test</a>,
+<a href=#38 id=38 data-nosnippet>38</a>        <a href="opts.rs.html#43">ForgeSubcommand::Coverage</a>(<span class="kw">_</span>) =&gt; <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::Coverage</a>,
+<a href=#39 id=39 data-nosnippet>39</a>        <a href="opts.rs.html#122">ForgeSubcommand::Snapshot</a>(<span class="kw">_</span>) =&gt; <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::Snapshot</a>,
+<a href=#40 id=40 data-nosnippet>40</a>        <a href="opts.rs.html#40">ForgeSubcommand::Script</a>(cmd) =&gt; {
+<a href=#41 id=41 data-nosnippet>41</a>            <span class="kw">if </span><a href="#40">cmd</a>.broadcast {
+<a href=#42 id=42 data-nosnippet>42</a>                <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::ScriptBroadcast</a>
+<a href=#43 id=43 data-nosnippet>43</a>            } <span class="kw">else if </span><a href="#40">cmd</a>.resume {
+<a href=#44 id=44 data-nosnippet>44</a>                <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::ScriptResume</a>
+<a href=#45 id=45 data-nosnippet>45</a>            } <span class="kw">else </span>{
+<a href=#46 id=46 data-nosnippet>46</a>                <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::ScriptDryRun</a>
+<a href=#47 id=47 data-nosnippet>47</a>            }
+<a href=#48 id=48 data-nosnippet>48</a>        }
+<a href=#49 id=49 data-nosnippet>49</a>        <span class="kw">_ </span>=&gt; <a href="../../forge/inspectors/cheatcodes/enum.ForgeContext.html">ForgeContext::Unknown</a>,
+<a href=#50 id=50 data-nosnippet>50</a>    };
+<a href=#51 id=51 data-nosnippet>51</a>    <a href="../../forge/inspectors/cheatcodes/fn.set_execution_context.html">set_execution_context</a>(<a href="#36">context</a>);
+<a href=#52 id=52 data-nosnippet>52</a>
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">let </span>global = <span class="kw-2">&amp;</span><a href="#34">args</a>.global;
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="comment">// Run the subcommand.
+<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">match </span><a href="#34">args</a>.cmd {
+<a href=#57 id=57 data-nosnippet>57</a>        <a href="opts.rs.html#37">ForgeSubcommand::Test</a>(cmd) =&gt; {
+<a href=#58 id=58 data-nosnippet>58</a>            <span class="kw">if </span><a href="#57">cmd</a>.<a href="cmd/test/mod.rs.html#837-839">is_watch</a>() {
+<a href=#59 id=59 data-nosnippet>59</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#295-349">watch::watch_test</a>(<a href="#57">cmd</a>))
+<a href=#60 id=60 data-nosnippet>60</a>            } <span class="kw">else </span>{
+<a href=#61 id=61 data-nosnippet>61</a>                <span class="kw">let </span>silent = <a href="#57">cmd</a>.junit || shell::is_json();
+<a href=#62 id=62 data-nosnippet>62</a>                <span class="kw">let </span>outcome = <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#57">cmd</a>.<a href="cmd/test/mod.rs.html#203-206">run</a>())<span class="question-mark">?</span>;
+<a href=#63 id=63 data-nosnippet>63</a>                <a href="#62">outcome</a>.<a href="result.rs.html#154-189">ensure_ok</a>(<a href="#61">silent</a>)
+<a href=#64 id=64 data-nosnippet>64</a>            }
+<a href=#65 id=65 data-nosnippet>65</a>        }
+<a href=#66 id=66 data-nosnippet>66</a>        <a href="opts.rs.html#40">ForgeSubcommand::Script</a>(cmd) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#66">cmd</a>.<a href="../../forge_script/struct.ScriptArgs.html#method.run_script">run_script</a>()),
+<a href=#67 id=67 data-nosnippet>67</a>        <a href="opts.rs.html#43">ForgeSubcommand::Coverage</a>(cmd) =&gt; {
+<a href=#68 id=68 data-nosnippet>68</a>            <span class="kw">if </span><a href="#67">cmd</a>.<a href="cmd/coverage.rs.html#347-349">is_watch</a>() {
+<a href=#69 id=69 data-nosnippet>69</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#351-357">watch::watch_coverage</a>(<a href="#67">cmd</a>))
+<a href=#70 id=70 data-nosnippet>70</a>            } <span class="kw">else </span>{
+<a href=#71 id=71 data-nosnippet>71</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#67">cmd</a>.<a href="cmd/coverage.rs.html#91-118">run</a>())
+<a href=#72 id=72 data-nosnippet>72</a>            }
+<a href=#73 id=73 data-nosnippet>73</a>        }
+<a href=#74 id=74 data-nosnippet>74</a>        <a href="opts.rs.html#47">ForgeSubcommand::Bind</a>(cmd) =&gt; <a href="#74">cmd</a>.<a href="cmd/bind.rs.html#115-143">run</a>(),
+<a href=#75 id=75 data-nosnippet>75</a>        <a href="opts.rs.html#51">ForgeSubcommand::Build</a>(cmd) =&gt; {
+<a href=#76 id=76 data-nosnippet>76</a>            <span class="kw">if </span><a href="#75">cmd</a>.<a href="cmd/build.rs.html#202-204">is_watch</a>() {
+<a href=#77 id=77 data-nosnippet>77</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#281-284">watch::watch_build</a>(<a href="#75">cmd</a>))
+<a href=#78 id=78 data-nosnippet>78</a>            } <span class="kw">else </span>{
+<a href=#79 id=79 data-nosnippet>79</a>                <a href="#75">cmd</a>.<a href="cmd/build.rs.html#74-125">run</a>().<a href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#method.map">map</a>(<a href="https://doc.rust-lang.org/nightly/core/mem/fn.drop.html">drop</a>)
+<a href=#80 id=80 data-nosnippet>80</a>            }
+<a href=#81 id=81 data-nosnippet>81</a>        }
+<a href=#82 id=82 data-nosnippet>82</a>        <a href="opts.rs.html#78">ForgeSubcommand::VerifyContract</a>(args) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#82">args</a>.<a href="../../forge_verify/verify/struct.VerifyArgs.html#method.run">run</a>()),
+<a href=#83 id=83 data-nosnippet>83</a>        <a href="opts.rs.html#82">ForgeSubcommand::VerifyCheck</a>(args) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#83">args</a>.<a href="../../forge_verify/verify/struct.VerifyCheckArgs.html#method.run">run</a>()),
+<a href=#84 id=84 data-nosnippet>84</a>        <a href="opts.rs.html#86">ForgeSubcommand::VerifyBytecode</a>(cmd) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#84">cmd</a>.<a href="../../forge_verify/bytecode/struct.VerifyBytecodeArgs.html#method.run">run</a>()),
+<a href=#85 id=85 data-nosnippet>85</a>        <a href="opts.rs.html#54">ForgeSubcommand::Clone</a>(cmd) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#85">cmd</a>.<a href="cmd/clone.rs.html#97-143">run</a>()),
+<a href=#86 id=86 data-nosnippet>86</a>        <a href="opts.rs.html#118">ForgeSubcommand::Cache</a>(cmd) =&gt; <span class="kw">match </span><a href="#86">cmd</a>.sub {
+<a href=#87 id=87 data-nosnippet>87</a>            <a href="cmd/cache.rs.html#21">CacheSubcommands::Clean</a>(cmd) =&gt; <a href="#87">cmd</a>.<a href="cmd/cache.rs.html#57-76">run</a>(),
+<a href=#88 id=88 data-nosnippet>88</a>            <a href="cmd/cache.rs.html#24">CacheSubcommands::Ls</a>(cmd) =&gt; <a href="#88">cmd</a>.<a href="cmd/cache.rs.html#93-106">run</a>(),
+<a href=#89 id=89 data-nosnippet>89</a>        },
+<a href=#90 id=90 data-nosnippet>90</a>        <a href="opts.rs.html#90">ForgeSubcommand::Create</a>(cmd) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#90">cmd</a>.<a href="cmd/create.rs.html#105-204">run</a>()),
+<a href=#91 id=91 data-nosnippet>91</a>        <a href="opts.rs.html#60">ForgeSubcommand::Update</a>(cmd) =&gt; <a href="#91">cmd</a>.<a href="cmd/update.rs.html#37-166">run</a>(),
+<a href=#92 id=92 data-nosnippet>92</a>        <a href="opts.rs.html#66">ForgeSubcommand::Install</a>(cmd) =&gt; <a href="#92">cmd</a>.<a href="cmd/install.rs.html#62-65">run</a>(),
+<a href=#93 id=93 data-nosnippet>93</a>        <a href="opts.rs.html#70">ForgeSubcommand::Remove</a>(cmd) =&gt; <a href="#93">cmd</a>.<a href="cmd/remove.rs.html#32-54">run</a>(),
+<a href=#94 id=94 data-nosnippet>94</a>        <a href="opts.rs.html#74">ForgeSubcommand::Remappings</a>(cmd) =&gt; <a href="#94">cmd</a>.<a href="cmd/remappings.rs.html#23-51">run</a>(),
+<a href=#95 id=95 data-nosnippet>95</a>        <a href="opts.rs.html#93">ForgeSubcommand::Init</a>(cmd) =&gt; <a href="#95">cmd</a>.<a href="cmd/init.rs.html#50-171">run</a>(),
+<a href=#96 id=96 data-nosnippet>96</a>        <a href="opts.rs.html#97-100">ForgeSubcommand::Completions</a> { shell } =&gt; {
+<a href=#97 id=97 data-nosnippet>97</a>            generate(<a href="#96">shell</a>, <span class="kw-2">&amp;mut </span>Forge::command(), <span class="string">"forge"</span>, <span class="kw-2">&amp;mut </span><a href="https://doc.rust-lang.org/nightly/std/io/stdio/fn.stdout.html">std::io::stdout</a>());
+<a href=#98 id=98 data-nosnippet>98</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#99 id=99 data-nosnippet>99</a>        }
+<a href=#100 id=100 data-nosnippet>100</a>        <a href="opts.rs.html#104">ForgeSubcommand::GenerateFigSpec</a> =&gt; {
+<a href=#101 id=101 data-nosnippet>101</a>            clap_complete::generate(
+<a href=#102 id=102 data-nosnippet>102</a>                clap_complete_fig::Fig,
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw-2">&amp;mut </span>Forge::command(),
+<a href=#104 id=104 data-nosnippet>104</a>                <span class="string">"forge"</span>,
+<a href=#105 id=105 data-nosnippet>105</a>                <span class="kw-2">&amp;mut </span><a href="https://doc.rust-lang.org/nightly/std/io/stdio/fn.stdout.html">std::io::stdout</a>(),
+<a href=#106 id=106 data-nosnippet>106</a>            );
+<a href=#107 id=107 data-nosnippet>107</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#108 id=108 data-nosnippet>108</a>        }
+<a href=#109 id=109 data-nosnippet>109</a>        <a href="opts.rs.html#108-115">ForgeSubcommand::Clean</a> { root } =&gt; {
+<a href=#110 id=110 data-nosnippet>110</a>            <span class="kw">let </span>config = utils::load_config_with_root(<a href="#109">root</a>.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.as_deref">as_deref</a>())<span class="question-mark">?</span>;
+<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">let </span>project = <a href="#110">config</a>.project()<span class="question-mark">?</span>;
+<a href=#112 id=112 data-nosnippet>112</a>            <a href="#110">config</a>.cleanup(<span class="kw-2">&amp;</span><a href="#111">project</a>)<span class="question-mark">?</span>;
+<a href=#113 id=113 data-nosnippet>113</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#114 id=114 data-nosnippet>114</a>        }
+<a href=#115 id=115 data-nosnippet>115</a>        <a href="opts.rs.html#122">ForgeSubcommand::Snapshot</a>(cmd) =&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">if </span><a href="#115">cmd</a>.<a href="cmd/snapshot.rs.html#84-86">is_watch</a>() {
+<a href=#117 id=117 data-nosnippet>117</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#288-291">watch::watch_gas_snapshot</a>(<a href="#115">cmd</a>))
+<a href=#118 id=118 data-nosnippet>118</a>            } <span class="kw">else </span>{
+<a href=#119 id=119 data-nosnippet>119</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#115">cmd</a>.<a href="cmd/snapshot.rs.html#93-117">run</a>())
+<a href=#120 id=120 data-nosnippet>120</a>            }
+<a href=#121 id=121 data-nosnippet>121</a>        }
+<a href=#122 id=122 data-nosnippet>122</a>        <a href="opts.rs.html#133">ForgeSubcommand::Fmt</a>(cmd) =&gt; {
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="kw">if </span><a href="#122">cmd</a>.<a href="cmd/fmt.rs.html#196-198">is_watch</a>() {
+<a href=#124 id=124 data-nosnippet>124</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#359-365">watch::watch_fmt</a>(<a href="#122">cmd</a>))
+<a href=#125 id=125 data-nosnippet>125</a>            } <span class="kw">else </span>{
+<a href=#126 id=126 data-nosnippet>126</a>                <a href="#122">cmd</a>.<a href="cmd/fmt.rs.html#51-193">run</a>()
+<a href=#127 id=127 data-nosnippet>127</a>            }
+<a href=#128 id=128 data-nosnippet>128</a>        }
+<a href=#129 id=129 data-nosnippet>129</a>        <a href="opts.rs.html#126">ForgeSubcommand::Config</a>(cmd) =&gt; <a href="#129">cmd</a>.<a href="cmd/config.rs.html#30-59">run</a>(),
+<a href=#130 id=130 data-nosnippet>130</a>        <a href="opts.rs.html#130">ForgeSubcommand::Flatten</a>(cmd) =&gt; <a href="#130">cmd</a>.<a href="cmd/flatten.rs.html#38-73">run</a>(),
+<a href=#131 id=131 data-nosnippet>131</a>        <a href="opts.rs.html#141">ForgeSubcommand::Inspect</a>(cmd) =&gt; <a href="#131">cmd</a>.<a href="cmd/inspect.rs.html#46-153">run</a>(),
+<a href=#132 id=132 data-nosnippet>132</a>        <a href="opts.rs.html#145">ForgeSubcommand::Tree</a>(cmd) =&gt; <a href="#132">cmd</a>.<a href="cmd/tree.rs.html#29-36">run</a>(),
+<a href=#133 id=133 data-nosnippet>133</a>        <a href="opts.rs.html#148">ForgeSubcommand::Geiger</a>(cmd) =&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>            <span class="kw">let </span>n = <a href="#133">cmd</a>.<a href="cmd/geiger.rs.html#86-116">run</a>()<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>            <span class="kw">if </span><a href="#134">n</a> &gt; <span class="number">0 </span>{
+<a href=#136 id=136 data-nosnippet>136</a>                <a href="https://doc.rust-lang.org/nightly/std/process/fn.exit.html">std::process::exit</a>(<a href="#134">n</a> <span class="kw">as </span><a href="https://doc.rust-lang.org/nightly/std/primitive.i32.html">i32</a>);
+<a href=#137 id=137 data-nosnippet>137</a>            }
+<a href=#138 id=138 data-nosnippet>138</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#139 id=139 data-nosnippet>139</a>        }
+<a href=#140 id=140 data-nosnippet>140</a>        <a href="opts.rs.html#151">ForgeSubcommand::Doc</a>(cmd) =&gt; {
+<a href=#141 id=141 data-nosnippet>141</a>            <span class="kw">if </span><a href="#140">cmd</a>.<a href="cmd/doc/mod.rs.html#135-137">is_watch</a>() {
+<a href=#142 id=142 data-nosnippet>142</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="cmd/watch.rs.html#368-374">watch::watch_doc</a>(<a href="#140">cmd</a>))
+<a href=#143 id=143 data-nosnippet>143</a>            } <span class="kw">else </span>{
+<a href=#144 id=144 data-nosnippet>144</a>                <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#140">cmd</a>.<a href="cmd/doc/mod.rs.html#69-132">run</a>())<span class="question-mark">?</span>;
+<a href=#145 id=145 data-nosnippet>145</a>                <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#146 id=146 data-nosnippet>146</a>            }
+<a href=#147 id=147 data-nosnippet>147</a>        }
+<a href=#148 id=148 data-nosnippet>148</a>        <a href="opts.rs.html#155-158">ForgeSubcommand::Selectors</a> { command } =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#148">command</a>.<a href="cmd/selectors.rs.html#81-392">run</a>()),
+<a href=#149 id=149 data-nosnippet>149</a>        <a href="opts.rs.html#161">ForgeSubcommand::Generate</a>(cmd) =&gt; <span class="kw">match </span><a href="#149">cmd</a>.sub {
+<a href=#150 id=150 data-nosnippet>150</a>            <a href="cmd/generate/mod.rs.html#17">GenerateSubcommands::Test</a>(cmd) =&gt; <a href="#150">cmd</a>.<a href="cmd/generate/mod.rs.html#28-49">run</a>(),
+<a href=#151 id=151 data-nosnippet>151</a>        },
+<a href=#152 id=152 data-nosnippet>152</a>        <a href="opts.rs.html#164">ForgeSubcommand::Compiler</a>(cmd) =&gt; <a href="#152">cmd</a>.<a href="cmd/compiler.rs.html#18-22">run</a>(),
+<a href=#153 id=153 data-nosnippet>153</a>        <a href="opts.rs.html#167">ForgeSubcommand::Soldeer</a>(cmd) =&gt; <a href="#53">global</a>.<a href="../../foundry_cli/opts/global/struct.GlobalArgs.html#method.block_on">block_on</a>(<a href="#153">cmd</a>.<a href="cmd/soldeer.rs.html#19-25">run</a>()),
+<a href=#154 id=154 data-nosnippet>154</a>        <a href="opts.rs.html#170">ForgeSubcommand::Eip712</a>(cmd) =&gt; <a href="#154">cmd</a>.<a href="cmd/eip712.rs.html#54-100">run</a>(),
+<a href=#155 id=155 data-nosnippet>155</a>        <a href="opts.rs.html#173">ForgeSubcommand::BindJson</a>(cmd) =&gt; <a href="#155">cmd</a>.<a href="cmd/bind_json.rs.html#50-88">run</a>(),
+<a href=#156 id=156 data-nosnippet>156</a>        <a href="opts.rs.html#137">ForgeSubcommand::Lint</a>(cmd) =&gt; <a href="#156">cmd</a>.<a href="cmd/lint.rs.html#44-123">run</a>(),
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>}</code></pre></div></section></main></body></html>

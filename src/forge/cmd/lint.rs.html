@@ -1,0 +1,124 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/forge/src/cmd/lint.rs`."><title>lint.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-069232aa.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="forge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (898aff704 2025-08-14)" data-channel="nightly" data-search-js="search-281b7574.js" data-settings-js="settings-5514c975.js" ><script src="../../../static.files/storage-68b7e25d.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">forge/cmd/</div>lint.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>clap::{Parser, ValueHint};
+<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>eyre::{<a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>, <a href="https://docs.rs/eyre/0.6.12/eyre/macro.eyre.html">eyre</a>};
+<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>forge_lint::{
+<a href=#4 id=4 data-nosnippet>4</a>    <a href="../../../forge_lint/linter/trait.Linter.html">linter::Linter</a>,
+<a href=#5 id=5 data-nosnippet>5</a>    sol::{<a href="../../../forge_lint/sol/struct.SolLint.html">SolLint</a>, <a href="../../../forge_lint/sol/enum.SolLintError.html">SolLintError</a>, <a href="../../../forge_lint/sol/struct.SolidityLinter.html">SolidityLinter</a>},
+<a href=#6 id=6 data-nosnippet>6</a>};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>foundry_cli::{
+<a href=#8 id=8 data-nosnippet>8</a>    opts::{<a href="../../../foundry_cli/opts/build/core/struct.BuildOpts.html">BuildOpts</a>, <a href="../../../foundry_cli/opts/build/utils/fn.solar_pcx_from_build_opts.html">solar_pcx_from_build_opts</a>},
+<a href=#9 id=9 data-nosnippet>9</a>    utils::{<a href="../../../foundry_cli/utils/trait.FoundryPathExt.html">FoundryPathExt</a>, <a href="../../../foundry_cli/utils/cmd/trait.LoadConfig.html">LoadConfig</a>},
+<a href=#10 id=10 data-nosnippet>10</a>};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>foundry_config::{filter::expand_globs, lint::Severity};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/std/path/struct.PathBuf.html">std::path::PathBuf</a>;
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="doccomment">/// CLI arguments for `forge lint`.
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="attr">#[derive(Clone, Debug, Parser)]
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub struct </span><a href="#17-39">LintArgs</a> {
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// Path to the file to be checked. Overrides the `ignore` project config.
+<a href=#19 id=19 data-nosnippet>19</a>    </span><span class="attr">#[arg(value_hint = ValueHint::FilePath, value_name = <span class="string">"PATH"</span>, num_args(<span class="number">1</span>..))]
+<a href=#20 id=20 data-nosnippet>20</a>    </span>paths: <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;<a href="https://doc.rust-lang.org/nightly/std/path/struct.PathBuf.html">PathBuf</a>&gt;,
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Specifies which lints to run based on severity. Overrides the `severity` project config.
+<a href=#23 id=23 data-nosnippet>23</a>    ///
+<a href=#24 id=24 data-nosnippet>24</a>    /// Supported values: `high`, `med`, `low`, `info`, `gas`.
+<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"SEVERITY"</span>, num_args(<span class="number">1</span>..))]
+<a href=#26 id=26 data-nosnippet>26</a>    </span>severity: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;Severity&gt;&gt;,
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Specifies which lints to run based on their ID (e.g., "incorrect-shift"). Overrides the
+<a href=#29 id=29 data-nosnippet>29</a>    /// `exclude_lints` project config.
+<a href=#30 id=30 data-nosnippet>30</a>    </span><span class="attr">#[arg(long = <span class="string">"only-lint"</span>, value_name = <span class="string">"LINT_ID"</span>, num_args(<span class="number">1</span>..))]
+<a href=#31 id=31 data-nosnippet>31</a>    </span>lint: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>&gt;&gt;,
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Activates the linter's JSON formatter (rustc-compatible).
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="attr">#[arg(long)]
+<a href=#35 id=35 data-nosnippet>35</a>    </span>json: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="attr">#[command(flatten)]
+<a href=#38 id=38 data-nosnippet>38</a>    </span>build: <a href="../../../foundry_cli/opts/build/core/struct.BuildOpts.html">BuildOpts</a>,
+<a href=#39 id=39 data-nosnippet>39</a>}
+<a href=#40 id=40 data-nosnippet>40</a>
+<a href=#41 id=41 data-nosnippet>41</a><span class="macro">foundry_config::impl_figment_convert!</span>(<a href="#17-39">LintArgs</a>, build);
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a><span class="kw">impl </span><a href="#17-39">LintArgs</a> {
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">pub fn </span>run(<span class="self">self</span>) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#45 id=45 data-nosnippet>45</a>        <span class="kw">let </span>config = <a class="self" href="#44">self</a>.<a href="../../../foundry_cli/utils/cmd/trait.LoadConfig.html#tymethod.load_config">load_config</a>()<span class="question-mark">?</span>;
+<a href=#46 id=46 data-nosnippet>46</a>        <span class="kw">let </span>project = <a href="#45">config</a>.project()<span class="question-mark">?</span>;
+<a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">let </span>path_config = <a href="#45">config</a>.project_paths();
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a>        <span class="comment">// Expand ignore globs and canonicalize from the get go
+<a href=#50 id=50 data-nosnippet>50</a>        </span><span class="kw">let </span>ignored = expand_globs(<span class="kw-2">&amp;</span><a href="#45">config</a>.root, <a href="#45">config</a>.lint.ignore.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.iter">iter</a>())<span class="question-mark">?
+<a href=#51 id=51 data-nosnippet>51</a>            </span>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.iter">iter</a>()
+<a href=#52 id=52 data-nosnippet>52</a>            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.flat_map">flat_map</a>(foundry_common::fs::canonicalize_path)
+<a href=#53 id=53 data-nosnippet>53</a>            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.collect">collect</a>::&lt;<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>cwd = <a href="https://doc.rust-lang.org/nightly/std/env/fn.current_dir.html">std::env::current_dir</a>()<span class="question-mark">?</span>;
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>input = <span class="kw">match </span><span class="kw-2">&amp;</span><a class="self" href="#44">self</a>.paths[..] {
+<a href=#57 id=57 data-nosnippet>57</a>            [] =&gt; {
+<a href=#58 id=58 data-nosnippet>58</a>                <span class="comment">// Retrieve the project paths, and filter out the ignored ones.
+<a href=#59 id=59 data-nosnippet>59</a>                </span><a href="#45">config</a>
+<a href=#60 id=60 data-nosnippet>60</a>                    .project_paths::&lt;SolcLanguage&gt;()
+<a href=#61 id=61 data-nosnippet>61</a>                    .input_files_iter()
+<a href=#62 id=62 data-nosnippet>62</a>                    .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.filter">filter</a>(|p| !(<a href="#50">ignored</a>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.contains">contains</a>(<a href="#62">p</a>) || <a href="#50">ignored</a>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.contains">contains</a>(<span class="kw-2">&amp;</span><a href="#55">cwd</a>.<a href="https://doc.rust-lang.org/nightly/std/path/struct.Path.html#method.join">join</a>(<a href="#62">p</a>))))
+<a href=#63 id=63 data-nosnippet>63</a>                    .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.collect">collect</a>()
+<a href=#64 id=64 data-nosnippet>64</a>            }
+<a href=#65 id=65 data-nosnippet>65</a>            paths =&gt; {
+<a href=#66 id=66 data-nosnippet>66</a>                <span class="comment">// Override default excluded paths and only lint the input files.
+<a href=#67 id=67 data-nosnippet>67</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>inputs = <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html#method.with_capacity">Vec::with_capacity</a>(<a href="#65">paths</a>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.len">len</a>());
+<a href=#68 id=68 data-nosnippet>68</a>                <span class="kw">for </span>path <span class="kw">in </span>paths {
+<a href=#69 id=69 data-nosnippet>69</a>                    <span class="kw">if </span>path.is_dir() {
+<a href=#70 id=70 data-nosnippet>70</a>                        inputs
+<a href=#71 id=71 data-nosnippet>71</a>                            .extend(foundry_compilers::utils::source_files(path, SOLC_EXTENSIONS));
+<a href=#72 id=72 data-nosnippet>72</a>                    } <span class="kw">else if </span>path.is_sol() {
+<a href=#73 id=73 data-nosnippet>73</a>                        inputs.push(path.to_path_buf());
+<a href=#74 id=74 data-nosnippet>74</a>                    } <span class="kw">else </span>{
+<a href=#75 id=75 data-nosnippet>75</a>                        <span class="macro">warn!</span>(<span class="string">"Cannot process path {}"</span>, path.display());
+<a href=#76 id=76 data-nosnippet>76</a>                    }
+<a href=#77 id=77 data-nosnippet>77</a>                }
+<a href=#78 id=78 data-nosnippet>78</a>                <a href="#67">inputs</a>
+<a href=#79 id=79 data-nosnippet>79</a>            }
+<a href=#80 id=80 data-nosnippet>80</a>        };
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">if </span><a href="#56">input</a>.<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html#method.is_empty">is_empty</a>() {
+<a href=#83 id=83 data-nosnippet>83</a>            <span class="macro">sh_println!</span>(<span class="string">"Nothing to lint"</span>)<span class="question-mark">?</span>;
+<a href=#84 id=84 data-nosnippet>84</a>            <span class="kw">return </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(());
+<a href=#85 id=85 data-nosnippet>85</a>        }
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>parse_lints = |lints: <span class="kw-2">&amp;</span>[<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>]| -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;<a href="../../../forge_lint/sol/struct.SolLint.html">SolLint</a>&gt;, <a href="../../../forge_lint/sol/enum.SolLintError.html">SolLintError</a>&gt; {
+<a href=#88 id=88 data-nosnippet>88</a>            <a href="#87">lints</a>.<a href="https://doc.rust-lang.org/nightly/core/foreigntype.slice.html#method.iter">iter</a>().<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.map">map</a>(|s| <a href="https://doc.rust-lang.org/nightly/core/convert/trait.TryFrom.html#tymethod.try_from">SolLint::try_from</a>(<a href="#88">s</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html#method.as_str">as_str</a>())).<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.collect">collect</a>()
+<a href=#89 id=89 data-nosnippet>89</a>        };
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="comment">// Override default lint config with user-defined lints
+<a href=#92 id=92 data-nosnippet>92</a>        </span><span class="kw">let </span>(include, exclude) = <span class="kw">match </span><span class="kw-2">&amp;</span><a class="self" href="#44">self</a>.lint {
+<a href=#93 id=93 data-nosnippet>93</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(cli_lints) =&gt; (<a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#87">parse_lints</a>(<a href="#93">cli_lints</a>)<span class="question-mark">?</span>), <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>),
+<a href=#94 id=94 data-nosnippet>94</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None"><a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a> </a>=&gt; (<a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>, <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#87">parse_lints</a>(<span class="kw-2">&amp;</span><a href="#45">config</a>.lint.exclude_lints)<span class="question-mark">?</span>)),
+<a href=#95 id=95 data-nosnippet>95</a>        };
+<a href=#96 id=96 data-nosnippet>96</a>
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="comment">// Override default severity config with user-defined severity
+<a href=#98 id=98 data-nosnippet>98</a>        </span><span class="kw">let </span>severity = <span class="kw">match </span><a class="self" href="#44">self</a>.severity {
+<a href=#99 id=99 data-nosnippet>99</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(target) =&gt; <a href="#99">target</a>,
+<a href=#100 id=100 data-nosnippet>100</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None"><a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a> </a>=&gt; <a href="#45">config</a>.lint.severity,
+<a href=#101 id=101 data-nosnippet>101</a>        };
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">if </span><a href="#46">project</a>.compiler.solc.<a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.is_none">is_none</a>() {
+<a href=#104 id=104 data-nosnippet>104</a>            <span class="kw">return </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Err">Err</a>(<a class="macro" href="https://docs.rs/eyre/0.6.12/eyre/macro.eyre.html">eyre!</a>(<span class="string">"Linting not supported for this language"</span>));
+<a href=#105 id=105 data-nosnippet>105</a>        }
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">let </span>linter = <a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.new">SolidityLinter::new</a>(<a href="#47">path_config</a>)
+<a href=#108 id=108 data-nosnippet>108</a>            .<a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.with_json_emitter">with_json_emitter</a>(<a class="self" href="#44">self</a>.json)
+<a href=#109 id=109 data-nosnippet>109</a>            .<a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.with_description">with_description</a>(<span class="bool-val">true</span>)
+<a href=#110 id=110 data-nosnippet>110</a>            .<a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.with_lints">with_lints</a>(<a href="#92">include</a>)
+<a href=#111 id=111 data-nosnippet>111</a>            .<a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.without_lints">without_lints</a>(<a href="#92">exclude</a>)
+<a href=#112 id=112 data-nosnippet>112</a>            .<a href="../../../forge_lint/sol/struct.SolidityLinter.html#method.with_severity">with_severity</a>(<span class="kw">if </span><a href="#98">severity</a>.<a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html#method.is_empty">is_empty</a>() { <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None"><a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a> </a>} <span class="kw">else </span>{ <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#98">severity</a>) });
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="kw">let </span>sess = <a href="#107">linter</a>.<a href="../../../forge_lint/linter/trait.Linter.html#tymethod.init">init</a>();
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>pcx = <a href="../../../foundry_cli/opts/build/utils/fn.solar_pcx_from_build_opts.html">solar_pcx_from_build_opts</a>(<span class="kw-2">&amp;</span><a href="#114">sess</a>, <span class="kw-2">&amp;</span><a class="self" href="#44">self</a>.build, <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="kw-2">&amp;</span><a href="#46">project</a>), <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="kw-2">&amp;</span><a href="#56">input</a>))<span class="question-mark">?</span>;
+<a href=#117 id=117 data-nosnippet>117</a>        <a href="#107">linter</a>.<a href="../../../forge_lint/linter/trait.Linter.html#tymethod.early_lint">early_lint</a>(<span class="kw-2">&amp;</span><a href="#56">input</a>, <a href="#116">pcx</a>);
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>pcx = <a href="../../../foundry_cli/opts/build/utils/fn.solar_pcx_from_build_opts.html">solar_pcx_from_build_opts</a>(<span class="kw-2">&amp;</span><a href="#114">sess</a>, <span class="kw-2">&amp;</span><a class="self" href="#44">self</a>.build, <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="kw-2">&amp;</span><a href="#46">project</a>), <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="kw-2">&amp;</span><a href="#56">input</a>))<span class="question-mark">?</span>;
+<a href=#120 id=120 data-nosnippet>120</a>        <a href="#107">linter</a>.<a href="../../../forge_lint/linter/trait.Linter.html#tymethod.late_lint">late_lint</a>(<span class="kw-2">&amp;</span><a href="#56">input</a>, <a href="#119">pcx</a>);
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a>        <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#123 id=123 data-nosnippet>123</a>    }
+<a href=#124 id=124 data-nosnippet>124</a>}</code></pre></div></section></main></body></html>

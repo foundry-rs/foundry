@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COVERAGE_MAP_SIZE","FAVORABILITY_THRESHOLD","JSON_EXTENSION","METADATA_SUFFIX"],"enum":["MutationType"],"struct":["CorpusEntry","CorpusManager","CorpusMetrics"]};
