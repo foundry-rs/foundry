@@ -17,7 +17,7 @@ pub const CHEATCODE_CONTRACT_HASH: B256 =
 
 /// The Hardhat console address.
 ///
-/// See: <https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol>
+/// See: <https://github.com/NomicFoundation/hardhat/blob/main/v-next/hardhat/console.sol>
 pub const HARDHAT_CONSOLE_ADDRESS: Address = address!("0x000000000000000000636F6e736F6c652e6c6f67");
 
 /// Stores the caller address to be used as *sender* account for:
