@@ -8749,7 +8749,7 @@
     {
       "func": {
         "id": "readForkAddress",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkAddress(string calldata key) external view returns (address);",
         "visibility": "external",
         "mutability": "view",
@@ -8769,7 +8769,7 @@
     {
       "func": {
         "id": "readForkAddressArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkAddressArray(string calldata key) external view returns (address[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8789,7 +8789,7 @@
     {
       "func": {
         "id": "readForkBool",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkBool(string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -8809,7 +8809,7 @@
     {
       "func": {
         "id": "readForkBoolArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkBoolArray(string calldata key) external view returns (bool[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8829,7 +8829,7 @@
     {
       "func": {
         "id": "readForkBytes",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkBytes(string calldata key) external view returns (bytes memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8849,7 +8849,7 @@
     {
       "func": {
         "id": "readForkBytes32",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkBytes32(string calldata key) external view returns (bytes32);",
         "visibility": "external",
         "mutability": "view",
@@ -8869,7 +8869,7 @@
     {
       "func": {
         "id": "readForkBytes32Array",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkBytes32Array(string calldata key) external view returns (bytes32[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8889,7 +8889,7 @@
     {
       "func": {
         "id": "readForkBytesArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkBytesArray(string calldata key) external view returns (bytes[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8909,7 +8909,7 @@
     {
       "func": {
         "id": "readForkChainAddress",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainAddress(uint256 chain, string calldata key) external view returns (address);",
         "visibility": "external",
         "mutability": "view",
@@ -8929,7 +8929,7 @@
     {
       "func": {
         "id": "readForkChainAddressArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainAddressArray(uint256 chain, string calldata key) external view returns (address[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8949,7 +8949,7 @@
     {
       "func": {
         "id": "readForkChainBool",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainBool(uint256 chain, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -8969,7 +8969,7 @@
     {
       "func": {
         "id": "readForkChainBoolArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainBoolArray(uint256 chain, string calldata key) external view returns (bool[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -8989,7 +8989,7 @@
     {
       "func": {
         "id": "readForkChainBytes",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9009,7 +9009,7 @@
     {
       "func": {
         "id": "readForkChainBytes32",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);",
         "visibility": "external",
         "mutability": "view",
@@ -9029,7 +9029,7 @@
     {
       "func": {
         "id": "readForkChainBytes32Array",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainBytes32Array(uint256 chain, string calldata key) external view returns (bytes32[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9049,7 +9049,7 @@
     {
       "func": {
         "id": "readForkChainBytesArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9069,7 +9069,7 @@
     {
       "func": {
         "id": "readForkChainInt",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainInt(uint256 chain, string calldata key) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
@@ -9089,7 +9089,7 @@
     {
       "func": {
         "id": "readForkChainIntArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainIntArray(uint256 chain, string calldata key) external view returns (int256[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9109,7 +9109,7 @@
     {
       "func": {
         "id": "readForkChainString",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainString(uint256 chain, string calldata key) external view returns (string memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9129,7 +9129,7 @@
     {
       "func": {
         "id": "readForkChainStringArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainStringArray(uint256 chain, string calldata key) external view returns (string[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9149,7 +9149,7 @@
     {
       "func": {
         "id": "readForkChainUint",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainUint(uint256 chain, string calldata key) external view returns (uint256);",
         "visibility": "external",
         "mutability": "view",
@@ -9169,7 +9169,7 @@
     {
       "func": {
         "id": "readForkChainUintArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkChainUintArray(uint256 chain, string calldata key) external view returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9189,7 +9189,7 @@
     {
       "func": {
         "id": "readForkInt",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkInt(string calldata key) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
@@ -9209,7 +9209,7 @@
     {
       "func": {
         "id": "readForkIntArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkIntArray(string calldata key) external view returns (int256[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9229,7 +9229,7 @@
     {
       "func": {
         "id": "readForkString",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkString(string calldata key) external view returns (string memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9249,7 +9249,7 @@
     {
       "func": {
         "id": "readForkStringArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkStringArray(string calldata key) external view returns (string[] memory);",
         "visibility": "external",
         "mutability": "view",
@@ -9269,7 +9269,7 @@
     {
       "func": {
         "id": "readForkUint",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkUint(string calldata key) external view returns (uint256);",
         "visibility": "external",
         "mutability": "view",
@@ -9289,7 +9289,7 @@
     {
       "func": {
         "id": "readForkUintArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
         "declaration": "function readForkUintArray(string calldata key) external view returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "view",
