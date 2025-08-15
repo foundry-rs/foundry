@@ -1,6 +1,9 @@
 //! Implementations of [`Forking`](spec::Group::Forking) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Error, Result, Vm::*, string};
+use crate::{
+    Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*, json::parse_json_as,
+    toml::toml_to_json_value,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
 use eyre::OptionExt;
@@ -64,21 +67,6 @@ impl Cheatcode for readForkRpcUrlCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let name = get_active_fork_chain_name(ccx)?;
         resolve_rpc_url(name, ccx.state)
-    }
-}
-
-/// Converts the error message of a failed parsing attempt to a more user-friendly message that
-/// doesn't leak the value.
-fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error + 'a {
-    move |e| {
-        // failed parsing <value> as type `uint256`: parser error:
-        // <value>
-        //   ^
-        //   expected at least one digit
-        let mut e = e.to_string();
-        e = e.replacen(&format!("\"{value}\""), &format!("${key}"), 1);
-        e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
-        Error::from(e)
     }
 }
 
@@ -237,53 +225,7 @@ fn parse_toml_element(
     context: &str,
     fork_name: &str,
 ) -> Result<DynSolValue> {
-    match element_ty {
-        DynSolType::Bool => {
-            if let Some(b) = elem.as_bool() {
-                Ok(DynSolValue::Bool(b))
-            } else if let Some(v) = elem.as_integer() {
-                Ok(DynSolValue::Bool(v != 0))
-            } else if let Some(s) = elem.as_str() {
-                string::parse_value(s, element_ty).map_err(map_env_err(context, s))
-            } else {
-                bail!(
-                    "Element '{context}' in [fork.{fork_name}] must be a boolean, integer, or a string"
-                )
-            }
-        }
-        DynSolType::Int(256) => {
-            if let Some(int_value) = elem.as_integer() {
-                Ok(DynSolValue::Int(alloy_primitives::I256::try_from(int_value).unwrap(), 256))
-            } else if let Some(s) = elem.as_str() {
-                string::parse_value(s, element_ty).map_err(map_env_err(context, s))
-            } else {
-                bail!("Element '{context}' in [fork.{fork_name}] must be an integer or a string")
-            }
-        }
-        DynSolType::Uint(256) => {
-            if let Some(int_value) = elem.as_integer() {
-                if int_value < 0 {
-                    bail!(
-                        "Element '{context}' in [fork.{fork_name}] is a negative integer but expected an unsigned integer"
-                    );
-                }
-                Ok(DynSolValue::Uint(alloy_primitives::U256::from(int_value as u64), 256))
-            } else if let Some(s) = elem.as_str() {
-                string::parse_value(s, element_ty).map_err(map_env_err(context, s))
-            } else {
-                bail!("Element '{context}' in [fork.{fork_name}] must be an integer or a string")
-            }
-        }
-        DynSolType::Address
-        | DynSolType::FixedBytes(32)
-        | DynSolType::String
-        | DynSolType::Bytes => {
-            if let Some(s) = elem.as_str() {
-                string::parse_value(s, element_ty).map_err(map_env_err(context, s))
-            } else {
-                bail!("Element '{context}' in [fork.{fork_name}] must be a string");
-            }
-        }
-        _ => bail!("Unsupported array element type for fork configuration: {element_ty:?}"),
-    }
+    // Convert TOML value to JSON value and use existing JSON parsing logic
+    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty)
+        .map_err(|e| fmt_err!("Failed to parse '{context}' in [fork.{fork_name}]: {e}"))
 }
