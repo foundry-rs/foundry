@@ -5866,166 +5866,6 @@
     },
     {
       "func": {
-        "id": "forkAddress",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkAddress(string calldata key) external view returns (address);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkAddress(string)",
-        "selector": "0x27b1efc0",
-        "selectorBytes": [
-          39,
-          177,
-          239,
-          192
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkAddressArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkAddressArray(string calldata key) external view returns (address[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkAddressArray(string)",
-        "selector": "0x96ab7625",
-        "selectorBytes": [
-          150,
-          171,
-          118,
-          37
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBool",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBool(string calldata key) external view returns (bool);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBool(string)",
-        "selector": "0xc06e85dd",
-        "selectorBytes": [
-          192,
-          110,
-          133,
-          221
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBoolArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkBoolArray(string calldata key) external view returns (bool[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBoolArray(string)",
-        "selector": "0x6b377ca3",
-        "selectorBytes": [
-          107,
-          55,
-          124,
-          163
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBytes",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBytes(string calldata key) external view returns (bytes memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBytes(string)",
-        "selector": "0x7c055631",
-        "selectorBytes": [
-          124,
-          5,
-          86,
-          49
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBytes32",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBytes32(string calldata key) external view returns (bytes32);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBytes32(string)",
-        "selector": "0xa912a3f4",
-        "selectorBytes": [
-          169,
-          18,
-          163,
-          244
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBytes32Array",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkBytes32Array(string calldata key) external view returns (bytes32[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBytes32Array(string)",
-        "selector": "0x53576e0e",
-        "selectorBytes": [
-          83,
-          87,
-          110,
-          14
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkBytesArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkBytesArray(string calldata key) external view returns (bytes[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkBytesArray(string)",
-        "selector": "0x47366dc7",
-        "selectorBytes": [
-          71,
-          54,
-          109,
-          199
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "forkChain",
         "description": "Returns the chain name of the currently selected fork.",
         "declaration": "function forkChain() external view returns (string memory);",
@@ -6038,166 +5878,6 @@
           7,
           93,
           148
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainAddress",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainAddress(uint256 chain, string calldata key) external view returns (address);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainAddress(uint256,string)",
-        "selector": "0x5dc00a35",
-        "selectorBytes": [
-          93,
-          192,
-          10,
-          53
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainAddressArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainAddressArray(uint256 chain, string calldata key) external view returns (address[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainAddressArray(uint256,string)",
-        "selector": "0x636939d6",
-        "selectorBytes": [
-          99,
-          105,
-          57,
-          214
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBool",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBool(uint256 chain, string calldata key) external view returns (bool);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBool(uint256,string)",
-        "selector": "0x8f947e16",
-        "selectorBytes": [
-          143,
-          148,
-          126,
-          22
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBoolArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainBoolArray(uint256 chain, string calldata key) external view returns (bool[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBoolArray(uint256,string)",
-        "selector": "0xfc681f31",
-        "selectorBytes": [
-          252,
-          104,
-          31,
-          49
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBytes",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBytes(uint256,string)",
-        "selector": "0x0e73256d",
-        "selectorBytes": [
-          14,
-          115,
-          37,
-          109
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBytes32",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBytes32(uint256,string)",
-        "selector": "0x05dd6d07",
-        "selectorBytes": [
-          5,
-          221,
-          109,
-          7
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBytes32Array",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainBytes32Array(uint256 chain, string calldata key) external view returns (bytes32[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBytes32Array(uint256,string)",
-        "selector": "0x0a7d84ef",
-        "selectorBytes": [
-          10,
-          125,
-          132,
-          239
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainBytesArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainBytesArray(uint256,string)",
-        "selector": "0x7703a689",
-        "selectorBytes": [
-          119,
-          3,
-          166,
-          137
         ]
       },
       "group": "forking",
@@ -6246,46 +5926,6 @@
     },
     {
       "func": {
-        "id": "forkChainInt",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainInt(uint256 chain, string calldata key) external view returns (int256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainInt(uint256,string)",
-        "selector": "0xc1ff595f",
-        "selectorBytes": [
-          193,
-          255,
-          89,
-          95
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainIntArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainIntArray(uint256 chain, string calldata key) external view returns (int256[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainIntArray(uint256,string)",
-        "selector": "0xf9e251a3",
-        "selectorBytes": [
-          249,
-          226,
-          81,
-          163
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "forkChainRpcUrl",
         "description": "Returns the rpc url of the corresponding chain id.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
         "declaration": "function forkChainRpcUrl(uint256 id) external view returns (string memory);",
@@ -6298,86 +5938,6 @@
           197,
           28,
           202
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainString",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainString(uint256 chain, string calldata key) external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainString(uint256,string)",
-        "selector": "0x24062881",
-        "selectorBytes": [
-          36,
-          6,
-          40,
-          129
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainStringArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainStringArray(uint256 chain, string calldata key) external view returns (string[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainStringArray(uint256,string)",
-        "selector": "0x560ccdd6",
-        "selectorBytes": [
-          86,
-          12,
-          205,
-          214
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainUint",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainUint(uint256,string)",
-        "selector": "0x2bfffa5c",
-        "selectorBytes": [
-          43,
-          255,
-          250,
-          92
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainUintArray",
-        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkChainUintArray(uint256 chain, string calldata key) external view returns (uint256[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainUintArray(uint256,string)",
-        "selector": "0x2b231c56",
-        "selectorBytes": [
-          43,
-          35,
-          28,
-          86
         ]
       },
       "group": "forking",
@@ -6406,46 +5966,6 @@
     },
     {
       "func": {
-        "id": "forkInt",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkInt(string calldata key) external view returns (int256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkInt(string)",
-        "selector": "0x4b326af0",
-        "selectorBytes": [
-          75,
-          50,
-          106,
-          240
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkIntArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkIntArray(string calldata key) external view returns (int256[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkIntArray(string)",
-        "selector": "0x2aab15bd",
-        "selectorBytes": [
-          42,
-          171,
-          21,
-          189
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "forkRpcUrl",
         "description": "Returns the rpc url of the currently selected fork.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
         "declaration": "function forkRpcUrl() external view returns (string memory);",
@@ -6458,86 +5978,6 @@
           212,
           141,
           33
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkString",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkString(string calldata key) external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkString(string)",
-        "selector": "0xd8525752",
-        "selectorBytes": [
-          216,
-          82,
-          87,
-          82
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkStringArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkStringArray(string calldata key) external view returns (string[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkStringArray(string)",
-        "selector": "0xbdd9262c",
-        "selectorBytes": [
-          189,
-          217,
-          38,
-          44
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkUint",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkUint(string calldata key) external view returns (uint256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkUint(string)",
-        "selector": "0xbe0fe4a8",
-        "selectorBytes": [
-          190,
-          15,
-          228,
-          168
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkUintArray",
-        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
-        "declaration": "function forkUintArray(string calldata key) external view returns (uint256[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkUintArray(string)",
-        "selector": "0xdbe1236b",
-        "selectorBytes": [
-          219,
-          225,
-          35,
-          107
         ]
       },
       "group": "forking",
@@ -9303,6 +8743,566 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkAddress",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkAddress(string calldata key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkAddress(string)",
+        "selector": "0x80ab4bca",
+        "selectorBytes": [
+          128,
+          171,
+          75,
+          202
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkAddressArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkAddressArray(string calldata key) external view returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkAddressArray(string)",
+        "selector": "0x3c69b4e5",
+        "selectorBytes": [
+          60,
+          105,
+          180,
+          229
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBool",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkBool(string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBool(string)",
+        "selector": "0x59d46fc3",
+        "selectorBytes": [
+          89,
+          212,
+          111,
+          195
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBoolArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkBoolArray(string calldata key) external view returns (bool[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBoolArray(string)",
+        "selector": "0x31313ddd",
+        "selectorBytes": [
+          49,
+          49,
+          61,
+          221
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBytes",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkBytes(string calldata key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBytes(string)",
+        "selector": "0xf577b434",
+        "selectorBytes": [
+          245,
+          119,
+          180,
+          52
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBytes32",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkBytes32(string calldata key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBytes32(string)",
+        "selector": "0x98d86b9f",
+        "selectorBytes": [
+          152,
+          216,
+          107,
+          159
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBytes32Array",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkBytes32Array(string calldata key) external view returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBytes32Array(string)",
+        "selector": "0x31233ae7",
+        "selectorBytes": [
+          49,
+          35,
+          58,
+          231
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkBytesArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkBytesArray(string calldata key) external view returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkBytesArray(string)",
+        "selector": "0xb8355047",
+        "selectorBytes": [
+          184,
+          53,
+          80,
+          71
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainAddress",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainAddress(uint256 chain, string calldata key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainAddress(uint256,string)",
+        "selector": "0xada12db3",
+        "selectorBytes": [
+          173,
+          161,
+          45,
+          179
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainAddressArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `address`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainAddressArray(uint256 chain, string calldata key) external view returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainAddressArray(uint256,string)",
+        "selector": "0x563ee150",
+        "selectorBytes": [
+          86,
+          62,
+          225,
+          80
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBool",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainBool(uint256 chain, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBool(uint256,string)",
+        "selector": "0x60f0d22d",
+        "selectorBytes": [
+          96,
+          240,
+          210,
+          45
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBoolArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bool`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainBoolArray(uint256 chain, string calldata key) external view returns (bool[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBoolArray(uint256,string)",
+        "selector": "0x7890a287",
+        "selectorBytes": [
+          120,
+          144,
+          162,
+          135
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBytes",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBytes(uint256,string)",
+        "selector": "0x26a8a87b",
+        "selectorBytes": [
+          38,
+          168,
+          168,
+          123
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBytes32",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBytes32(uint256,string)",
+        "selector": "0x3b94101d",
+        "selectorBytes": [
+          59,
+          148,
+          16,
+          29
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBytes32Array",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes32`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainBytes32Array(uint256 chain, string calldata key) external view returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBytes32Array(uint256,string)",
+        "selector": "0x1557cfd5",
+        "selectorBytes": [
+          21,
+          87,
+          207,
+          213
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainBytesArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `bytes`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainBytesArray(uint256,string)",
+        "selector": "0xbdcc82ec",
+        "selectorBytes": [
+          189,
+          204,
+          130,
+          236
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainInt",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainInt(uint256 chain, string calldata key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainInt(uint256,string)",
+        "selector": "0x2f0cb2a2",
+        "selectorBytes": [
+          47,
+          12,
+          178,
+          162
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainIntArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainIntArray(uint256 chain, string calldata key) external view returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainIntArray(uint256,string)",
+        "selector": "0xf47ef264",
+        "selectorBytes": [
+          244,
+          126,
+          242,
+          100
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainString",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainString(uint256 chain, string calldata key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainString(uint256,string)",
+        "selector": "0xf82a7685",
+        "selectorBytes": [
+          248,
+          42,
+          118,
+          133
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainStringArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainStringArray(uint256 chain, string calldata key) external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainStringArray(uint256,string)",
+        "selector": "0x03505f56",
+        "selectorBytes": [
+          3,
+          80,
+          95,
+          86
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainUint",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkChainUint(uint256 chain, string calldata key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainUint(uint256,string)",
+        "selector": "0x1b7eda4d",
+        "selectorBytes": [
+          27,
+          126,
+          218,
+          77
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainUintArray",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkChainUintArray(uint256 chain, string calldata key) external view returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainUintArray(uint256,string)",
+        "selector": "0xda7509b4",
+        "selectorBytes": [
+          218,
+          117,
+          9,
+          180
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkInt",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkInt(string calldata key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkInt(string)",
+        "selector": "0xdbfced07",
+        "selectorBytes": [
+          219,
+          252,
+          237,
+          7
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkIntArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `int256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkIntArray(string calldata key) external view returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkIntArray(string)",
+        "selector": "0xd06f1229",
+        "selectorBytes": [
+          208,
+          111,
+          18,
+          41
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkString",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkString(string calldata key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkString(string)",
+        "selector": "0xbdb621a5",
+        "selectorBytes": [
+          189,
+          182,
+          33,
+          165
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkStringArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `string`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkStringArray(string calldata key) external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkStringArray(string)",
+        "selector": "0x3b469f94",
+        "selectorBytes": [
+          59,
+          70,
+          159,
+          148
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkUint",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function readForkUint(string calldata key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkUint(string)",
+        "selector": "0x28a1e7fe",
+        "selectorBytes": [
+          40,
+          161,
+          231,
+          254
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkUintArray",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as an array of `uint256`.\nReverts if a key was not found or any of the values could not be parsed.",
+        "declaration": "function readForkUintArray(string calldata key) external view returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkUintArray(string)",
+        "selector": "0xac032c02",
+        "selectorBytes": [
+          172,
+          3,
+          44,
+          2
+        ]
+      },
+      "group": "forking",
       "status": "stable",
       "safety": "safe"
     },

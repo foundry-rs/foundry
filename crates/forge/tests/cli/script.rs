@@ -3344,13 +3344,13 @@ contract ForkScript is DSTest {
             console.log("id:", chainIds[i]);
 
             string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
-            int256 i256 = vm.forkChainInt(chainIds[i], "i256");
-            uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
-            bool boolean = vm.forkChainBool(chainIds[i], "bool");
-            address addr = vm.forkChainAddress(chainIds[i], "addr");
-            bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
-            bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
-            string memory str = vm.forkChainString(chainIds[i], "str");
+            int256 i256 = vm.readForkChainInt(chainIds[i], "i256");
+            uint256 u256 = vm.readForkChainUint(chainIds[i], "u256");
+            bool boolean = vm.readForkChainBool(chainIds[i], "bool");
+            address addr = vm.readForkChainAddress(chainIds[i], "addr");
+            bytes32 b256 = vm.readForkChainBytes32(chainIds[i], "b256");
+            bytes memory byytes = vm.readForkChainBytes(chainIds[i], "bytes");
+            string memory str = vm.readForkChainString(chainIds[i], "str");
 
             console.log(" > rpc:", rpc);
             console.log(" > vars:");
@@ -3377,35 +3377,35 @@ contract ForkScript is DSTest {
             console.log("Testing arrays for chain:", chains[i]);
             
             // Test bool array
-            bool[] memory boolArray = vm.forkChainBoolArray(chainIds[i], "bool_array");
+            bool[] memory boolArray = vm.readForkChainBoolArray(chainIds[i], "bool_array");
             assert(boolArray.length == 3);
             console.log("  > bool_array[0]:", boolArray[0]);
             
             // Test int array
-            int256[] memory intArray = vm.forkChainIntArray(chainIds[i], "int_array");
+            int256[] memory intArray = vm.readForkChainIntArray(chainIds[i], "int_array");
             assert(intArray.length == 3);
             console.log("  > int_array[0]:", intArray[0]);
             
             // Test uint array
-            uint256[] memory uintArray = vm.forkChainUintArray(chainIds[i], "uint_array");
+            uint256[] memory uintArray = vm.readForkChainUintArray(chainIds[i], "uint_array");
             assert(uintArray.length == 3);
             console.log("  > uint_array[0]:", uintArray[0]);
             
             // Test address array
-            address[] memory addrArray = vm.forkChainAddressArray(chainIds[i], "addr_array");
+            address[] memory addrArray = vm.readForkChainAddressArray(chainIds[i], "addr_array");
             assert(addrArray.length == 2);
             console.log("  > addr_array[0]:", addrArray[0]);
             
             // Test bytes32 array
-            bytes32[] memory bytes32Array = vm.forkChainBytes32Array(chainIds[i], "bytes32_array");
+            bytes32[] memory bytes32Array = vm.readForkChainBytes32Array(chainIds[i], "bytes32_array");
             assert(bytes32Array.length == 2);
             
             // Test bytes array  
-            bytes[] memory bytesArray = vm.forkChainBytesArray(chainIds[i], "bytes_array");
+            bytes[] memory bytesArray = vm.readForkChainBytesArray(chainIds[i], "bytes_array");
             assert(bytesArray.length == 3);
             
             // Test string array
-            string[] memory stringArray = vm.forkChainStringArray(chainIds[i], "string_array");
+            string[] memory stringArray = vm.readForkChainStringArray(chainIds[i], "string_array");
             assert(stringArray.length == 3);
             console.log("  > string_array[0]:", stringArray[0]);
         }
@@ -3567,13 +3567,13 @@ contract ForkTest is DSTest {
         console.log("id:", vm.forkChainId());
         assert(eqString(vm.forkRpcUrl(), "<url>"));
 
-        int256 i256 = vm.forkInt("i256");
-        uint256 u256 = vm.forkUint("u256");
-        bool boolean = vm.forkBool("bool");
-        address addr = vm.forkAddress("addr");
-        bytes32 b256 = vm.forkBytes32("b256");
-        bytes memory byytes = vm.forkBytes("bytes");
-        string memory str = vm.forkString("str");
+        int256 i256 = vm.readForkInt("i256");
+        uint256 u256 = vm.readForkUint("u256");
+        bool boolean = vm.readForkBool("bool");
+        address addr = vm.readForkAddress("addr");
+        bytes32 b256 = vm.readForkBytes32("b256");
+        bytes memory byytes = vm.readForkBytes("bytes");
+        string memory str = vm.readForkString("str");
 
         console.log(" > vars:");
         console.log("   > i256:", i256);
@@ -3596,39 +3596,39 @@ contract ForkTest is DSTest {
         console.log("   > Arrays:");
         
         // Test bool array
-        bool[] memory boolArray = vm.forkBoolArray("bool_array");
+        bool[] memory boolArray = vm.readForkBoolArray("bool_array");
         assert(boolArray.length == 3);
         assert(boolArray[0] == true);
         console.log("     > bool_array[0]:", boolArray[0]);
         
         // Test int array
-        int256[] memory intArray = vm.forkIntArray("int_array");
+        int256[] memory intArray = vm.readForkIntArray("int_array");
         assert(intArray.length == 3);
         assert(intArray[0] == -100);
         console.log("     > int_array[0]:", intArray[0]);
         
         // Test uint array
-        uint256[] memory uintArray = vm.forkUintArray("uint_array");
+        uint256[] memory uintArray = vm.readForkUintArray("uint_array");
         assert(uintArray.length == 3);
         assert(uintArray[0] == 100);
         console.log("     > uint_array[0]:", uintArray[0]);
         
         // Test address array
-        address[] memory addrArray = vm.forkAddressArray("addr_array");
+        address[] memory addrArray = vm.readForkAddressArray("addr_array");
         assert(addrArray.length == 2);
         assert(addrArray[0] == 0x1111111111111111111111111111111111111111);
         console.log("     > addr_array[0]:", addrArray[0]);
         
         // Test bytes32 array
-        bytes32[] memory bytes32Array = vm.forkBytes32Array("bytes32_array");
+        bytes32[] memory bytes32Array = vm.readForkBytes32Array("bytes32_array");
         assert(bytes32Array.length == 2);
         
         // Test bytes array
-        bytes[] memory bytesArray = vm.forkBytesArray("bytes_array");
+        bytes[] memory bytesArray = vm.readForkBytesArray("bytes_array");
         assert(bytesArray.length == 3);
         
         // Test string array
-        string[] memory stringArray = vm.forkStringArray("string_array");
+        string[] memory stringArray = vm.readForkStringArray("string_array");
         assert(stringArray.length == 3);
         assert(eqString(stringArray[0], "hello"));
         console.log("     > string_array[0]:", stringArray[0]);
@@ -3698,7 +3698,7 @@ contract ForkTest is DSTest {
 
     function test_throwsErrorWhen() public {
         vm.createSelectFork("<url>");
-        address owner = vm.forkAddress("owner");
+        address owner = vm.readForkAddress("owner");
     }
 }
        "#
@@ -3708,7 +3708,7 @@ contract ForkTest is DSTest {
 
     cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.forkAddress: failed parsing $owner as type `address`: parser error:
+[FAIL: vm.readForkAddress: failed parsing $owner as type `address`: parser error:
 $owner
 ^
 invalid string length] test_throwsErrorWhen() ([GAS])

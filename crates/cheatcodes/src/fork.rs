@@ -143,46 +143,46 @@ macro_rules! impl_get_array_cheatcode {
 }
 
 // Bool
-impl_get_value_cheatcode!(forkChainBoolCall, &DynSolType::Bool);
-impl_get_value_cheatcode!(forkBoolCall, &DynSolType::Bool, stateful);
-impl_get_array_cheatcode!(forkChainBoolArrayCall, &DynSolType::Bool);
-impl_get_array_cheatcode!(forkBoolArrayCall, &DynSolType::Bool, stateful);
+impl_get_value_cheatcode!(readForkChainBoolCall, &DynSolType::Bool);
+impl_get_value_cheatcode!(readForkBoolCall, &DynSolType::Bool, stateful);
+impl_get_array_cheatcode!(readForkChainBoolArrayCall, &DynSolType::Bool);
+impl_get_array_cheatcode!(readForkBoolArrayCall, &DynSolType::Bool, stateful);
 
 // Int
-impl_get_value_cheatcode!(forkChainIntCall, &DynSolType::Int(256));
-impl_get_value_cheatcode!(forkIntCall, &DynSolType::Int(256), stateful);
-impl_get_array_cheatcode!(forkChainIntArrayCall, &DynSolType::Int(256));
-impl_get_array_cheatcode!(forkIntArrayCall, &DynSolType::Int(256), stateful);
+impl_get_value_cheatcode!(readForkChainIntCall, &DynSolType::Int(256));
+impl_get_value_cheatcode!(readForkIntCall, &DynSolType::Int(256), stateful);
+impl_get_array_cheatcode!(readForkChainIntArrayCall, &DynSolType::Int(256));
+impl_get_array_cheatcode!(readForkIntArrayCall, &DynSolType::Int(256), stateful);
 
 // Uint
-impl_get_value_cheatcode!(forkChainUintCall, &DynSolType::Uint(256));
-impl_get_value_cheatcode!(forkUintCall, &DynSolType::Uint(256), stateful);
-impl_get_array_cheatcode!(forkChainUintArrayCall, &DynSolType::Uint(256));
-impl_get_array_cheatcode!(forkUintArrayCall, &DynSolType::Uint(256), stateful);
+impl_get_value_cheatcode!(readForkChainUintCall, &DynSolType::Uint(256));
+impl_get_value_cheatcode!(readForkUintCall, &DynSolType::Uint(256), stateful);
+impl_get_array_cheatcode!(readForkChainUintArrayCall, &DynSolType::Uint(256));
+impl_get_array_cheatcode!(readForkUintArrayCall, &DynSolType::Uint(256), stateful);
 
 // Address
-impl_get_value_cheatcode!(forkChainAddressCall, &DynSolType::Address);
-impl_get_value_cheatcode!(forkAddressCall, &DynSolType::Address, stateful);
-impl_get_array_cheatcode!(forkChainAddressArrayCall, &DynSolType::Address);
-impl_get_array_cheatcode!(forkAddressArrayCall, &DynSolType::Address, stateful);
+impl_get_value_cheatcode!(readForkChainAddressCall, &DynSolType::Address);
+impl_get_value_cheatcode!(readForkAddressCall, &DynSolType::Address, stateful);
+impl_get_array_cheatcode!(readForkChainAddressArrayCall, &DynSolType::Address);
+impl_get_array_cheatcode!(readForkAddressArrayCall, &DynSolType::Address, stateful);
 
 // Bytes32
-impl_get_value_cheatcode!(forkChainBytes32Call, &DynSolType::FixedBytes(32));
-impl_get_value_cheatcode!(forkBytes32Call, &DynSolType::FixedBytes(32), stateful);
-impl_get_array_cheatcode!(forkChainBytes32ArrayCall, &DynSolType::FixedBytes(32));
-impl_get_array_cheatcode!(forkBytes32ArrayCall, &DynSolType::FixedBytes(32), stateful);
+impl_get_value_cheatcode!(readForkChainBytes32Call, &DynSolType::FixedBytes(32));
+impl_get_value_cheatcode!(readForkBytes32Call, &DynSolType::FixedBytes(32), stateful);
+impl_get_array_cheatcode!(readForkChainBytes32ArrayCall, &DynSolType::FixedBytes(32));
+impl_get_array_cheatcode!(readForkBytes32ArrayCall, &DynSolType::FixedBytes(32), stateful);
 
 // Bytes
-impl_get_value_cheatcode!(forkChainBytesCall, &DynSolType::Bytes);
-impl_get_value_cheatcode!(forkBytesCall, &DynSolType::Bytes, stateful);
-impl_get_array_cheatcode!(forkChainBytesArrayCall, &DynSolType::Bytes);
-impl_get_array_cheatcode!(forkBytesArrayCall, &DynSolType::Bytes, stateful);
+impl_get_value_cheatcode!(readForkChainBytesCall, &DynSolType::Bytes);
+impl_get_value_cheatcode!(readForkBytesCall, &DynSolType::Bytes, stateful);
+impl_get_array_cheatcode!(readForkChainBytesArrayCall, &DynSolType::Bytes);
+impl_get_array_cheatcode!(readForkBytesArrayCall, &DynSolType::Bytes, stateful);
 
 // String
-impl_get_value_cheatcode!(forkChainStringCall, &DynSolType::String);
-impl_get_value_cheatcode!(forkStringCall, &DynSolType::String, stateful);
-impl_get_array_cheatcode!(forkChainStringArrayCall, &DynSolType::String);
-impl_get_array_cheatcode!(forkStringArrayCall, &DynSolType::String, stateful);
+impl_get_value_cheatcode!(readForkChainStringCall, &DynSolType::String);
+impl_get_value_cheatcode!(readForkStringCall, &DynSolType::String, stateful);
+impl_get_array_cheatcode!(readForkChainStringArrayCall, &DynSolType::String);
+impl_get_array_cheatcode!(readForkStringArrayCall, &DynSolType::String, stateful);
 
 /// Generic helper to get any value from the TOML config.
 fn get_toml_value<'a>(

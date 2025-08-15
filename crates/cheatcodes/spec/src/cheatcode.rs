@@ -88,7 +88,7 @@ pub enum Group {
     Scripting,
     /// Cheatcodes that interact with the program's forking configuration.
     ///
-    /// Examples: `forkChains`, `forkChainRpcUrl`, `forkUint`.
+    /// Examples: `forkChains`, `forkChainRpcUrl`, `readForkUint`, `readForkAddressArray`.
     ///
     /// Safety: safe.
     Forking,
