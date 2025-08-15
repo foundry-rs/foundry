@@ -4018,7 +4018,7 @@ casttest!(abi_encode_event_indexed, |_prj, cmd| {
         "Transfer(address indexed from, address indexed to, uint256 value)",
         "0x1234567890123456789012345678901234567890",
         "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-        "1000"
+        "1000",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
