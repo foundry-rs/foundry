@@ -56,8 +56,12 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
+mod corpus;
 mod trace;
+
 pub use trace::TracingExecutor;
+
+const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 sol! {
     interface ITest {
@@ -1093,6 +1097,11 @@ pub struct FuzzTestTimer {
 impl FuzzTestTimer {
     pub fn new(timeout: Option<u32>) -> Self {
         Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
+    }
+
+    /// Whether the fuzz test timer is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
     }
 
     /// Whether the current fuzz test timed out and should be stopped.
