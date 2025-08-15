@@ -2614,13 +2614,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2629,11 +2629,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3259,6 +3259,20 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
+                        ("uint_array".into(), vec!["100", "200", "300"].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
                     .into_iter()
                     .collect(),
@@ -3280,6 +3294,20 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
                         ("bytes".into(), "0x00f00000000000".into()),
                         ("str".into(), "bazz".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![false, true, false].into()),
+                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
+                        ("uint_array".into(), vec!["400", "500", "600"].into()),
+                        ("addr_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
+                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
                     .into_iter()
                     .collect(),
@@ -3337,6 +3365,50 @@ contract ForkScript is DSTest {
                     || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
             );
         }
+
+        // Test array cheatcodes in a separate function to avoid stack too deep
+        testArrayCheatcodes();
+    }
+
+    function testArrayCheatcodes() public view {
+        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+        
+        for (uint256 i = 0; i < chains.length; i++) {
+            console.log("Testing arrays for chain:", chains[i]);
+            
+            // Test bool array
+            bool[] memory boolArray = vm.forkChainBoolArray(chainIds[i], "bool_array");
+            assert(boolArray.length == 3);
+            console.log("  > bool_array[0]:", boolArray[0]);
+            
+            // Test int array
+            int256[] memory intArray = vm.forkChainIntArray(chainIds[i], "int_array");
+            assert(intArray.length == 3);
+            console.log("  > int_array[0]:", intArray[0]);
+            
+            // Test uint array
+            uint256[] memory uintArray = vm.forkChainUintArray(chainIds[i], "uint_array");
+            assert(uintArray.length == 3);
+            console.log("  > uint_array[0]:", uintArray[0]);
+            
+            // Test address array
+            address[] memory addrArray = vm.forkChainAddressArray(chainIds[i], "addr_array");
+            assert(addrArray.length == 2);
+            console.log("  > addr_array[0]:", addrArray[0]);
+            
+            // Test bytes32 array
+            bytes32[] memory bytes32Array = vm.forkChainBytes32Array(chainIds[i], "bytes32_array");
+            assert(bytes32Array.length == 2);
+            
+            // Test bytes array  
+            bytes[] memory bytesArray = vm.forkChainBytesArray(chainIds[i], "bytes_array");
+            assert(bytesArray.length == 3);
+            
+            // Test string array
+            string[] memory stringArray = vm.forkChainStringArray(chainIds[i], "string_array");
+            assert(stringArray.length == 3);
+            console.log("  > string_array[0]:", stringArray[0]);
+        }
     }
 
     function eqString(string memory s1, string memory s2) public pure returns(bool) {
@@ -3367,6 +3439,18 @@ contract ForkScript is DSTest {
      > bool: false
      > addr: 0x00000000000000000000000000000000DeaDBeef
      > string: bazz
+  Testing arrays for chain: mainnet
+    > bool_array[0]: true
+    > int_array[0]: -100
+    > uint_array[0]: 100
+    > addr_array[0]: 0x1111111111111111111111111111111111111111
+    > string_array[0]: hello
+  Testing arrays for chain: optimism
+    > bool_array[0]: false
+    > int_array[0]: -400
+    > uint_array[0]: 400
+    > addr_array[0]: 0x3333333333333333333333333333333333333333
+    > string_array[0]: foo
 
 "#]]);
 });
@@ -3398,6 +3482,20 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
+                        ("uint_array".into(), vec!["100", "200", "300"].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
                     .into_iter()
                     .collect(),
@@ -3419,6 +3517,20 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
                         ("bytes".into(), "0x00f00000000000".into()),
                         ("str".into(), "bazz".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![false, true, false].into()),
+                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
+                        ("uint_array".into(), vec!["400", "500", "600"].into()),
+                        ("addr_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
+                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
                     .into_iter()
                     .collect(),
@@ -3474,6 +3586,52 @@ contract ForkTest is DSTest {
             b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
             || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
         );
+
+        // Test array cheatcodes in a separate function to avoid stack too deep
+        testArrayCheatcodes();
+    }
+
+    function testArrayCheatcodes() public {
+        // Test array cheatcodes without specifying chain (uses active fork)
+        console.log("   > Arrays:");
+        
+        // Test bool array
+        bool[] memory boolArray = vm.forkBoolArray("bool_array");
+        assert(boolArray.length == 3);
+        assert(boolArray[0] == true);
+        console.log("     > bool_array[0]:", boolArray[0]);
+        
+        // Test int array
+        int256[] memory intArray = vm.forkIntArray("int_array");
+        assert(intArray.length == 3);
+        assert(intArray[0] == -100);
+        console.log("     > int_array[0]:", intArray[0]);
+        
+        // Test uint array
+        uint256[] memory uintArray = vm.forkUintArray("uint_array");
+        assert(uintArray.length == 3);
+        assert(uintArray[0] == 100);
+        console.log("     > uint_array[0]:", uintArray[0]);
+        
+        // Test address array
+        address[] memory addrArray = vm.forkAddressArray("addr_array");
+        assert(addrArray.length == 2);
+        assert(addrArray[0] == 0x1111111111111111111111111111111111111111);
+        console.log("     > addr_array[0]:", addrArray[0]);
+        
+        // Test bytes32 array
+        bytes32[] memory bytes32Array = vm.forkBytes32Array("bytes32_array");
+        assert(bytes32Array.length == 2);
+        
+        // Test bytes array
+        bytes[] memory bytesArray = vm.forkBytesArray("bytes_array");
+        assert(bytesArray.length == 3);
+        
+        // Test string array
+        string[] memory stringArray = vm.forkStringArray("string_array");
+        assert(stringArray.length == 3);
+        assert(eqString(stringArray[0], "hello"));
+        console.log("     > string_array[0]:", stringArray[0]);
     }
 
     function eqString(string memory s1, string memory s2) public pure returns(bool) {
@@ -3497,8 +3655,63 @@ Logs:
      > bool: true
      > addr: 0xdEADBEeF00000000000000000000000000000000
      > string: bar
+     > Arrays:
+       > bool_array[0]: true
+       > int_array[0]: -100
+       > uint_array[0]: 100
+       > addr_array[0]: 0x1111111111111111111111111111111111111111
+       > string_array[0]: hello
 
 [FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
+...
+"#]]);
+});
+
+// Tests that it will throw an error when reading an address that is not 20 bytes
+forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.update_config(|config| {
+        config.forks = vec![(
+            "mainnet".to_string(),
+            ForkConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
+            },
+        )]
+        .into_iter()
+        .collect();
+    });
+
+    prj.add_source(
+        "ForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_throwsErrorWhen() public {
+        vm.createSelectFork("<url>");
+        address owner = vm.forkAddress("owner");
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: vm.forkAddress: failed parsing $owner as type `address`: parser error:
+$owner
+^
+invalid string length] test_throwsErrorWhen() ([GAS])
 ...
 "#]]);
 });

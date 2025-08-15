@@ -1,7 +1,7 @@
 //! Implementations of [`Forking`](spec::Group::Forking) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Error, Result, Vm::*, string};
-use alloy_dyn_abi::DynSolType;
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
 use eyre::OptionExt;
 use foundry_evm_core::ContextExt;
@@ -123,6 +123,20 @@ impl Cheatcode for forkBoolCall {
     }
 }
 
+impl Cheatcode for forkBoolArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::Bool, ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainBoolArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::Bool, state)
+    }
+}
+
 impl Cheatcode for forkChainIntCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -137,6 +151,20 @@ impl Cheatcode for forkIntCall {
     }
 }
 
+impl Cheatcode for forkIntArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::Int(256), ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainIntArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::Int(256), state)
+    }
+}
+
 impl Cheatcode for forkChainUintCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -148,6 +176,20 @@ impl Cheatcode for forkUintCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { key } = self;
         get_uint256(get_active_fork_chain_id(ccx)?, key, ccx.state)
+    }
+}
+
+impl Cheatcode for forkUintArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::Uint(256), ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainUintArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::Uint(256), state)
     }
 }
 
@@ -166,6 +208,20 @@ impl Cheatcode for forkAddressCall {
     }
 }
 
+impl Cheatcode for forkAddressArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::Address, ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainAddressArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::Address, state)
+    }
+}
+
 impl Cheatcode for forkChainBytes32Call {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -178,6 +234,20 @@ impl Cheatcode for forkBytes32Call {
         let Self { key } = self;
         let chain = get_active_fork_chain_id(ccx)?;
         get_type_from_str_input(chain, key, &DynSolType::FixedBytes(32), ccx.state)
+    }
+}
+
+impl Cheatcode for forkBytes32ArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::FixedBytes(32), ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainBytes32ArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::FixedBytes(32), state)
     }
 }
 
@@ -196,6 +266,20 @@ impl Cheatcode for forkBytesCall {
     }
 }
 
+impl Cheatcode for forkBytesArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::Bytes, ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainBytesArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::Bytes, state)
+    }
+}
+
 impl Cheatcode for forkChainStringCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -208,6 +292,20 @@ impl Cheatcode for forkStringCall {
         let Self { key } = self;
         let chain = get_active_fork_chain_id(ccx)?;
         get_type_from_str_input(chain, key, &DynSolType::String, ccx.state)
+    }
+}
+
+impl Cheatcode for forkStringArrayCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { key } = self;
+        get_array(get_active_fork_chain_id(ccx)?, key, &DynSolType::String, ccx.state)
+    }
+}
+
+impl Cheatcode for forkChainStringArrayCall {
+    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self { chain, key } = self;
+        get_array(chain.to::<u64>(), key, &DynSolType::String, state)
     }
 }
 
@@ -284,5 +382,77 @@ fn get_type_from_str_input(
         cast_string(key, val, ty)
     } else {
         bail!("Variable '{key}' in [fork.{name}] must be a string");
+    }
+}
+
+fn get_array(chain: u64, key: &str, element_ty: &DynSolType, state: &crate::Cheatcodes) -> Result {
+    let name = get_chain_name(chain)?;
+    let value = get_toml_value(name, key, state)?;
+
+    if let Some(arr) = value.as_array() {
+        let mut result = Vec::new();
+        for (i, elem) in arr.iter().enumerate() {
+            let parsed = match element_ty {
+                DynSolType::Bool => {
+                    if let Some(b) = elem.as_bool() {
+                        DynSolValue::Bool(b)
+                    } else if let Some(v) = elem.as_integer() {
+                        DynSolValue::Bool(v != 0)
+                    } else if let Some(s) = elem.as_str() {
+                        string::parse_value(s, element_ty)
+                            .map_err(map_env_err(&format!("{key}[{i}]"), s))?
+                    } else {
+                        bail!(
+                            "Element {i} of '{key}' in [fork.{name}] must be a boolean or a string"
+                        );
+                    }
+                }
+                DynSolType::Int(256) => {
+                    if let Some(int_value) = elem.as_integer() {
+                        DynSolValue::Int(alloy_primitives::I256::try_from(int_value).unwrap(), 256)
+                    } else if let Some(s) = elem.as_str() {
+                        string::parse_value(s, element_ty)
+                            .map_err(map_env_err(&format!("{key}[{i}]"), s))?
+                    } else {
+                        bail!(
+                            "Element {i} of '{key}' in [fork.{name}] must be an integer or a string"
+                        );
+                    }
+                }
+                DynSolType::Uint(256) => {
+                    if let Some(int_value) = elem.as_integer() {
+                        if int_value >= 0 {
+                            DynSolValue::Uint(alloy_primitives::U256::from(int_value as u64), 256)
+                        } else {
+                            bail!("Element {i} of '{key}' in [fork.{name}] is a negative integer");
+                        }
+                    } else if let Some(s) = elem.as_str() {
+                        string::parse_value(s, element_ty)
+                            .map_err(map_env_err(&format!("{key}[{i}]"), s))?
+                    } else {
+                        bail!(
+                            "Element {i} of '{key}' in [fork.{name}] must be an integer or a string"
+                        );
+                    }
+                }
+                DynSolType::Address
+                | DynSolType::FixedBytes(32)
+                | DynSolType::String
+                | DynSolType::Bytes => {
+                    if let Some(s) = elem.as_str() {
+                        string::parse_value(s, element_ty)
+                            .map_err(map_env_err(&format!("{key}[{i}]"), s))?
+                    } else {
+                        bail!("Element {i} of '{key}' in [fork.{name}] must be a string");
+                    }
+                }
+                _ => bail!("Unsupported array element type for fork configuration"),
+            };
+            result.push(parsed);
+        }
+
+        Ok(DynSolValue::Array(result).abi_encode())
+    } else {
+        bail!("Variable '{key}' in [fork.{name}] must be an array");
     }
 }
