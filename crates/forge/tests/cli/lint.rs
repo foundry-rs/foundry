@@ -407,50 +407,10 @@ note[unused-import]: unused imports should be removed
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11234>
-forgetest!(can_lint_src_and_build_files, |prj, cmd| {
+forgetest!(can_lint_only_built_files, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_test("TestWithLints", COUNTER_A).unwrap();
-    prj.add_script("ScriptWithLints", COUNTER_A).unwrap();
-    // No sources, hence no lints on `forge lint` / `forge build`.
-    cmd.arg("lint").assert_success().stderr_eq(str![""]);
-    cmd.forge_fuse().arg("build").assert_success().stderr_eq(str![""]);
-
     prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
     prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
-    // Both contracts should be linted
-    cmd.forge_fuse().args(["lint"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
-  |
-6 |         uint256 public CounterA_Fail_Lint;
-  |                        ------------------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
-  |
-6 |         uint256 public CounterB_Fail_Lint;
-  |                        ------------------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-
-"#]]);
-    // Only ContractAWithLints should be linted
-    cmd.forge_fuse().args(["lint", "src/CounterAWithLints.sol"]).assert_success().stderr_eq(str![
-        [r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
-  |
-6 |         uint256 public CounterA_Fail_Lint;
-  |                        ------------------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-
-"#]
-    ]);
 
     // Both contracts should be linted on build.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
@@ -472,7 +432,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 
 "#]]);
-    // Only contract CounterBWithLints that we built should be linted.
+    // Only contract CounterBWithLints that we build should be linted.
     cmd.forge_fuse().args(["build", "src/CounterBWithLints.sol"]).assert_success().stderr_eq(str![
         [r#"
 note[mixed-case-variable]: mutable variables should use mixedCase

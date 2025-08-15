@@ -164,13 +164,8 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    let include = if ignored.is_empty() {
-                        // Default to source contracts only if lint ignore not configured.
-                        p.starts_with(&config.src)
-                    } else {
-                        !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
-                    };
-                    skip.is_match(p) && include
+                    skip.is_match(p)
+                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
                 })
                 .collect::<Vec<_>>();
 
