@@ -38,7 +38,7 @@ use foundry_config::{
         Metadata, Profile, Provider,
     },
     filter::GlobMatcher,
-    Config,
+    revive, Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -286,6 +286,7 @@ impl TestArgs {
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+
         let strategy = utils::get_executor_strategy(&config);
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -311,10 +312,16 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
             .files(sources_to_compile);
+
+        // Apply revive size limits if revive compilation is enabled
+        if config.resolc.resolc_compile {
+            compiler =
+                compiler.size_limits(revive::CONTRACT_SIZE_LIMIT, revive::CONTRACT_SIZE_LIMIT);
+        }
 
         let output = compiler.compile(&project)?;
 
