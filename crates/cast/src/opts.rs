@@ -1065,7 +1065,7 @@ pub enum CastSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: clap_complete::Shell,
+        shell: foundry_common::clap::Shell,
     },
 
     /// Generate Fig autocompletion spec.

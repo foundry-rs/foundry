@@ -65,7 +65,7 @@ alloy-transport.workspace = true
 revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
+clap_complete.workspace = true
 clap_complete_fig = "4"
 dunce.workspace = true
 indicatif.workspace = true
