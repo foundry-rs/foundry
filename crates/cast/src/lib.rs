@@ -1853,8 +1853,13 @@ impl SimpleCast {
     ///
     /// let (topics, data) = Cast::abi_encode_event(
     ///     "Transfer(address indexed from, address indexed to, uint256 value)",
-    ///     &["0x1234567890123456789012345678901234567890", "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "1000"]
-    /// ).unwrap();
+    ///     &[
+    ///         "0x1234567890123456789012345678901234567890",
+    ///         "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+    ///         "1000",
+    ///     ],
+    /// )
+    /// .unwrap();
     ///
     /// // topic0 is the event selector
     /// assert_eq!(topics.len(), 3);
@@ -1888,7 +1893,7 @@ impl SimpleCast {
                     // For dynamic types, hash the encoded value
                     let encoded = token.abi_encode();
                     let hash = keccak256(encoded);
-                    topics.push(format!("{:?}", hash));
+                    topics.push(format!("{hash:?}"));
                 } else {
                     // For fixed-size types, encode directly to 32 bytes
                     let mut encoded = [0u8; 32];
