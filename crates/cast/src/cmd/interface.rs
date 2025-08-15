@@ -5,8 +5,9 @@ use eyre::{Context, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_common::{
+    ContractsByArtifact,
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_target_path, fs, shell, ContractsByArtifact,
+    find_target_path, fs, shell,
 };
 use foundry_config::load_config;
 use itertools::Itertools;
@@ -55,8 +56,8 @@ impl InterfaceArgs {
         let Self { contract, name, pragma, output: output_location, etherscan } = self;
 
         // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
-        let abis = if Path::new(&contract).is_file() &&
-            fs::read_to_string(&contract)
+        let abis = if Path::new(&contract).is_file()
+            && fs::read_to_string(&contract)
                 .ok()
                 .and_then(|content| serde_json::from_str::<Value>(&content).ok())
                 .is_some()

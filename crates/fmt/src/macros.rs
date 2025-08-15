@@ -91,7 +91,7 @@ macro_rules! return_source_if_disabled {
         let loc = $loc;
         if $self.inline_config.is_disabled(loc) {
             trace!("Returning because disabled: {loc:?}");
-            return $self.visit_source(loc)
+            return $self.visit_source(loc);
         }
     }};
     ($self:expr, $loc:expr, $suffix:literal) => {{
@@ -103,7 +103,7 @@ macro_rules! return_source_if_disabled {
             if !has_suffix {
                 write!($self.buf(), "{}", $suffix)?;
             }
-            return Ok(())
+            return Ok(());
         }
     }};
 }

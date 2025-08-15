@@ -2,15 +2,15 @@ use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::{
-    ast::{self, Ast, Node, NodeType},
     Source,
+    ast::{self, Ast, Node, NodeType},
 };
 use rayon::prelude::*;
 use std::sync::Arc;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone, Debug)]
-pub struct ContractVisitor<'a> {
+struct ContractVisitor<'a> {
     /// The source ID of the contract.
     source_id: u32,
     /// The source code that contains the AST being walked.
@@ -25,11 +25,11 @@ pub struct ContractVisitor<'a> {
     last_line: u32,
 
     /// Coverage items
-    pub items: Vec<CoverageItem>,
+    items: Vec<CoverageItem>,
 }
 
 impl<'a> ContractVisitor<'a> {
-    pub fn new(source_id: usize, source: &'a str, contract_name: &'a Arc<str>) -> Self {
+    fn new(source_id: usize, source: &'a str, contract_name: &'a Arc<str>) -> Self {
         Self {
             source_id: source_id.try_into().expect("too many sources"),
             source,
@@ -40,7 +40,46 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    pub fn visit_contract(&mut self, node: &Node) -> eyre::Result<()> {
+    /// Filter out all items if the contract has any test functions.
+    fn clear_if_test(&mut self) {
+        let has_tests = self.items.iter().any(|item| {
+            if let CoverageItemKind::Function { name } = &item.kind {
+                name.is_any_test()
+            } else {
+                false
+            }
+        });
+        if has_tests {
+            self.items = Vec::new();
+        }
+    }
+
+    /// Disambiguate functions with the same name in the same contract.
+    fn disambiguate_functions(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let mut dups = HashMap::<_, Vec<usize>>::default();
+        for (i, item) in self.items.iter().enumerate() {
+            if let CoverageItemKind::Function { name } = &item.kind {
+                dups.entry(name.clone()).or_default().push(i);
+            }
+        }
+        for dups in dups.values() {
+            if dups.len() > 1 {
+                for (i, &dup) in dups.iter().enumerate() {
+                    let item = &mut self.items[dup];
+                    if let CoverageItemKind::Function { name } = &item.kind {
+                        item.kind =
+                            CoverageItemKind::Function { name: format!("{name}.{i}").into() };
+                    }
+                }
+            }
+        }
+    }
+
+    fn visit_contract(&mut self, node: &Node) -> eyre::Result<()> {
         // Find all functions and walk their AST
         for node in &node.nodes {
             match node.node_type {
@@ -59,14 +98,14 @@ impl<'a> ContractVisitor<'a> {
     fn visit_function_definition(&mut self, node: &Node) -> eyre::Result<()> {
         let Some(body) = &node.body else { return Ok(()) };
 
-        let name: String =
+        let name: Box<str> =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
-        let kind: String =
+        let kind: Box<str> =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
         // TODO: We currently can only detect empty bodies in normal functions, not any of the other
         // kinds: https://github.com/foundry-rs/foundry/issues/9458
-        if kind != "function" && !has_statements(body) {
+        if &*kind != "function" && !has_statements(body) {
             return Ok(());
         }
 
@@ -79,16 +118,12 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_modifier_or_yul_fn_definition(&mut self, node: &Node) -> eyre::Result<()> {
-        let name: String =
-            node.attribute("name").ok_or_else(|| eyre::eyre!("Modifier has no name"))?;
+        let Some(body) = &node.body else { return Ok(()) };
 
-        match &node.body {
-            Some(body) => {
-                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
-                self.visit_block(body)
-            }
-            _ => Ok(()),
-        }
+        let name: Box<str> =
+            node.attribute("name").ok_or_else(|| eyre::eyre!("Modifier has no name"))?;
+        self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
+        self.visit_block(body)
     }
 
     fn visit_block(&mut self, node: &Node) -> eyre::Result<()> {
@@ -114,15 +149,15 @@ impl<'a> ContractVisitor<'a> {
                     .ok_or_else(|| eyre::eyre!("inline assembly block with no AST attribute"))?,
             ),
             // Simple statements
-            NodeType::Break |
-            NodeType::Continue |
-            NodeType::EmitStatement |
-            NodeType::RevertStatement |
-            NodeType::YulAssignment |
-            NodeType::YulBreak |
-            NodeType::YulContinue |
-            NodeType::YulLeave |
-            NodeType::YulVariableDeclaration => {
+            NodeType::Break
+            | NodeType::Continue
+            | NodeType::EmitStatement
+            | NodeType::RevertStatement
+            | NodeType::YulAssignment
+            | NodeType::YulBreak
+            | NodeType::YulContinue
+            | NodeType::YulLeave
+            | NodeType::YulVariableDeclaration => {
                 self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
@@ -395,10 +430,10 @@ impl<'a> ContractVisitor<'a> {
 
     fn visit_expression(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
-            NodeType::Assignment |
-            NodeType::UnaryOperation |
-            NodeType::Conditional |
-            NodeType::YulFunctionCall => {
+            NodeType::Assignment
+            | NodeType::UnaryOperation
+            | NodeType::Conditional
+            | NodeType::YulFunctionCall => {
                 self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
@@ -456,13 +491,13 @@ impl<'a> ContractVisitor<'a> {
                 Ok(())
             }
             // Does not count towards coverage
-            NodeType::FunctionCallOptions |
-            NodeType::Identifier |
-            NodeType::IndexAccess |
-            NodeType::IndexRangeAccess |
-            NodeType::Literal |
-            NodeType::YulLiteralValue |
-            NodeType::YulIdentifier => Ok(()),
+            NodeType::FunctionCallOptions
+            | NodeType::Identifier
+            | NodeType::IndexAccess
+            | NodeType::IndexRangeAccess
+            | NodeType::Literal
+            | NodeType::YulLiteralValue
+            | NodeType::YulIdentifier => Ok(()),
             _ => {
                 warn!("unexpected node type, expected an expression: {:?}", node.node_type);
                 Ok(())
@@ -473,20 +508,20 @@ impl<'a> ContractVisitor<'a> {
     fn visit_block_or_statement(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
             NodeType::Block => self.visit_block(node),
-            NodeType::Break |
-            NodeType::Continue |
-            NodeType::DoWhileStatement |
-            NodeType::EmitStatement |
-            NodeType::ExpressionStatement |
-            NodeType::ForStatement |
-            NodeType::IfStatement |
-            NodeType::InlineAssembly |
-            NodeType::Return |
-            NodeType::RevertStatement |
-            NodeType::TryStatement |
-            NodeType::VariableDeclarationStatement |
-            NodeType::YulVariableDeclaration |
-            NodeType::WhileStatement => self.visit_statement(node),
+            NodeType::Break
+            | NodeType::Continue
+            | NodeType::DoWhileStatement
+            | NodeType::EmitStatement
+            | NodeType::ExpressionStatement
+            | NodeType::ForStatement
+            | NodeType::IfStatement
+            | NodeType::InlineAssembly
+            | NodeType::Return
+            | NodeType::RevertStatement
+            | NodeType::TryStatement
+            | NodeType::VariableDeclarationStatement
+            | NodeType::YulVariableDeclaration
+            | NodeType::WhileStatement => self.visit_statement(node),
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
             _ => {
@@ -535,15 +570,15 @@ impl<'a> ContractVisitor<'a> {
 /// Helper function to check if a given node is or contains any statement.
 fn has_statements(node: &Node) -> bool {
     match node.node_type {
-        NodeType::DoWhileStatement |
-        NodeType::EmitStatement |
-        NodeType::ExpressionStatement |
-        NodeType::ForStatement |
-        NodeType::IfStatement |
-        NodeType::RevertStatement |
-        NodeType::TryStatement |
-        NodeType::VariableDeclarationStatement |
-        NodeType::WhileStatement => true,
+        NodeType::DoWhileStatement
+        | NodeType::EmitStatement
+        | NodeType::ExpressionStatement
+        | NodeType::ForStatement
+        | NodeType::IfStatement
+        | NodeType::RevertStatement
+        | NodeType::TryStatement
+        | NodeType::VariableDeclarationStatement
+        | NodeType::WhileStatement => true,
         _ => node.attribute::<Vec<Node>>("statements").is_some_and(|s| !s.is_empty()),
     }
 }
@@ -571,6 +606,7 @@ impl SourceAnalysis {
     /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
     /// two different solc versions will produce overlapping source IDs if the compiler version is
     /// not taken into account.
+    #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles<'_>) -> eyre::Result<Self> {
         let mut sourced_items = data
             .sources
@@ -592,23 +628,12 @@ impl SourceAnalysis {
                     let name = node
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
-
+                    let _guard = debug_span!("visit_contract", %name).entered();
                     let mut visitor = ContractVisitor::new(source_id, &source.content, &name);
                     visitor.visit_contract(node)?;
-                    let mut items = visitor.items;
-
-                    let is_test = items.iter().any(|item| {
-                        if let CoverageItemKind::Function { name } = &item.kind {
-                            name.is_any_test()
-                        } else {
-                            false
-                        }
-                    });
-                    if is_test {
-                        items.clear();
-                    }
-
-                    Ok(items)
+                    visitor.clear_if_test();
+                    visitor.disambiguate_functions();
+                    Ok(visitor.items)
                 });
                 items.map(move |items| items.map(|items| (source_id, items)))
             })

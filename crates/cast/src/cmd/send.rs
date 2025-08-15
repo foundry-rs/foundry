@@ -1,20 +1,20 @@
 use crate::{
-    tx::{self, CastTxBuilder},
     Cast,
+    tx::{self, CastTxBuilder},
 };
+use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
     utils::LoadConfig,
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -30,6 +30,7 @@ pub struct SendTxArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
@@ -80,12 +81,12 @@ pub enum SendTxSubcommands {
         sig: Option<String>,
 
         /// The arguments of the function to call.
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
     },
 }
 
 impl SendTxArgs {
-    #[expect(dependency_on_unit_never_type_fallback)]
     pub async fn run(self) -> eyre::Result<()> {
         let Self {
             eth,
@@ -112,12 +113,16 @@ impl SendTxArgs {
             // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
             // which require mandatory target
             if to.is_none() && tx.auth.is_some() {
-                return Err(eyre!("EIP-7702 transactions can't be CREATE transactions and require a destination address"));
+                return Err(eyre!(
+                    "EIP-7702 transactions can't be CREATE transactions and require a destination address"
+                ));
             }
             // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
             // which require mandatory target
             if to.is_none() && blob_data.is_some() {
-                return Err(eyre!("EIP-4844 transactions can't be CREATE transactions and require a destination address"));
+                return Err(eyre!(
+                    "EIP-4844 transactions can't be CREATE transactions and require a destination address"
+                ));
             }
 
             sig = constructor_sig;
@@ -154,7 +159,7 @@ impl SendTxArgs {
                 if config_chain_id != current_chain_id {
                     sh_warn!("Switching to chain {}", config_chain)?;
                     provider
-                        .raw_request(
+                        .raw_request::<_, ()>(
                             "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
                                 "chainId": format!("0x{:x}", config_chain_id),
@@ -183,7 +188,7 @@ impl SendTxArgs {
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
-                .on_provider(&provider);
+                .connect_provider(&provider);
 
             cast_send(provider, tx, cast_async, confirmations, timeout).await
         }

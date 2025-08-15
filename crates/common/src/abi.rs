@@ -2,13 +2,13 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, Param};
-use alloy_primitives::{hex, Address, LogData};
+use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{
-    contract::ContractMetadata, errors::EtherscanError, Client, EtherscanApiVersion,
+    Client, EtherscanApiVersion, contract::ContractMetadata, errors::EtherscanError,
 };
 use foundry_config::Chain;
-use std::{future::Future, pin::Pin};
+use std::pin::Pin;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where
@@ -21,13 +21,23 @@ where
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
-/// [DynSolValue]s and then ABI encode them.
+/// [DynSolValue]s and then ABI encode them, prefixes the encoded data with the function selector.
 pub fn encode_function_args<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
     Ok(func.abi_encode_input(&encode_args(&func.inputs, args)?)?)
+}
+
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and then ABI encode them. Doesn't prefix the function selector.
+pub fn encode_function_args_raw<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    Ok(func.abi_encode_input_raw(&encode_args(&func.inputs, args)?)?)
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
@@ -63,11 +73,8 @@ pub fn abi_decode_calldata(
         calldata = &calldata[4..];
     }
 
-    let res = if input {
-        func.abi_decode_input(calldata, false)
-    } else {
-        func.abi_decode_output(calldata, false)
-    }?;
+    let res =
+        if input { func.abi_decode_input(calldata) } else { func.abi_decode_output(calldata) }?;
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
@@ -104,8 +111,8 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
             if param.name.is_empty() {
                 param.name = format!("param{index}");
             }
-            if num_inputs == indexed_params ||
-                (num_address_params == indexed_params && param.ty == "address")
+            if num_inputs == indexed_params
+                || (num_address_params == indexed_params && param.ty == "address")
             {
                 param.indexed = true;
             }
@@ -134,7 +141,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_function_args(&func, args);
         if res.is_ok() {
-            return Ok(func)
+            return Ok(func);
         }
     }
 
@@ -219,7 +226,7 @@ mod tests {
         assert_eq!(event.inputs.len(), 3);
 
         // Only the address fields get indexed since total_params > num_indexed_params
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
@@ -244,7 +251,7 @@ mod tests {
 
         // All parameters get indexed since num_indexed_params == total_params
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));

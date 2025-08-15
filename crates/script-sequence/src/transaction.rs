@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_common::TransactionMaybeSigned;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,
+    pub contract_name: Option<String>,
     pub address: Address,
     pub init_code: Bytes,
 }

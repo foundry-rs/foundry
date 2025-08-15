@@ -1,17 +1,17 @@
 //! Test config.
 
 use forge::{
-    result::{SuiteResult, TestStatus},
     MultiContractRunner,
+    result::{SuiteResult, TestStatus},
 };
 use foundry_evm::{
     decode::decode_console_logs,
-    revm::primitives::SpecId,
-    traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
+    traces::{CallTraceDecoderBuilder, decode_trace_arena, render_trace_arena},
 };
-use foundry_test_utils::{init_tracing, Filter};
+use foundry_test_utils::{Filter, init_tracing};
 use futures::future::join_all;
 use itertools::Itertools;
+use revm::primitives::hardfork::SpecId;
 use std::collections::BTreeMap;
 
 /// How to execute a test run.
@@ -66,8 +66,8 @@ impl TestConfig {
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, mut result) in test_results {
-                if self.should_fail && (result.status == TestStatus::Success) ||
-                    !self.should_fail && (result.status == TestStatus::Failure)
+                if self.should_fail && (result.status == TestStatus::Success)
+                    || !self.should_fail && (result.status == TestStatus::Failure)
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };

@@ -1,16 +1,15 @@
 //! CLI arguments for configuring the EVM settings.
 
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
     },
-    Chain, Config,
 };
 use serde::Serialize;
 
@@ -47,7 +46,7 @@ pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
-    #[arg(long, short, visible_alias = "rpc-url", value_name = "URL")]
+    #[arg(long, short, visible_alias = "rpc-url", env = "ETH_RPC_URL", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
