@@ -5,15 +5,15 @@ use rand::seq::IndexedRandom;
 use std::fmt::Debug;
 
 // Interesting 8-bit values to inject.
-static INTERESTING_8: [i8; 9] = [-128, -1, 0, 1, 16, 32, 64, 100, 127];
+static INTERESTING_8: &[i8] = &[-128, -1, 0, 1, 16, 32, 64, 100, 127];
 
 /// Interesting 16-bit values to inject.
-static INTERESTING_16: [i16; 19] = [
+static INTERESTING_16: &[i16] = &[
     -128, -1, 0, 1, 16, 32, 64, 100, 127, -32768, -129, 128, 255, 256, 512, 1000, 1024, 4096, 32767,
 ];
 
 /// Interesting 32-bit values to inject.
-static INTERESTING_32: [i32; 27] = [
+static INTERESTING_32: &[i32] = &[
     -128,
     -1,
     0,
