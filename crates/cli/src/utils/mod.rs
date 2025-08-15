@@ -91,10 +91,11 @@ pub fn subscriber() {
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Hyper
+        // Low level networking
         "hyper=off",
         "hyper_util=off",
         "h2=off",
+        "rustls=off",
         // Tokio
         "mio=off",
     ];
@@ -487,6 +488,10 @@ impl<'a> Git<'a> {
 
     pub fn is_in_repo(self) -> std::io::Result<bool> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
+    }
+
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {
