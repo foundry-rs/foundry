@@ -124,7 +124,7 @@ impl BenchmarkProject {
 
         // Get root path before clearing
         let root_path = temp_project.root().to_path_buf();
-        let root = root_path.to_str().unwrap();
+        let root = root_path.to_str().ok_or("Invalid UTF-8 in project root path")?;
 
         // Remove all files in the directory
         for entry in std::fs::read_dir(&root_path)? {
@@ -485,7 +485,11 @@ pub fn get_forge_version_details() -> Result<String> {
         let timestamp = lines[2].trim().replace("Build Timestamp: ", "");
 
         // Format as: "forge 1.2.3-nightly (51650ea 2025-06-27)"
-        let short_commit = &commit[..7]; // First 7 chars of commit hash
+        let short_commit = if commit.len() >= 7 {
+            &commit[..7]
+        } else {
+            &commit
+        }; // First 7 chars of commit hash, or full hash if shorter
         let date = timestamp.split('T').next().unwrap_or(&timestamp);
 
         Ok(format!("{version} ({short_commit} {date})"))
@@ -516,13 +520,19 @@ pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
     let repos = if let Ok(repos_env) = env::var("FOUNDRY_BENCH_REPOS") {
         // Parse repo specs from the environment variable
         // Format should be: "org1/repo1,org2/repo2"
-        repos_env
+        match repos_env
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.parse::<RepoConfig>())
             .collect::<Result<Vec<_>>>()
-            .expect("Failed to parse FOUNDRY_BENCH_REPOS")
+        {
+            Ok(repos) => repos,
+            Err(e) => {
+                sh_println!("Warning: Failed to parse FOUNDRY_BENCH_REPOS: {}. Using default repos.", e);
+                BENCHMARK_REPOS.clone()
+            }
+        }
     } else {
         BENCHMARK_REPOS.clone()
     };
