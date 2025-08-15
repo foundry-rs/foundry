@@ -5866,126 +5866,6 @@
     },
     {
       "func": {
-        "id": "forkChain",
-        "description": "Returns the chain name of the currently selected fork.",
-        "declaration": "function forkChain() external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChain()",
-        "selector": "0xe6075d94",
-        "selectorBytes": [
-          230,
-          7,
-          93,
-          148
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainId",
-        "description": "Returns the chain id of the currently selected fork.",
-        "declaration": "function forkChainId() external view returns (uint256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainId()",
-        "selector": "0xe6b661e2",
-        "selectorBytes": [
-          230,
-          182,
-          97,
-          226
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainIds",
-        "description": "Returns an array with the ids of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
-        "declaration": "function forkChainIds() external view returns (uint256[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainIds()",
-        "selector": "0x04dc8feb",
-        "selectorBytes": [
-          4,
-          220,
-          143,
-          235
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChainRpcUrl",
-        "description": "Returns the rpc url of the corresponding chain id.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
-        "declaration": "function forkChainRpcUrl(uint256 id) external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChainRpcUrl(uint256)",
-        "selector": "0xa2c51cca",
-        "selectorBytes": [
-          162,
-          197,
-          28,
-          202
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkChains",
-        "description": "Returns an array with the name of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
-        "declaration": "function forkChains() external view returns (string[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkChains()",
-        "selector": "0x081f64cd",
-        "selectorBytes": [
-          8,
-          31,
-          100,
-          205
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "forkRpcUrl",
-        "description": "Returns the rpc url of the currently selected fork.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
-        "declaration": "function forkRpcUrl() external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "forkRpcUrl()",
-        "selector": "0x66d48d21",
-        "selectorBytes": [
-          102,
-          212,
-          141,
-          33
-        ]
-      },
-      "group": "forking",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "foundryVersionAtLeast",
         "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
         "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",
@@ -8908,6 +8788,26 @@
     },
     {
       "func": {
+        "id": "readForkChain",
+        "description": "Returns the chain name of the currently selected fork.",
+        "declaration": "function readForkChain() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChain()",
+        "selector": "0x99a10434",
+        "selectorBytes": [
+          153,
+          161,
+          4,
+          52
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readForkChainAddress",
         "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainAddress(uint256 chain, string calldata key) external view returns (address);",
@@ -9068,6 +8968,46 @@
     },
     {
       "func": {
+        "id": "readForkChainId",
+        "description": "Returns the chain id of the currently selected fork.",
+        "declaration": "function readForkChainId() external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainId()",
+        "selector": "0x69986b8c",
+        "selectorBytes": [
+          105,
+          152,
+          107,
+          140
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainIds",
+        "description": "Returns an array with the ids of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function readForkChainIds() external view returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainIds()",
+        "selector": "0x890ec2f4",
+        "selectorBytes": [
+          137,
+          14,
+          194,
+          244
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readForkChainInt",
         "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkChainInt(uint256 chain, string calldata key) external view returns (int256);",
@@ -9100,6 +9040,26 @@
           126,
           242,
           100
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkChainRpcUrl",
+        "description": "Returns the rpc url of the corresponding chain id.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function readForkChainRpcUrl(uint256 id) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChainRpcUrl(uint256)",
+        "selector": "0x76394e84",
+        "selectorBytes": [
+          118,
+          57,
+          78,
+          132
         ]
       },
       "group": "forking",
@@ -9188,6 +9148,26 @@
     },
     {
       "func": {
+        "id": "readForkChains",
+        "description": "Returns an array with the name of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function readForkChains() external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkChains()",
+        "selector": "0x237f2335",
+        "selectorBytes": [
+          35,
+          127,
+          35,
+          53
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readForkInt",
         "description": "Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
         "declaration": "function readForkInt(string calldata key) external view returns (int256);",
@@ -9220,6 +9200,26 @@
           111,
           18,
           41
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "readForkRpcUrl",
+        "description": "Returns the rpc url of the currently selected fork.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function readForkRpcUrl() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "readForkRpcUrl()",
+        "selector": "0xb5ca8455",
+        "selectorBytes": [
+          181,
+          202,
+          132,
+          85
         ]
       },
       "group": "forking",

@@ -6,7 +6,7 @@ use alloy_sol_types::SolValue;
 use eyre::OptionExt;
 use foundry_evm_core::ContextExt;
 
-impl Cheatcode for forkChainIdsCall {
+impl Cheatcode for readForkChainIdsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state
@@ -19,20 +19,20 @@ impl Cheatcode for forkChainIdsCall {
     }
 }
 
-impl Cheatcode for forkChainsCall {
+impl Cheatcode for readForkChainsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self {} = self;
         Ok(state.config.forks.keys().collect::<Vec<_>>().abi_encode())
     }
 }
 
-impl Cheatcode for forkChainCall {
+impl Cheatcode for readForkChainCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         Ok(get_active_fork_chain_name(ccx)?.abi_encode())
     }
 }
 
-impl Cheatcode for forkChainIdCall {
+impl Cheatcode for readForkChainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         Ok(get_active_fork_chain_id(ccx)?.abi_encode())
     }
@@ -52,7 +52,7 @@ fn resolve_rpc_url(name: &'static str, state: &mut crate::Cheatcodes) -> Result 
     bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
 }
 
-impl Cheatcode for forkChainRpcUrlCall {
+impl Cheatcode for readForkChainRpcUrlCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { id } = self;
         let name = get_chain_name(id.to::<u64>())?;
@@ -60,7 +60,7 @@ impl Cheatcode for forkChainRpcUrlCall {
     }
 }
 
-impl Cheatcode for forkRpcUrlCall {
+impl Cheatcode for readForkRpcUrlCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let name = get_active_fork_chain_name(ccx)?;
         resolve_rpc_url(name, ccx.state)

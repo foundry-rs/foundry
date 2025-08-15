@@ -2189,35 +2189,35 @@ interface Vm {
     ///
     /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
     #[cheatcode(group = Forking)]
-    function forkChains() external view returns (string[] memory);
+    function readForkChains() external view returns (string[] memory);
 
     /// Returns an array with the ids of all the configured fork chains.
     ///
     /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
     #[cheatcode(group = Forking)]
-    function forkChainIds() external view returns (uint256[] memory);
+    function readForkChainIds() external view returns (uint256[] memory);
 
     /// Returns the chain name of the currently selected fork.
     #[cheatcode(group = Forking)]
-    function forkChain() external view returns (string memory);
+    function readForkChain() external view returns (string memory);
 
     /// Returns the chain id of the currently selected fork.
     #[cheatcode(group = Forking)]
-    function forkChainId() external view returns (uint256);
+    function readForkChainId() external view returns (uint256);
 
     /// Returns the rpc url of the currently selected fork.
     ///
     /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
     /// the rpc config is specifically informed in the fork config for that specific chain.
     #[cheatcode(group = Forking)]
-    function forkRpcUrl() external view returns (string memory);
+    function readForkRpcUrl() external view returns (string memory);
 
     /// Returns the rpc url of the corresponding chain id.
     ///
     /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
     /// the rpc config is specifically informed in the fork config for that specific chain.
     #[cheatcode(group = Forking)]
-    function forkChainRpcUrl(uint256 id) external view returns (string memory);
+    function readForkChainRpcUrl(uint256 id) external view returns (string memory);
 
     /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bool`.
     /// Reverts if the key was not found or the value could not be parsed.

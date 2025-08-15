@@ -3335,7 +3335,7 @@ contract ForkScript is DSTest {
 
     function run() public view {
         (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
+        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.readForkChainIds(), vm.readForkChains());
 
         for (uint256 i = 0; i < chains.length; i++) {
             assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
@@ -3343,7 +3343,7 @@ contract ForkScript is DSTest {
             console.log("chain:", chains[i]);
             console.log("id:", chainIds[i]);
 
-            string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
+            string memory rpc = vm.readForkChainRpcUrl(chainIds[i]);
             int256 i256 = vm.readForkChainInt(chainIds[i], "i256");
             uint256 u256 = vm.readForkChainUint(chainIds[i], "u256");
             bool boolean = vm.readForkChainBool(chainIds[i], "bool");
@@ -3557,15 +3557,15 @@ contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
     function test_panicsWhithoutSelectedFork() public {
-        vm.forkChain();
+        vm.readForkChain();
     }
 
     function test_forkVars() public {
         vm.createSelectFork("<url>");
 
-        console.log("chain:", vm.forkChain());
-        console.log("id:", vm.forkChainId());
-        assert(eqString(vm.forkRpcUrl(), "<url>"));
+        console.log("chain:", vm.readForkChain());
+        console.log("id:", vm.readForkChainId());
+        assert(eqString(vm.readForkRpcUrl(), "<url>"));
 
         int256 i256 = vm.readForkInt("i256");
         uint256 u256 = vm.readForkUint("u256");
