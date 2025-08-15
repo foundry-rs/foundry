@@ -80,7 +80,7 @@ mod tests {
         assert!(matches!(
             args.cmd,
             Some(AnvilSubcommand::Completions {
-                shell: foundry_common::clap::Shell::ClapCompeleteShell(clap_complete::Shell::Bash)
+                shell: foundry_common::clap::Shell::ClapCompleteShell(clap_complete::Shell::Bash)
             })
         ));
     }
