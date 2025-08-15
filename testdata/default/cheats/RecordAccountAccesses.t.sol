@@ -269,7 +269,7 @@ contract RecordAccountAccessesTest is DSTest {
         );
         string memory diffsJson = cheats.getStateDiffJson();
         assertEq(
-            "{\"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x00000000000000000000000000000000000000000000000000000000000004d3\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000162e\"}}},\"0xc7183455a4c133ae270771860664b6b7ec320bb1\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x000000000000000000000000000000000000000000000000000000000000162e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x00000000000000000000000000000000000000000000000000000000000004d2\"}}}}",
+            '{"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9":{"label":null,"contract":"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x00000000000000000000000000000000000000000000000000000000000004d3":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000000000000000000000000000162e"}}},"0xc7183455a4c133ae270771860664b6b7ec320bb1":{"label":null,"contract":"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x000000000000000000000000000000000000000000000000000000000000162e":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x00000000000000000000000000000000000000000000000000000000000004d2"}}}}',
             diffsJson
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -491,7 +491,7 @@ contract RecordAccountAccessesTest is DSTest {
             cheats.getStateDiff()
         );
         assertEq(
-            "{\"0x00000000000000000000000000000000000004d2\":{\"label\":null,\"contract\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x16345785d8a0000\"},\"nonceDiff\":null,\"stateDiff\":{}}}",
+            '{"0x00000000000000000000000000000000000004d2":{"label":null,"contract":null,"balanceDiff":{"previousValue":"0x0","newValue":"0x16345785d8a0000"},"nonceDiff":null,"stateDiff":{}}}',
             cheats.getStateDiffJson()
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -837,7 +837,7 @@ contract RecordAccountAccessesTest is DSTest {
             cheats.getStateDiff()
         );
         assertEq(
-            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":\"NestedStorer\",\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:NestedStorer\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"}}}}",
+            '{"0x2e234dae75c793f67a35089c9d99245e1c58470b":{"label":"NestedStorer","contract":"default/cheats/RecordAccountAccesses.t.sol:NestedStorer","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"},"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001"}}}}',
             cheats.getStateDiffJson()
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -1402,5 +1402,52 @@ contract RecordAccountAccessesTest is DSTest {
 
     function deriveCreate2Address(address deployer, bytes32 salt, bytes32 codeHash) internal pure returns (address) {
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
+    }
+
+    /// @notice Simple test for getStorageAccesses() cheatcode
+    function testGetStorageAccesses() public {
+        StorageAccessor accessor = test1;
+
+        // Start recording to enable storage access tracking
+        cheats.startStateDiffRecording();
+
+        // Perform a read operation
+        accessor.read(bytes32(uint256(789)));
+
+        // Perform a write operation
+        accessor.write(bytes32(uint256(123)), bytes32(uint256(456)));
+
+        // Perform another read operation after the write
+        accessor.read(bytes32(uint256(123)));
+
+        // Get all storage accesses
+        Vm.StorageAccess[] memory accesses = cheats.getStorageAccesses();
+
+        // Check we have 3 storage accesses (2 reads + 1 write)
+        assertEq(accesses.length, 3, "should have 3 storage accesses");
+
+        // Check the first read access
+        assertEq(accesses[0].account, address(accessor));
+        assertEq(accesses[0].slot, bytes32(uint256(789)));
+        assertEq(accesses[0].isWrite, false);
+        assertEq(accesses[0].previousValue, bytes32(uint256(0)));
+        assertEq(accesses[0].newValue, bytes32(uint256(0)));
+        assertEq(accesses[0].reverted, false);
+
+        // Check the write access
+        assertEq(accesses[1].account, address(accessor));
+        assertEq(accesses[1].slot, bytes32(uint256(123)));
+        assertEq(accesses[1].isWrite, true);
+        assertEq(accesses[1].previousValue, bytes32(uint256(0)));
+        assertEq(accesses[1].newValue, bytes32(uint256(456)));
+        assertEq(accesses[1].reverted, false);
+
+        // Check the second read access (reading the value we just wrote)
+        assertEq(accesses[2].account, address(accessor));
+        assertEq(accesses[2].slot, bytes32(uint256(123)));
+        assertEq(accesses[2].isWrite, false);
+        assertEq(accesses[2].previousValue, bytes32(uint256(456)));
+        assertEq(accesses[2].newValue, bytes32(uint256(456)));
+        assertEq(accesses[2].reverted, false);
     }
 }

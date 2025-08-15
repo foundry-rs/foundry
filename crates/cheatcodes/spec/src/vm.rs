@@ -432,6 +432,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStateDiffJson() external view returns (string memory diff);
 
+    /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStorageAccesses() external view returns (StorageAccess[] memory accesses);
+
     // -------- Recording Map Writes --------
 
     /// Starts recording all map SSTOREs for later retrieval.

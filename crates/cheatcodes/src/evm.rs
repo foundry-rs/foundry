@@ -855,6 +855,20 @@ impl Cheatcode for getStateDiffJsonCall {
     }
 }
 
+impl Cheatcode for getStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let mut storage_accesses = Vec::new();
+
+        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
+            for account_accesses in recorded_diffs.iter().flatten() {
+                storage_accesses.extend(account_accesses.storageAccesses.clone());
+            }
+        }
+
+        Ok(storage_accesses.abi_encode())
+    }
+}
+
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())

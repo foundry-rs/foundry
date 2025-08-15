@@ -7,8 +7,8 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
+    SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -85,14 +85,16 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            failure_persist_file: Some("failures".to_string()),
             show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            corpus_dir: Some("cache/invariant/corpus".into()),
+            corpus: FuzzCorpusConfig {
+                corpus_dir: Some("cache/invariant/corpus".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ffi: true,
@@ -1104,8 +1106,11 @@ include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/fuzz"
-failure_persist_file = "failures"
 show_logs = false
 
 [invariant]
@@ -1124,10 +1129,10 @@ gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
-show_edge_coverage = false
 
 [labels]
 
@@ -1218,8 +1223,12 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/fuzz",
-    "failure_persist_file": "failures",
     "show_logs": false,
     "timeout": null
   },
@@ -1240,11 +1249,11 @@ exclude = []
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false,
-    "show_edge_coverage": false
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,

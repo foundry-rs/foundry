@@ -572,6 +572,7 @@ impl TestResult {
             mean_gas: result.mean_gas(false),
             first_case: result.first_case,
             runs: result.gas_by_case.len(),
+            failed_corpus_replays: result.failed_corpus_replays,
         };
 
         // Record logs, labels, traces and merge coverages.
@@ -590,6 +591,19 @@ impl TestResult {
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+    }
+
+    /// Returns the fail result for fuzz test setup.
+    pub fn fuzz_setup_fail(&mut self, e: Report) {
+        self.kind = TestKind::Fuzz {
+            first_case: Default::default(),
+            runs: 0,
+            mean_gas: 0,
+            median_gas: 0,
+            failed_corpus_replays: 0,
+        };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
     }
 
     /// Returns the skipped result for invariant test.
@@ -701,6 +715,7 @@ pub enum TestKindReport {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     Invariant {
         runs: usize,
@@ -717,8 +732,15 @@ impl fmt::Display for TestKindReport {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            Self::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(
+                        f,
+                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
+                    )
+                } else {
+                    write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 if *failed_corpus_replays != 0 {
@@ -759,6 +781,7 @@ pub enum TestKind {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     /// An invariant test.
     Invariant {
@@ -781,8 +804,13 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
-            Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            Self::Fuzz { first_case: _, runs, mean_gas, median_gas, failed_corpus_replays } => {
+                TestKindReport::Fuzz {
+                    runs: *runs,
+                    mean_gas: *mean_gas,
+                    median_gas: *median_gas,
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 TestKindReport::Invariant {
