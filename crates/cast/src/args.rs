@@ -191,6 +191,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
+        CastSubcommand::AbiEncodeEvent { sig, args } => {
+            let (topics, data) = SimpleCast::abi_encode_event(&sig, &args)?;
+            for (i, topic) in topics.iter().enumerate() {
+                sh_println!("[topic{}]: {}", i, topic)?;
+            }
+            if !data.is_empty() {
+                sh_println!("[data]: {}", data)?;
+            }
+        }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
             let raw_hex = if let Some(file_path) = file {
                 let contents = fs::read_to_string(&file_path)?;

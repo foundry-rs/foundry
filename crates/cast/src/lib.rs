@@ -28,7 +28,7 @@ use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     TransactionReceiptWithRevertReason,
-    abi::{encode_function_args, get_func},
+    abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
@@ -1842,6 +1842,80 @@ impl SimpleCast {
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         };
         Ok(format!("0x{encoded}"))
+    }
+
+    /// Performs ABI encoding of an event to produce the topics and data.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let (topics, data) = Cast::abi_encode_event(
+    ///     "Transfer(address indexed from, address indexed to, uint256 value)",
+    ///     &["0x1234567890123456789012345678901234567890", "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "1000"]
+    /// ).unwrap();
+    ///
+    /// // topic0 is the event selector
+    /// assert_eq!(topics.len(), 3);
+    /// assert_eq!(topics[0], "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
+    /// assert_eq!(topics[1], "0x0000000000000000000000001234567890123456789012345678901234567890");
+    /// assert_eq!(topics[2], "0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd");
+    /// assert_eq!(data, "0x00000000000000000000000000000000000000000000000000000000000003e8");
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<(Vec<String>, String)> {
+        let event = get_event(sig)?;
+
+        let tokens: Result<Vec<DynSolValue>> = std::iter::zip(&event.inputs, args)
+            .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
+            .collect();
+        let tokens = tokens?;
+
+        let mut topics = vec![format!("{:?}", event.selector())];
+        let mut data_tokens = Vec::new();
+
+        for (input, token) in event.inputs.iter().zip(tokens.iter()) {
+            if input.indexed {
+                let ty = DynSolType::parse(&input.ty)?;
+                if matches!(
+                    ty,
+                    DynSolType::String
+                        | DynSolType::Bytes
+                        | DynSolType::Array(_)
+                        | DynSolType::Tuple(_)
+                ) {
+                    // For dynamic types, hash the encoded value
+                    let encoded = token.abi_encode();
+                    let hash = keccak256(encoded);
+                    topics.push(format!("{:?}", hash));
+                } else {
+                    // For fixed-size types, encode directly to 32 bytes
+                    let mut encoded = [0u8; 32];
+                    let token_encoded = token.abi_encode();
+                    if token_encoded.len() <= 32 {
+                        let start = 32 - token_encoded.len();
+                        encoded[start..].copy_from_slice(&token_encoded);
+                    }
+                    topics.push(format!("{:?}", B256::from(encoded)));
+                }
+            } else {
+                // Non-indexed parameters go into data
+                data_tokens.push(token.clone());
+            }
+        }
+
+        let data = if !data_tokens.is_empty() {
+            let mut encoded_data = Vec::new();
+            for token in &data_tokens {
+                encoded_data.extend_from_slice(&token.abi_encode());
+            }
+            hex::encode_prefixed(encoded_data)
+        } else {
+            String::new()
+        };
+
+        Ok((topics, data))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
