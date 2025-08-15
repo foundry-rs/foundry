@@ -5175,6 +5175,21 @@ mod tests {
                     pool_name = "USDC-ETH"
                     pool_fee = 3000
                     max_slippage = 500
+
+                    # Array configurations for testing array support
+                    bool_array = [true, false, true]
+                    int_array = [-100, 200, -300]
+                    uint_array = [100, 200, 300]
+                    addr_array = [
+                        "0x1111111111111111111111111111111111111111",
+                        "0x2222222222222222222222222222222222222222"
+                    ]
+                    bytes32_array = [
+                        "0x1111111111111111111111111111111111111111111111111111111111111111",
+                        "0x2222222222222222222222222222222222222222222222222222222222222222"
+                    ]
+                    bytes_array = ["0x1234", "0x5678", "0xabcd"]
+                    string_array = ["hello", "world", "test"]
                 "#,
             )?;
             let config = Config::load().unwrap();
@@ -5191,6 +5206,19 @@ mod tests {
                         ("pool_name".into(), "USDC-ETH".into()),
                         ("pool_fee".into(), 3000.into()),
                         ("max_slippage".into(), 500.into()),
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec![-100i64, 200, -300].into()),
+                        ("uint_array".into(), vec![100i64, 200, 300].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
                     .into_iter()
                     .collect(),
@@ -5209,6 +5237,37 @@ mod tests {
             for (k, v) in &expected_mainnet.vars {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }
+
+            // Verify array values are properly loaded
+            let bool_array = mainnet.vars.get("bool_array").unwrap();
+            assert!(bool_array.as_array().is_some());
+            assert_eq!(bool_array.as_array().unwrap().len(), 3);
+
+            let int_array = mainnet.vars.get("int_array").unwrap();
+            assert!(int_array.as_array().is_some());
+            assert_eq!(int_array.as_array().unwrap().len(), 3);
+
+            let uint_array = mainnet.vars.get("uint_array").unwrap();
+            assert!(uint_array.as_array().is_some());
+            assert_eq!(uint_array.as_array().unwrap().len(), 3);
+
+            let addr_array = mainnet.vars.get("addr_array").unwrap();
+            assert!(addr_array.as_array().is_some());
+            assert_eq!(addr_array.as_array().unwrap().len(), 2);
+
+            let bytes32_array = mainnet.vars.get("bytes32_array").unwrap();
+            assert!(bytes32_array.as_array().is_some());
+            assert_eq!(bytes32_array.as_array().unwrap().len(), 2);
+
+            let bytes_array = mainnet.vars.get("bytes_array").unwrap();
+            assert!(bytes_array.as_array().is_some());
+            assert_eq!(bytes_array.as_array().unwrap().len(), 3);
+
+            let string_array = mainnet.vars.get("string_array").unwrap();
+            assert!(string_array.as_array().is_some());
+            assert_eq!(string_array.as_array().unwrap().len(), 3);
+            assert_eq!(string_array.as_array().unwrap()[0].as_str().unwrap(), "hello");
+
             Ok(())
         });
     }
