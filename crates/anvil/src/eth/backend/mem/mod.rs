@@ -2729,6 +2729,7 @@ impl Backend {
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
             blob_params: self.blob_params(),
+            cheats: self.cheats().clone(),
         };
 
         let _ = executor.execute();
