@@ -49,8 +49,8 @@ contract IfStatement {
         /* comment9 */
         else if ( /* comment10 */
             anotherLongCondition // comment11
-        ) {
             /* comment12 */
+        ) {
             execute();
         } // comment13
         /* comment14 */

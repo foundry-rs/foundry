@@ -29,7 +29,7 @@ contract Mapping {
         // comment2
     ) mapping6;
     mapping( /* comment3 */
-        uint256 /* comment4 */ key /* comment5 */
-            => /* comment6 */ uint256 /* comment7 */ value /* comment8 */ /* comment9 */
+        uint256 /* comment4 */ key /* comment5 */ /* comment6 */
+            => uint256 /* comment7 */ value /* comment8 */ /* comment9 */
     ) /* comment10 */ mapping7;
 }

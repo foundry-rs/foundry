@@ -27,7 +27,7 @@ contract HelloWorld {
     function example() public {
           /**
      * Does this add a whitespace error?
-    *  
+    *
      * Let's find out.
      */
     }
@@ -43,10 +43,10 @@ contract HelloWorld {
         p = 2 * (w + h);
     }
 
-    /// A long doc line comment that will be wrapped 
+    /// A long doc line comment that will be wrapped
     function docLineOverflow() external {}
 
-    function docLinePostfixOverflow() external {} /// A long doc line comment that will be wrapped 
+    function docLinePostfixOverflow() external {} /// A long doc line comment that will be wrapped
 
     /**
      * @notice Here is my comment
