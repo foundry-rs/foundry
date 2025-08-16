@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -81,6 +81,9 @@ pub use lint::{LinterConfig, Severity as LintSeverity};
 pub mod fs_permissions;
 pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
+
+pub mod fork_config;
+pub use fork_config::{ForkChainConfig, ForkConfigs};
 
 pub mod error;
 use error::ExtractConfigError;
@@ -447,7 +450,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
     /// Fork configuration
-    pub forks: HashMap<String, ForkConfig>,
+    pub forks: ForkConfigs,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -561,18 +564,6 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
-}
-
-/// Fork-scoped config for tests and scripts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ForkConfig {
-    // Optional RPC endpoint for the fork.
-    //
-    // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
-    // for the name of the forked chain.
-    pub rpc_endpoint: Option<RpcEndpoint>,
-    // Any arbitrary key-value pair of variables.
-    pub vars: HashMap<String, toml::Value>,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -698,6 +689,7 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
+        config.forks.resolve_env_vars()?;
 
         Ok(config)
     }
@@ -2643,7 +2635,7 @@ mod tests {
     use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write};
+    use std::{collections::HashMap, fs::File, io::Write};
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -5159,7 +5151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_script_config() {
+    fn test_get_fork_config() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -5167,10 +5159,10 @@ mod tests {
                     [forks]
 
                     [forks.mainnet]
-                    rpc_endpoint = "mainnet-rpc"
+                    rpc_endpoint = "${_MAINNET_RPC}"
 
                     [forks.mainnet.vars]
-                    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                    weth = "${_WETH_ADDRESS}"
                     usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
                     pool_name = "USDC-ETH"
                     pool_fee = 3000
@@ -5181,7 +5173,7 @@ mod tests {
                     int_array = [-100, 200, -300]
                     uint_array = [100, 200, 300]
                     addr_array = [
-                        "0x1111111111111111111111111111111111111111",
+                        "${_ADDR1}",
                         "0x2222222222222222222222222222222222222222"
                     ]
                     bytes32_array = [
@@ -5192,11 +5184,18 @@ mod tests {
                     string_array = ["hello", "world", "test"]
                 "#,
             )?;
+
+            // Now set the environment variables
+            jail.set_env("_MAINNET_RPC", "mainnet-rpc");
+            jail.set_env("_WETH_ADDRESS", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+            jail.set_env("_ADDR1", "0x1111111111111111111111111111111111111111");
+
+            // Reload the config with env vars set
             let config = Config::load().unwrap();
 
-            let expected: HashMap<String, ForkConfig> = vec![(
+            let expected: HashMap<String, ForkChainConfig> = vec![(
                 "mainnet".to_string(),
-                ForkConfig {
+                ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         "mainnet-rpc".to_string(),
                     ))),
@@ -5233,7 +5232,19 @@ mod tests {
 
             let expected_mainnet = expected.get("mainnet").unwrap();
             let mainnet = config.forks.get("mainnet").unwrap();
-            assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
+
+            // Verify that rpc_endpoint is now resolved to the actual value
+            if let Some(rpc) = &mainnet.rpc_endpoint {
+                // The rpc endpoint should be resolved after env var is set
+                let resolved_url = rpc.to_owned().resolve().url().unwrap();
+                assert_eq!(resolved_url, "mainnet-rpc");
+            }
+
+            // Verify that weth is now resolved to the actual address
+            let weth_after = mainnet.vars.get("weth").unwrap();
+            assert_eq!(weth_after.as_str().unwrap(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+            // Check all other vars match expected values
             for (k, v) in &expected_mainnet.vars {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }
@@ -5251,9 +5262,18 @@ mod tests {
             assert!(uint_array.as_array().is_some());
             assert_eq!(uint_array.as_array().unwrap().len(), 3);
 
+            // Verify that the environment variable in the array was resolved
             let addr_array = mainnet.vars.get("addr_array").unwrap();
             assert!(addr_array.as_array().is_some());
             assert_eq!(addr_array.as_array().unwrap().len(), 2);
+            assert_eq!(
+                addr_array.as_array().unwrap()[0].as_str().unwrap(),
+                "0x1111111111111111111111111111111111111111"
+            );
+            assert_eq!(
+                addr_array.as_array().unwrap()[1].as_str().unwrap(),
+                "0x2222222222222222222222222222222222222222"
+            );
 
             let bytes32_array = mainnet.vars.get("bytes32_array").unwrap();
             assert!(bytes32_array.as_array().is_some());
@@ -5267,6 +5287,34 @@ mod tests {
             assert!(string_array.as_array().is_some());
             assert_eq!(string_array.as_array().unwrap().len(), 3);
             assert_eq!(string_array.as_array().unwrap()[0].as_str().unwrap(), "hello");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_config_missing_env_var_fails() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [forks]
+                    [forks.mainnet]
+                    rpc_endpoint = "${MISSING_RPC_VAR}"
+
+                    [forks.mainnet.vars]
+                    some_value = "${MISSING_VAR}"
+                "#,
+            )?;
+            let result = Config::load();
+            assert!(result.is_err());
+            let err_str = result.unwrap_err().to_string();
+
+            // Check that the error message contains the chain name and specific variable name
+            assert!(
+                err_str.contains("[forks.mainnet]")
+                    && (err_str.contains("MISSING_RPC_VAR") || err_str.contains("MISSING_VAR"))
+            );
 
             Ok(())
         });

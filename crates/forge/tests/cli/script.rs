@@ -5,7 +5,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
-use foundry_config::{ForkConfig, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
+use foundry_config::{ForkChainConfig, ForkConfigs, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -2615,12 +2615,12 @@ accessList           []
 chainId              31337
 gasLimit             [..]
 gasPrice             
-input                [..]
-maxFeePerBlobGas     
+        [..]
+maxFeePerBlobmaxFeePerBlobGas     
 maxFeePerGas         
 maxPriorityFeePerGas 
-nonce                0
-to                   
+        0
+to
 type                 0
 value                0
 
@@ -3240,14 +3240,15 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
     prj.insert_ds_test();
 
     prj.update_config(|config| {
-        config.forks = vec![
-            (
-                "mainnet".to_string(),
-                ForkConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        "mainnet-rpc".to_string(),
-                    ))),
-                    vars: vec![
+        config.forks = ForkConfigs(
+            vec![
+                (
+                    "mainnet".to_string(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            "mainnet-rpc".to_string(),
+                        ))),
+                        vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
                         ("bool".into(), true.into()),
@@ -3274,15 +3275,15 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
                         ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
-                    .into_iter()
-                    .collect(),
-                },
-            ),
-            (
-                "optimism".to_string(),
-                ForkConfig {
-                    rpc_endpoint: None,
-                    vars: vec![
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                (
+                    "optimism".to_string(),
+                    ForkChainConfig {
+                        rpc_endpoint: None,
+                        vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
                         ("bool".into(), "false".into()),
@@ -3309,13 +3310,14 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
                         ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
-                    .into_iter()
-                    .collect(),
-                },
-            ),
-        ]
-        .into_iter()
-        .collect();
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
 
         config.rpc_endpoints = RpcEndpoints::new(vec![(
             "optimism",
@@ -3372,38 +3374,38 @@ contract ForkScript is DSTest {
 
     function testArrayCheatcodes() public view {
         (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-        
+
         for (uint256 i = 0; i < chains.length; i++) {
             console.log("Testing arrays for chain:", chains[i]);
-            
+
             // Test bool array
             bool[] memory boolArray = vm.readForkChainBoolArray(chainIds[i], "bool_array");
             assert(boolArray.length == 3);
             console.log("  > bool_array[0]:", boolArray[0]);
-            
+
             // Test int array
             int256[] memory intArray = vm.readForkChainIntArray(chainIds[i], "int_array");
             assert(intArray.length == 3);
             console.log("  > int_array[0]:", intArray[0]);
-            
+
             // Test uint array
             uint256[] memory uintArray = vm.readForkChainUintArray(chainIds[i], "uint_array");
             assert(uintArray.length == 3);
             console.log("  > uint_array[0]:", uintArray[0]);
-            
+
             // Test address array
             address[] memory addrArray = vm.readForkChainAddressArray(chainIds[i], "addr_array");
             assert(addrArray.length == 2);
             console.log("  > addr_array[0]:", addrArray[0]);
-            
+
             // Test bytes32 array
             bytes32[] memory bytes32Array = vm.readForkChainBytes32Array(chainIds[i], "bytes32_array");
             assert(bytes32Array.length == 2);
-            
-            // Test bytes array  
+
+            // Test bytes array
             bytes[] memory bytesArray = vm.readForkChainBytesArray(chainIds[i], "bytes_array");
             assert(bytesArray.length == 3);
-            
+
             // Test string array
             string[] memory stringArray = vm.readForkChainStringArray(chainIds[i], "string_array");
             assert(stringArray.length == 3);
@@ -3463,14 +3465,15 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
     prj.update_config(|config| {
-        config.forks = vec![
-            (
-                "mainnet".to_string(),
-                ForkConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        mainnet_endpoint.clone(),
-                    ))),
-                    vars: vec![
+        config.forks = ForkConfigs(
+            vec![
+                (
+                    "mainnet".to_string(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            mainnet_endpoint.clone(),
+                        ))),
+                        vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
                         ("bool".into(), true.into()),
@@ -3497,15 +3500,15 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
                         ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
-                    .into_iter()
-                    .collect(),
-                },
-            ),
-            (
-                "optimism".to_string(),
-                ForkConfig {
-                    rpc_endpoint: None,
-                    vars: vec![
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                (
+                    "optimism".to_string(),
+                    ForkChainConfig {
+                        rpc_endpoint: None,
+                        vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
                         ("bool".into(), "false".into()),
@@ -3532,13 +3535,14 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
                         ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
-                    .into_iter()
-                    .collect(),
-                },
-            ),
-        ]
-        .into_iter()
-        .collect();
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
 
         config.rpc_endpoints = RpcEndpoints::new(vec![(
             "optimism",
@@ -3594,39 +3598,39 @@ contract ForkTest is DSTest {
     function testArrayCheatcodes() public {
         // Test array cheatcodes without specifying chain (uses active fork)
         console.log("   > Arrays:");
-        
+
         // Test bool array
         bool[] memory boolArray = vm.readForkBoolArray("bool_array");
         assert(boolArray.length == 3);
         assert(boolArray[0] == true);
         console.log("     > bool_array[0]:", boolArray[0]);
-        
+
         // Test int array
         int256[] memory intArray = vm.readForkIntArray("int_array");
         assert(intArray.length == 3);
         assert(intArray[0] == -100);
         console.log("     > int_array[0]:", intArray[0]);
-        
+
         // Test uint array
         uint256[] memory uintArray = vm.readForkUintArray("uint_array");
         assert(uintArray.length == 3);
         assert(uintArray[0] == 100);
         console.log("     > uint_array[0]:", uintArray[0]);
-        
+
         // Test address array
         address[] memory addrArray = vm.readForkAddressArray("addr_array");
         assert(addrArray.length == 2);
         assert(addrArray[0] == 0x1111111111111111111111111111111111111111);
         console.log("     > addr_array[0]:", addrArray[0]);
-        
+
         // Test bytes32 array
         bytes32[] memory bytes32Array = vm.readForkBytes32Array("bytes32_array");
         assert(bytes32Array.length == 2);
-        
+
         // Test bytes array
         bytes[] memory bytesArray = vm.readForkBytesArray("bytes_array");
         assert(bytesArray.length == 3);
-        
+
         // Test string array
         string[] memory stringArray = vm.readForkStringArray("string_array");
         assert(stringArray.length == 3);
@@ -3662,7 +3666,7 @@ Logs:
        > addr_array[0]: 0x1111111111111111111111111111111111111111
        > string_array[0]: hello
 
-[FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
 ...
 "#]]);
 });
@@ -3675,15 +3679,19 @@ forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
     prj.update_config(|config| {
-        config.forks = vec![(
-            "mainnet".to_string(),
-            ForkConfig {
-                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
-                vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
-            },
-        )]
-        .into_iter()
-        .collect();
+        config.forks = ForkConfigs(
+            vec![(
+                "mainnet".to_string(),
+                ForkChainConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        mainnet_endpoint.clone(),
+                    ))),
+                    vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
     });
 
     prj.add_source(
