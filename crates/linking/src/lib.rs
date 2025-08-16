@@ -276,21 +276,20 @@ impl<'a> Linker<'a> {
         let contract = self.link(target, libraries)?;
 
         // Check if bytecode is still unlinked after linking attempt
-        if let Some(bytecode) = &contract.bytecode {
-            if bytecode.object.is_unlinked() {
-                return Err(LinkerError::LinkingFailed {
-                    artifact: target.source.to_string_lossy().into(),
-                });
-            }
+        if let Some(bytecode) = &contract.bytecode
+            && bytecode.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
         }
-        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
-            if let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode {
-                if deployed_bytecode_obj.object.is_unlinked() {
-                    return Err(LinkerError::LinkingFailed {
-                        artifact: target.source.to_string_lossy().into(),
-                    });
-                }
-            }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode
+            && deployed_bytecode_obj.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
         }
         Ok(contract)
     }
