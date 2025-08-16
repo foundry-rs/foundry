@@ -29,6 +29,8 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
+    #[error("failed linking {artifact}")]
+    LinkingFailed { artifact: String },
 }
 
 pub struct Linker<'a> {
@@ -204,7 +206,7 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
+                let bytecode = self.link_fully(id, &libraries).unwrap().bytecode.unwrap();
                 (id, bytecode)
             })
             .collect::<Vec<_>>();
@@ -261,6 +263,33 @@ impl<'a> Linker<'a> {
                     deployed_bytecode.link(&file.to_string_lossy(), name, address);
                 }
             }
+        }
+        Ok(contract)
+    }
+
+    /// Links given artifact with given libraries and validates that all references are linked.
+    fn link_fully(
+        &self,
+        target: &ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<CompactContractBytecodeCow<'a>, LinkerError> {
+        let contract = self.link(target, libraries)?;
+
+        // Check if bytecode is still unlinked after linking attempt
+        if let Some(bytecode) = &contract.bytecode
+            && bytecode.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
+        }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode
+            && deployed_bytecode_obj.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
         }
         Ok(contract)
     }
@@ -684,5 +713,37 @@ mod tests {
                     ),
                 );
         });
+    }
+
+    #[test]
+    fn linking_failure() {
+        let linker = LinkerTest::new("../../testdata/default/linking/simple", true);
+        let linker_instance =
+            Linker::new(linker.project.root(), linker.output.artifact_ids().collect());
+
+        // Create a libraries object with an incorrect library name that won't match any references
+        let mut libraries = Libraries::default();
+        libraries.libs.entry("default/linking/simple/Simple.t.sol".into()).or_default().insert(
+            "NonExistentLib".to_string(),
+            "0x5a443704dd4b594b382c22a083e2bd3090a6fef3".to_string(),
+        );
+
+        // Try to link the LibraryConsumer contract with incorrect library
+        let artifact_id = linker_instance
+            .contracts
+            .keys()
+            .find(|id| id.name == "LibraryConsumer")
+            .expect("LibraryConsumer contract not found");
+
+        // Attempt to link should fail
+        let result = linker_instance.link_fully(artifact_id, &libraries);
+
+        // Verify we get a LinkingFailed error
+        match result {
+            Err(LinkerError::LinkingFailed { artifact }) => {
+                assert_eq!(artifact, "default/linking/simple/Simple.t.sol");
+            }
+            _ => panic!("Expected LinkingFailed error, got: {result:?}"),
+        }
     }
 }
