@@ -206,29 +206,7 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                // For CREATE2 deployment, we need to handle partially linked libraries.
-                let contract = self.contracts.get(id).expect("Missing target artifact").clone();
-                let mut linked_contract = contract;
-
-                // Apply existing library linkings
-                for (file, libs) in &libraries.libs {
-                    for (name, address) in libs {
-                        if let Ok(address) = Address::from_str(address) {
-                            if let Some(bytecode) = linked_contract.bytecode.as_mut() {
-                                bytecode.to_mut().link(&file.to_string_lossy(), name, address);
-                            }
-                            if let Some(deployed_bytecode) = linked_contract
-                                .deployed_bytecode
-                                .as_mut()
-                                .and_then(|b| b.to_mut().bytecode.as_mut())
-                            {
-                                deployed_bytecode.link(&file.to_string_lossy(), name, address);
-                            }
-                        }
-                    }
-                }
-
-                let bytecode = linked_contract.bytecode.expect("Bytecode should exist");
+                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
                 (id, bytecode)
             })
             .collect::<Vec<_>>();
@@ -276,7 +254,6 @@ impl<'a> Linker<'a> {
         for (file, libs) in &libraries.libs {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
-
                 if let Some(bytecode) = contract.bytecode.as_mut() {
                     bytecode.to_mut().link(&file.to_string_lossy(), name, address);
                 }
@@ -288,18 +265,23 @@ impl<'a> Linker<'a> {
             }
         }
 
-        if contract.bytecode.as_deref().is_some_and(|b| b.object.is_unlinked())
-            || contract
-                .deployed_bytecode
-                .as_deref()
-                .and_then(|b| b.bytecode.as_ref())
-                .is_some_and(|b| b.object.is_unlinked())
-        {
-            return Err(LinkerError::LinkingFailed {
-                artifact: target.source.to_string_lossy().into(),
-            });
+        // Check if bytecode is still unlinked after linking attempt
+        if let Some(bytecode) = &contract.bytecode {
+            if bytecode.object.is_unlinked() {
+                return Err(LinkerError::LinkingFailed {
+                    artifact: target.source.to_string_lossy().into(),
+                });
+            }
         }
-
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
+            if let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode {
+                if deployed_bytecode_obj.object.is_unlinked() {
+                    return Err(LinkerError::LinkingFailed {
+                        artifact: target.source.to_string_lossy().into(),
+                    });
+                }
+            }
+        }
         Ok(contract)
     }
 

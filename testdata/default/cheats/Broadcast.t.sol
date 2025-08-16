@@ -11,8 +11,6 @@ library F {
 }
 
 contract Test is DSTest {
-    using F for *;
-
     uint256 public changed = 0;
 
     function t(uint256 a) public returns (uint256) {
