@@ -330,3 +330,115 @@ impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
         self.walk_item(item)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_all_without_parens_defaults_to_all() {
+        let ids: [&str; 1] = ["some_lint"];
+        let item = InlineConfigItem::parse("disable-line", &ids).expect("should parse");
+        match item {
+            InlineConfigItem::DisableLine(lints) => assert_eq!(lints, vec!["all".to_string()]),
+            _ => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn parse_all_with_parens() {
+        let ids: [&str; 0] = [];
+        let item = InlineConfigItem::parse("disable-next-item(all)", &ids).expect("should parse");
+        match item {
+            InlineConfigItem::DisableNextItem(lints) => assert_eq!(lints, vec!["all".to_string()]),
+            _ => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn parse_specific_lints_are_trimmed_and_preserved() {
+        let ids = ["foo", "bar", "baz"]; // available lint ids
+        let item = InlineConfigItem::parse("disable-next-line(foo, bar)", &ids).expect("should parse");
+        match item {
+            InlineConfigItem::DisableNextLine(lints) => {
+                assert_eq!(lints, vec!["foo".to_string(), "bar".to_string()]);
+            }
+            _ => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn parse_invalid_lint_ids_are_reported() {
+        let ids = ["foo"]; // only foo is valid
+        let err = InlineConfigItem::parse("disable-line(foo, qux, nope)", &ids)
+            .expect_err("should error for unknown ids");
+        match err {
+            InvalidInlineConfigItem::LintIds(mut unknown) => {
+                unknown.sort();
+                assert_eq!(unknown, vec!["nope".to_string(), "qux".to_string()]);
+            }
+            _ => panic!("expected LintIds error"),
+        }
+    }
+
+    #[test]
+    fn parse_syntax_errors_unknown_directive() {
+        let ids: [&str; 0] = [];
+        let err = InlineConfigItem::parse("disable-something(all)", &ids)
+            .expect_err("should error for unknown directive");
+        match err {
+            InvalidInlineConfigItem::Syntax(s) => assert_eq!(s, "disable-something"),
+            _ => panic!("expected Syntax error"),
+        }
+    }
+
+    #[test]
+    fn parse_syntax_errors_missing_closing_paren() {
+        let ids: [&str; 0] = [];
+        let err = InlineConfigItem::parse("disable-line(all", &ids)
+            .expect_err("should error for missing closing paren");
+        match err {
+            InvalidInlineConfigItem::Syntax(s) => assert_eq!(s, "disable-line(all"),
+            _ => panic!("expected Syntax error"),
+        }
+    }
+
+    #[test]
+    fn invalid_inline_config_item_display() {
+        let s = InvalidInlineConfigItem::Syntax("oops".into()).to_string();
+        assert_eq!(s, "invalid inline config item: oops");
+
+        let ids = InvalidInlineConfigItem::LintIds(vec!["a".into(), "b".into()]).to_string();
+        assert_eq!(ids, "unknown lint id: 'a', 'b'");
+    }
+
+    #[test]
+    fn disabled_range_includes_strict() {
+        let range = DisabledRange { start: 10, end: 20, loose: false };
+        // inside
+        assert!(range.includes(12..18));
+        // boundaries
+        assert!(range.includes(10..20));
+        assert!(range.includes(10..10));
+        assert!(range.includes(20..20));
+        // starts before
+        assert!(!range.includes(9..12));
+        // ends after
+        assert!(!range.includes(12..21));
+        // both out
+        assert!(!range.includes(0..9));
+    }
+
+    #[test]
+    fn disabled_range_includes_loose() {
+        let range = DisabledRange { start: 10, end: 20, loose: true };
+        // start inside, end can go beyond
+        assert!(range.includes(12..100));
+        // start exactly at end still counts if >= start and <= end
+        assert!(range.includes(20..100));
+        // start before start is not included
+        assert!(!range.includes(0..15));
+        // start after end is not included
+        assert!(!range.includes(21..30));
+    }
+}
