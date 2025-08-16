@@ -6866,6 +6866,26 @@
     },
     {
       "func": {
+        "id": "getStorageAccesses",
+        "description": "Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session",
+        "declaration": "function getStorageAccesses() external view returns (StorageAccess[] memory accesses);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageAccesses()",
+        "selector": "0x2899b1d0",
+        "selectorBytes": [
+          40,
+          153,
+          177,
+          208
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
         "declaration": "function getWallets() external returns (address[] memory wallets);",
