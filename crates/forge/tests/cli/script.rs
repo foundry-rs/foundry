@@ -2615,12 +2615,12 @@ accessList           []
 chainId              31337
 gasLimit             [..]
 gasPrice             
-        [..]
-maxFeePerBlobmaxFeePerBlobGas     
+input                [..]
+maxFeePerBlobGas     
 maxFeePerGas         
 maxPriorityFeePerGas 
-        0
-to
+nonce                0
+to                   
 type                 0
 value                0
 
