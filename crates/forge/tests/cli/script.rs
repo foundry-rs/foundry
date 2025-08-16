@@ -3716,8 +3716,8 @@ contract ForkTest is DSTest {
 
     cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.readForkAddress: failed parsing $owner as type `address`: parser error:
-$owner
+[FAIL: vm.readForkAddress: Failed to parse 'owner' in [fork.mainnet]: failed parsing "0xdeadbeef" as type `address`: parser error:
+0xdeadbeef
 ^
 invalid string length] test_throwsErrorWhen() ([GAS])
 ...
