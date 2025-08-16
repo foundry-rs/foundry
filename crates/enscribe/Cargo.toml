@@ -1,0 +1,25 @@
+[package]
+name = "enscribe"
+description = "setting ens names for smart contracts"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+
+foundry-cli.workspace = true
+foundry-common.workspace = true
+foundry-config.workspace = true
+
+alloy-ens.workspace = true
+alloy-chains = { git = "https://github.com/alloy-rs/chains", rev = "e5812b8e092801dc9f872ef955b1f071f17e85db"}
+alloy-sol-types.workspace = true

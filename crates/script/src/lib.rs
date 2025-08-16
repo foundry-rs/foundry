@@ -210,6 +210,14 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// The ens name to set for the contract.
+    #[arg(long)]
+    pub ens_name: Option<String>,
+
+    /// Whether the contract is ReverseSetter or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_setter: bool,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -245,6 +253,7 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
+        let config = self.load_config()?;
         let state = self.preprocess().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
@@ -333,7 +342,12 @@ impl ScriptArgs {
         }
 
         // Wait for pending txes and broadcast others.
-        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        let mut broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+
+        // check if we have to set a name for the deployed contract
+        if broadcasted.args.ens_name.is_some() {
+            broadcasted.set_ens_name(&config).await?;
+        }
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;
@@ -774,6 +788,18 @@ mod tests {
             "50000",
         ]);
         assert_eq!(args.evm.env.code_size_limit, Some(50000));
+    }
+
+    #[test]
+    fn can_extract_ens_name() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--ens-name",
+            "test.abhi.eth",
+        ]);
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
     }
 
     #[test]
