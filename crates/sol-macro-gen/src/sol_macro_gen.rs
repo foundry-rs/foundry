@@ -60,7 +60,7 @@ impl MultiSolMacroGen {
 
     pub fn populate_expansion(&mut self, bindings_path: &Path) -> Result<()> {
         for instance in &mut self.instances {
-            let path = bindings_path.join(format!("{}.rs", instance.name.to_lowercase()));
+            let path = bindings_path.join(format!("{}.rs", instance.name.to_snake_case()));
             let expansion = fs::read_to_string(path).wrap_err("Failed to read file")?;
 
             let tokens = TokenStream::from_str(&expansion)
