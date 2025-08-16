@@ -24,7 +24,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_linking::{LinkOutput, Linker};
+use foundry_linking::{LinkOutput, Linker, LinkerError};
 use rayon::prelude::*;
 use revm::primitives::hardfork::SpecId;
 use std::{
@@ -513,6 +513,14 @@ impl MultiContractRunnerBuilder {
                 else {
                     continue;
                 };
+
+                // Check if test contract bytecode is still unlinked after linking
+                if linker.is_unlinked(id) {
+                    return Err(LinkerError::LinkingFailed {
+                        artifact: id.source.to_string_lossy().into(),
+                    }
+                    .into());
+                }
 
                 deployable_contracts
                     .insert(id.clone(), TestContract { abi: abi.clone(), bytecode });
