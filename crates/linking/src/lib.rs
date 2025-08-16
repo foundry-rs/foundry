@@ -206,7 +206,29 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
+                // For CREATE2 deployment, we need to handle partially linked libraries.
+                let contract = self.contracts.get(id).expect("Missing target artifact").clone();
+                let mut linked_contract = contract;
+
+                // Apply existing library linkings
+                for (file, libs) in &libraries.libs {
+                    for (name, address) in libs {
+                        if let Ok(address) = Address::from_str(address) {
+                            if let Some(bytecode) = linked_contract.bytecode.as_mut() {
+                                bytecode.to_mut().link(&file.to_string_lossy(), name, address);
+                            }
+                            if let Some(deployed_bytecode) = linked_contract
+                                .deployed_bytecode
+                                .as_mut()
+                                .and_then(|b| b.to_mut().bytecode.as_mut())
+                            {
+                                deployed_bytecode.link(&file.to_string_lossy(), name, address);
+                            }
+                        }
+                    }
+                }
+
+                let bytecode = linked_contract.bytecode.expect("Bytecode should exist");
                 (id, bytecode)
             })
             .collect::<Vec<_>>();
