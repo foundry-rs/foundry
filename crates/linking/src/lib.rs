@@ -206,7 +206,7 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
+                let bytecode = self.link_fully(id, &libraries).unwrap().bytecode.unwrap();
                 (id, bytecode)
             })
             .collect::<Vec<_>>();
@@ -264,6 +264,16 @@ impl<'a> Linker<'a> {
                 }
             }
         }
+        Ok(contract)
+    }
+
+    /// Links given artifact with given libraries and validates that all references are linked.
+    fn link_fully(
+        &self,
+        target: &ArtifactId,
+        libraries: &Libraries,
+    ) -> Result<CompactContractBytecodeCow<'a>, LinkerError> {
+        let contract = self.link(target, libraries)?;
 
         // Check if bytecode is still unlinked after linking attempt
         if let Some(bytecode) = &contract.bytecode {
@@ -727,7 +737,7 @@ mod tests {
             .expect("LibraryConsumer contract not found");
 
         // Attempt to link should fail
-        let result = linker_instance.link(artifact_id, &libraries);
+        let result = linker_instance.link_fully(artifact_id, &libraries);
 
         // Verify we get a LinkingFailed error
         match result {
