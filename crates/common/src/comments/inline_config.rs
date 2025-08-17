@@ -35,26 +35,26 @@ pub enum InlineConfigItem<I> {
 }
 
 impl InlineConfigItem<Vec<String>> {
-    /// Parse an inline config item from a string. Validates lint IDs against available lints.
-    pub fn parse(s: &str, lint_ids: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
+    /// Parse an inline config item from a string. Validates IDs against available IDs.
+    pub fn parse(s: &str, available_ids: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
         let (disable, relevant) = s.split_once('(').unwrap_or((s, ""));
-        let lints = if relevant.is_empty() || relevant == "all)" {
+        let ids = if relevant.is_empty() || relevant == "all)" {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((lint, _)) => lint.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
 
-        // Validate lint IDs
+        // Validate IDs
         let mut invalid_ids = Vec::new();
-        'ids: for id in &lints {
+        'ids: for id in &ids {
             if id == "all" {
                 continue;
             }
-            for lint in lint_ids {
-                if *lint == id {
+            for available_id in available_ids {
+                if *available_id == id {
                     continue 'ids;
                 }
             }
@@ -62,15 +62,15 @@ impl InlineConfigItem<Vec<String>> {
         }
 
         if !invalid_ids.is_empty() {
-            return Err(InvalidInlineConfigItem::LintIds(invalid_ids));
+            return Err(InvalidInlineConfigItem::Ids(invalid_ids));
         }
 
         let res = match disable {
-            "disable-next-item" => Self::DisableNextItem(lints),
-            "disable-line" => Self::DisableLine(lints),
-            "disable-next-line" => Self::DisableNextLine(lints),
-            "disable-start" => Self::DisableStart(lints),
-            "disable-end" => Self::DisableEnd(lints),
+            "disable-next-item" => Self::DisableNextItem(ids),
+            "disable-line" => Self::DisableLine(ids),
+            "disable-next-line" => Self::DisableNextLine(ids),
+            "disable-start" => Self::DisableStart(ids),
+            "disable-end" => Self::DisableEnd(ids),
             s => return Err(InvalidInlineConfigItem::Syntax(s.into())),
         };
 
@@ -95,15 +95,15 @@ impl std::str::FromStr for InlineConfigItem<()> {
 #[derive(Debug)]
 pub enum InvalidInlineConfigItem {
     Syntax(String),
-    LintIds(Vec<String>),
+    Ids(Vec<String>),
 }
 
 impl std::fmt::Display for InvalidInlineConfigItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Syntax(s) => write!(f, "invalid inline config item: {s}"),
-            Self::LintIds(ids) => {
-                write!(f, "unknown lint id: '{}'", ids.join("', '"))
+            Self::Ids(ids) => {
+                write!(f, "unknown id: '{}'", ids.join("', '"))
             }
         }
     }
@@ -453,7 +453,7 @@ mod tests {
         // Invalid lint ID
         assert!(matches!(
             InlineConfigItem::parse("disable-line(unknown)", &lint_ids),
-            Err(InvalidInlineConfigItem::LintIds(_))
+            Err(InvalidInlineConfigItem::Ids(_))
         ));
         
         // Malformed syntax
