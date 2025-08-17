@@ -400,3 +400,66 @@ impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
         self.walk_item(item)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_disabled_range_includes() {
+        // Strict mode - requires full containment
+        let strict = DisabledRange { start: 10, end: 20, loose: false };
+        assert!(strict.includes(10..20));
+        assert!(strict.includes(12..18));
+        assert!(!strict.includes(5..15)); // Partial overlap fails
+        
+        // Loose mode - only checks start position
+        let loose = DisabledRange { start: 10, end: 20, loose: true };
+        assert!(loose.includes(10..25)); // Start in range
+        assert!(!loose.includes(5..15));  // Start before range
+    }
+
+    #[test]
+    fn test_inline_config_item_from_str() {
+        assert!(matches!("disable-next-item".parse::<InlineConfigItem<()>>().unwrap(), InlineConfigItem::DisableNextItem(())));
+        assert!(matches!("disable-line".parse::<InlineConfigItem<()>>().unwrap(), InlineConfigItem::DisableLine(())));
+        assert!(matches!("disable-start".parse::<InlineConfigItem<()>>().unwrap(), InlineConfigItem::DisableStart(())));
+        assert!(matches!("disable-end".parse::<InlineConfigItem<()>>().unwrap(), InlineConfigItem::DisableEnd(())));
+        assert!("invalid".parse::<InlineConfigItem<()>>().is_err());
+    }
+
+    #[test]
+    fn test_inline_config_item_parse_with_lints() {
+        let lint_ids = vec!["lint1", "lint2"];
+        
+        // No lints = "all"
+        match InlineConfigItem::parse("disable-line", &lint_ids).unwrap() {
+            InlineConfigItem::DisableLine(lints) => assert_eq!(lints, vec!["all"]),
+            _ => panic!("Wrong type"),
+        }
+        
+        // Valid single lint
+        match InlineConfigItem::parse("disable-start(lint1)", &lint_ids).unwrap() {
+            InlineConfigItem::DisableStart(lints) => assert_eq!(lints, vec!["lint1"]),
+            _ => panic!("Wrong type"),
+        }
+        
+        // Multiple lints with spaces
+        match InlineConfigItem::parse("disable-end(lint1, lint2)", &lint_ids).unwrap() {
+            InlineConfigItem::DisableEnd(lints) => assert_eq!(lints, vec!["lint1", "lint2"]),
+            _ => panic!("Wrong type"),
+        }
+        
+        // Invalid lint ID
+        assert!(matches!(
+            InlineConfigItem::parse("disable-line(unknown)", &lint_ids),
+            Err(InvalidInlineConfigItem::LintIds(_))
+        ));
+        
+        // Malformed syntax
+        assert!(matches!(
+            InlineConfigItem::parse("disable-line(lint1", &lint_ids),
+            Err(InvalidInlineConfigItem::Syntax(_))
+        ));
+    }
+}
