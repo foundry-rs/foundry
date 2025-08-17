@@ -11,6 +11,7 @@ use foundry_evm_core::opts::EvmOpts;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -63,8 +64,8 @@ pub struct CheatsConfig {
     pub chains: HashMap<String, ChainData>,
     /// Mapping of chain IDs to their aliases
     pub chain_id_to_alias: HashMap<u64, String>,
-    /// Fork configuration
-    pub forks: ForkConfigs,
+    /// Fork configuration wrapped in Arc<RwLock> for thread-safe read/write access
+    pub forks: Arc<RwLock<ForkConfigs>>,
 }
 
 /// Chain data for getChain cheatcodes
@@ -116,7 +117,7 @@ impl CheatsConfig {
             internal_expect_revert: config.allow_internal_expect_revert,
             chains: HashMap::new(),
             chain_id_to_alias: HashMap::new(),
-            forks: config.forks.clone(),
+            forks: Arc::new(RwLock::new(config.forks.clone())),
         }
     }
 
@@ -321,7 +322,7 @@ impl Default for CheatsConfig {
             internal_expect_revert: false,
             chains: HashMap::new(),
             chain_id_to_alias: HashMap::new(),
-            forks: Default::default(),
+            forks: Arc::new(RwLock::new(Default::default())),
         }
     }
 }

@@ -2185,6 +2185,8 @@ interface Vm {
 
     // ======== Forks ========
 
+    // -------- Read chains and URLs --------
+
     /// Returns an array with the name of all the configured fork chains.
     ///
     /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
@@ -2218,6 +2220,18 @@ interface Vm {
     /// the rpc config is specifically informed in the fork config for that specific chain.
     #[cheatcode(group = Forking)]
     function readForkChainRpcUrl(uint256 id) external view returns (string memory);
+
+    // -------- Check Variables --------
+
+    /// Checks if a key exists in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    #[cheatcode(group = Forking)]
+    function checkForkVar(string calldata key) external view returns (bool);
+
+    /// Checks if a key exists in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    #[cheatcode(group = Forking)]
+    function checkForkChainVar(uint256 chain, string calldata key) external view returns (bool);
+
+    // -------- Read Variables --------
 
     /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bool`.
     /// Reverts if the key was not found or the value could not be parsed.
@@ -2358,6 +2372,148 @@ interface Vm {
     /// Reverts if a key was not found or any of the values could not be parsed.
     #[cheatcode(group = Forking)]
     function readForkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);
+
+    // -------- Write Variables --------
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bool value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bool value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bool[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bool[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, int256 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, int256 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, int256[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, int256[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, uint256 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, uint256 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, uint256[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, uint256[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, address value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, address value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, address[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, address[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bytes32 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bytes32 value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bytes32[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bytes32[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, string calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, string calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, string[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, string[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bytes calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bytes calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkVar(string calldata key, bytes[] calldata value) external returns (bool success, bool overwrote);
+
+    /// Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.
+    /// Returns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.
+    #[cheatcode(group = Forking)]
+    function writeForkChainVar(uint256 chain, string calldata key, bytes[] calldata value) external returns (bool success, bool overwrote);
 
     // ======== Scripts ========
     // -------- Broadcasting Transactions --------

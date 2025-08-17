@@ -2625,6 +2625,7 @@ mod tests {
         endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
         fmt::IndentStyle,
+        fork_config::ForkConfigPermission,
     };
     use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -5193,6 +5194,9 @@ mod tests {
             // Reload the config with env vars set
             let config = Config::load().unwrap();
 
+            // By default, it has read-only permissions.
+            assert_eq!(config.forks.access, ForkConfigPermission::Read);
+
             let expected: HashMap<String, ForkChainConfig> = vec![(
                 "mainnet".to_string(),
                 ForkChainConfig {
@@ -5225,9 +5229,10 @@ mod tests {
             )]
             .into_iter()
             .collect();
+
             assert_eq!(
+                config.forks.chain_configs.keys().sorted().collect::<Vec<_>>(),
                 expected.keys().sorted().collect::<Vec<_>>(),
-                config.forks.keys().sorted().collect::<Vec<_>>()
             );
 
             let expected_mainnet = expected.get("mainnet").unwrap();
@@ -5287,6 +5292,24 @@ mod tests {
             assert!(string_array.as_array().is_some());
             assert_eq!(string_array.as_array().unwrap().len(), 3);
             assert_eq!(string_array.as_array().unwrap()[0].as_str().unwrap(), "hello");
+
+            Ok(())
+        });
+
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [forks]
+                    access = true
+                "#,
+            )?;
+
+            // Reload the config with env vars set
+            let config = Config::load().unwrap();
+
+            // Properly parses "read-write" access
+            assert_eq!(config.forks.access, ForkConfigPermission::ReadWrite);
 
             Ok(())
         });

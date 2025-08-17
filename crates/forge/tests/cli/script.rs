@@ -5,7 +5,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
-use foundry_config::{ForkChainConfig, ForkConfigs, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
+use foundry_config::{ForkChainConfig, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -3240,15 +3240,14 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
     prj.insert_ds_test();
 
     prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![
-                (
-                    "mainnet".to_string(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            "mainnet-rpc".to_string(),
-                        ))),
-                        vars: vec![
+        config.forks.chain_configs = vec![
+            (
+                "mainnet".to_string(),
+                ForkChainConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        "mainnet-rpc".to_string(),
+                    ))),
+                    vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
                         ("bool".into(), true.into()),
@@ -3275,15 +3274,15 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
                         ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-                (
-                    "optimism".to_string(),
-                    ForkChainConfig {
-                        rpc_endpoint: None,
-                        vars: vec![
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+            (
+                "optimism".to_string(),
+                ForkChainConfig {
+                    rpc_endpoint: None,
+                    vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
                         ("bool".into(), "false".into()),
@@ -3310,14 +3309,13 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
                         ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
 
         config.rpc_endpoints = RpcEndpoints::new(vec![(
             "optimism",
@@ -3465,15 +3463,14 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
     prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![
-                (
-                    "mainnet".to_string(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            mainnet_endpoint.clone(),
-                        ))),
-                        vars: vec![
+        config.forks.chain_configs = vec![
+            (
+                "mainnet".to_string(),
+                ForkChainConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        mainnet_endpoint.clone(),
+                    ))),
+                    vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
                         ("bool".into(), true.into()),
@@ -3500,15 +3497,15 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
                         ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-                (
-                    "optimism".to_string(),
-                    ForkChainConfig {
-                        rpc_endpoint: None,
-                        vars: vec![
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+            (
+                "optimism".to_string(),
+                ForkChainConfig {
+                    rpc_endpoint: None,
+                    vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
                         ("bool".into(), "false".into()),
@@ -3535,14 +3532,13 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
                         ("string_array".into(), vec!["foo", "bar", "baz"].into()),
                     ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
 
         config.rpc_endpoints = RpcEndpoints::new(vec![(
             "optimism",
@@ -3679,19 +3675,15 @@ forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
     prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![(
-                "mainnet".to_string(),
-                ForkChainConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        mainnet_endpoint.clone(),
-                    ))),
-                    vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-        );
+        config.forks.chain_configs = vec![(
+            "mainnet".to_string(),
+            ForkChainConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
+            },
+        )]
+        .into_iter()
+        .collect();
     });
 
     prj.add_source(
