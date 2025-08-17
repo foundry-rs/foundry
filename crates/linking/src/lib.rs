@@ -267,22 +267,27 @@ impl<'a> Linker<'a> {
         Ok(contract)
     }
 
-    /// Checks if the given artifact has unlinked initial or deployed bytecode.
-    pub fn is_unlinked(&self, target: &ArtifactId) -> bool {
-        let Some(contract) = self.contracts.get(target) else { return false };
+    /// Checks if the given artifact is linkable (has no unlinked bytecode).
+    /// Returns an error if the artifact has unlinked initial or deployed bytecode.
+    pub fn check_linkable(&self, target: &ArtifactId) -> Result<(), LinkerError> {
+        let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
         if let Some(bytecode) = &contract.bytecode
             && bytecode.object.is_unlinked()
         {
-            return true;
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
         }
         if let Some(deployed_bytecode) = &contract.deployed_bytecode
             && let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode
             && deployed_bytecode_obj.object.is_unlinked()
         {
-            return true;
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
         }
-        false
+        Ok(())
     }
 
     pub fn get_linked_artifacts(
@@ -728,7 +733,7 @@ mod tests {
 
         // Verify that the artifact has unlinked bytecode
         assert!(
-            linker_instance.is_unlinked(artifact_id),
+            linker_instance.check_linkable(artifact_id).is_err(),
             "Expected artifact to have unlinked bytecode"
         );
     }
