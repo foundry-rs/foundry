@@ -49,7 +49,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
 ///
 /// To avoid false positives like `fn increment()` or `uint256 counter`,
 /// lowercase strings are treated as mixedCase.
-pub fn is_mixed_case(s: &str, is_fn: bool, allowed_patterns: &Vec<&String>) -> bool {
+pub fn is_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> bool {
     if s.len() <= 1 {
         return true;
     }
@@ -60,13 +60,12 @@ pub fn is_mixed_case(s: &str, is_fn: bool, allowed_patterns: &Vec<&String>) -> b
     }
 
     // Ignore user-defined infixes.
-    for pattern in allowed_patterns.iter() {
-        if let Some(pos) = s.find(*pattern) {
-            if check_lower_mixed_case(&s[..pos])
-                && check_upper_mixed_case_post_pattern(&s[pos + pattern.len()..])
-            {
-                return true;
-            }
+    for pattern in allowed_patterns {
+        if let Some(pos) = s.find(pattern.as_str())
+            && check_lower_mixed_case(&s[..pos])
+            && check_upper_mixed_case_post_pattern(&s[pos + pattern.len()..])
+        {
+            return true;
         }
     }
 
@@ -85,7 +84,7 @@ fn check_upper_mixed_case_post_pattern(s: &str) -> bool {
         return true;
     };
 
-    // Validate the characters preceeding the initial numbers have the correct format.
+    // Validate the characters preceding the initial numbers have the correct format.
     let trimmed = &s[split_idx..];
     if let Some(c) = trimmed.chars().next()
         && !c.is_alphabetic()

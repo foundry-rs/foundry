@@ -26,7 +26,9 @@ pub struct LinterConfig {
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
 
-    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Default's to ["ERC"] to allow common names like `rescueERC20` or `ERC721TokenReceiver`.
     pub mixed_case_exceptions: Vec<String>,
 }
 

@@ -58,7 +58,7 @@ pub struct LintContext<'s> {
 
 pub struct LinterConfig<'s> {
     pub inline: InlineConfig,
-    pub mixed_case_exceptions: &'s Vec<&'s String>,
+    pub mixed_case_exceptions: &'s [String],
 }
 
 impl<'s> LintContext<'s> {

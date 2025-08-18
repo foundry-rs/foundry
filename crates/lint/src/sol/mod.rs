@@ -54,10 +54,10 @@ pub struct SolidityLinter<'a> {
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
-    mixed_case_exceptions: Vec<&'a String>,
+    mixed_case_exceptions: &'a [String],
 }
 
-impl<'a: 'ast, 'ast> SolidityLinter<'a> {
+impl<'a> SolidityLinter<'a> {
     pub fn new(path_config: ProjectPathsConfig) -> Self {
         Self {
             path_config,
@@ -66,7 +66,7 @@ impl<'a: 'ast, 'ast> SolidityLinter<'a> {
             lints_included: None,
             lints_excluded: None,
             with_json_emitter: false,
-            mixed_case_exceptions: Vec::new(),
+            mixed_case_exceptions: &[],
         }
     }
 
@@ -95,13 +95,13 @@ impl<'a: 'ast, 'ast> SolidityLinter<'a> {
         self
     }
 
-    pub fn with_mixed_case_exceptions(mut self, exceptions: Vec<&'a String>) -> Self {
+    pub fn with_mixed_case_exceptions(mut self, exceptions: &'a [String]) -> Self {
         self.mixed_case_exceptions = exceptions;
         self
     }
 
-    fn config(&'a self, inline: InlineConfig) -> LinterConfig<'a> {
-        LinterConfig { inline, mixed_case_exceptions: &self.mixed_case_exceptions }
+    fn config(&self, inline: InlineConfig) -> LinterConfig<'_> {
+        LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
     }
 
     fn include_lint(&self, lint: SolLint) -> bool {
@@ -110,7 +110,7 @@ impl<'a: 'ast, 'ast> SolidityLinter<'a> {
             && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
     }
 
-    fn process_source_ast(
+    fn process_source_ast<'ast>(
         &'ast self,
         sess: &'ast Session,
         ast: &'ast ast::SourceUnit<'ast>,

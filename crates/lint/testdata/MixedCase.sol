@@ -60,9 +60,11 @@ contract MixedCaseTest {
     function statefulFuzzMixedCaseDisabled() public {}
     function statefulFuzzmixedcasedisabled() public {}
 
-    // ERC is an allowed infix (by default)
+    // ERC is, by default, an allowed infix
     function rescueERC6909(address token, address to, uint256 tokenId, uint256 amount) public {}
     function ERC20DoSomething() public {}
+    function ERC20_DoSomething() public {} // invalid because of the underscore
+    //~^NOTE: function names should use mixedCase
 
     // SCREAMING_SNAKE_CASE is allowed for functions that are most likely constant getters
     function MAX_NUMBER() external view returns (uint256) {}
