@@ -19,7 +19,7 @@ interface Vm {
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct Chain { string name; uint256 chainId; string chainAlias; string rpcUrl; }
-    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; uint64 oldNonce; uint64 newNonce; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
@@ -286,6 +286,26 @@ interface Vm {
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function forkAddress(string calldata key) external view returns (address);
+    function forkBool(string calldata key) external view returns (bool);
+    function forkBytes(string calldata key) external view returns (bytes memory);
+    function forkBytes32(string calldata key) external view returns (bytes32);
+    function forkChain() external view returns (string memory);
+    function forkChainAddress(uint256 chain, string calldata key) external view returns (address);
+    function forkChainBool(uint256 chain, string calldata key) external view returns (bool);
+    function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
+    function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
+    function forkChainId() external view returns (uint256);
+    function forkChainIds() external view returns (uint256[] memory);
+    function forkChainInt(uint256 chain, string calldata key) external view returns (int256);
+    function forkChainRpcUrl(uint256 id) external view returns (string memory);
+    function forkChainString(uint256 chain, string calldata key) external view returns (string memory);
+    function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);
+    function forkChains() external view returns (string[] memory);
+    function forkInt(string calldata key) external view returns (int256);
+    function forkRpcUrl() external view returns (string memory);
+    function forkString(string calldata key) external view returns (string memory);
+    function forkUint(string calldata key) external view returns (uint256);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
     function foundryVersionCmp(string calldata version) external view returns (int256);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
@@ -316,6 +336,7 @@ interface Vm {
     function getRecordedLogs() external returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
+    function getStorageAccesses() external view returns (StorageAccess[] memory accesses);
     function getWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
