@@ -26,6 +26,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
 };
 
 // tests all config values that are in use
@@ -1882,9 +1883,10 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
 // <https://github.com/foundry-rs/foundry/issues/6529>
 forgetest_init!(test_fail_fast_config, |prj, cmd| {
     // Skip if we don't have at least 2 CPUs to run both tests in parallel.
-    if num_cpus::get() < 2 {
+    if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
         return;
     }
+
     prj.wipe_contracts();
     prj.update_config(|config| {
         // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
