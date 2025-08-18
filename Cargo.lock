@@ -4333,6 +4333,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "toml 0.9.5",
+ "toml_edit 0.23.3",
  "tracing",
  "walkdir",
 ]

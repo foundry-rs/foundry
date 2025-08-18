@@ -7,7 +7,12 @@ use crate::{
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
 use eyre::OptionExt;
+use foundry_config::{Config, fork_config::ForkConfigPermission};
 use foundry_evm_core::ContextExt;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 // -- CHECK FORK VARIABLES -----------------------------------------------------
 
@@ -489,7 +494,69 @@ fn parse_toml_element(
         .map_err(|e| fmt_err!("Failed to parse '{context}' in [fork.{fork_name}]: {e}"))
 }
 
-/// Generic helper to write value(s) to the in-memory config.
+/// A resolver to determine the correct configuration file to modify for a given fork chain.
+struct ForkConfigResolver<'a> {
+    root: &'a Path,
+    chain_name: &'a str,
+}
+
+impl<'a> ForkConfigResolver<'a> {
+    /// Creates a new resolver for a specific fork chain.
+    fn new(root: &'a Path, chain_name: &'a str) -> Self {
+        Self { root, chain_name }
+    }
+
+    /// Determines the correct config file and returns its path and parsed content.
+    ///
+    /// The logic is as follows:
+    /// 1. Check if the section `[forks.<chain_name>]` exists in `foundry.toml`. If so, it is the
+    ///    target.
+    /// 2. If not, check if `foundry.toml` `extends` a base file and if that base file contains the
+    ///    section. If so, the base file is the target.
+    /// 3. If the section exists in neither, `foundry.toml` is the default target for creation.
+    ///
+    /// Returns `Ok(None)` if the local `foundry.toml` doesn't exist.
+    fn resolve_and_load(&self) -> eyre::Result<Option<(PathBuf, toml_edit::DocumentMut)>> {
+        let local_path = self.root.join(Config::FILE_NAME);
+        if !local_path.exists() {
+            return Ok(None);
+        }
+
+        let local_content = fs::read_to_string(&local_path)?;
+        let mut local_doc: toml_edit::DocumentMut = local_content.parse()?;
+
+        // 1. Local file has precedence. If the section exists here, this is our target.
+        if get_toml_section(&local_doc.into_item(), self.chain_name).is_some() {
+            return Ok(Some((local_path, local_doc)));
+        }
+
+        // 2. If not local, check the base file specified by `extends`.
+        let extends_path_str = local_doc
+            .get("profile")
+            .and_then(|p| p.as_table())
+            .and_then(|profiles| profiles.values().find_map(|p| p.get("extends")?.as_str()));
+
+        if let Some(extends_path_str) = extends_path_str {
+            if let Some(parent) = local_path.parent() {
+                let base_path =
+                    foundry_compilers::utils::canonicalize(parent.join(extends_path_str))?;
+                if base_path.exists() {
+                    let base_content = fs::read_to_string(&base_path)?;
+                    let base_doc: toml_edit::DocumentMut = base_content.parse()?;
+                    // If the section exists in the base, that's our target.
+                    if get_toml_section(&base_doc.into_item(), self.chain_name).is_some() {
+                        return Ok(Some((base_path, base_doc)));
+                    }
+                }
+            }
+        }
+
+        // 3. Default to local file if the section is not found in either place.
+        Ok(Some((local_path, local_doc)))
+    }
+}
+
+/// Generic helper to write value(s) to the in-memory config and disk.
 ///
 /// # Arguments
 /// * `chain`: The chain ID to write the configuration for
@@ -505,23 +572,92 @@ fn write_toml_value(
     value: toml::Value,
     state: &mut crate::Cheatcodes,
 ) -> Result {
+    if matches!(key, "access" | "rpc_endpoint") {
+        bail!("'{key}' cannot be modified with cheatcodes");
+    }
+
+    let overwrote = false;
     let name = get_chain_name(chain)?;
 
-    // Acquire write lock
-    let mut forks =
-        state.config.forks.write().map_err(|_| fmt_err!("Failed to acquire write lock"))?;
+    // Update in-memory config first to calculate `overwrote` for the return value.
+    {
+        state
+            .config
+            .forks
+            .write()
+            .map_err(|_| fmt_err!("Failed to acquire write lock"))?
+            .chain_configs
+            .entry(name.to_string())
+            .and_modify(|v| {
+                overwrote = true;
+                v = value;
+            })
+            .or_insert(value);
+    }
 
-    // Check if fork config exists, create if not
-    let config = forks.chain_configs.entry(name.to_string()).or_default();
+    // The `overwrote` flag is NOT passed down, as the resolver handles all cases correctly.
+    let (success, overworte) = match persist_fork_config_to_file(chain, key, &value, state) {
+        Err(e) => {
+            eprintln!("Warning: Failed to persist fork config to disk: {e}");
+            (false, false)
+        }
+        Ok(()) => (true, overwrote),
+    };
 
-    // Check if key already exists (for overwrote flag)
-    let overwrote = config.vars.contains_key(key);
+    Ok((success, overwrote).abi_encode())
+}
 
-    // Insert the value
-    config.vars.insert(key.to_string(), value);
+/// Orchestrates persisting a fork variable by finding the correct config file.
+fn persist_fork_config_to_file(
+    chain: u64,
+    key: &str,
+    value: &toml::Value,
+    state: &crate::Cheatcodes,
+) -> Result<()> {
+    if !state
+        .config
+        .forks
+        .read()
+        .map_err(|_| eyre::eyre!("Failed to acquire read lock for fork configs"))?
+        .access
+        .can_write()
+    {
+        return Ok(());
+    }
 
-    // Return (success=true, overwrote)
-    Ok((true, overwrote).abi_encode())
+    let chain_name = get_chain_name(chain)?;
+
+    // Use the resolver to determine the correct file to write to.
+    let resolver = ForkConfigResolver::new(&state.config.root, chain_name);
+    if let Some((target_path, mut doc)) = resolver.resolve_and_load()? {
+        // Modify the document.
+        let forks_table = doc
+            .entry("forks")
+            .or_insert(toml_edit::table())
+            .as_table_mut()
+            .ok_or_else(|| eyre::eyre!("Invalid TOML: root 'forks' entry must be a table"))?;
+
+        let chain_table =
+            forks_table.entry(chain_name).or_insert(toml_edit::table()).as_table_mut().ok_or_else(
+                || eyre::eyre!("Invalid TOML: '[forks.{chain_name}]' must be a table"),
+            )?;
+
+        let vars_table =
+            chain_table.entry("vars").or_insert(toml_edit::table()).as_table_mut().ok_or_else(
+                || eyre::eyre!("Invalid TOML: '[forks.{chain_name}.vars]' must be a table"),
+            )?;
+
+        // Insert the value and write back to the file.
+        vars_table[key] = toml_edit::value(value);
+        fs::write(&target_path, doc.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Helper to safely traverse a TOML document to find a specific fork chain's section.
+fn get_toml_section<'a>(doc: &'a toml_edit::Item, chain_name: &str) -> Option<&'a toml_edit::Item> {
+    doc.get("forks")?.get(chain_name)
 }
 
 /// Gets the chain id of the active fork. Panics if no fork is selected.

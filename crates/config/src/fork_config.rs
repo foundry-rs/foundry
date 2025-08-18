@@ -120,8 +120,8 @@ impl ForkConfigPermission {
     /// Returns true if write access is allowed
     pub fn can_write(&self) -> bool {
         match self {
-            Self::ReadWrite => false,
-            Self::Read => true,
+            Self::ReadWrite => true,
+            Self::Read => false,
         }
     }
 }
