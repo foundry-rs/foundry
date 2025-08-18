@@ -240,17 +240,17 @@ alloy-hardforks = { version = "0.2.12", default-features = false }
 alloy-op-hardforks = { version = "0.2.12", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "1.3.0"
+alloy-dyn-abi = "1.3.1"
 alloy-json-abi = "1.3.0"
-alloy-primitives = { version = "1.3.0", features = [
+alloy-primitives = { version = "1.3.1", features = [
     "getrandom",
     "rand",
     "map-fxhash",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "1.3.0"
-alloy-sol-macro-input = "1.3.0"
-alloy-sol-types = "1.3.0"
+alloy-sol-macro-expander = "1.3.1"
+alloy-sol-macro-input = "1.3.1"
+alloy-sol-types = "1.3.1"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
