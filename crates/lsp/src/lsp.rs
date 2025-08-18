@@ -1,5 +1,5 @@
 use crate::{
-    goto,
+    goto, references,
     runner::{ForgeRunner, Runner},
 };
 use foundry_common::version::SHORT_VERSION;
@@ -132,10 +132,10 @@ impl LanguageServer for ForgeLsp {
             capabilities: ServerCapabilities {
                 definition_provider: Some(OneOf::Left(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
+                references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
-                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -460,17 +460,14 @@ impl LanguageServer for ForgeLsp {
         };
 
         // Use goto_references function to find all references
-        let locations = goto::goto_references(&ast_data, &uri, position, &source_bytes);
-        
+        let locations = references::goto_references(&ast_data, &uri, position, &source_bytes);
+
         if locations.is_empty() {
             self.client.log_message(MessageType::INFO, "No references found").await;
             Ok(None)
         } else {
             self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Found {} references", locations.len()),
-                )
+                .log_message(MessageType::INFO, format!("Found {} references", locations.len()))
                 .await;
             Ok(Some(locations))
         }
