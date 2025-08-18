@@ -55,7 +55,6 @@ use revm::{
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
@@ -1815,10 +1814,10 @@ impl Cheatcodes {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
             // Make sure we record the memory changes so that memory expansion is not paused.
-            let memory = *interpreter.control.gas.memory();
-            interpreter.control.gas = *paused_gas;
-            interpreter.control.gas.memory_mut().words_num = memory.words_num;
-            interpreter.control.gas.memory_mut().expansion_cost = memory.expansion_cost;
+            let memory = *interpreter.gas.memory();
+            interpreter.gas = *paused_gas;
+            interpreter.gas.memory_mut().words_num = memory.words_num;
+            interpreter.gas.memory_mut().expansion_cost = memory.expansion_cost;
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.gas);
@@ -1859,7 +1858,7 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
+        interpreter.gas = Gas::new(interpreter.gas.limit());
         self.gas_metering.reset = false;
     }
 

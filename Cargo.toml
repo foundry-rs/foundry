@@ -408,7 +408,7 @@ idna_adapter = "=1.1.0"
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "e09cb89" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "bae7340" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "50683eb" }
 
 ## solar
 # solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }

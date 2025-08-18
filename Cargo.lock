@@ -4786,7 +4786,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.16.0"
-source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=bae7340#bae73407a6a220c890b747e6def862863ecee642"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=50683eb#50683ebc66e06a6ea31a89223f4082f7a4b2166a"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
