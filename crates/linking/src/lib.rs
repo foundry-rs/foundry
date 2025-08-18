@@ -269,9 +269,11 @@ impl<'a> Linker<'a> {
 
     /// Checks if the given artifact is linkable (has no unlinked bytecode).
     /// Returns an error if the artifact has unlinked initial or deployed bytecode.
-    pub fn check_linkable(&self, target: &ArtifactId) -> Result<(), LinkerError> {
-        let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
-
+    pub fn check_linkable(
+        &self,
+        contract: &CompactContractBytecodeCow<'a>,
+        target: &ArtifactId,
+    ) -> Result<(), LinkerError> {
         if let Some(bytecode) = &contract.bytecode
             && bytecode.object.is_unlinked()
         {
@@ -731,9 +733,11 @@ mod tests {
             .find(|id| id.name == "LibraryConsumer")
             .expect("LibraryConsumer contract not found");
 
+        let contract = linker_instance.contracts.get(artifact_id).unwrap();
+
         // Verify that the artifact has unlinked bytecode
         assert!(
-            linker_instance.check_linkable(artifact_id).is_err(),
+            linker_instance.check_linkable(contract, artifact_id).is_err(),
             "Expected artifact to have unlinked bytecode"
         );
     }
