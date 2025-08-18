@@ -4038,6 +4038,7 @@ dependencies = [
  "inferno",
  "itertools 0.14.0",
  "mockall",
+ "num_cpus",
  "opener",
  "parking_lot",
  "paste",
