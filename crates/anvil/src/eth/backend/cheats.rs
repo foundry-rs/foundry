@@ -1,10 +1,12 @@
 //! Support for "cheat codes" / bypass functions
 
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_evm::precompiles::{Precompile, PrecompileInput};
 use alloy_primitives::{
-    Address, Bytes,
+    Address, Bytes, U256,
     map::{AddressHashSet, foldhash::HashMap},
 };
+use alloy_rpc_types::Authorization;
 use parking_lot::RwLock;
 use revm::precompile::{
     PrecompileError, PrecompileOutput, PrecompileResult, secp256k1::ec_recover_run,
@@ -83,6 +85,38 @@ impl CheatsManager {
     /// Returns true if any ecrecover overrides have been registered.
     pub fn has_recover_overrides(&self) -> bool {
         !self.state.read().signature_overrides.is_empty()
+    }
+
+    /// Creates authorization entries for impersonated accounts with signature overrides.
+    /// This allows impersonated accounts to be used in EIP-7702 transactions.
+    pub fn create_impersonated_authorizations(
+        &self,
+        authorizations: &[SignedAuthorization],
+        chain_id: u64,
+    ) -> Vec<SignedAuthorization> {
+        let mut authorization_list = authorizations.to_vec();
+        for addr in self.impersonated_accounts() {
+            let auth = Authorization { chain_id: U256::from(chain_id), address: addr, nonce: 0 };
+
+            let signed_auth = SignedAuthorization::new_unchecked(
+                auth,
+                0,             // y_parity
+                U256::from(1), // r
+                U256::from(1), // s
+            );
+
+            let mut sig_bytes = [0u8; 65];
+            let r_bytes = signed_auth.r().to_be_bytes::<32>();
+            let s_bytes = signed_auth.s().to_be_bytes::<32>();
+            sig_bytes[..32].copy_from_slice(&r_bytes);
+            sig_bytes[32..64].copy_from_slice(&s_bytes);
+            sig_bytes[64] = signed_auth.y_parity();
+            let sig = Bytes::copy_from_slice(&sig_bytes);
+
+            self.add_recover_override(sig, addr);
+            authorization_list.push(signed_auth);
+        }
+        authorization_list
     }
 }
 

@@ -268,6 +268,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
 
+        if let TypedTransaction::EIP7702(tx_7702) = &tx.transaction.transaction {
+            let authorization_list = self.cheats.create_impersonated_authorizations(
+                &tx_7702.tx().authorization_list,
+                self.cfg_env.chain_id,
+            );
+            tx_env.base.set_signed_authorization(authorization_list);
+        }
+
         if self.optimism {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
