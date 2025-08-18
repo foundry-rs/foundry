@@ -18,7 +18,7 @@ use foundry_evm::{
     Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
+    executors::{Executor, ExecutorBuilder, FailFast},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -296,6 +296,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: FailFast,
 }
 
 impl TestRunnerConfig {
@@ -404,6 +406,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -419,6 +423,7 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             odyssey: Default::default(),
+            fail_fast: false,
         }
     }
 
@@ -454,6 +459,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+        self.fail_fast = fail_fast;
         self
     }
 
@@ -538,15 +548,14 @@ impl MultiContractRunnerBuilder {
                 env,
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
-
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 odyssey: self.odyssey,
-
                 config: self.config,
+                fail_fast: FailFast::new(self.fail_fast),
             },
         })
     }
