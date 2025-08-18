@@ -112,12 +112,8 @@ impl BuildArgs {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
-        if !config.lint.lint_on_build {
-            return Ok(output);
-        }
-
-        // Only run the `SolidityLinter` if there are no compilation errors
-        if !output.output().errors.iter().any(|e| e.is_error()) {
+        // Only run the `SolidityLinter` if lint on build and no compilation errors.
+        if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
             self.lint(&project, &config, self.paths.as_deref())
                 .map_err(|err| eyre!("Lint failed: {err}"))?;
         }
