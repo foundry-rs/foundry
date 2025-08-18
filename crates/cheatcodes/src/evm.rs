@@ -177,7 +177,7 @@ struct NonceDiff {
 struct AccountStateDiffs {
     /// Address label, if any set.
     label: Option<String>,
-    /// Contract name from artifact, if found.
+    /// Contract identifier from artifact. e.g "src/Counter.sol:Counter"
     contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
@@ -927,6 +927,20 @@ impl Cheatcode for getStateDiffJsonCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let mut storage_accesses = Vec::new();
+
+        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
+            for account_accesses in recorded_diffs.iter().flatten() {
+                storage_accesses.extend(account_accesses.storageAccesses.clone());
+            }
+        }
+
+        Ok(storage_accesses.abi_encode())
     }
 }
 
