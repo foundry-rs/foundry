@@ -18,7 +18,7 @@ use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
     executors::{
-        CallResult, EvmError, Executor, FailFast, ITest, RawCallResult,
+        CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
             InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
@@ -279,7 +279,7 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
-    pub fn run_tests(mut self, filter: &dyn TestFilter, fail_fast: &FailFast) -> SuiteResult {
+    pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
@@ -401,6 +401,8 @@ impl<'a> ContractRunner<'a> {
             return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings);
         }
 
+        let fail_fast = &self.tcfg.fail_fast;
+
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -434,7 +436,6 @@ impl<'a> ContractRunner<'a> {
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
-                    fail_fast,
                 );
                 res.duration = start.elapsed();
 
@@ -512,7 +513,6 @@ impl<'a> FunctionRunner<'a> {
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
-        fail_fast: &FailFast,
     ) -> TestResult {
         if let Err(e) = self.apply_function_inline_config(func) {
             self.result.single_fail(Some(e.to_string()));
@@ -521,8 +521,8 @@ impl<'a> FunctionRunner<'a> {
 
         match kind {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
-            TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func, fail_fast),
-            TestFunctionKind::TableTest => self.run_table_test(func, fail_fast),
+            TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
+            TestFunctionKind::TableTest => self.run_table_test(func),
             TestFunctionKind::InvariantTest => {
                 let test_bytecode = &self.cr.contract.bytecode;
                 self.run_invariant_test(
@@ -530,7 +530,6 @@ impl<'a> FunctionRunner<'a> {
                     call_after_invariant,
                     identified_contracts.unwrap(),
                     test_bytecode,
-                    fail_fast,
                 )
             }
             _ => unreachable!(),
@@ -586,7 +585,7 @@ impl<'a> FunctionRunner<'a> {
     /// - `uint256[] public fixtureAmount = [2, 5]`
     /// - `bool[] public fixtureSwap = [true, false]` The `table_test` is then called with the pair
     ///   of args `(2, true)` and `(5, false)`.
-    fn run_table_test(mut self, func: &Function, fail_fast: &FailFast) -> TestResult {
+    fn run_table_test(mut self, func: &Function) -> TestResult {
         // Prepare unit test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -642,7 +641,7 @@ impl<'a> FunctionRunner<'a> {
         );
 
         for i in 0..fixtures_len {
-            if fail_fast.should_stop() {
+            if self.tcfg.fail_fast.should_stop() {
                 return self.result;
             }
 
@@ -703,7 +702,6 @@ impl<'a> FunctionRunner<'a> {
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
         test_bytecode: &Bytes,
-        fail_fast: &FailFast,
     ) -> TestResult {
         // First, run the test normally to see if it needs to be skipped.
         if let Err(EvmError::Skip(reason)) = self.executor.call(
@@ -818,7 +816,7 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             progress.as_ref(),
-            fail_fast,
+            &self.tcfg.fail_fast,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -929,7 +927,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the fuzz test will use the modified state).
     /// State modifications of before test txes and fuzz test are discarded after test ends,
     /// similar to `eth_call`.
-    fn run_fuzz_test(mut self, func: &Function, fail_fast: &FailFast) -> TestResult {
+    fn run_fuzz_test(mut self, func: &Function) -> TestResult {
         // Prepare fuzz test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -969,7 +967,7 @@ impl<'a> FunctionRunner<'a> {
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
-            fail_fast,
+            &self.tcfg.fail_fast,
         ) {
             Ok(x) => x,
             Err(e) => {

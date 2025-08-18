@@ -153,7 +153,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false, false)?;
+        self.test(filter, tx, false)?;
         Ok(rx.into_iter())
     }
 
@@ -168,7 +168,6 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
-        fail_fast: bool,
     ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
@@ -186,8 +185,6 @@ impl MultiContractRunner {
             find_time,
         );
 
-        let fail_fast = FailFast::new(fail_fast);
-
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
             // Collect test suite results to stream at the end of test run.
@@ -204,7 +201,6 @@ impl MultiContractRunner {
                         filter,
                         &tokio_handle,
                         Some(&tests_progress),
-                        &fail_fast,
                     );
 
                     tests_progress
@@ -224,8 +220,7 @@ impl MultiContractRunner {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result =
-                    self.run_test_suite(id, contract, &db, filter, &tokio_handle, None, &fail_fast);
+                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -233,7 +228,6 @@ impl MultiContractRunner {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_test_suite(
         &self,
         artifact_id: &ArtifactId,
@@ -242,7 +236,6 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
-        fail_fast: &FailFast,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -266,7 +259,7 @@ impl MultiContractRunner {
             span,
             self,
         );
-        let r = runner.run_tests(filter, fail_fast);
+        let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
@@ -303,6 +296,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: FailFast,
 }
 
 impl TestRunnerConfig {
@@ -411,6 +406,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -426,6 +423,7 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             odyssey: Default::default(),
+            fail_fast: false,
         }
     }
 
@@ -461,6 +459,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+        self.fail_fast = fail_fast;
         self
     }
 
@@ -545,15 +548,14 @@ impl MultiContractRunnerBuilder {
                 env,
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
-
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 odyssey: self.odyssey,
-
                 config: self.config,
+                fail_fast: FailFast::new(self.fail_fast),
             },
         })
     }

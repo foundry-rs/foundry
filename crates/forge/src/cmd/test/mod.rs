@@ -355,6 +355,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
@@ -509,10 +510,9 @@ impl TestArgs {
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;
-        let fail_fast = self.fail_fast;
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            move || runner.test(&filter, tx, show_progress, fail_fast)
+            move || runner.test(&filter, tx, show_progress)
         });
 
         // Set up trace identifiers.

@@ -1115,6 +1115,7 @@ impl FuzzTestTimer {
 }
 
 /// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
+#[derive(Clone)]
 pub struct FailFast {
     /// Shared atomic flag set to `true` when a failure occurs.
     /// None if fail-fast is disabled.
