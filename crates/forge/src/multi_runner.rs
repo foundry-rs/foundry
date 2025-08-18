@@ -506,18 +506,20 @@ impl MultiContractRunnerBuilder {
             linker.contracts.keys(),
         )?;
 
-        let linked_contracts = linker.get_linked_artifacts(&libraries)?;
+        let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
-            let Some(abi) = &contract.abi else { continue };
+            let Some(abi) = contract.abi.as_ref() else { continue };
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| func.name.is_any_test())
             {
+                linker.ensure_linked(contract, id)?;
+
                 let Some(bytecode) =
                     contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
                 else {
@@ -525,7 +527,7 @@ impl MultiContractRunnerBuilder {
                 };
 
                 deployable_contracts
-                    .insert(id.clone(), TestContract { abi: abi.clone(), bytecode });
+                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
             }
         }
 
