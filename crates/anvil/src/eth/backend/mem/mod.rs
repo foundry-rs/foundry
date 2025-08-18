@@ -7,7 +7,7 @@ use crate::{
     config::PruneStateHistoryConfig,
     eth::{
         backend::{
-            cheats::CheatsManager,
+            cheats::{CheatEcrecover, CheatsManager},
             db::{Db, MaybeFullDatabase, SerializableState},
             env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
@@ -45,7 +45,7 @@ use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
-    precompiles::PrecompilesMap,
+    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -98,7 +98,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, TracingInspectorConfig},
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_evm_core::either_evm::EitherEvm;
+use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -118,7 +118,6 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -247,6 +246,8 @@ pub struct Backend {
     // === wallet === //
     capabilities: Arc<RwLock<WalletCapabilities>>,
     executor_wallet: Arc<RwLock<Option<EthereumWallet>>>,
+    /// Disable pool balance checks
+    disable_pool_balance_checks: bool,
 }
 
 impl Backend {
@@ -310,9 +311,9 @@ impl Backend {
             states = states.disk_path(cache_path);
         }
 
-        let (slots_in_an_epoch, precompile_factory) = {
+        let (slots_in_an_epoch, precompile_factory, disable_pool_balance_checks) = {
             let cfg = node_config.read().await;
-            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
+            (cfg.slots_in_an_epoch, cfg.precompile_factory.clone(), cfg.disable_pool_balance_checks)
         };
 
         let (capabilities, executor_wallet) = if odyssey {
@@ -377,6 +378,7 @@ impl Backend {
             mining: Arc::new(tokio::sync::Mutex::new(())),
             capabilities: Arc::new(RwLock::new(capabilities)),
             executor_wallet: Arc::new(RwLock::new(executor_wallet)),
+            disable_pool_balance_checks,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -1179,6 +1181,14 @@ impl Backend {
             inject_precompiles(&mut evm, factory.precompiles());
         }
 
+        let cheats = Arc::new(self.cheats.clone());
+        if cheats.has_recover_overrides() {
+            let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
+            evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
+                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+            });
+        }
+
         evm
     }
 
@@ -1267,6 +1277,7 @@ impl Backend {
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
             blob_params: self.blob_params(),
+            cheats: self.cheats().clone(),
         };
 
         // create a new pending block
@@ -1354,6 +1365,7 @@ impl Backend {
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
                     blob_params: self.blob_params(),
+                    cheats: self.cheats().clone(),
                 };
                 let executed_tx = executor.execute();
 
@@ -1693,11 +1705,13 @@ impl Backend {
                         env.evm_env.block_env.basefee = 0;
                     }
 
+                    let mut inspector = self.build_inspector();
+
                     // transact
                     let ResultAndState { result, state } = if trace_transfers {
                         // prepare inspector to capture transfer inside the evm so they are
                         // recorded and included in logs
-                        let mut inspector = TransferInspector::new(false).with_logs(true);
+                        inspector = inspector.with_transfers();
                         let mut evm= self.new_evm_with_inspector_ref(
                             &cache_db as &dyn DatabaseRef,
                             &env,
@@ -1707,7 +1721,6 @@ impl Backend {
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     } else {
-                        let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
                             &cache_db as &dyn DatabaseRef,
                             &env,
@@ -1717,6 +1730,11 @@ impl Backend {
                         evm.transact(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
+
+                    inspector.print_logs();
+                    if self.print_traces {
+                        inspector.into_print_traces(self.call_trace_decoder.clone());
+                    }
 
                     // commit the transaction
                     cache_db.commit(state);
@@ -2711,6 +2729,7 @@ impl Backend {
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
             blob_params: self.blob_params(),
+            cheats: self.cheats().clone(),
         };
 
         let _ = executor.execute();
@@ -3129,6 +3148,16 @@ impl Backend {
         Ok(None)
     }
 
+    /// Overrides the given signature to impersonate the specified address during ecrecover.
+    pub async fn impersonate_signature(
+        &self,
+        signature: Bytes,
+        address: Address,
+    ) -> Result<(), BlockchainError> {
+        self.cheats.add_recover_override(signature, address);
+        Ok(())
+    }
+
     /// Prove an account's existence or nonexistence in the state trie.
     ///
     /// Returns a merkle proof of the account's trie node, `account_key` == keccak(address)
@@ -3336,22 +3365,7 @@ impl TransactionValidator for Backend {
             }
         }
 
-        if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
-            warn!(target: "backend", "[{:?}] gas too low", tx.hash());
-            return Err(InvalidTransactionError::GasTooLow);
-        }
-
-        // Check gas limit, iff block gas limit is set.
-        if !env.evm_env.cfg_env.disable_block_gas_limit
-            && tx.gas_limit() > env.evm_env.block_env.gas_limit
-        {
-            warn!(target: "backend", "[{:?}] gas too high", tx.hash());
-            return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
-                detail: String::from("tx.gas_limit > env.block.gas_limit"),
-            }));
-        }
-
-        // check nonce
+        // Nonce validation
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce = tx.nonce();
@@ -3360,39 +3374,15 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-            if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
-                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
-                return Err(InvalidTransactionError::FeeCapTooLow);
-            }
-
-            if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
-                (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
-                && max_priority_fee_per_gas > max_fee_per_gas
-            {
-                warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
-                return Err(InvalidTransactionError::TipAboveFeeCap);
-            }
-        }
-
-        // EIP-4844 Cancun hard fork validation steps
+        // EIP-4844 structural validation
         if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
-            // Light checks first: see if the blob fee cap is too low.
-            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
-                && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
-                && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
-            {
-                warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                return Err(InvalidTransactionError::BlobFeeCapTooLow);
-            }
-
             // Heavy (blob validation) checks
-            let tx = match &tx.transaction {
+            let blob_tx = match &tx.transaction {
                 TypedTransaction::EIP4844(tx) => tx.tx(),
                 _ => unreachable!(),
             };
 
-            let blob_count = tx.tx().blob_versioned_hashes.len();
+            let blob_count = blob_tx.tx().blob_versioned_hashes.len();
 
             // Ensure there are blob hashes.
             if blob_count == 0 {
@@ -3407,40 +3397,85 @@ impl TransactionValidator for Backend {
 
             // Check for any blob validation errors if not impersonating.
             if !self.skip_blob_validation(Some(*pending.sender()))
-                && let Err(err) = tx.validate(EnvKzgSettings::default().get())
+                && let Err(err) = blob_tx.validate(EnvKzgSettings::default().get())
             {
                 return Err(InvalidTransactionError::BlobTransactionValidationError(err));
             }
         }
 
-        let max_cost = tx.max_cost();
-        let value = tx.value();
+        // Balance and fee related checks
+        if !self.disable_pool_balance_checks {
+            // Gas limit validation
+            if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
+                warn!(target: "backend", "[{:?}] gas too low", tx.hash());
+                return Err(InvalidTransactionError::GasTooLow);
+            }
 
-        match &tx.transaction {
-            TypedTransaction::Deposit(deposit_tx) => {
-                // Deposit transactions
-                // https://specs.optimism.io/protocol/deposits.html#execution
-                // 1. no gas cost check required since already have prepaid gas from L1
-                // 2. increment account balance by deposited amount before checking for sufficient
-                //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + U256::from(deposit_tx.mint) {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
-                    return Err(InvalidTransactionError::InsufficientFunds);
+            // Check gas limit against block gas limit, if block gas limit is set.
+            if !env.evm_env.cfg_env.disable_block_gas_limit
+                && tx.gas_limit() > env.evm_env.block_env.gas_limit
+            {
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
+                return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("tx.gas_limit > env.block.gas_limit"),
+                }));
+            }
+
+            // EIP-1559 fee validation (London hard fork and later)
+            if env.evm_env.cfg_env.spec >= SpecId::LONDON {
+                if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
+                    return Err(InvalidTransactionError::FeeCapTooLow);
+                }
+
+                if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
+                    (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                    && max_priority_fee_per_gas > max_fee_per_gas
+                {
+                    warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
+                    return Err(InvalidTransactionError::TipAboveFeeCap);
                 }
             }
-            _ => {
-                // check sufficient funds: `gas * price + value`
-                let req_funds = max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
-                    warn!(target: "backend", "[{:?}] cost too high", tx.hash());
-                    InvalidTransactionError::InsufficientFunds
-                })?;
-                if account.balance < U256::from(req_funds) {
-                    warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-                    return Err(InvalidTransactionError::InsufficientFunds);
+
+            // EIP-4844 blob fee validation
+            if env.evm_env.cfg_env.spec >= SpecId::CANCUN
+                && tx.transaction.is_eip4844()
+                && let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
+                && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
+            {
+                warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow);
+            }
+
+            let max_cost = tx.max_cost();
+            let value = tx.value();
+            match &tx.transaction {
+                TypedTransaction::Deposit(deposit_tx) => {
+                    // Deposit transactions
+                    // https://specs.optimism.io/protocol/deposits.html#execution
+                    // 1. no gas cost check required since already have prepaid gas from L1
+                    // 2. increment account balance by deposited amount before checking for
+                    //    sufficient funds `tx.value <= existing account value + deposited value`
+                    if value > account.balance + U256::from(deposit_tx.mint) {
+                        warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
+                        return Err(InvalidTransactionError::InsufficientFunds);
+                    }
+                }
+                _ => {
+                    // check sufficient funds: `gas * price + value`
+                    let req_funds =
+                        max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
+                            warn!(target: "backend", "[{:?}] cost too high", tx.hash());
+                            InvalidTransactionError::InsufficientFunds
+                        })?;
+                    if account.balance < U256::from(req_funds) {
+                        warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                        return Err(InvalidTransactionError::InsufficientFunds);
+                    }
                 }
             }
         }
-
         Ok(())
     }
 

@@ -527,12 +527,25 @@ impl Cheatcode for ffiCall {
         let Self { commandInput: input } = self;
 
         let output = ffi(state, input)?;
-        // TODO: check exit code?
+
+        // Check the exit code of the command.
+        if output.exitCode != 0 {
+            // If the command failed, return an error with the exit code and stderr.
+            return Err(fmt_err!(
+                "ffi command {:?} exited with code {}. stderr: {}",
+                input,
+                output.exitCode,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // If the command succeeded but still wrote to stderr, log it as a warning.
         if !output.stderr.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            error!(target: "cheatcodes", ?input, ?stderr, "non-empty stderr");
+            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
         }
-        // we already hex-decoded the stdout in `ffi`
+
+        // We already hex-decoded the stdout in the `ffi` helper function.
         Ok(output.stdout.abi_encode())
     }
 }
@@ -882,6 +895,29 @@ mod tests {
         let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
         assert_eq!(output.stdout, Bytes::from(msg.as_bytes()));
+    }
+
+    #[test]
+    fn test_ffi_fails_on_error_code() {
+        let mut cheats = cheats();
+
+        // Use a command that is guaranteed to fail with a non-zero exit code on any platform.
+        #[cfg(unix)]
+        let args = vec!["false".to_string()];
+        #[cfg(windows)]
+        let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
+
+        let result = ffiCall { commandInput: args }.apply(&mut cheats);
+
+        // Assert that the cheatcode returned an error.
+        assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");
+
+        // Assert that the error message contains the expected information.
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exited with code 1"),
+            "Error message did not contain exit code: {err_msg}"
+        );
     }
 
     #[test]
