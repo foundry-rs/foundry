@@ -408,7 +408,6 @@ pub struct AnvilEvmArgs {
         long,
         short,
         visible_alias = "rpc-url",
-        env = "ETH_RPC_URL",
         value_name = "URL",
         help_heading = "Fork config"
     )]
