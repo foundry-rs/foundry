@@ -205,7 +205,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.20.0", default-features = false }
 foundry-compilers = { version = "0.18.2", default-features = false }
-foundry-fork-db = "0.16"
+foundry-fork-db = "0.17"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.5", default-features = false }
 solar-parse = { version = "=0.1.5", default-features = false }
@@ -262,13 +262,13 @@ op-alloy-rpc-types = "0.18.13"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "27.1.0", default-features = false }
-revm-inspectors = { version = "0.27.1", features = ["serde"] }
-op-revm = { version = "8.1.0", default-features = false }
+revm = { version = "28.0.0", default-features = false }
+revm-inspectors = { version = "0.28.0", features = ["serde"] }
+op-revm = { version = "9.0.1", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.16.0"
-alloy-op-evm = "0.16.0"
+alloy-evm = "0.18.3"
+alloy-op-evm = "0.18.3"
 
 ## cli
 anstream = "0.6"
@@ -401,14 +401,14 @@ idna_adapter = "=1.1.0"
 # alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7762adc" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
+# revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
+# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "956bc98" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "e09cb89" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "4ed9afb" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "50683eb" }
 
 ## solar
 # solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
