@@ -59,4 +59,15 @@ contract MixedCaseTest {
     function statefulFuzz_mixedcase_disabled() public {}
     function statefulFuzzMixedCaseDisabled() public {}
     function statefulFuzzmixedcasedisabled() public {}
+
+    // ERC is an allowed infix (by default)
+    function rescueERC6909(address token, address to, uint256 tokenId, uint256 amount) public {}
+    function ERC20DoSomething() public {}
+
+    // SCREAMING_SNAKE_CASE is allowed for functions that are most likely constant getters
+    function MAX_NUMBER() external view returns (uint256) {}
+    function HAS_PARAMS(address addr) external view returns (uint256) {} //~NOTE: function names should use mixedCase
+    function HAS_NO_RETURN() external view {} //~NOTE: function names should use mixedCase
+    function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {} //~NOTE: function names should use mixedCase
+    function NOT_ELEMENTARY_RETURN() external view returns (uint256[]) {} //~NOTE: function names should use mixedCase
 }
