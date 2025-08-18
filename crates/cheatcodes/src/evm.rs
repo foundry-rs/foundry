@@ -8,11 +8,11 @@ use crate::{
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
+use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -117,17 +117,44 @@ struct SlotStateDiff {
 #[derive(Serialize, Debug)]
 struct SlotInfo {
     label: String,
-    #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
-    dyn_sol_type: DynSolType,
+    #[serde(rename = "type", serialize_with = "serialize_slot_type")]
+    slot_type: SlotType,
     offset: i64,
     slot: String,
+    /// For struct members, contains nested SlotInfo for each member
+    #[serde(skip_serializing_if = "Option::is_none")]
+    members: Option<Vec<SlotInfo>>,
+    /// Decoded values (if available) - used for struct members
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decoded: Option<DecodedSlotValues>,
 }
 
-fn serialize_dyn_sol_type<S>(dyn_type: &DynSolType, serializer: S) -> Result<S::Ok, S::Error>
+/// Wrapper type that holds both the original type label and the DynSolType
+#[derive(Debug)]
+struct SlotType {
+    /// Original type label from storage layout (e.g., "struct DiffTest.TestStruct")
+    label: String,
+    /// Parsed dynamic type for decoding
+    dyn_sol_type: DynSolType,
+}
+
+fn serialize_slot_type<S>(slot_type: &SlotType, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&dyn_type.to_string())
+    // For CustomStruct, format as "struct Name", otherwise use the label
+    let type_str = match &slot_type.dyn_sol_type {
+        DynSolType::CustomStruct { name, .. } => {
+            // If the label already has "struct " prefix, use it as-is
+            if slot_type.label.starts_with("struct ") {
+                slot_type.label.clone()
+            } else {
+                format!("struct {}", name)
+            }
+        }
+        _ => slot_type.label.clone(),
+    };
+    serializer.serialize_str(&type_str)
 }
 
 #[derive(Debug)]
@@ -223,7 +250,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {} [decoded: {} → {}]",
                             slot_info.label,
-                            slot_info.dyn_sol_type,
+                            slot_info.slot_type.dyn_sol_type,
                             slot_changes.previous_value,
                             slot_changes.new_value,
                             format_dyn_sol_value_raw(&decoded.previous_value),
@@ -236,7 +263,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.dyn_sol_type,
+                            slot_info.slot_type.dyn_sol_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -1327,10 +1354,20 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
 
         // Also get storage layout if available
-        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
-            && let Some(storage_layout) = &contract_data.storage_layout
-        {
-            storage_layouts.insert(address, storage_layout.clone());
+        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
+            trace!("Found contract data for {:?}: {:?}", address, artifact_id);
+            if let Some(storage_layout) = &contract_data.storage_layout {
+                trace!(
+                    "Found storage layout for {:?} with {} storage items",
+                    address,
+                    storage_layout.storage.len()
+                );
+                storage_layouts.insert(address, storage_layout.clone());
+            } else {
+                trace!("No storage layout found for {:?}", address);
+            }
+        } else {
+            trace!("No contract data found for {:?}", address);
         }
     }
 
@@ -1403,26 +1440,119 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 // Get storage layout info for this slot
                                 let slot_info = storage_layouts
                                     .get(&storage_access.account)
-                                    .and_then(|layout| get_slot_info(layout, &storage_access.slot));
+                                    .and_then(|layout| {
+                                        trace!("Getting slot info for slot {:?} in layout with {} items", 
+                                              storage_access.slot, layout.storage.len());
+                                        let info = get_slot_info(layout, &storage_access.slot);
+                                        if info.is_some() {
+                                            trace!("Found slot info for slot {:?}", storage_access.slot);
+                                        } else {
+                                            trace!("No slot info found for slot {:?}", storage_access.slot);
+                                        }
+                                        info
+                                    });
 
                                 // Try to decode values if we have slot info
-                                let decoded = slot_info.as_ref().and_then(|info| {
-                                    let prev = decode_storage_value(
-                                        storage_access.previousValue,
-                                        &info.dyn_sol_type,
-                                    )?;
-                                    let new = decode_storage_value(
-                                        storage_access.newValue,
-                                        &info.dyn_sol_type,
-                                    )?;
-                                    Some(DecodedSlotValues { previous_value: prev, new_value: new })
-                                });
+                                let (decoded, slot_info_with_decoded) =
+                                    if let Some(mut info) = slot_info {
+                                        // Check if this is a struct with members
+                                        if let Some(ref mut members) = info.members {
+                                            // Decode each member individually
+                                            for member in members.iter_mut() {
+                                                let offset = member.offset as usize;
+                                                let size = match &member.slot_type.dyn_sol_type {
+                                                    DynSolType::Uint(bits)
+                                                    | DynSolType::Int(bits) => bits / 8,
+                                                    DynSolType::Address => 20,
+                                                    DynSolType::Bool => 1,
+                                                    DynSolType::FixedBytes(size) => *size,
+                                                    _ => 32, // Default to full word
+                                                };
+
+                                                // Extract and decode member values
+                                                let mut prev_bytes = [0u8; 32];
+                                                let mut new_bytes = [0u8; 32];
+
+                                                if offset + size <= 32 {
+                                                    // In Solidity storage, values are right-aligned
+                                                    // For offset 0, we want the rightmost bytes
+                                                    // For offset 16 (for a uint128), we want bytes
+                                                    // 0-16
+                                                    let byte_offset = 32 - offset - size;
+                                                    prev_bytes[32 - size..].copy_from_slice(
+                                                        &storage_access.previousValue.0
+                                                            [byte_offset..byte_offset + size],
+                                                    );
+                                                    new_bytes[32 - size..].copy_from_slice(
+                                                        &storage_access.newValue.0
+                                                            [byte_offset..byte_offset + size],
+                                                    );
+                                                }
+
+                                                // Decode the member values
+                                                if let (Ok(prev_val), Ok(new_val)) = (
+                                                    member
+                                                        .slot_type
+                                                        .dyn_sol_type
+                                                        .abi_decode(&prev_bytes),
+                                                    member
+                                                        .slot_type
+                                                        .dyn_sol_type
+                                                        .abi_decode(&new_bytes),
+                                                ) {
+                                                    member.decoded = Some(DecodedSlotValues {
+                                                        previous_value: prev_val,
+                                                        new_value: new_val,
+                                                    });
+                                                }
+                                            }
+                                            // For structs with members, we don't need a top-level
+                                            // decoded value
+                                            (None, Some(info))
+                                        } else {
+                                            // Not a struct, decode as a single value
+                                            let storage_layout =
+                                                storage_layouts.get(&storage_access.account);
+                                            let storage_type = storage_layout.and_then(|layout| {
+                                                layout
+                                                    .storage
+                                                    .iter()
+                                                    .find(|s| s.slot == info.slot)
+                                                    .and_then(|s| layout.types.get(&s.storage_type))
+                                            });
+
+                                            let decoded = if let (Some(prev), Some(new)) = (
+                                                decode_storage_value(
+                                                    storage_access.previousValue,
+                                                    &info.slot_type.dyn_sol_type,
+                                                    storage_type,
+                                                    storage_layout.as_ref().map(|arc| arc.as_ref()),
+                                                ),
+                                                decode_storage_value(
+                                                    storage_access.newValue,
+                                                    &info.slot_type.dyn_sol_type,
+                                                    storage_type,
+                                                    storage_layout.as_ref().map(|arc| arc.as_ref()),
+                                                ),
+                                            ) {
+                                                Some(DecodedSlotValues {
+                                                    previous_value: prev,
+                                                    new_value: new,
+                                                })
+                                            } else {
+                                                None
+                                            };
+                                            (decoded, Some(info))
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
                                     decoded,
-                                    slot_info,
+                                    slot_info: slot_info_with_decoded,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
@@ -1431,12 +1561,27 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
 
                                 if let Some(slot_info) = &entry.slot_info
                                     && let Some(ref mut decoded) = entry.decoded
-                                    && let Some(new_value) = decode_storage_value(
-                                        storage_access.newValue,
-                                        &slot_info.dyn_sol_type,
-                                    )
                                 {
-                                    decoded.new_value = new_value;
+                                    // Get storage layout for storage type info
+                                    let storage_layout =
+                                        storage_layouts.get(&storage_access.account);
+                                    let storage_type = storage_layout.and_then(|layout| {
+                                        // Find the storage item that matches this slot
+                                        layout
+                                            .storage
+                                            .iter()
+                                            .find(|s| s.slot == slot_info.slot)
+                                            .and_then(|s| layout.types.get(&s.storage_type))
+                                    });
+
+                                    if let Some(new_value) = decode_storage_value(
+                                        storage_access.newValue,
+                                        &slot_info.slot_type.dyn_sol_type,
+                                        storage_type,
+                                        storage_layout.as_ref().map(|arc| arc.as_ref()),
+                                    ) {
+                                        decoded.new_value = new_value;
+                                    }
                                 }
                             }
                         }
@@ -1494,44 +1639,211 @@ fn get_contract_data<'a>(
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
+    trace!(
+        "Looking for artifact for address {:?} with code hash: {:?}",
+        address,
+        keccak256(&code_bytes)
+    );
     if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+        trace!("Found exact match for {:?}: {:?}", address, result.0);
         return Some(result);
     }
 
     // Fallback to fuzzy matching if exact match fails
-    artifacts.find_by_deployed_code(&code_bytes)
+    let fuzzy_result = artifacts.find_by_deployed_code(&code_bytes);
+    if let Some(ref result) = fuzzy_result {
+        trace!("Found fuzzy match for {:?}: {:?}", address, result.0);
+    } else {
+        trace!("No match found for {:?}", address);
+    }
+    fuzzy_result
 }
 
 /// Gets storage layout info for a specific slot.
 fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
     let slot = U256::from_be_bytes(slot.0);
     let slot_str = slot.to_string();
+    trace!("Looking for slot {} in storage layout", slot_str);
 
     for storage in &storage_layout.storage {
-        let base_slot = U256::from_str(&storage.slot).ok()?;
-        let storage_type = storage_layout.types.get(&storage.storage_type)?;
-        let dyn_type = DynSolType::parse(&storage_type.label).ok()?;
+        trace!(
+            "Checking storage item: label={}, slot={}, type={}",
+            storage.label, storage.slot, storage.storage_type
+        );
+        let base_slot = match U256::from_str(&storage.slot) {
+            Ok(s) => s,
+            Err(e) => {
+                trace!("Failed to parse slot '{}': {:?}", storage.slot, e);
+                continue;
+            }
+        };
+        let storage_type = match storage_layout.types.get(&storage.storage_type) {
+            Some(t) => t,
+            None => {
+                trace!("Storage type '{}' not found in types", storage.storage_type);
+                continue;
+            }
+        };
+
+        // Parse the type - structs need special handling
+        let mut parsed_type = if storage_type.label.starts_with("struct ") {
+            // For structs, we need to build the type from members
+            if let Some(members_value) = storage_type.other.get("members")
+                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+            {
+                let mut member_types = Vec::new();
+                for member in &members {
+                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
+                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                    {
+                        member_types.push(member_type);
+                    } else {
+                        // If we can't parse all members, skip this item
+                        continue;
+                    }
+                }
+                // Create a tuple type for now, will convert to CustomStruct below
+                DynSolType::Tuple(member_types)
+            } else {
+                trace!("Failed to get members for struct type '{}'", storage_type.label);
+                continue;
+            }
+        } else {
+            // Non-struct types can be parsed directly
+            match DynSolType::parse(&storage_type.label) {
+                Ok(t) => t,
+                Err(e) => {
+                    trace!("Failed to parse type label '{}': {:?}", storage_type.label, e);
+                    continue;
+                }
+            }
+        };
+
+        // If it's a struct, enhance it with CustomStruct variant
+        if storage_type.label.starts_with("struct ") {
+            if let Some(struct_name) = storage_type.label.strip_prefix("struct ")
+                && let Some(members_value) = storage_type.other.get("members")
+                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+            {
+                let mut prop_names = Vec::new();
+                let mut member_types = Vec::new();
+
+                for member in &members {
+                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
+                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                    {
+                        prop_names.push(member.label.clone());
+                        member_types.push(member_type);
+                    }
+                }
+
+                // Only create CustomStruct if we successfully parsed all members
+                if member_types.len() == members.len() {
+                    parsed_type = DynSolType::CustomStruct {
+                        name: struct_name.to_string(),
+                        prop_names,
+                        tuple: member_types,
+                    };
+                }
+            }
+        }
+
+        trace!("Parsed type '{}' for slot {} as: {:?}", storage_type.label, slot_str, parsed_type);
+
+        // Build struct members info if this is a struct with members
+        // Only include members for single-slot structs (where all members are in the same slot)
+        let struct_members = if matches!(parsed_type, DynSolType::CustomStruct { .. })
+            && let Some(members_value) = storage_type.other.get("members")
+            && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+        {
+            // Check if all members are in the same slot (single-slot struct)
+            let all_same_slot = members.iter().all(|m| m.slot == "0");
+
+            if all_same_slot {
+                // Single-slot struct - include member info for decoding
+                let mut member_infos = Vec::new();
+
+                for member in &members {
+                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
+                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                    {
+                        member_infos.push(SlotInfo {
+                            label: member.label.clone(),
+                            slot_type: SlotType {
+                                label: member_type_info.label.clone(),
+                                dyn_sol_type: member_type,
+                            },
+                            offset: member.offset,
+                            slot: storage.slot.clone(),
+                            members: None,
+                            decoded: None,
+                        });
+                    }
+                }
+
+                if !member_infos.is_empty() { Some(member_infos) } else { None }
+            } else {
+                // Multi-slot struct - don't include members here
+                // Each member will be handled as a separate slot access
+                None
+            }
+        } else {
+            None
+        };
 
         // Check for exact slot match
         if storage.slot == slot_str {
-            let label = match &dyn_type {
+            // For multi-slot structs at base slot, decode the first member
+            if matches!(parsed_type, DynSolType::CustomStruct { .. })
+                && struct_members.is_none()  // This is a multi-slot struct
+                && let Some(members_value) = storage_type.other.get("members")
+                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+                && !members.is_empty()
+            {
+                // Find the first member (at slot offset 0)
+                if let Some(first_member) = members.iter().find(|m| m.slot == "0") {
+                    if let Some(member_type_info) = storage_layout.types.get(&first_member.storage_type)
+                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                    {
+                        // Return info for the first member instead of the struct
+                        return Some(SlotInfo {
+                            label: format!("{}.{}", storage.label, first_member.label),
+                            slot_type: SlotType {
+                                label: member_type_info.label.clone(),
+                                dyn_sol_type: member_type,
+                            },
+                            offset: first_member.offset,
+                            slot: storage.slot.clone(),
+                            members: None,
+                            decoded: None,
+                        });
+                    }
+                }
+            }
+
+            let label = match &parsed_type {
                 DynSolType::FixedArray(_, _) => {
                     // For arrays, label the base slot with indices
-                    format!("{}{}", storage.label, get_array_base_indices(&dyn_type))
+                    format!("{}{}", storage.label, get_array_base_indices(&parsed_type))
                 }
                 _ => storage.label.clone(),
             };
 
             return Some(SlotInfo {
                 label,
-                dyn_sol_type: dyn_type,
+                slot_type: SlotType {
+                    label: storage_type.label.clone(),
+                    dyn_sol_type: parsed_type,
+                },
                 offset: storage.offset,
                 slot: storage.slot.clone(),
+                members: struct_members,
+                decoded: None, // Will be populated when decoding
             });
         }
 
         // Check if slot is part of a static array
-        if let DynSolType::FixedArray(_, _) = &dyn_type
+        if let DynSolType::FixedArray(_, _) = &parsed_type
             && let Ok(total_bytes) = storage_type.number_of_bytes.parse::<u64>()
         {
             let total_slots = total_bytes.div_ceil(32);
@@ -1539,14 +1851,55 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
             // Check if slot is within array range
             if slot > base_slot && slot < base_slot + U256::from(total_slots) {
                 let index = (slot - base_slot).to::<u64>();
-                let label = format_array_element_label(&storage.label, &dyn_type, index);
+                let label = format_array_element_label(&storage.label, &parsed_type, index);
 
                 return Some(SlotInfo {
                     label,
-                    dyn_sol_type: dyn_type,
+                    slot_type: SlotType {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: parsed_type,
+                    },
                     offset: 0,
                     slot: slot.to_string(),
+                    members: None, // Arrays don't have members like structs
+                    decoded: None, // Will be populated when decoding
                 });
+            }
+        }
+
+        // Check if this slot is part of a multi-slot struct
+        // For structs that span multiple slots, check if the requested slot
+        // matches a member's absolute slot position
+        if storage_type.label.starts_with("struct ")
+            && let Some(members_value) = storage_type.other.get("members")
+            && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+        {
+            for member in &members {
+                // Calculate absolute slot for this member
+                let member_slot = if let Ok(member_slot_offset) = U256::from_str(&member.slot) {
+                    base_slot + member_slot_offset
+                } else {
+                    continue;
+                };
+
+                // Check if this is the slot we're looking for
+                if member_slot == slot {
+                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
+                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                    {
+                        return Some(SlotInfo {
+                            label: format!("{}.{}", storage.label, member.label),
+                            slot_type: SlotType {
+                                label: member_type_info.label.clone(),
+                                dyn_sol_type: member_type,
+                            },
+                            offset: member.offset,
+                            slot: slot_str.clone(),
+                            members: None,
+                            decoded: None,
+                        });
+                    }
+                }
             }
         }
     }
@@ -1588,7 +1941,12 @@ fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u6
 }
 
 /// Helper function to decode a single storage value using its DynSolType
-fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
+fn decode_storage_value(
+    value: B256,
+    dyn_type: &DynSolType,
+    storage_type: Option<&StorageType>,
+    storage_layout: Option<&StorageLayout>,
+) -> Option<DynSolValue> {
     // Storage values are always 32 bytes, stored as a single word
     // For arrays, we need to unwrap to the base element type
     let mut actual_type = dyn_type;
@@ -1598,7 +1956,52 @@ fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValu
         actual_type = elem_type.as_ref();
     }
 
-    // Use abi_decode to decode the value
+    // For tuples (structs), we need to decode each member based on its offset
+    if let DynSolType::Tuple(member_types) = actual_type {
+        // If we have storage type info with members, decode each member from the value
+        if let Some(st) = storage_type
+            && let Some(members_value) = st.other.get("members")
+            && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+            && members.len() == member_types.len()
+        {
+            let mut decoded_members = Vec::new();
+
+            for (i, member) in members.iter().enumerate() {
+                // Get the member type
+                let member_type = &member_types[i];
+
+                // Calculate byte range for this member
+                let offset = member.offset as usize;
+                let member_storage_type =
+                    storage_layout.and_then(|sl| sl.types.get(&member.storage_type));
+                let size = member_storage_type
+                    .and_then(|t| t.number_of_bytes.parse::<usize>().ok())
+                    .unwrap_or(32);
+
+                // Extract bytes for this member from the full value
+                let mut member_bytes = [0u8; 32];
+                if offset + size <= 32 {
+                    // In Solidity storage, values are right-aligned
+                    // For offset 0, we want the rightmost bytes
+                    // For offset 16 (for a uint128), we want bytes 0-16
+                    let byte_offset = 32 - offset - size;
+                    member_bytes[32 - size..]
+                        .copy_from_slice(&value.0[byte_offset..byte_offset + size]);
+                }
+
+                // Decode the member value
+                if let Ok(decoded) = member_type.abi_decode(&member_bytes) {
+                    decoded_members.push(decoded);
+                } else {
+                    return None;
+                }
+            }
+
+            return Some(DynSolValue::Tuple(decoded_members));
+        }
+    }
+
+    // Use abi_decode to decode the value for non-struct types
     actual_type.abi_decode(&value.0).ok()
 }
 
