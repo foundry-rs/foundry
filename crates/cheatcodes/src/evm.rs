@@ -1568,6 +1568,7 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
+/// Returns the base index [\0\] or [\0\][\0\] for a fixed array type depending on the dimensions.
 fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     match dyn_type {
         DynSolType::FixedArray(inner, _) => {
@@ -1605,15 +1606,11 @@ fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u6
 fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
     // Storage values are always 32 bytes, stored as a single word
     // For arrays, we need to unwrap to the base element type
-    let mut actual_type = dyn_type;
-
-    // Unwrap nested arrays to get to the base element type
-    while let DynSolType::FixedArray(elem_type, _) = actual_type {
-        actual_type = elem_type.as_ref();
+    if let DynSolType::FixedArray(elem_type, _) = dyn_type {
+        elem_type.as_ref().abi_decode(&value.0).ok()
+    } else {
+        dyn_type.abi_decode(&value.0).ok()
     }
-
-    // Use abi_decode to decode the value
-    actual_type.abi_decode(&value.0).ok()
 }
 
 /// Helper function to format DynSolValue as raw string without type information
