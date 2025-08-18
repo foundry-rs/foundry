@@ -509,9 +509,10 @@ impl TestArgs {
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;
+        let fail_fast = self.fail_fast;
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            move || runner.test(&filter, tx, show_progress)
+            move || runner.test(&filter, tx, show_progress, fail_fast)
         });
 
         // Set up trace identifiers.

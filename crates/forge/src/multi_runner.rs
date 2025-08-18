@@ -18,7 +18,7 @@ use foundry_evm::{
     Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
+    executors::{Executor, ExecutorBuilder, FailFast},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -153,7 +153,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false)?;
+        self.test(filter, tx, false, false)?;
         Ok(rx.into_iter())
     }
 
@@ -168,6 +168,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
+        fail_fast: bool,
     ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
@@ -185,6 +186,8 @@ impl MultiContractRunner {
             find_time,
         );
 
+        let fail_fast = FailFast::new(fail_fast);
+
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
             // Collect test suite results to stream at the end of test run.
@@ -201,6 +204,7 @@ impl MultiContractRunner {
                         filter,
                         &tokio_handle,
                         Some(&tests_progress),
+                        &fail_fast,
                     );
 
                     tests_progress
@@ -220,7 +224,8 @@ impl MultiContractRunner {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
+                let result =
+                    self.run_test_suite(id, contract, &db, filter, &tokio_handle, None, &fail_fast);
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -228,6 +233,7 @@ impl MultiContractRunner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_test_suite(
         &self,
         artifact_id: &ArtifactId,
@@ -236,6 +242,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
+        fail_fast: &FailFast,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -259,7 +266,7 @@ impl MultiContractRunner {
             span,
             self,
         );
-        let r = runner.run_tests(filter);
+        let r = runner.run_tests(filter, fail_fast);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
