@@ -135,6 +135,7 @@ impl LanguageServer for ForgeLsp {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -387,6 +388,91 @@ impl LanguageServer for ForgeLsp {
             // Fallback to current position
             let location = Location { uri, range: Range { start: position, end: position } };
             Ok(Some(request::GotoDeclarationResponse::from(location)))
+        }
+    }
+
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> tower_lsp::jsonrpc::Result<Option<Vec<Location>>> {
+        self.client.log_message(MessageType::INFO, "Got a textDocument/references request").await;
+
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        // Get the file path from URI
+        let file_path = match uri.to_file_path() {
+            Ok(path) => path,
+            Err(_) => {
+                self.client.log_message(MessageType::ERROR, "Invalid file URI").await;
+                return Ok(None);
+            }
+        };
+
+        // Read the source file
+        let source_bytes = match std::fs::read(&file_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to read file: {e}"))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        // Try to get AST data from cache first
+        let ast_data = {
+            let cache = self.ast_cache.read().await;
+            if let Some(cached_ast) = cache.get(&uri.to_string()) {
+                self.client.log_message(MessageType::INFO, "Using cached AST data").await;
+                cached_ast.clone()
+            } else {
+                // Cache miss - get AST data and cache it
+                drop(cache); // Release read lock
+
+                let path_str = match file_path.to_str() {
+                    Some(s) => s,
+                    None => {
+                        self.client.log_message(MessageType::ERROR, "Invalid file path").await;
+                        return Ok(None);
+                    }
+                };
+
+                match self.compiler.ast(path_str).await {
+                    Ok(data) => {
+                        self.client
+                            .log_message(MessageType::INFO, "Fetched and caching new AST data")
+                            .await;
+
+                        // Cache the new AST data
+                        let mut cache = self.ast_cache.write().await;
+                        cache.insert(uri.to_string(), data.clone());
+                        data
+                    }
+                    Err(e) => {
+                        self.client
+                            .log_message(MessageType::ERROR, format!("Failed to get AST: {e}"))
+                            .await;
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+
+        // Use goto_references function to find all references
+        let locations = goto::goto_references(&ast_data, &uri, position, &source_bytes);
+        
+        if locations.is_empty() {
+            self.client.log_message(MessageType::INFO, "No references found").await;
+            Ok(None)
+        } else {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Found {} references", locations.len()),
+                )
+                .await;
+            Ok(Some(locations))
         }
     }
 
