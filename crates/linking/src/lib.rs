@@ -267,9 +267,8 @@ impl<'a> Linker<'a> {
         Ok(contract)
     }
 
-    /// Checks if the given artifact is linkable (has no unlinked bytecode).
-    /// Returns an error if the artifact has unlinked initial or deployed bytecode.
-    pub fn check_linkable(
+    /// Ensures that both initial and deployed bytecode are linked.
+    pub fn ensure_linked(
         &self,
         contract: &CompactContractBytecodeCow<'a>,
         target: &ArtifactId,
@@ -737,7 +736,7 @@ mod tests {
 
         // Verify that the artifact has unlinked bytecode
         assert!(
-            linker_instance.check_linkable(contract, artifact_id).is_err(),
+            linker_instance.ensure_linked(contract, artifact_id).is_err(),
             "Expected artifact to have unlinked bytecode"
         );
     }

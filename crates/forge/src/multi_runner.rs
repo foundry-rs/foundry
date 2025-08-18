@@ -508,8 +508,7 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| func.name.is_any_test())
             {
-                // Check if test contract bytecode is still unlinked after linking
-                linker.check_linkable(contract, id)?;
+                linker.ensure_linked(contract, id)?;
 
                 let Some(bytecode) =
                     contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
