@@ -1,0 +1,50 @@
+[package]
+name = "revive-strategy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm.workspace = true
+foundry-evm-core.workspace = true
+foundry-cheatcodes.workspace = true
+foundry-linking.workspace = true
+revive-env.workspace = true
+
+alloy-primitives.workspace = true
+alloy-rpc-types.workspace = true
+alloy-eips.workspace = true
+
+eyre.workspace = true
+revm.workspace = true
+itertools.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+
+codec = { version = "3.7.5", default-features = false, package = "parity-scale-codec" }
+scale-info = { version = "2.11.6", default-features = false }
+
+polkadot-sdk.workspace = true
+polkadot-sdk.features = [
+    "experimental",
+    "runtime",
+    "polkadot-runtime-common",
+    "pallet-revive",
+    "pallet-balances",
+    "pallet-timestamp"
+]
+
+
+[lints]
+workspace = true

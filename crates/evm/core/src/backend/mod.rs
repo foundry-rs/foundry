@@ -51,7 +51,7 @@ pub use strategy::{
 };
 
 // A `revm::Database` that is used in forking mode
-type ForkDB = CacheDB<SharedBackend>;
+pub type ForkDB = CacheDB<SharedBackend>;
 
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
 ///
