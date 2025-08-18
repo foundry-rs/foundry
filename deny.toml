@@ -11,6 +11,10 @@ ignore = [
     "RUSTSEC-2024-0437",
     # https://rustsec.org/advisories/RUSTSEC-2025-0021 gitoxide uses SHA-1 hash implementations without any collision detection, leaving it vulnerable to hash collision attacks.
     "RUSTSEC-2025-0021",
+    # https://rustsec.org/advisories/RUSTSEC-2022-0061 parity-wasm deprecated by the author
+    "RUSTSEC-2022-0061",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0370 proc-macro-error is unmaintained
+    "RUSTSEC-2024-0370",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -69,6 +73,26 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    { allow = ["CC0-1.0"], name = "bip39" },
+    { allow = ["CC0-1.0"], name = "bitcoin-internals" },
+    { allow = ["CC0-1.0"], name = "bitcoin_hashes" },
+    { allow = ["CC0-1.0"], name = "hex-conservative" },
+    { allow = ["CC0-1.0"], name = "parity-bip39" },
+    { allow = ["CC0-1.0"], name = "secp256k1" },
+    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
+
+    # GPL-3.0 is allowed only for crates owned by Parity
+    { allow = ["GPL-3.0-only"], name = "polkadot-core-primitives" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "polkadot-parachain-primitives" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "polkadot-primitives" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-common" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-metrics" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-parachains" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "slot-range-helper" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "staging-xcm-builder" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "staging-xcm-executor" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "staging-xcm" }, # Polkadot SDK
+    { allow = ["GPL-3.0-only"], name = "xcm-procedural" }, # Polkadot SDK
 ]
 #copyleft = "deny"
 

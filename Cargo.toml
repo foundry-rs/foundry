@@ -23,6 +23,7 @@ members = [
     "crates/script-sequence/",
     "crates/macros/",
     "crates/test-utils/",
+    "crates/revive-env",
 ]
 resolver = "2"
 
@@ -318,6 +319,8 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 serial_test = "2.0"
+polkadot-sdk = { version = "2506.0.0" }
+
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
