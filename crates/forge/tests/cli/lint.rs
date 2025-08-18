@@ -150,13 +150,13 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-    note[mixed-case-function]: function names should use mixedCase
-        [FILE]:9:18
-        |
-    9 |         function functionMIXEDCaseInfo() public {}
-        |                  ---------------------
-        |
-        = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
+  |
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
