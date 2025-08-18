@@ -149,14 +149,14 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 
 /// Recursively converts a `DynSolValue` into a serde_json::Value.
 pub fn token_to_json(value: &DynSolValue) -> Value {
-    use DynSolValue::*;
-
     match value {
-        Array(values) | FixedArray(values) | Tuple(values) => {
+        DynSolValue::Array(values)
+        | DynSolValue::FixedArray(values)
+        | DynSolValue::Tuple(values) => {
             let tokens: Vec<Value> = values.iter().map(token_to_json).collect();
             Value::Array(tokens)
         }
-        CustomStruct { name, prop_names, tuple } => {
+        DynSolValue::CustomStruct { name, prop_names, tuple } => {
             if prop_names.len() == tuple.len() {
                 let obj = prop_names
                     .iter()
