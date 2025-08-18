@@ -1,17 +1,14 @@
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
-use foundry_common::{fmt::ConsoleFmt, ErrorExt};
-use foundry_evm_core::{
-    abi::console, backend::DatabaseError, constants::HARDHAT_CONSOLE_ADDRESS, InspectorExt,
-};
+use foundry_common::{ErrorExt, fmt::ConsoleFmt};
+use foundry_evm_core::{InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS};
 use revm::{
+    Inspector,
     context::ContextTr,
-    inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, CallInputs, CallOutcome, Gas, InstructionResult, Interpreter,
-        InterpreterResult,
+        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+        interpreter::EthInterpreter,
     },
-    Database, Inspector,
 };
 
 /// An inspector that collects logs during execution.
@@ -27,7 +24,7 @@ impl LogCollector {
     #[cold]
     fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
     where
-        CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+        CTX: ContextTr,
     {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
@@ -35,7 +32,7 @@ impl LogCollector {
             return Some(CallOutcome {
                 result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
                 memory_offset: inputs.return_memory_offset.clone(),
-            })
+            });
         }
         None
     }
@@ -47,11 +44,9 @@ impl LogCollector {
     }
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for LogCollector
+impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
 where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
+    CTX: ContextTr,
 {
     fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
         self.logs.push(log);

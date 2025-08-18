@@ -1,14 +1,14 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
+    LocalSigner, MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use k256::{
@@ -16,7 +16,7 @@ use k256::{
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 use p256::ecdsa::{
-    signature::hazmat::PrehashSigner, Signature as P256Signature, SigningKey as P256SigningKey,
+    Signature as P256Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
 };
 
 /// The BIP32 default derivation path prefix.
@@ -261,7 +261,9 @@ fn sign_with_wallet(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        bail!("could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one");
+        bail!(
+            "could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one"
+        );
     };
 
     let wallet = signers
@@ -287,7 +289,7 @@ fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> 
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
-        *private_key < U256::from_be_slice(&C::ORDER.to_be_byte_array()),
+        *private_key < order,
         "private key must be less than the {curve:?} curve order ({order})",
         curve = C::default(),
     );
@@ -390,7 +392,7 @@ fn derive_wallets<W: Wordlist>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex::FromHex, FixedBytes};
+    use alloy_primitives::{FixedBytes, hex::FromHex};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
 
     #[test]
@@ -421,7 +423,10 @@ mod tests {
         )
         .unwrap();
         let result = sign_p256(&pk, &digest);
-        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)"
+        );
     }
 
     #[test]

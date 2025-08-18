@@ -1,6 +1,5 @@
 use super::IncorrectShift;
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
@@ -10,8 +9,7 @@ declare_forge_lint!(
     INCORRECT_SHIFT,
     Severity::High,
     "incorrect-shift",
-    "the order of args in a shift operation is incorrect",
-    ""
+    "the order of args in a shift operation is incorrect"
 );
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
@@ -21,10 +19,9 @@ impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
             BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },
             right_expr,
         ) = &expr.kind
+            && contains_incorrect_shift(left_expr, right_expr)
         {
-            if contains_incorrect_shift(left_expr, right_expr) {
-                ctx.emit(&INCORRECT_SHIFT, expr.span);
-            }
+            ctx.emit(&INCORRECT_SHIFT, expr.span);
         }
     }
 }

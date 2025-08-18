@@ -1,5 +1,6 @@
 //! Forge is a fast and flexible Ethereum testing framework.
 
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
@@ -28,3 +29,6 @@ pub mod result;
 // TODO: remove
 pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
+
+mod lockfile;
+pub use lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile};

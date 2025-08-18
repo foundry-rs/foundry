@@ -1,7 +1,10 @@
 use std::path::Path;
-use ui_test::spanned::Spanned;
+use ui_test::{
+    spanned::Spanned,
+    status_emitter::{Gha, StatusEmitter},
+};
 
-/// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/tools/tester`.
+/// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/blob/main/tools/tester/src/lib.rs`.
 pub fn run_tests<'a>(cmd: &str, cmd_path: &'a Path, testdata: &'a Path) -> eyre::Result<()> {
     ui_test::color_eyre::install()?;
 
@@ -24,11 +27,8 @@ pub fn run_tests<'a>(cmd: &str, cmd_path: &'a Path, testdata: &'a Path) -> eyre:
 
     let config = config(cmd, cmd_path, &args, testdata);
 
-    let text_emitter = match args.format {
-        ui_test::Format::Terse => ui_test::status_emitter::Text::quiet(),
-        ui_test::Format::Pretty => ui_test::status_emitter::Text::verbose(),
-    };
-    let gha_emitter = ui_test::status_emitter::Gha::<true> { name: "Foundry Lint UI".to_string() };
+    let text_emitter: Box<dyn StatusEmitter> = args.format.into();
+    let gha_emitter = Gha { name: "Foundry Lint UI".to_string(), group: true };
     let status_emitter = (text_emitter, gha_emitter);
 
     // run tests on all .sol files
@@ -63,7 +63,7 @@ fn config<'a>(
         program: ui_test::CommandBuilder {
             program: cmd_path.into(),
             args: {
-                let args = vec![cmd, "--json"];
+                let args = vec![cmd, "--json", "--root", testdata.to_str().expect("invalid root")];
                 args.into_iter().map(Into::into).collect()
             },
             out_dir_flag: None,

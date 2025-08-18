@@ -20,13 +20,13 @@ use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use spec::Status;
 
+pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
 pub use spec::{CheatcodeDef, Vm};
-pub use Vm::ForgeContext;
 
 #[macro_use]
 mod error;
@@ -163,7 +163,17 @@ impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_, '_> {
 
 impl CheatsCtxt<'_, '_, '_, '_> {
     #[inline]
+    pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
+        if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
+    }
+
+    #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
         self.ecx.journaled_state.inner.precompiles.contains(address)
     }
+}
+
+#[cold]
+fn precompile_error(address: &Address) -> Error {
+    fmt_err!("cannot use precompile {address} as an argument")
 }

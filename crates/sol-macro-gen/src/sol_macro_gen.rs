@@ -21,6 +21,8 @@ use std::{
     str::FromStr,
 };
 
+use heck::ToSnakeCase;
+
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
@@ -110,7 +112,7 @@ impl MultiSolMacroGen {
                     std::mem::swap(&mut tmp_file, &mut instance.path);
                     input.normalize_json()?
                 } else {
-                    return Err(error)
+                    return Err(error);
                 }
             }
         };
@@ -209,7 +211,7 @@ edition = "2021"
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
 
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
@@ -266,7 +268,7 @@ edition = "2021"
         .to_string();
 
         for instance in &self.instances {
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             if !single_file {
                 // Module
                 write_mod_name(&mut mod_contents, &name)?;
@@ -328,7 +330,7 @@ edition = "2021"
         )?;
         if !single_file {
             for instance in &self.instances {
-                let name = instance.name.to_lowercase();
+                let name = instance.name.to_snake_case();
                 let path = if is_mod {
                     crate_path.join(format!("{name}.rs"))
                 } else {
@@ -393,9 +395,9 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
-        let toml_consistent = cargo_toml_contents.contains(&name_check) &&
-            cargo_toml_contents.contains(&version_check) &&
-            cargo_toml_contents.contains(&alloy_dep_check);
+        let toml_consistent = cargo_toml_contents.contains(&name_check)
+            && cargo_toml_contents.contains(&version_check)
+            && cargo_toml_contents.contains(&alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
@@ -418,7 +420,7 @@ edition = "2021"
                 r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
             )
         } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+            r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
         }
     }
 }

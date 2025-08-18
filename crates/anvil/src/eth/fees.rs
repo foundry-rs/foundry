@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -97,19 +96,11 @@ impl FeeManager {
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() {
-            self.base_fee_per_blob_gas()
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() {
-            *self.base_fee.read()
-        } else {
-            0
-        }
+        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
     }
 
     pub fn is_min_priority_fee_enforced(&self) -> bool {
@@ -122,19 +113,11 @@ impl FeeManager {
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        if self.is_eip4844() {
-            Some(*self.blob_excess_gas_and_price.read())
-        } else {
-            None
-        }
+        if self.is_eip4844() { Some(*self.blob_excess_gas_and_price.read()) } else { None }
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() {
-            self.blob_excess_gas_and_price.read().blob_gasprice
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
     }
 
     /// Returns the current gas price
@@ -168,7 +151,7 @@ impl FeeManager {
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
         if self.base_fee() == 0 {
-            return 0
+            return 0;
         }
         calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
@@ -192,6 +175,8 @@ pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u6
 
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService {
+    /// blob parameters for the current spec
+    blob_params: BlobParams,
     /// incoming notifications about new blocks
     new_blocks: NewBlockNotifications,
     /// contains all fee history related entries
@@ -204,11 +189,18 @@ pub struct FeeHistoryService {
 
 impl FeeHistoryService {
     pub fn new(
+        blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo,
     ) -> Self {
-        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, storage_info }
+        Self {
+            blob_params,
+            new_blocks,
+            cache,
+            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
+            storage_info,
+        }
     }
 
     /// Returns the configured history limit
@@ -245,7 +237,8 @@ impl FeeHistoryService {
         let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(BlobParams::cancun());
+        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
+
         let mut item = FeeHistoryCacheItem {
             base_fee,
             gas_used_ratio: 0f64,
@@ -313,10 +306,10 @@ impl FeeHistoryService {
                 .filter_map(|p| {
                     let target_gas = (p * gas_used / 100f64) as u64;
                     let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().cloned() {
+                    for (gas_used, effective_reward) in transactions.iter().copied() {
                         sum_gas += gas_used;
                         if target_gas <= sum_gas {
-                            return Some(effective_reward)
+                            return Some(effective_reward);
                         }
                     }
                     None
@@ -438,7 +431,7 @@ impl FeeDetails {
                 if let Some(max_priority) = max_priority {
                     let max_fee = max_fee.unwrap_or_default();
                     if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput)
+                        return Err(BlockchainError::InvalidFeeInput);
                     }
                 }
                 Ok(Self {
@@ -454,7 +447,7 @@ impl FeeDetails {
                 if let Some(max_priority) = max_priority {
                     let max_fee = max_fee.unwrap_or_default();
                     if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput)
+                        return Err(BlockchainError::InvalidFeeInput);
                     }
                 }
                 Ok(Self {
