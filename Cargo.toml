@@ -275,6 +275,7 @@ anstream = "0.6"
 anstyle = "1.0"
 terminal_size = "0.4"
 clap_complete = "4"
+clap_complete_nushell = "4"
 
 # macros
 proc-macro2 = "1.0"
