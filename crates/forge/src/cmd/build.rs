@@ -118,7 +118,8 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if there are no compilation errors
         if !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref()).map_err(|err| eyre!("Lint failed: {err}"))?;
+            self.lint(&project, &config, self.paths.as_deref())
+                .map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
         Ok(output)
