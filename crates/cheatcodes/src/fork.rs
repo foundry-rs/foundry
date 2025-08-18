@@ -98,15 +98,17 @@ macro_rules! impl_get_value_cheatcode {
     ($struct:ident, $sol_type:expr,stateful) => {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
                 let chain = get_active_fork_chain_id(ccx)?;
-                get_value(chain, &self.key, $sol_type, ccx.state)
+                get_value(chain, key, $sol_type, ccx.state)
             }
         }
     };
     ($struct:ident, $sol_type:expr) => {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                get_value(self.chain.to::<u64>(), &self.key, $sol_type, state)
+                let Self { chain, key } = self;
+                get_value(chain.to::<u64>(), key, $sol_type, state)
             }
         }
     };
@@ -116,15 +118,17 @@ macro_rules! impl_get_array_cheatcode {
     ($struct:ident, $sol_type:expr,stateful) => {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
                 let chain = get_active_fork_chain_id(ccx)?;
-                get_array(chain, &self.key, $sol_type, ccx.state)
+                get_array(chain, key, $sol_type, ccx.state)
             }
         }
     };
     ($struct:ident, $sol_type:expr) => {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                get_array(self.chain.to::<u64>(), &self.key, $sol_type, state)
+                let Self { chain, key } = self;
+                get_array(chain.to::<u64>(), key, $sol_type, state)
             }
         }
     };
