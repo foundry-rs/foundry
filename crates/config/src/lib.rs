@@ -689,7 +689,7 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
-        config.forks.resolve_env_vars()?;
+        config.forks.normalize_and_resolve()?;
 
         Ok(config)
     }

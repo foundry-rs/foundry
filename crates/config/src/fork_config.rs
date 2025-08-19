@@ -13,7 +13,7 @@ pub struct ForkConfigs(pub HashMap<String, ForkChainConfig>);
 
 impl ForkConfigs {
     /// Resolve environment variables in all fork config fields
-    pub fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
+    fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
         for (name, fork_config) in &mut self.0 {
             // Take temporary ownership of the config, so that it can be consumed.
             let config = std::mem::take(fork_config);
@@ -31,6 +31,47 @@ impl ForkConfigs {
             })?;
         }
 
+        Ok(())
+    }
+
+    /// Normalize fork config chains, so that all have `alloy_chain::NamedChain` compatible names.
+    fn normalize_keys(&mut self) -> Result<(), ExtractConfigError> {
+        let mut normalized = HashMap::new();
+
+        for (key, config) in std::mem::take(&mut self.0) {
+            // Determine the canonical key for this entry
+            let canonical_key = if let Ok(chain_id) = key.parse::<u64>() {
+                if let Some(named) = alloy_chains::Chain::from_id(chain_id).named() {
+                    named.as_str().to_string()
+                } else {
+                    return Err(ExtractConfigError::new(figment::Error::from(format!(
+                        "chain id '{key}' is not supported by 'alloy_chains'.",
+                    ))));
+                }
+            } else if let Ok(named) = key.parse::<alloy_chains::NamedChain>() {
+                named.as_str().to_string()
+            } else {
+                return Err(ExtractConfigError::new(figment::Error::from(format!(
+                    "chain name '{key}' is not supported by 'alloy_chains'.",
+                ))));
+            };
+
+            // Insert and check for conflicts
+            if normalized.insert(canonical_key, config).is_some() {
+                return Err(ExtractConfigError::new(figment::Error::from(
+                    "duplicate fork configuration.",
+                )));
+            }
+        }
+
+        self.0 = normalized;
+        Ok(())
+    }
+
+    /// Normalize fork config chains and resolve environment variables in all configured fields.
+    pub fn normalize_and_resolve(&mut self) -> Result<(), ExtractConfigError> {
+        self.resolve_env_vars()?;
+        self.normalize_keys()?;
         Ok(())
     }
 }
