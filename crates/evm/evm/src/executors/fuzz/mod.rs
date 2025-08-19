@@ -1,4 +1,6 @@
-use crate::executors::{DURATION_BETWEEN_METRICS_REPORT, Executor, FuzzTestTimer, RawCallResult};
+use crate::executors::{
+    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
@@ -90,6 +92,7 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case.
+    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
         &mut self,
         func: &Function,
@@ -98,6 +101,7 @@ impl FuzzedExecutor {
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
+        fail_fast: &FailFast,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
@@ -128,6 +132,10 @@ impl FuzzedExecutor {
         let mut last_metrics_report = Instant::now();
         let max_runs = self.config.runs;
         let continue_campaign = |runs: u32| {
+            if fail_fast.should_stop() {
+                return false;
+            }
+
             if timer.is_enabled() { !timer.is_timed_out() } else { runs < max_runs }
         };
 
