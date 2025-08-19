@@ -16,7 +16,7 @@ use eyre::Result;
 use foundry_cli::{handler, utils, utils::LoadConfig};
 use foundry_common::{
     abi::{get_error, get_event},
-    fmt::{format_tokens, format_uint_exp, token_to_json},
+    fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
     fs,
     selectors::{
         ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
@@ -757,7 +757,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
     fn print_tokens(tokens: &[DynSolValue]) {
         if shell::is_json() {
-            let tokens: Vec<serde_json::Value> = tokens.iter().map(token_to_json).collect();
+            let tokens: Vec<serde_json::Value> = tokens
+                .iter()
+                .cloned()
+                .map(serialize_value_as_json)
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
             let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
         } else {
             let tokens = format_tokens(tokens);

@@ -4460,6 +4460,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde",
  "chrono",
+ "eyre",
  "foundry-macros",
  "revm",
  "serde",

@@ -1,7 +1,8 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
-use serde_json::{Value, json};
+use eyre::Result;
+use serde_json::Value;
 use std::fmt;
 
 /// [`DynSolValue`] formatter.
@@ -147,29 +148,46 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
 }
 
-/// Recursively converts a `DynSolValue` into a serde_json::Value.
-pub fn token_to_json(value: &DynSolValue) -> Value {
+/// Serializes given [DynSolValue] into a [serde_json::Value].
+pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
     match value {
-        DynSolValue::Array(values)
-        | DynSolValue::FixedArray(values)
-        | DynSolValue::Tuple(values) => {
-            let tokens: Vec<Value> = values.iter().map(token_to_json).collect();
-            Value::Array(tokens)
-        }
-        DynSolValue::CustomStruct { name, prop_names, tuple } => {
-            if prop_names.len() == tuple.len() {
-                let obj = prop_names
-                    .iter()
-                    .zip(tuple)
-                    .map(|(k, v)| (k.clone(), token_to_json(v)))
-                    .collect();
-                Value::Object(obj)
+        DynSolValue::Bool(b) => Ok(Value::Bool(b)),
+        DynSolValue::String(s) => {
+            // Strings are allowed to contain stringified JSON objects, so we try to parse it like
+            // one first.
+            if let Ok(map) = serde_json::from_str(&s) {
+                Ok(Value::Object(map))
             } else {
-                let tokens: Vec<Value> = tuple.iter().map(token_to_json).collect();
-                json!({ name: tokens })
+                Ok(Value::String(s))
             }
         }
-        _ => json!(format_token_raw(value)),
+        DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
+        DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
+        DynSolValue::Int(i, _) => {
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
+        }
+        DynSolValue::Uint(i, _) => {
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
+        }
+        DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
+        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
+            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_, _>>()?))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
+            let values =
+                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
+            let map = prop_names.into_iter().zip(values).collect();
+
+            Ok(Value::Object(map))
+        }
+        DynSolValue::Tuple(values) => Ok(Value::Array(
+            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
+        )),
+        DynSolValue::Function(_) => eyre::bail!("cannot serialize function pointer"),
     }
 }
 
