@@ -4258,7 +4258,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-test-utils",
- "num_cpus",
  "once_cell",
  "rayon",
  "serde",
