@@ -76,7 +76,6 @@ impl EtherscanIdentifier {
             if let Ok(cache) = self.cache.lock()
                 && let Some(cached_sources) = cache.get(address)
             {
-                // Merge cached sources into the result
                 sources.merge(cached_sources.clone());
                 continue;
             }
@@ -100,7 +99,7 @@ impl EtherscanIdentifier {
                         eyre::bail!("{output}")
                     }
 
-                    Ok((*address, metadata, project, output, root))
+                    Ok((*address, project, output))
                 })
                 .collect::<Vec<_>>();
 
@@ -109,18 +108,16 @@ impl EtherscanIdentifier {
 
             // construct the map and cache results
             for res in outputs {
-                let (address, _metadata, project, output, _root) = res?;
+                let (address, project, output) = res?;
 
-                // Create a temporary ContractSources for this contract
-                let mut contract_sources: ContractSources = Default::default();
-                contract_sources.insert(&output, project.root(), None)?;
+                let contract_sources =
+                    ContractSources::from_project_output(&output, project.root(), None)?;
 
                 // Cache the compiled sources
                 if let Ok(mut cache) = self.cache.lock() {
                     cache.insert(address, contract_sources.clone());
                 }
 
-                // Merge into the main result
                 sources.merge(contract_sources);
             }
         }
