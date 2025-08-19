@@ -1213,6 +1213,12 @@ impl<'ast> State<'_, 'ast> {
                 MultilineFuncHeaderStyle::ParamsFirst => {
                     ListFormat::AlwaysBreak { break_single: true, with_space: false }
                 }
+                MultilineFuncHeaderStyle::AllParams
+                    if !header.parameters.is_empty()
+                        && !self.can_header_fit_in_one_line(header) =>
+                {
+                    ListFormat::AlwaysBreak { break_single: true, with_space: false }
+                }
                 _ => ListFormat::Consistent { cmnts_break: true, with_space: false },
             },
         );
@@ -3129,6 +3135,28 @@ impl<'ast> State<'_, 'ast> {
 
         // Always 6 chars for the else: 'else '
         els_opt.map_or(true, |els| self.is_inline_stmt(els, 6))
+    }
+
+    fn can_header_fit_in_one_line(&self, header: &ast::FunctionHeader<'_>) -> bool {
+        let name = header.name.map_or(0, |name| self.estimate_size(name.span) + 1);
+        let params = header
+            .parameters
+            .vars
+            .iter()
+            .fold(0, |len, p| if len != 0 { len + 2 } else { 3 } + self.estimate_size(p.span));
+        let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
+        let mutability = header.state_mutability.map_or(0, |sm| self.estimate_size(sm.span) + 1);
+        let modifiers =
+            header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span())) + 1;
+        let overrides = header.override_.as_ref().map_or(0, |o| self.estimate_size(o.span) + 1);
+        let returns = header.returns.as_ref().map_or(0, |ret| {
+            ret.vars
+                .iter()
+                .fold(0, |len, p| if len != 0 { len + 2 } else { 3 } + self.estimate_size(p.span))
+        });
+
+        8 + name + params + visibility + mutability + modifiers + overrides + returns
+            < self.space_left()
     }
 }
 
