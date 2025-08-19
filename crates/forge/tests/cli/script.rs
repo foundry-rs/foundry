@@ -3149,9 +3149,11 @@ forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
         r#"
 contract Counter {
     uint256 public number;
+
     function setNumber(uint256 newNumber) public {
         number = newNumber;
     }
+
     function increment() public {
         number++;
     }
@@ -3166,6 +3168,7 @@ contract Counter {
             &r#"
 import "forge-std/Script.sol";
 import {Counter} from "../src/Counter.sol";
+
 contract CounterScript is Script {
     Counter public counter;
     function setUp() public {}
@@ -3174,6 +3177,7 @@ contract CounterScript is Script {
         vm.startBroadcast();
         counter = new Counter();
         vm.stopBroadcast();
+
         vm.createSelectFork("<url>");
         vm.startBroadcast();
         counter.increment();
