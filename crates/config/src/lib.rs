@@ -5347,7 +5347,7 @@ mod tests {
 
             // Check the error message
             assert!(err_str.contains(
-                "foundry config error: chain name 'randomchain' is not supported by 'alloy_chains'"
+                "foundry config error: chain name 'randomchain' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR."
             ));
 
             Ok(())
@@ -5372,7 +5372,7 @@ mod tests {
             // Check the error message
             assert!(
                 err_str.contains(
-                    "foundry config error: chain id '0' is not supported by 'alloy_chains'"
+                    "foundry config error: chain id '0' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR."
                 )
             );
 

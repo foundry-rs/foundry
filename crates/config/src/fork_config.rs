@@ -29,14 +29,14 @@ impl ForkConfigs {
                     named.as_str().to_string()
                 } else {
                     return Err(ExtractConfigError::new(figment::Error::from(format!(
-                        "chain id '{key}' is not supported by 'alloy_chains'.",
+                        "chain id '{key}' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR.",
                     ))));
                 }
             } else if let Ok(named) = key.parse::<alloy_chains::NamedChain>() {
                 named.as_str().to_string()
             } else {
                 return Err(ExtractConfigError::new(figment::Error::from(format!(
-                    "chain name '{key}' is not supported by 'alloy_chains'.",
+                    "chain name '{key}' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR.",
                 ))));
             };
 
