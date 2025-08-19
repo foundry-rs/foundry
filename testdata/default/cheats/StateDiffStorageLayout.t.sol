@@ -97,7 +97,6 @@ contract TwoDArrayStorage {
     }
 }
 
-
 contract StateDiffStorageLayoutTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     SimpleStorage simpleStorage;
@@ -333,7 +332,6 @@ contract StateDiffStorageLayoutTest is DSTest {
         // Get the state diff as string (not JSON)
         string memory stateDiff = vm.getStateDiff();
 
-
         // Test that decoded values are shown in the string format
         // The output uses Unicode arrow →
         // For uint256 values, should show decoded value "42"
@@ -349,7 +347,6 @@ contract StateDiffStorageLayoutTest is DSTest {
 
         vm.stopAndReturnStateDiff();
     }
-
 
     // Helper function to check if a string contains a substring
     function assertContains(string memory haystack, string memory needle, string memory message) internal pure {
