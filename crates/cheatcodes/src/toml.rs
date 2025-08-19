@@ -228,7 +228,7 @@ fn format_json_to_toml(json: JsonValue) -> Result<String> {
 }
 
 /// Convert a TOML value to a JSON value.
-fn toml_to_json_value(toml: TomlValue) -> JsonValue {
+pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
     match toml {
         TomlValue::String(s) => match s.as_str() {
             "null" => JsonValue::Null,
