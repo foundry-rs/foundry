@@ -8,6 +8,7 @@ use crate::{
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
@@ -542,6 +543,8 @@ impl Cheatcode for blobhashesCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         ccx.ecx.tx.blob_hashes.clone_from(hashes);
+        // force this as 4844 txtype
+        ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
         Ok(Default::default())
     }
 }
