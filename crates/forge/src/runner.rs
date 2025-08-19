@@ -401,9 +401,16 @@ impl<'a> ContractRunner<'a> {
             return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings);
         }
 
+        let fail_fast = &self.tcfg.fail_fast;
+
         let test_results = functions
             .par_iter()
             .map(|&func| {
+                // Early exit if we're running with fail-fast and a test already failed.
+                if fail_fast.should_stop() {
+                    return (func.signature(), TestResult::setup_result(setup.clone()));
+                }
+
                 let start = Instant::now();
 
                 let _guard = self.tokio_handle.enter();
@@ -431,6 +438,11 @@ impl<'a> ContractRunner<'a> {
                     identified_contracts.as_ref(),
                 );
                 res.duration = start.elapsed();
+
+                // Set fail fast flag if current test failed.
+                if res.status.is_failure() {
+                    fail_fast.record_fail();
+                }
 
                 (sig, res)
             })
@@ -629,6 +641,10 @@ impl<'a> FunctionRunner<'a> {
         );
 
         for i in 0..fixtures_len {
+            if self.tcfg.fail_fast.should_stop() {
+                return self.result;
+            }
+
             // Increment progress bar.
             if let Some(progress) = progress.as_ref() {
                 progress.inc(1);
@@ -800,6 +816,7 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             progress.as_ref(),
+            &self.tcfg.fail_fast,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -950,6 +967,7 @@ impl<'a> FunctionRunner<'a> {
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
+            &self.tcfg.fail_fast,
         ) {
             Ok(x) => x,
             Err(e) => {

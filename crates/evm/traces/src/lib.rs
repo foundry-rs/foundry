@@ -109,8 +109,8 @@ impl SparsedTraceArena {
                         // we only remove decoded internal calls if they did not start/pause tracing
                         Some(TraceMemberOrder::Step(step_idx)) => {
                             // If this is an internal call beginning, track it in `internal_calls`
-                            if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
-                                &nodes[node_idx].trace.steps[step_idx].decoded
+                            if let Some(decoded) = &nodes[node_idx].trace.steps[step_idx].decoded
+                                && let DecodedTraceStep::InternalCall(_, end_step_idx) = &**decoded
                             {
                                 internal_calls.push((item_idx, remove, *end_step_idx));
                                 // we decide if we should remove it later
