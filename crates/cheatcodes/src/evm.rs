@@ -1627,15 +1627,7 @@ fn format_slot(slot: &B256) -> String {
         }
         Some(pos) => {
             // Format from the first non-zero byte onward
-            let significant_bytes = &slot.0[pos..];
-            let hex_str = hex::encode(significant_bytes);
-
-            // Ensure we always have an even number of hex digits (leading zero if odd)
-            if hex_str.len() % 2 == 1 {
-                format!("0x0{}", hex_str)
-            } else {
-                format!("0x{}", hex_str)
-            }
+            hex::encode_prefixed(&slot.0[pos..])
         }
     }
 }
