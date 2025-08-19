@@ -1,4 +1,4 @@
-use crate::{Config, utils};
+use crate::{Config, extend, utils};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Toml},
@@ -79,23 +79,162 @@ impl TomlFileProvider {
         self
     }
 
+    /// Reads and processes the TOML configuration file, handling inheritance if configured.
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
-        if let Some(file) = self.env_val() {
-            let path = Path::new(&file);
-            if !path.exists() {
+
+        // Get the config file path and validate it exists
+        let local_path = self.file();
+        if !local_path.exists() {
+            if let Some(file) = self.env_val() {
                 return Err(Error::custom(format!(
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
                 )));
             }
-            Toml::file(file)
-        } else {
-            Toml::file(&self.default)
+            return Ok(Map::new());
         }
-        .nested()
-        .data()
+
+        // Create a provider for the local config file
+        let local_provider = Toml::file(local_path.clone()).nested();
+
+        // Parse the local config to check for extends field
+        let local_path_str = local_path.to_string_lossy();
+        let local_content = std::fs::read_to_string(&local_path)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+        let partial_config: extend::ExtendsPartialConfig = toml::from_str(&local_content)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+
+        // Check if the currently active profile has an 'extends' field
+        let selected_profile = Config::selected_profile();
+        let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
+            let profile_str = selected_profile.to_string();
+            profiles.get(&profile_str).and_then(|cfg| cfg.extends.as_ref())
+        });
+
+        // If inheritance is configured, load and merge the base config
+        if let Some(extends_config) = extends_config {
+            let extends_path = extends_config.path();
+            let extends_strategy = extends_config.strategy();
+            let relative_base_path = PathBuf::from(extends_path);
+            let local_dir = local_path.parent().ok_or_else(|| {
+                Error::custom(format!(
+                    "Could not determine parent directory of config file: {}",
+                    local_path.display()
+                ))
+            })?;
+
+            let base_path =
+                foundry_compilers::utils::canonicalize(local_dir.join(&relative_base_path))
+                    .map_err(|e| {
+                        Error::custom(format!(
+                            "Failed to resolve inherited config path: {}: {e}",
+                            relative_base_path.display()
+                        ))
+                    })?;
+
+            // Validate the base config file exists
+            if !base_path.is_file() {
+                return Err(Error::custom(format!(
+                    "Inherited config file does not exist or is not a file: {}",
+                    base_path.display()
+                )));
+            }
+
+            // Prevent self-inheritance which would cause infinite recursion
+            if foundry_compilers::utils::canonicalize(&local_path).ok().as_ref() == Some(&base_path)
+            {
+                return Err(Error::custom(format!(
+                    "Config file {} cannot inherit from itself.",
+                    local_path.display()
+                )));
+            }
+
+            // Parse the base config to check for nested inheritance
+            let base_path_str = base_path.to_string_lossy();
+            let base_content = std::fs::read_to_string(&base_path)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+            let base_partial: extend::ExtendsPartialConfig = toml::from_str(&base_content)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+
+            // Check if the base file's same profile also has extends (nested inheritance)
+            let base_extends = base_partial
+                .profile
+                .as_ref()
+                .and_then(|profiles| {
+                    let profile_str = selected_profile.to_string();
+                    profiles.get(&profile_str)
+                })
+                .and_then(|profile| profile.extends.as_ref());
+
+            // Prevent nested inheritance to avoid complexity and potential cycles
+            if base_extends.is_some() {
+                return Err(Error::custom(format!(
+                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{selected_profile}'.",
+                    base_path.display()
+                )));
+            }
+
+            // Load base configuration as a Figment provider
+            let base_provider = Toml::file(base_path).nested();
+
+            // Apply the selected merge strategy
+            match extends_strategy {
+                extend::ExtendStrategy::ExtendArrays => {
+                    // Using 'admerge' strategy:
+                    // - Arrays are concatenated (base elements + local elements)
+                    // - Other values are replaced (local values override base values)
+                    // - The extends field is preserved in the final configuration
+                    Figment::new().merge(base_provider).admerge(local_provider).data()
+                }
+                extend::ExtendStrategy::ReplaceArrays => {
+                    // Using 'merge' strategy:
+                    // - Arrays are replaced entirely (local arrays replace base arrays)
+                    // - Other values are replaced (local values override base values)
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+                extend::ExtendStrategy::NoCollision => {
+                    // Check for key collisions between base and local configs
+                    let base_data = base_provider.data()?;
+                    let local_data = local_provider.data()?;
+
+                    let profile_key = Profile::new("profile");
+                    if let (Some(local_profiles), Some(base_profiles)) =
+                        (local_data.get(&profile_key), base_data.get(&profile_key))
+                    {
+                        // Extract dicts for the selected profile
+                        let profile_str = selected_profile.to_string();
+                        let base_dict = base_profiles.get(&profile_str).and_then(|v| v.as_dict());
+                        let local_dict = local_profiles.get(&profile_str).and_then(|v| v.as_dict());
+
+                        // Find colliding keys
+                        if let (Some(local_dict), Some(base_dict)) = (local_dict, base_dict) {
+                            let collisions: Vec<&String> = local_dict
+                                .keys()
+                                .filter(|key| {
+                                    // Ignore the "extends" key as it's expected
+                                    *key != "extends" && base_dict.contains_key(*key)
+                                })
+                                .collect();
+
+                            if !collisions.is_empty() {
+                                return Err(Error::custom(format!(
+                                    "Key collision detected in profile '{profile_str}' when extending '{extends_path}'. \
+                                    Conflicting keys: {collisions:?}. Use 'extends.strategy' or 'extends_strategy' to specify how to handle conflicts."
+                                )));
+                            }
+                        }
+                    }
+
+                    // Safe to merge the configs without collisions
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+            }
+        } else {
+            // No inheritance - return the local config as-is
+            local_provider.data()
+        }
     }
 }
 

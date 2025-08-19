@@ -1,4 +1,4 @@
-use super::{BasicTxDetails, CallDetails};
+use crate::{BasicTxDetails, CallDetails};
 use alloy_primitives::Address;
 use parking_lot::{Mutex, RwLock};
 use proptest::{

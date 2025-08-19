@@ -184,6 +184,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Disable pool balance checks
+    pub disable_pool_balance_checks: bool,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
     /// Slots in an epoch
@@ -484,6 +486,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            disable_pool_balance_checks: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
@@ -993,6 +996,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable pool balance checks
+    #[must_use]
+    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+        self.disable_pool_balance_checks = yes;
+        self
+    }
+
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
     pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
@@ -1436,7 +1446,9 @@ async fn derive_block_and_transactions(
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
-            let transaction_block_number = transaction.block_number.unwrap();
+            let transaction_block_number = transaction.block_number.ok_or_else(|| {
+                eyre::eyre!("fork transaction is not mined yet (no block number)")
+            })?;
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
