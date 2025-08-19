@@ -44,9 +44,11 @@ impl EtherscanIdentifier {
         if config.offline {
             return Ok(None);
         }
-        let Some(config) = config.get_etherscan_config_with_chain(chain)? else {
+
+        let Ok(Some(config)) = config.get_etherscan_config_with_chain(chain) else {
             return Ok(None);
         };
+
         trace!(target: "traces::etherscan", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
         Ok(Some(Self {
             client: Arc::new(config.into_client()?),
