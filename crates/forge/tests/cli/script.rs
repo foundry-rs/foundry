@@ -3489,7 +3489,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![true, false, true].into()),
                         ("int_array".into(), vec!["-100", "200", "-300"].into()),
                         ("uint_array".into(), vec!["100", "200", "300"].into()),
@@ -3524,7 +3523,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
                         ("bytes".into(), "0x00f00000000000".into()),
                         ("str".into(), "bazz".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![false, true, false].into()),
                         ("int_array".into(), vec!["-400", "500", "-600"].into()),
                         ("uint_array".into(), vec!["400", "500", "600"].into()),

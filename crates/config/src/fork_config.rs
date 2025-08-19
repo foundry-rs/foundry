@@ -12,26 +12,10 @@ use std::{collections::HashMap, ops::Deref};
 pub struct ForkConfigs(pub HashMap<String, ForkChainConfig>);
 
 impl ForkConfigs {
-    /// Resolve environment variables in all fork config fields
-    fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
-        for (name, fork_config) in &mut self.0 {
-            // Take temporary ownership of the config, so that it can be consumed.
-            let config = std::mem::take(fork_config);
-
-            // Resolve the env vars and place it back into the map.
-            *fork_config = config.resolved().map_err(|e| {
-                let msg = if !e.var.is_empty() {
-                    format!("environment variable `{}` not found", e.var)
-                } else {
-                    e.to_string()
-                };
-                ExtractConfigError::new(figment::Error::from(format!(
-                    "Failed to resolve fork config [forks.{name}]: {msg}"
-                )))
-            })?;
-        }
-
-        Ok(())
+    /// Normalize fork config chain keys and resolve environment variables in all configured fields.
+    pub fn normalize_and_resolve(&mut self) -> Result<(), ExtractConfigError> {
+        self.normalize_keys()?;
+        self.resolve_env_vars()
     }
 
     /// Normalize fork config chains, so that all have `alloy_chain::NamedChain` compatible names.
@@ -68,10 +52,25 @@ impl ForkConfigs {
         Ok(())
     }
 
-    /// Normalize fork config chains and resolve environment variables in all configured fields.
-    pub fn normalize_and_resolve(&mut self) -> Result<(), ExtractConfigError> {
-        self.resolve_env_vars()?;
-        self.normalize_keys()?;
+    /// Resolve environment variables in all fork config fields
+    fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
+        for (name, fork_config) in &mut self.0 {
+            // Take temporary ownership of the config, so that it can be consumed.
+            let config = std::mem::take(fork_config);
+
+            // Resolve the env vars and place it back into the map.
+            *fork_config = config.resolved().map_err(|e| {
+                let msg = if !e.var.is_empty() {
+                    format!("environment variable `{}` not found", e.var)
+                } else {
+                    e.to_string()
+                };
+                ExtractConfigError::new(figment::Error::from(format!(
+                    "Failed to resolve fork config [forks.{name}]: {msg}"
+                )))
+            })?;
+        }
+
         Ok(())
     }
 }
