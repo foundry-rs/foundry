@@ -3247,7 +3247,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
         config.forks = ForkConfigs(
             vec![
                 (
-                    "1".to_string(),
+                    "mainnet".to_string(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             "mainnet-rpc".to_string(),
@@ -3284,7 +3284,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                     },
                 ),
                 (
-                    "10".to_string(),
+                    "optimism".to_string(),
                     ForkChainConfig {
                         rpc_endpoint: None,
                         vars: vec![
