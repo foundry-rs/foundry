@@ -1620,15 +1620,11 @@ fn format_slot(slot: &B256) -> String {
     // Find the first non-zero byte
     let first_non_zero = slot.0.iter().position(|&b| b != 0);
 
-    match first_non_zero {
-        None => {
-            // All zeros - display as 0x00
-            "0x00".to_string()
-        }
-        Some(pos) => {
-            // Format from the first non-zero byte onward
-            hex::encode_prefixed(&slot.0[pos..])
-        }
+    if let Some(pos) = first_non_zero {
+        hex::encode_prefixed(&slot.0[pos..])
+    } else {
+        // All zeros - display as 0x00
+        "0x00".to_string()
     }
 }
 
