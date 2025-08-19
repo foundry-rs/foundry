@@ -1,6 +1,7 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_chains::Chain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
@@ -2614,13 +2615,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2629,11 +2630,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3247,7 +3248,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
         config.forks = ForkConfigs(
             vec![
                 (
-                    "mainnet".to_string(),
+                    Chain::mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             "mainnet-rpc".to_string(),
@@ -3284,7 +3285,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                     },
                 ),
                 (
-                    "optimism".to_string(),
+                    Chain::optimism_mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: None,
                         vars: vec![
@@ -3472,7 +3473,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
         config.forks = ForkConfigs(
             vec![
                 (
-                    "mainnet".to_string(),
+                    Chain::mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             mainnet_endpoint.clone(),
@@ -3508,7 +3509,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                     },
                 ),
                 (
-                    "optimism".to_string(),
+                    Chain::optimism_mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: None,
                         vars: vec![
@@ -3562,8 +3563,16 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_panicsWhithoutSelectedFork() public {
+    function test_panicsWithoutSelectedFork() public {
         vm.readForkChain();
+    }
+    function test_panicsWithUnknownVar() public {
+        vm.createSelectFork("<url>");
+        bool invalid = vm.readForkBool("invalid");
+    }
+    function test_panicsWhenNotArray() public {
+        vm.createSelectFork("<url>");
+        bool[] memory invalid = vm.readForkBoolArray("bool");
     }
 
     function test_forkVars() public {
@@ -3597,7 +3606,7 @@ contract ForkTest is DSTest {
         testArrayCheatcodes();
     }
 
-    function testArrayCheatcodes() public {
+    function testArrayCheatcodes() private {
         // Test array cheatcodes without specifying chain (uses active fork)
         console.log("   > Arrays:");
 
@@ -3667,9 +3676,15 @@ Logs:
        > uint_array[0]: 100
        > addr_array[0]: 0x1111111111111111111111111111111111111111
        > string_array[0]: hello
-
-[FAIL: vm.readForkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
 ...
+Failing tests:
+Encountered 3 failing tests in src/ForkTest.t.sol:ForkTest
+[FAIL: vm.readForkBoolArray: variable 'bool' in '[fork.<chain_id: 1>]' must be an array] test_panicsWhenNotArray() ([GAS])
+[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_panicsWithUnknownVar() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_panicsWithoutSelectedFork() ([GAS])
+
+Encountered a total of 3 failing tests, 1 tests succeeded
+
 "#]]);
 });
 
@@ -3683,7 +3698,7 @@ forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
     prj.update_config(|config| {
         config.forks = ForkConfigs(
             vec![(
-                "mainnet".to_string(),
+                Chain::mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         mainnet_endpoint.clone(),

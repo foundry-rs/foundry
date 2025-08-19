@@ -4,56 +4,17 @@ use crate::{
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 
+use alloy_chains::Chain;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, ops::Deref};
 
 /// Fork-scoped config for tests and scripts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct ForkConfigs(pub HashMap<String, ForkChainConfig>);
+pub struct ForkConfigs(pub HashMap<Chain, ForkChainConfig>);
 
 impl ForkConfigs {
-    /// Normalize fork config chain keys and resolve environment variables in all configured fields.
-    pub fn normalize_and_resolve(&mut self) -> Result<(), ExtractConfigError> {
-        self.normalize_keys()?;
-        self.resolve_env_vars()
-    }
-
-    /// Normalize fork config chains, so that all have `alloy_chain::NamedChain` compatible names.
-    fn normalize_keys(&mut self) -> Result<(), ExtractConfigError> {
-        let mut normalized = HashMap::new();
-
-        for (key, config) in std::mem::take(&mut self.0) {
-            // Determine the canonical key for this entry
-            let canonical_key = if let Ok(chain_id) = key.parse::<u64>() {
-                if let Some(named) = alloy_chains::Chain::from_id(chain_id).named() {
-                    named.as_str().to_string()
-                } else {
-                    return Err(ExtractConfigError::new(figment::Error::from(format!(
-                        "chain id '{key}' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR.",
-                    ))));
-                }
-            } else if let Ok(named) = key.parse::<alloy_chains::NamedChain>() {
-                named.as_str().to_string()
-            } else {
-                return Err(ExtractConfigError::new(figment::Error::from(format!(
-                    "chain name '{key}' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR.",
-                ))));
-            };
-
-            // Insert and check for conflicts
-            if normalized.insert(canonical_key, config).is_some() {
-                return Err(ExtractConfigError::new(figment::Error::from(
-                    "duplicate fork configuration.",
-                )));
-            }
-        }
-
-        self.0 = normalized;
-        Ok(())
-    }
-
     /// Resolve environment variables in all fork config fields
-    fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
+    pub fn resolve_env_vars(&mut self) -> Result<(), ExtractConfigError> {
         for (name, fork_config) in &mut self.0 {
             // Take temporary ownership of the config, so that it can be consumed.
             let config = std::mem::take(fork_config);
@@ -76,7 +37,7 @@ impl ForkConfigs {
 }
 
 impl Deref for ForkConfigs {
-    type Target = HashMap<String, ForkChainConfig>;
+    type Target = HashMap<Chain, ForkChainConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

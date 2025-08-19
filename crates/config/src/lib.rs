@@ -689,7 +689,7 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
-        config.forks.normalize_and_resolve()?;
+        config.forks.resolve_env_vars()?;
 
         Ok(config)
     }
@@ -5201,9 +5201,9 @@ mod tests {
             // Reload the config with env vars set
             let config = Config::load().unwrap();
 
-            let expected: HashMap<String, ForkChainConfig> = vec![
+            let expected: HashMap<Chain, ForkChainConfig> = vec![
                 (
-                    "mainnet".to_string(),
+                    Chain::mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             "mainnet-rpc".to_string(),
@@ -5233,7 +5233,7 @@ mod tests {
                     },
                 ),
                 (
-                    "optimism".to_string(),
+                    Chain::optimism_mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             "optimism-rpc".to_string(),
@@ -5250,14 +5250,14 @@ mod tests {
             .into_iter()
             .collect();
             assert_eq!(
-                expected.keys().sorted().collect::<Vec<_>>(),
-                config.forks.keys().sorted().collect::<Vec<_>>()
+                expected.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>(),
+                config.forks.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>()
             );
 
-            let expected_mainnet = expected.get("mainnet").unwrap();
-            let expected_optimism = expected.get("optimism").unwrap();
-            let mainnet = config.forks.get("mainnet").unwrap();
-            let optimism = config.forks.get("optimism").unwrap();
+            let expected_mainnet = expected.get(&Chain::mainnet()).unwrap();
+            let expected_optimism = expected.get(&Chain::optimism_mainnet()).unwrap();
+            let mainnet = config.forks.get(&Chain::mainnet()).unwrap();
+            let optimism = config.forks.get(&Chain::optimism_mainnet()).unwrap();
 
             // Verify that rpc_endpoints are resolved to their actual value
             if let Some(rpc) = &mainnet.rpc_endpoint {
@@ -5346,9 +5346,7 @@ mod tests {
             let err_str = result.unwrap_err().to_string();
 
             // Check the error message
-            assert!(err_str.contains(
-                "foundry config error: chain name 'randomchain' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR."
-            ));
+            assert!(err_str.contains("`forks.randomchain`"));
 
             Ok(())
         });
@@ -5366,45 +5364,9 @@ mod tests {
                     "#,
             )?;
             let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
-
-            // Check the error message
-            assert!(
-                err_str.contains(
-                    "foundry config error: chain id '0' is not supported. Check 'https://github.com/alloy-rs/chains' and consider opening a PR."
-                )
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_fork_config_duplicate_key_fails() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                        [forks]
-
-                        [forks.mainnet]
-                        rpc_endpoint = "mainnet-rpc"
-                        [forks.mainnet.vars]
-                        some_value = "some_value"
-
-                        [forks.1]
-                        rpc_endpoint = "mainnet-rpc"
-                        [forks.1.vars]
-                        some_value = "some_value"
-                    "#,
-            )?;
-            let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
-
-            // Check the error message
-            assert!(err_str.contains("duplicate fork configuration."));
+            // Despite there is no `NamedChain` associated with `0` id, it is a valid u64
+            assert!(result.is_ok());
+            assert!(result.unwrap().forks.get(&Chain::from_id_unchecked(0)).is_some());
 
             Ok(())
         });
