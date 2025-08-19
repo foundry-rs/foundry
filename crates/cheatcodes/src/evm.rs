@@ -218,20 +218,18 @@ impl Display for AccountStateDiffs {
             for (slot, slot_changes) in &self.state_diff {
                 match (&slot_changes.slot_info, &slot_changes.decoded) {
                     (Some(slot_info), Some(decoded)) => {
-                        // Have both slot info and decoded values
+                        // Have both slot info and decoded values - only show decoded values
                         writeln!(
                             f,
-                            "@ {slot} ({}, {}): {} → {} [decoded: {} → {}]",
+                            "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
                             slot_info.dyn_sol_type,
-                            slot_changes.previous_value,
-                            slot_changes.new_value,
                             format_dyn_sol_value_raw(&decoded.previous_value),
                             format_dyn_sol_value_raw(&decoded.new_value)
                         )?;
                     }
                     (Some(slot_info), None) => {
-                        // Have slot info but no decoded values
+                        // Have slot info but no decoded values - show raw hex values
                         writeln!(
                             f,
                             "@ {slot} ({}, {}): {} → {}",
@@ -242,7 +240,7 @@ impl Display for AccountStateDiffs {
                         )?;
                     }
                     _ => {
-                        // No slot info
+                        // No slot info - show raw hex values
                         writeln!(
                             f,
                             "@ {slot}: {} → {}",
