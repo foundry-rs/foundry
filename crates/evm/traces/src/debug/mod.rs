@@ -158,10 +158,10 @@ impl<'a> DebugStepsWalker<'a> {
             })
             .unwrap_or_default();
 
-        self.node.trace.steps[start_idx].decoded = Some(DecodedTraceStep::InternalCall(
+        self.node.trace.steps[start_idx].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
             DecodedInternalCall { func_name, args: inputs, return_data: outputs },
             self.current_step,
-        ));
+        )));
     }
 
     fn process(&mut self) {
