@@ -1277,6 +1277,7 @@ impl Backend {
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
             blob_params: self.blob_params(),
+            cheats: self.cheats().clone(),
         };
 
         // create a new pending block
@@ -1364,6 +1365,7 @@ impl Backend {
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
                     blob_params: self.blob_params(),
+                    cheats: self.cheats().clone(),
                 };
                 let executed_tx = executor.execute();
 
@@ -2727,6 +2729,7 @@ impl Backend {
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
             blob_params: self.blob_params(),
+            cheats: self.cheats().clone(),
         };
 
         let _ = executor.execute();

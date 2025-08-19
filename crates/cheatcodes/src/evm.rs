@@ -204,7 +204,7 @@ struct NonceDiff {
 struct AccountStateDiffs {
     /// Address label, if any set.
     label: Option<String>,
-    /// Contract name from artifact, if found.
+    /// Contract identifier from artifact. e.g "src/Counter.sol:Counter"
     contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
@@ -245,20 +245,18 @@ impl Display for AccountStateDiffs {
             for (slot, slot_changes) in &self.state_diff {
                 match (&slot_changes.slot_info, &slot_changes.decoded) {
                     (Some(slot_info), Some(decoded)) => {
-                        // Have both slot info and decoded values
+                        // Have both slot info and decoded values - only show decoded values
                         writeln!(
                             f,
-                            "@ {slot} ({}, {}): {} → {} [decoded: {} → {}]",
+                            "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
                             slot_info.slot_type.dyn_sol_type,
-                            slot_changes.previous_value,
-                            slot_changes.new_value,
                             format_dyn_sol_value_raw(&decoded.previous_value),
                             format_dyn_sol_value_raw(&decoded.new_value)
                         )?;
                     }
                     (Some(slot_info), None) => {
-                        // Have slot info but no decoded values
+                        // Have slot info but no decoded values - show raw hex values
                         writeln!(
                             f,
                             "@ {slot} ({}, {}): {} → {}",
@@ -269,7 +267,7 @@ impl Display for AccountStateDiffs {
                         )?;
                     }
                     _ => {
-                        // No slot info
+                        // No slot info - show raw hex values
                         writeln!(
                             f,
                             "@ {slot}: {} → {}",
@@ -954,6 +952,20 @@ impl Cheatcode for getStateDiffJsonCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let mut storage_accesses = Vec::new();
+
+        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
+            for account_accesses in recorded_diffs.iter().flatten() {
+                storage_accesses.extend(account_accesses.storageAccesses.clone());
+            }
+        }
+
+        Ok(storage_accesses.abi_encode())
     }
 }
 
@@ -1802,7 +1814,8 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
             {
                 // Find the first member (at slot offset 0)
                 if let Some(first_member) = members.iter().find(|m| m.slot == "0") {
-                    if let Some(member_type_info) = storage_layout.types.get(&first_member.storage_type)
+                    if let Some(member_type_info) =
+                        storage_layout.types.get(&first_member.storage_type)
                         && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
                     {
                         // Return info for the first member instead of the struct
@@ -1907,6 +1920,7 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
+/// Returns the base index [\0\] or [\0\][\0\] for a fixed array type depending on the dimensions.
 fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     match dyn_type {
         DynSolType::FixedArray(inner, _) => {
@@ -1950,8 +1964,7 @@ fn decode_storage_value(
     // Storage values are always 32 bytes, stored as a single word
     // For arrays, we need to unwrap to the base element type
     let mut actual_type = dyn_type;
-
-    // Unwrap nested arrays to get to the base element type
+    // Unwrap nested arrays to get to the base element type.
     while let DynSolType::FixedArray(elem_type, _) = actual_type {
         actual_type = elem_type.as_ref();
     }
