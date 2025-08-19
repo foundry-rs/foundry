@@ -106,20 +106,28 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
-    /// Decoded Slot Values
+    /// Decoded values according to the Solidity type (e.g., uint256, address).
+    /// Only present when storage layout is available and decoding succeeds.
     #[serde(skip_serializing_if = "Option::is_none")]
     decoded: Option<DecodedSlotValues>,
-    /// Slot Info
+
+    /// Storage layout metadata (variable name, type, offset).
+    /// Only present when contract has storage layout output.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
 }
 
+/// Storage slot metadata from the contract's storage layout.
 #[derive(Serialize, Debug)]
 struct SlotInfo {
+    /// Variable name (e.g., "owner", "values[0]", "config.maxSize").
     label: String,
+    /// Solidity type, serialized as string (e.g., "uint256", "address").
     #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
     dyn_sol_type: DynSolType,
+    /// Byte offset within the 32-byte slot (0 for full slot, 0-31 for packed).
     offset: i64,
+    /// Storage slot number as decimal string.
     slot: String,
 }
 
@@ -130,11 +138,12 @@ where
     serializer.serialize_str(&dyn_type.to_string())
 }
 
+/// Decoded storage values showing before and after states.
 #[derive(Debug)]
 struct DecodedSlotValues {
-    /// Initial decoded storage value
+    /// Decoded value before the state change.
     previous_value: DynSolValue,
-    /// Current decoded storage value
+    /// Decoded value after the state change.
     new_value: DynSolValue,
 }
 
