@@ -63,26 +63,21 @@ impl EtherscanIdentifier {
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         let mut sources: ContractSources = Default::default();
-        let mut contracts_to_compile = Vec::new();
-
-        // Check cache first and collect contracts that need compilation
-        for (address, metadata) in &self.contracts {
-            // filter out vyper files
-            if metadata.is_vyper() {
-                continue;
-            }
-
-            // Try to get from cache first
-            if let Ok(cache) = self.cache.lock()
-                && let Some(cached_sources) = cache.get(address)
-            {
-                sources.merge(cached_sources.clone());
-                continue;
-            }
-
-            // If not in cache, add to compilation list
-            contracts_to_compile.push((*address, metadata));
-        }
+        let contracts_to_compile: Vec<_> = self
+            .contracts
+            .iter()
+            .filter(|(_, metadata)| !metadata.is_vyper())
+            .filter_map(|(address, metadata)| {
+                if let Ok(cache) = self.cache.lock()
+                    && let Some(cached_sources) = cache.get(address)
+                {
+                    sources.merge(cached_sources.clone());
+                    None
+                } else {
+                    Some((*address, metadata))
+                }
+            })
+            .collect();
 
         // Compile contracts that weren't in cache
         if !contracts_to_compile.is_empty() {
@@ -110,10 +105,9 @@ impl EtherscanIdentifier {
             for res in outputs {
                 let (address, project, output) = res?;
 
-                let contract_sources =
-                    ContractSources::from_project_output(&output, project.root(), None)?;
+                let mut contract_sources: ContractSources = Default::default();
+                contract_sources.insert(&output, project.root(), None)?;
 
-                // Cache the compiled sources
                 if let Ok(mut cache) = self.cache.lock() {
                     cache.insert(address, contract_sources.clone());
                 }
