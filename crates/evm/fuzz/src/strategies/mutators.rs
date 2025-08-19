@@ -43,56 +43,21 @@ static INTERESTING_32: &[i32] = &[
     2147483647,
 ];
 
-/// Mutator that randomly increments or decrements an uint or int.
-pub(crate) trait IncrementDecrementMutator: Sized + Copy + Debug {
-    fn validate(old: Self, new: Self, size: usize) -> Option<Self>;
-
-    #[instrument(name = "mutator::increment_decrement", skip(size, test_runner), ret)]
-    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mutated = if test_runner.rng().random::<bool>() {
-            self.wrapping_add(Self::ONE)
-        } else {
-            self.wrapping_sub(Self::ONE)
-        };
-        Self::validate(self, mutated, size)
-    }
-
-    fn wrapping_add(self, rhs: Self) -> Self;
-    fn wrapping_sub(self, rhs: Self) -> Self;
-    const ONE: Self;
-}
-
-macro_rules! impl_increment_decrement_mutator {
-    ($ty:ty, $validate_fn:path) => {
-        impl IncrementDecrementMutator for $ty {
-            fn validate(old: Self, new: Self, size: usize) -> Option<Self> {
-                $validate_fn(old, new, size)
-            }
-
-            fn wrapping_add(self, rhs: Self) -> Self {
-                Self::wrapping_add(self, rhs)
-            }
-
-            fn wrapping_sub(self, rhs: Self) -> Self {
-                Self::wrapping_sub(self, rhs)
-            }
-
-            const ONE: Self = Self::ONE;
-        }
-    };
-}
-
-impl_increment_decrement_mutator!(U256, validate_uint_mutation);
-impl_increment_decrement_mutator!(I256, validate_int_mutation);
+/// Multipliers used to define the 3 standard deviation range of a Gaussian-like curve.
+/// For example, a multiplier of 0.25 means the +/-3 standard deviation bounds are +/-25% of the
+/// original value.
+static THREE_SIGMA_MULTIPLIERS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0];
 
 /// ABI mutator that changes current value by flipping a random bit and randomly injecting
-/// interesting words - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
-/// Implemented for uint, int, address and fixed bytes.
+/// interesting words (for uint, int, address and fixed bytes.) - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
+/// Randomly increments / decrements and mutates with gaussian noise (for uint and int).
 pub(crate) trait AbiMutator: Sized + Copy + Debug {
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
     fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
 impl AbiMutator for U256 {
@@ -121,6 +86,24 @@ impl AbiMutator for U256 {
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "U256::increment_decrement", skip(size, test_runner), ret)]
+    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mutated = if test_runner.rng().random::<bool>() {
+            self.wrapping_add(Self::ONE)
+        } else {
+            self.wrapping_sub(Self::ONE)
+        };
+        validate_uint_mutation(self, mutated, size)
+    }
+
+    #[instrument(name = "U256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
         validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
 }
@@ -153,6 +136,24 @@ impl AbiMutator for I256 {
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_int_mutation(self, Self::from_be_bytes(bytes), size)
     }
+
+    #[instrument(name = "I256::increment_decrement", skip(size, test_runner), ret)]
+    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mutated = if test_runner.rng().random::<bool>() {
+            self.wrapping_add(Self::ONE)
+        } else {
+            self.wrapping_sub(Self::ONE)
+        };
+        validate_int_mutation(self, mutated, size)
+    }
+
+    #[instrument(name = "I256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
 }
 
 impl AbiMutator for Address {
@@ -182,6 +183,18 @@ impl AbiMutator for Address {
         let mut mutated = self;
         mutate_interesting_dword_slice(mutated.as_mut_slice(), test_runner)?;
         (self != mutated).then_some(mutated)
+    }
+
+    fn increment_decrement(self, _size: usize, _test_runner: &mut TestRunner) -> Option<Self> {
+        None
+    }
+
+    fn mutate_with_gaussian_noise(
+        self,
+        _size: usize,
+        _test_runner: &mut TestRunner,
+    ) -> Option<Self> {
+        None
     }
 }
 
@@ -216,6 +229,18 @@ impl AbiMutator for Word {
         let slice = &mut bytes[..size];
         mutate_interesting_dword_slice(slice, test_runner)?;
         (self != bytes).then_some(bytes)
+    }
+
+    fn increment_decrement(self, _size: usize, _test_runner: &mut TestRunner) -> Option<Self> {
+        None
+    }
+
+    fn mutate_with_gaussian_noise(
+        self,
+        _size: usize,
+        _test_runner: &mut TestRunner,
+    ) -> Option<Self> {
+        None
     }
 }
 
@@ -259,6 +284,72 @@ fn mutate_interesting_dword_slice(bytes: &mut [u8], test_runner: &mut TestRunner
     let index = test_runner.rng().random_range(0..=bytes.len() - 4);
     let val = *INTERESTING_32.choose(&mut test_runner.rng())? as u32;
     bytes[index..index + 4].copy_from_slice(&val.to_be_bytes());
+    Some(())
+}
+
+/// Samples a scale factor from a pseudo-Gaussian distribution centered around 1.0.
+///
+/// - Select a random standard deviation multiplier from a predefined set.
+/// - Approximates a standard normal distribution using the Irwin-Hall method (sum of uniform
+///   samples).
+/// - Scales the normal value by the chosen standard deviation multiplier, divided by 3 to get
+///   standard deviation.
+/// - Adds 1.0 to center the scale factor around 1.0 (no mutation).
+///
+/// Returns a scale factor that, when applied to a number, mimics Gaussian noise.
+fn sample_gaussian_scale<R: Rng>(rng: &mut R) -> Option<f64> {
+    let num_samples = 8;
+    let chosen_3rd_sigma = *THREE_SIGMA_MULTIPLIERS.choose(rng).unwrap_or(&1.0);
+
+    let mut sum = 0.0;
+    for _ in 0..num_samples {
+        sum += rng.random::<f64>();
+    }
+
+    let standard_normal = sum - (num_samples as f64 / 2.0);
+    let mut scale_factor = (chosen_3rd_sigma / 3.0) * standard_normal;
+    scale_factor += 1.0;
+
+    if scale_factor < 0.0 || (scale_factor - 1.0).abs() < f64::EPSILON {
+        None
+    } else {
+        Some(scale_factor)
+    }
+}
+
+/// Applies a floating-point scale factor to a byte slice representing an unsigned or signed
+/// integer.
+fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
+    let mut carry_down = 0.0;
+
+    for i in (0..bytes.len()).rev() {
+        let byte_val = bytes[i] as f64;
+        let scaled = (byte_val + carry_down * 256.0) * scale_factor;
+
+        if i == 0 && scaled >= 256.0 {
+            bytes.iter_mut().for_each(|b| *b = 0xFF);
+            return Some(());
+        }
+
+        bytes[i] = (scaled % 256.0).floor() as u8;
+
+        let mut carry_up = (scaled / 256.0).floor();
+        carry_down = (scaled % 1.0) / scale_factor;
+
+        let mut j = i;
+        // Propagate carry_up until it is zero or no more bytes left
+        while carry_up > 0.0 && j > 0 {
+            j -= 1;
+            let new_val = bytes[j] as f64 + carry_up;
+            if j == 0 && new_val >= 256.0 {
+                bytes.iter_mut().for_each(|b| *b = 0xFF);
+                return Some(());
+            }
+            bytes[j] = (new_val % 256.0).floor() as u8;
+            carry_up = (new_val / 256.0).floor();
+        }
+    }
+
     Some(())
 }
 
