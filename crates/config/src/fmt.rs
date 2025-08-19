@@ -156,6 +156,14 @@ impl MultilineFuncHeaderStyle {
     pub fn all(&self) -> bool {
         matches!(self, Self::All | Self::AllParams)
     }
+
+    pub fn params_first(&self) -> bool {
+        matches!(self, Self::ParamsFirst | Self::ParamsFirstMulti)
+    }
+
+    pub fn attrib_first(&self) -> bool {
+        matches!(self, Self::AttributesFirst)
+    }
 }
 
 /// Style of indent

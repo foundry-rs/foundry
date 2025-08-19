@@ -1206,22 +1206,19 @@ impl<'ast> State<'_, 'ast> {
             self.cursor.advance_to(name.span.hi(), true);
         }
         self.s.cbox(-self.ind);
-        self.print_parameter_list(
-            parameters,
-            parameters.span,
-            match self.config.multiline_func_header {
-                MultilineFuncHeaderStyle::ParamsFirst => {
-                    ListFormat::AlwaysBreak { break_single: true, with_space: false }
-                }
-                MultilineFuncHeaderStyle::AllParams
-                    if !header.parameters.is_empty()
-                        && !self.can_header_fit_in_one_line(header) =>
-                {
-                    ListFormat::AlwaysBreak { break_single: true, with_space: false }
-                }
-                _ => ListFormat::Consistent { cmnts_break: true, with_space: false },
-            },
-        );
+        let header_style = self.config.multiline_func_header;
+        let params_format = match header_style {
+            MultilineFuncHeaderStyle::ParamsFirst => {
+                ListFormat::AlwaysBreak { break_single: true, with_space: false }
+            }
+            MultilineFuncHeaderStyle::AllParams
+                if !header.parameters.is_empty() && !self.can_header_fit_in_one_line(header) =>
+            {
+                ListFormat::AlwaysBreak { break_single: true, with_space: false }
+            }
+            _ => ListFormat::Consistent { cmnts_break: true, with_space: false },
+        };
+        self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
 
         // Map attributes to their corresponding comments
@@ -1260,7 +1257,10 @@ impl<'ast> State<'_, 'ast> {
             self.handle_span(ret_span, false)
         };
 
-        if !self.config.multiline_func_header.all() {
+        let attrib_box = self.config.multiline_func_header.params_first()
+            || (self.config.multiline_func_header.attrib_first()
+                && !self.can_header_params_fit_in_one_line(header));
+        if attrib_box {
             self.s.cbox(0);
         }
         if !(skip_attribs || skip_returns) {
@@ -1340,7 +1340,7 @@ impl<'ast> State<'_, 'ast> {
             }
             self.print_word("{");
             self.end();
-            if !self.config.multiline_func_header.all() {
+            if attrib_box {
                 self.end();
             }
 
@@ -1352,7 +1352,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
-            if !self.config.multiline_func_header.all() {
+            if attrib_box {
                 self.end();
             }
             self.neverbreak();
@@ -3137,26 +3137,48 @@ impl<'ast> State<'_, 'ast> {
         els_opt.map_or(true, |els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_fit_in_one_line(&self, header: &ast::FunctionHeader<'_>) -> bool {
+    fn can_header_fit_in_one_line(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+        // ' ' + visibility
+        let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
+        // ' ' + state mutability
+        let mutability = header.state_mutability.map_or(0, |sm| self.estimate_size(sm.span) + 1);
+        // ' ' + modifier + (' ' + modifier)
+        let modifiers =
+            header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span())) + 1;
+        // ' ' + override
+        let override_ = header.override_.as_ref().map_or(0, |o| self.estimate_size(o.span) + 1);
+        // ' returns(' + var + (', ' + var) + ')'
+        let returns = header.returns.as_ref().map_or(0, |ret| {
+            ret.vars
+                .iter()
+                .fold(0, |len, p| if len != 0 { len + 2 } else { 8 } + self.estimate_size(p.span))
+        });
+
+        self.estimate_header_params_size(header)
+            + visibility
+            + mutability
+            + modifiers
+            + override_
+            + returns
+            <= self.space_left()
+    }
+
+    fn estimate_header_params_size(&mut self, header: &ast::FunctionHeader<'_>) -> usize {
+        // ' ' + name
         let name = header.name.map_or(0, |name| self.estimate_size(name.span) + 1);
+        // '(' + param + (', ' + param) + ')'
         let params = header
             .parameters
             .vars
             .iter()
-            .fold(0, |len, p| if len != 0 { len + 2 } else { 3 } + self.estimate_size(p.span));
-        let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
-        let mutability = header.state_mutability.map_or(0, |sm| self.estimate_size(sm.span) + 1);
-        let modifiers =
-            header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span())) + 1;
-        let overrides = header.override_.as_ref().map_or(0, |o| self.estimate_size(o.span) + 1);
-        let returns = header.returns.as_ref().map_or(0, |ret| {
-            ret.vars
-                .iter()
-                .fold(0, |len, p| if len != 0 { len + 2 } else { 3 } + self.estimate_size(p.span))
-        });
+            .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
-        8 + name + params + visibility + mutability + modifiers + overrides + returns
-            < self.space_left()
+        // `function` takes 8 chars
+        8 + name + params
+    }
+
+    fn can_header_params_fit_in_one_line(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+        self.estimate_header_params_size(header) <= self.space_left()
     }
 }
 

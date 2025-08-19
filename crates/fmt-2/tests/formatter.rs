@@ -179,7 +179,7 @@ fmt_tests! {
     ForStatement, // OK
     FunctionCall, // OK
     FunctionCallArgsStatement, // OK? Is it acceptable?
-    FunctionDefinition, // OK? Is it acceptable? TODO: support all configs
+    FunctionDefinition, // OK?
     FunctionDefinitionWithFunctionReturns, // OK
     FunctionType, // OK? Is it acceptable? TODO: support all configs
     HexUnderscore, // OK
