@@ -1606,11 +1606,14 @@ fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u6
 fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
     // Storage values are always 32 bytes, stored as a single word
     // For arrays, we need to unwrap to the base element type
-    if let DynSolType::FixedArray(elem_type, _) = dyn_type {
-        elem_type.as_ref().abi_decode(&value.0).ok()
-    } else {
-        dyn_type.abi_decode(&value.0).ok()
+    let mut actual_type = dyn_type;
+    // Unwrap nested arrays to get to the base element type.
+    while let DynSolType::FixedArray(elem_type, _) = actual_type {
+        actual_type = elem_type.as_ref();
     }
+
+    // Use abi_decode to decode the value
+    actual_type.abi_decode(&value.0).ok()
 }
 
 /// Helper function to format DynSolValue as raw string without type information
