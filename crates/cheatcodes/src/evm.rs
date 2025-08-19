@@ -216,6 +216,7 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
+                let slot = format_slot(slot);
                 match (&slot_changes.slot_info, &slot_changes.decoded) {
                     (Some(slot_info), Some(decoded)) => {
                         // Have both slot info and decoded values - only show decoded values
@@ -1612,6 +1613,31 @@ fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValu
 
     // Use abi_decode to decode the value
     actual_type.abi_decode(&value.0).ok()
+}
+
+/// Helper function to format B256 slot values by stripping leading zeros
+fn format_slot(slot: &B256) -> String {
+    // Find the first non-zero byte
+    let first_non_zero = slot.0.iter().position(|&b| b != 0);
+
+    match first_non_zero {
+        None => {
+            // All zeros - display as 0x00
+            "0x00".to_string()
+        }
+        Some(pos) => {
+            // Format from the first non-zero byte onward
+            let significant_bytes = &slot.0[pos..];
+            let hex_str = hex::encode(significant_bytes);
+
+            // Ensure we always have an even number of hex digits (leading zero if odd)
+            if hex_str.len() % 2 == 1 {
+                format!("0x0{}", hex_str)
+            } else {
+                format!("0x{}", hex_str)
+            }
+        }
+    }
 }
 
 /// Helper function to format DynSolValue as raw string without type information

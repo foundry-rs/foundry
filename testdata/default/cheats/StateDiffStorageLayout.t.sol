@@ -97,16 +97,41 @@ contract TwoDArrayStorage {
     }
 }
 
+contract LargeSlotStorage {
+    // Regular storage variables
+    uint256 public normalValue; // slot 0
+
+    function setLargeSlot(uint256 value) external {
+        assembly {
+            // Using a large slot number directly
+            sstore(0x123456789abcdef, value)
+        }
+    }
+
+    function setMediumSlot(uint256 value) external {
+        assembly {
+            // Using a medium slot number (4096)
+            sstore(0x1000, value)
+        }
+    }
+
+    function setNormalValue(uint256 value) external {
+        normalValue = value;
+    }
+}
+
 contract StateDiffStorageLayoutTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     SimpleStorage simpleStorage;
     VariousArrays variousArrays;
     TwoDArrayStorage twoDArrayStorage;
+    LargeSlotStorage largeSlotStorage;
 
     function setUp() public {
         simpleStorage = new SimpleStorage();
         variousArrays = new VariousArrays();
         twoDArrayStorage = new TwoDArrayStorage();
+        largeSlotStorage = new LargeSlotStorage();
     }
 
     function testSimpleStorageLayout() public {
@@ -332,6 +357,13 @@ contract StateDiffStorageLayoutTest is DSTest {
         // Get the state diff as string (not JSON)
         string memory stateDiff = vm.getStateDiff();
 
+        // Check that slots are formatted compactly (e.g., @ 0x00, @ 0x01, @ 0x02)
+        assertContains(stateDiff, "@ 0x00 (value", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, "@ 0x01 (owner", "Slot 1 should be formatted as 0x01");
+        assertContains(stateDiff, "@ 0x02 (values[0]", "Slot 2 should be formatted as 0x02");
+        assertContains(stateDiff, "@ 0x03 (values[1]", "Slot 3 should be formatted as 0x03");
+        assertContains(stateDiff, "@ 0x04 (values[2]", "Slot 4 should be formatted as 0x04");
+
         // Test that decoded values are shown in the string format
         // The output uses Unicode arrow →
         // For uint256 values, should show decoded value "42"
@@ -344,6 +376,54 @@ contract StateDiffStorageLayoutTest is DSTest {
         assertContains(stateDiff, unicode"0 → 100", "Should show decoded array value 100");
         assertContains(stateDiff, unicode"0 → 200", "Should show decoded array value 200");
         assertContains(stateDiff, unicode"0 → 300", "Should show decoded array value 300");
+
+        vm.stopAndReturnStateDiff();
+    }
+
+    function testCompactSlotFormatting() public {
+        // Start recording state diffs
+        vm.startStateDiffRecording();
+
+        // Test that normal storage slots are formatted compactly
+        // These writes go to known storage layout positions
+        simpleStorage.setValue(42); // Slot 0
+        simpleStorage.setOwner(address(0xBEEF)); // Slot 1
+
+        // Get the state diff as string
+        string memory stateDiff = vm.getStateDiff();
+
+        emit log_string("State Diff:");
+        emit log_string(stateDiff);
+
+        // Check that slot numbers are formatted compactly
+        assertContains(stateDiff, "@ 0x00 (value", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, "@ 0x01 (owner", "Slot 1 should be formatted as 0x01");
+
+        vm.stopAndReturnStateDiff();
+    }
+
+    function testLargeSlotNumberFormatting() public {
+        // Start recording state diffs
+        vm.startStateDiffRecording();
+
+        // Test with normal slot first (slot 0)
+        largeSlotStorage.setNormalValue(42); // Slot 0
+
+        // Test with large slot numbers using assembly
+        largeSlotStorage.setLargeSlot(999); // Slot 0x123456789abcdef
+        largeSlotStorage.setMediumSlot(888); // Slot 0x1000
+
+        // Get the state diff as string
+        string memory stateDiff = vm.getStateDiff();
+
+        // The normal storage variable should have layout info
+        assertContains(stateDiff, "@ 0x00 (normalValue", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, unicode"0 → 42", "Should show decoded value 42");
+
+        // For slots accessed via assembly without storage layout, they'll show raw format
+        // but the slot numbers should still be compact with even number of hex digits
+        assertContains(stateDiff, "@ 0x0123456789abcdef:", "Large slot should be compact");
+        assertContains(stateDiff, "@ 0x1000:", "Medium slot should be compact with even digits");
 
         vm.stopAndReturnStateDiff();
     }
