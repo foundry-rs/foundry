@@ -92,5 +92,7 @@ pub fn configure_env(chain_id: u64, memory_limit: u64, disable_block_gas_limit: 
     cfg.disable_eip3607 = true;
     cfg.disable_block_gas_limit = disable_block_gas_limit;
     cfg.disable_nonce_check = true;
+    // For Osaka EIP-7825
+    cfg.tx_gas_limit_cap = Some(u64::MAX);
     cfg
 }
