@@ -116,21 +116,17 @@ macro_rules! impl_get_value_cheatcode {
     ($struct:ident, $sol_type:expr,stateful) => {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
                 let chain = get_active_fork_chain_id(ccx)?;
-                get_and_encode_toml_value(chain, &self.key, $sol_type, false, ccx.state)
+                get_and_encode_toml_value(chain, key, $sol_type, false, ccx.state)
             }
         }
     };
     ($struct:ident, $sol_type:expr) => {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                get_and_encode_toml_value(
-                    self.chain.to::<u64>(),
-                    &self.key,
-                    $sol_type,
-                    false,
-                    state,
-                )
+                let Self { chain, key } = self;
+                get_and_encode_toml_value(chain.to::<u64>(), key, $sol_type, false, state)
             }
         }
     };
@@ -140,15 +136,17 @@ macro_rules! impl_get_array_cheatcode {
     ($struct:ident, $sol_type:expr,stateful) => {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
                 let chain = get_active_fork_chain_id(ccx)?;
-                get_and_encode_toml_value(chain, &self.key, $sol_type, true, ccx.state)
+                get_and_encode_toml_value(chain, key, $sol_type, true, ccx.state)
             }
         }
     };
     ($struct:ident, $sol_type:expr) => {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                get_and_encode_toml_value(self.chain.to::<u64>(), &self.key, $sol_type, true, state)
+                let Self { chain, key } = self;
+                get_and_encode_toml_value(chain.to::<u64>(), key, $sol_type, true, state)
             }
         }
     };
@@ -339,48 +337,48 @@ impl_write_array_cheatcode!(
 impl_write_value_cheatcode!(
     writeForkVar_6Call,
     &DynSolType::Address,
-    |v: alloy_primitives::Address| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::Address| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_value_cheatcode!(
     writeForkChainVar_6Call,
     &DynSolType::Address,
-    |v: alloy_primitives::Address| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::Address| toml::Value::String(v.to_string())
 );
 impl_write_array_cheatcode!(
     writeForkVar_7Call,
     &DynSolType::Address,
-    |v: alloy_primitives::Address| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::Address| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_array_cheatcode!(
     writeForkChainVar_7Call,
     &DynSolType::Address,
-    |v: alloy_primitives::Address| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::Address| toml::Value::String(v.to_string())
 );
 
 // Bytes32
 impl_write_value_cheatcode!(
     writeForkVar_8Call,
     &DynSolType::FixedBytes(32),
-    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_value_cheatcode!(
     writeForkChainVar_8Call,
     &DynSolType::FixedBytes(32),
-    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(v.to_string())
 );
 impl_write_array_cheatcode!(
     writeForkVar_9Call,
     &DynSolType::FixedBytes(32),
-    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_array_cheatcode!(
     writeForkChainVar_9Call,
     &DynSolType::FixedBytes(32),
-    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::FixedBytes<32>| toml::Value::String(v.to_string())
 );
 
 // String
@@ -407,24 +405,24 @@ impl_write_array_cheatcode!(writeForkChainVar_11Call, &DynSolType::String, |v: S
 impl_write_value_cheatcode!(
     writeForkVar_12Call,
     &DynSolType::Bytes,
-    |v: alloy_primitives::Bytes| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::Bytes| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_value_cheatcode!(
     writeForkChainVar_12Call,
     &DynSolType::Bytes,
-    |v: alloy_primitives::Bytes| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::Bytes| toml::Value::String(v.to_string())
 );
 impl_write_array_cheatcode!(
     writeForkVar_13Call,
     &DynSolType::Bytes,
-    |v: alloy_primitives::Bytes| toml::Value::String(format!("0x{v}")),
+    |v: alloy_primitives::Bytes| toml::Value::String(v.to_string()),
     stateful
 );
 impl_write_array_cheatcode!(
     writeForkChainVar_13Call,
     &DynSolType::Bytes,
-    |v: alloy_primitives::Bytes| toml::Value::String(format!("0x{v}"))
+    |v: alloy_primitives::Bytes| toml::Value::String(v.to_string())
 );
 
 // -- HELPER METHODS -----------------------------------------------------
@@ -486,24 +484,24 @@ fn get_and_encode_toml_value(
 fn parse_toml_element(
     elem: &toml::Value,
     element_ty: &DynSolType,
-    context: &str,
+    key: &str,
     fork_name: &str,
 ) -> Result<DynSolValue> {
     // Convert TOML value to JSON value and use existing JSON parsing logic
     parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty)
-        .map_err(|e| fmt_err!("Failed to parse '{context}' in [fork.{fork_name}]: {e}"))
+        .map_err(|e| fmt_err!("Failed to parse '{key}' in [fork.{fork_name}]: {e}"))
 }
 
 /// A resolver to determine the correct configuration file to modify for a given fork chain.
 struct ForkConfigResolver<'a> {
     root: &'a Path,
-    chain_name: &'a str,
+    chain: &'a str,
 }
 
 impl<'a> ForkConfigResolver<'a> {
     /// Creates a new resolver for a specific fork chain.
     fn new(root: &'a Path, chain_name: &'a str) -> Self {
-        Self { root, chain_name }
+        Self { root, chain: chain_name }
     }
 
     /// Determines the correct config file and returns its path and parsed content.
@@ -526,7 +524,7 @@ impl<'a> ForkConfigResolver<'a> {
         let mut local_doc: toml_edit::DocumentMut = local_content.parse()?;
 
         // 1. Local file has precedence. If the section exists here, this is our target.
-        if get_toml_section(&local_doc.into_item(), self.chain_name).is_some() {
+        if get_toml_section(&local_doc.into_item(), self.chain).is_some() {
             return Ok(Some((local_path, local_doc)));
         }
 
@@ -544,7 +542,7 @@ impl<'a> ForkConfigResolver<'a> {
                     let base_content = fs::read_to_string(&base_path)?;
                     let base_doc: toml_edit::DocumentMut = base_content.parse()?;
                     // If the section exists in the base, that's our target.
-                    if get_toml_section(&base_doc.into_item(), self.chain_name).is_some() {
+                    if get_toml_section(&base_doc.into_item(), self.chain).is_some() {
                         return Ok(Some((base_path, base_doc)));
                     }
                 }
@@ -595,7 +593,7 @@ fn write_toml_value(
             .or_insert(value);
     }
 
-    // The `overwrote` flag is NOT passed down, as the resolver handles all cases correctly.
+    // The `overwrote` flag is NOT passed down, if the disk update is unsuccessful.
     let (success, overworte) = match persist_fork_config_to_file(chain, key, &value, state) {
         Err(e) => {
             eprintln!("Warning: Failed to persist fork config to disk: {e}");
