@@ -751,8 +751,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
     };
 
-    /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether
-    /// the shell is in JSON mode.
+    /// Prints slice of tokens using [`format_tokens`] or [`serialize_value_as_json`] depending
+    /// whether the shell is in JSON mode.
     ///
     /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
     fn print_tokens(tokens: &[DynSolValue]) {
