@@ -242,7 +242,7 @@
           "const": "scripting"
         },
         {
-          "description": "Cheatcodes that interact with the program's forking configuration.\n\nExamples: `forkChains`, `forkChainRpcUrl`, `readForkUint`, `readForkAddressArray`.\n\nSafety: safe.",
+          "description": "Cheatcodes that interact with the program's forking configuration.\n\nExamples: `readForkChains`, `readForkChainRpcUrl`, `readForkUint`, `readForkAddressArray`.\n\nSafety: safe.",
           "type": "string",
           "const": "forking"
         },
