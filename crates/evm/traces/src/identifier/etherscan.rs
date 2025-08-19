@@ -77,20 +77,7 @@ impl EtherscanIdentifier {
                 && let Some(cached_sources) = cache.get(address)
             {
                 // Merge cached sources into the result
-                for (build_id, source_map) in &cached_sources.sources_by_id {
-                    sources
-                        .sources_by_id
-                        .entry(build_id.clone())
-                        .or_default()
-                        .extend(source_map.iter().map(|(id, data)| (*id, data.clone())));
-                }
-                for (name, artifacts) in &cached_sources.artifacts_by_name {
-                    sources
-                        .artifacts_by_name
-                        .entry(name.clone())
-                        .or_default()
-                        .extend(artifacts.clone());
-                }
+                sources.merge(cached_sources.clone());
                 continue;
             }
 
@@ -122,7 +109,7 @@ impl EtherscanIdentifier {
 
             // construct the map and cache results
             for res in outputs {
-                let (address, metadata, project, output, _root) = res?;
+                let (address, _metadata, project, output, _root) = res?;
 
                 // Create a temporary ContractSources for this contract
                 let mut contract_sources: ContractSources = Default::default();
@@ -134,20 +121,7 @@ impl EtherscanIdentifier {
                 }
 
                 // Merge into the main result
-                for (build_id, source_map) in &contract_sources.sources_by_id {
-                    sources
-                        .sources_by_id
-                        .entry(build_id.clone())
-                        .or_default()
-                        .extend(source_map.iter().map(|(id, data)| (*id, data.clone())));
-                }
-                for (name, artifacts) in &contract_sources.artifacts_by_name {
-                    sources
-                        .artifacts_by_name
-                        .entry(name.clone())
-                        .or_default()
-                        .extend(artifacts.clone());
-                }
+                sources.merge(contract_sources);
             }
         }
 
