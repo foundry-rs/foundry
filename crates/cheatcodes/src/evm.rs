@@ -120,7 +120,7 @@ struct SlotStateDiff {
 /// Storage slot metadata from the contract's storage layout.
 #[derive(Serialize, Debug)]
 struct SlotInfo {
-    /// Variable name (e.g., "owner", "values[0]", "config.maxSize").
+    /// Variable name (e.g., "owner", "values\[0\]", "config.maxSize").
     label: String,
     /// Solidity type, serialized as string (e.g., "uint256", "address").
     #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
