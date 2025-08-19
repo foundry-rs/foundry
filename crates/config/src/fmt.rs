@@ -152,6 +152,12 @@ pub enum MultilineFuncHeaderStyle {
     AllParams,
 }
 
+impl MultilineFuncHeaderStyle {
+    pub fn all(&self) -> bool {
+        matches!(self, Self::All | Self::AllParams)
+    }
+}
+
 /// Style of indent
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

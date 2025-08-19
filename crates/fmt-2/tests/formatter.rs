@@ -176,7 +176,7 @@ fmt_tests! {
     EnumVariants, // OK
     ErrorDefinition, // OK
     EventDefinition, // OK
-    ForStatement, // OK (works if we use one less digit + breaks as it should)
+    ForStatement, // OK
     FunctionCall, // OK
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable? TODO: support all configs

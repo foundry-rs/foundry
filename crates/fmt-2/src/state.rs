@@ -6,7 +6,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{self as config, IndentStyle};
+use foundry_config::fmt::{self as config, IndentStyle, MultilineFuncHeaderStyle};
 use itertools::{Either, Itertools};
 use solar_parse::{
     Cursor,
@@ -623,7 +623,7 @@ impl<'sess> State<'sess, '_> {
             }
         }
         if !skip_first_break {
-            format.soft_break(&mut self.s);
+            format.add_break(true, values.len(), &mut self.s);
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
         }
@@ -669,7 +669,7 @@ impl<'sess> State<'sess, '_> {
                 skip_last_break = true;
             }
             if !is_last && !self.is_bol_or_only_ind() {
-                self.space();
+                format.add_break(false, values.len(), &mut self.s);
             }
         }
 
@@ -677,7 +677,7 @@ impl<'sess> State<'sess, '_> {
             self.end();
         }
         if !skip_last_break {
-            format.soft_break(&mut self.s);
+            format.add_break(true, values.len(), &mut self.s);
             self.s.offset(-self.ind);
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
@@ -1209,7 +1209,12 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Consistent { cmnts_break: true, with_space: false },
+            match self.config.multiline_func_header {
+                MultilineFuncHeaderStyle::ParamsFirst => {
+                    ListFormat::AlwaysBreak { break_single: true, with_space: false }
+                }
+                _ => ListFormat::Consistent { cmnts_break: true, with_space: false },
+            },
         );
         self.end();
 
@@ -1249,7 +1254,9 @@ impl<'ast> State<'_, 'ast> {
             self.handle_span(ret_span, false)
         };
 
-        self.s.cbox(0);
+        if !self.config.multiline_func_header.all() {
+            self.s.cbox(0);
+        }
         if !(skip_attribs || skip_returns) {
             // Print fn attributes in correct order
             if let Some(v) = visibility {
@@ -1312,10 +1319,10 @@ impl<'ast> State<'_, 'ast> {
                         self.s.offset(-self.ind);
                     }
                 } else {
-                    // If there are no comments, and just a fn name, never break
-                    if parameters.is_empty()
+                    // If there are no modifiers, overrides, nor returns never break
+                    if header.modifiers.is_empty()
+                        && header.override_.is_none()
                         && returns.as_ref().is_none_or(|r| r.is_empty())
-                        && attributes.is_empty()
                     {
                         self.nbsp();
                     } else {
@@ -1327,7 +1334,9 @@ impl<'ast> State<'_, 'ast> {
             }
             self.print_word("{");
             self.end();
-            self.end();
+            if !self.config.multiline_func_header.all() {
+                self.end();
+            }
 
             self.print_block_without_braces(body, body_span.hi(), Some(self.ind));
             if self.cursor.enabled || self.cursor.pos < body_span.hi() {
@@ -1337,7 +1346,9 @@ impl<'ast> State<'_, 'ast> {
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
-            self.end();
+            if !self.config.multiline_func_header.all() {
+                self.end();
+            }
             self.neverbreak();
             self.print_word(";");
         }
@@ -1556,7 +1567,7 @@ impl<'ast> State<'_, 'ast> {
             |fmt, var| fmt.print_var(var, false),
             get_span!(),
             format,
-            false,
+            matches!(format, ListFormat::AlwaysBreak { break_single: true, .. }),
         );
     }
 
@@ -3356,6 +3367,9 @@ impl<'ast> State<'_, 'ast> {
 /// Formatting style for comma-separated lists
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListFormat {
+    /// Always breaks for multiple elements. If only one element, will print it isolated depending
+    /// on the `break_single` flag.
+    AlwaysBreak { break_single: bool, with_space: bool },
     /// Breaks all elements if any break.
     Consistent { cmnts_break: bool, with_space: bool },
     /// Attempts to fit all elements in one line, before breaking consistently.
@@ -3369,6 +3383,7 @@ pub(crate) enum ListFormat {
 impl ListFormat {
     pub(crate) fn breaks_comments(&self) -> bool {
         match self {
+            Self::AlwaysBreak { .. } => true,
             Self::Consistent { cmnts_break, .. } => *cmnts_break,
             Self::Compact { cmnts_break, .. } => *cmnts_break,
             Self::Inline => false,
@@ -3377,17 +3392,22 @@ impl ListFormat {
 
     pub(crate) fn with_space(&self) -> bool {
         match self {
+            Self::AlwaysBreak { with_space, .. } => *with_space,
             Self::Consistent { with_space, .. } => *with_space,
             Self::Compact { with_space, .. } => *with_space,
             Self::Inline => false,
         }
     }
 
-    fn soft_break(&self, p: &mut pp::Printer) {
-        if self.with_space() {
-            p.space();
-        } else {
+    fn add_break(&self, soft: bool, elems: usize, p: &mut pp::Printer) {
+        if let Self::AlwaysBreak { break_single, .. } = self
+            && (elems > 1 || (*break_single && elems == 1))
+        {
+            p.hardbreak();
+        } else if soft && !self.with_space() {
             p.zerobreak();
+        } else {
+            p.space();
         }
     }
 
