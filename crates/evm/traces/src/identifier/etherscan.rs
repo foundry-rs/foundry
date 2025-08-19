@@ -15,10 +15,10 @@ use futures::{
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -35,6 +35,8 @@ pub struct EtherscanIdentifier {
     invalid_api_key: Arc<AtomicBool>,
     pub contracts: BTreeMap<Address, Metadata>,
     pub sources: BTreeMap<u32, String>,
+    /// Cache for compiled contract sources to avoid double-fetching
+    cache: Arc<Mutex<HashMap<Address, ContractSources>>>,
 }
 
 impl EtherscanIdentifier {
@@ -53,42 +55,100 @@ impl EtherscanIdentifier {
             invalid_api_key: Arc::new(AtomicBool::new(false)),
             contracts: BTreeMap::new(),
             sources: BTreeMap::new(),
+            cache: Arc::new(Mutex::new(HashMap::new())),
         }))
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        // TODO: Add caching so we dont double-fetch contracts.
-        let outputs_fut = self
-            .contracts
-            .iter()
-            // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| async move {
-                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
-                let root = tempfile::tempdir()?;
-                let root_path = root.path();
-                let project = etherscan_project(metadata, root_path)?;
-                let output = project.compile()?;
+        let mut sources: ContractSources = Default::default();
+        let mut contracts_to_compile = Vec::new();
 
-                if output.has_compiler_errors() {
-                    eyre::bail!("{output}")
+        // Check cache first and collect contracts that need compilation
+        for (address, metadata) in &self.contracts {
+            // filter out vyper files
+            if metadata.is_vyper() {
+                continue;
+            }
+
+            // Try to get from cache first
+            if let Ok(cache) = self.cache.lock()
+                && let Some(cached_sources) = cache.get(address)
+            {
+                // Merge cached sources into the result
+                for (build_id, source_map) in &cached_sources.sources_by_id {
+                    sources
+                        .sources_by_id
+                        .entry(build_id.clone())
+                        .or_default()
+                        .extend(source_map.iter().map(|(id, data)| (*id, data.clone())));
+                }
+                for (name, artifacts) in &cached_sources.artifacts_by_name {
+                    sources
+                        .artifacts_by_name
+                        .entry(name.clone())
+                        .or_default()
+                        .extend(artifacts.clone());
+                }
+                continue;
+            }
+
+            // If not in cache, add to compilation list
+            contracts_to_compile.push((*address, metadata));
+        }
+
+        // Compile contracts that weren't in cache
+        if !contracts_to_compile.is_empty() {
+            let outputs_fut = contracts_to_compile
+                .iter()
+                .map(|(address, metadata)| async move {
+                    sh_println!("Compiling: {} {address}", metadata.contract_name)?;
+                    let root = tempfile::tempdir()?;
+                    let root_path = root.path();
+                    let project = etherscan_project(metadata, root_path)?;
+                    let output = project.compile()?;
+
+                    if output.has_compiler_errors() {
+                        eyre::bail!("{output}")
+                    }
+
+                    Ok((*address, metadata, project, output, root))
+                })
+                .collect::<Vec<_>>();
+
+            // poll all the futures concurrently
+            let outputs = join_all(outputs_fut).await;
+
+            // construct the map and cache results
+            for res in outputs {
+                let (address, metadata, project, output, _root) = res?;
+
+                // Create a temporary ContractSources for this contract
+                let mut contract_sources: ContractSources = Default::default();
+                contract_sources.insert(&output, project.root(), None)?;
+
+                // Cache the compiled sources
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.insert(address, contract_sources.clone());
                 }
 
-                Ok((project, output, root))
-            })
-            .collect::<Vec<_>>();
-
-        // poll all the futures concurrently
-        let outputs = join_all(outputs_fut).await;
-
-        let mut sources: ContractSources = Default::default();
-
-        // construct the map
-        for res in outputs {
-            let (project, output, _root) = res?;
-            sources.insert(&output, project.root(), None)?;
+                // Merge into the main result
+                for (build_id, source_map) in &contract_sources.sources_by_id {
+                    sources
+                        .sources_by_id
+                        .entry(build_id.clone())
+                        .or_default()
+                        .extend(source_map.iter().map(|(id, data)| (*id, data.clone())));
+                }
+                for (name, artifacts) in &contract_sources.artifacts_by_name {
+                    sources
+                        .artifacts_by_name
+                        .entry(name.clone())
+                        .or_default()
+                        .extend(artifacts.clone());
+                }
+            }
         }
 
         Ok(sources)
