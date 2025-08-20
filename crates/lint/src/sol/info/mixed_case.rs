@@ -15,7 +15,7 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
     fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name
-            && !is_mixed_case(name.as_str(), true, &ctx.config.mixed_case_exceptions)
+            && !is_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
         {
             ctx.emit(&MIXED_CASE_FUNCTION, name.span);
@@ -38,7 +38,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     ) {
         if var.mutability.is_none()
             && let Some(name) = var.name
-            && !is_mixed_case(name.as_str(), false, &ctx.config.mixed_case_exceptions)
+            && !is_mixed_case(name.as_str(), false, ctx.config.mixed_case_exceptions)
         {
             ctx.emit(&MIXED_CASE_VARIABLE, name.span);
         }
