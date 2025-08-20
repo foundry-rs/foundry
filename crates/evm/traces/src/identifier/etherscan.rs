@@ -15,14 +15,24 @@ use futures::{
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 use tokio::time::{Duration, Interval};
+
+/// Cache entry for compiled contracts
+#[derive(Clone, Debug)]
+struct CachedContract {
+    /// The compiled contract sources
+    sources: ContractSources,
+    /// Timestamp when this entry was cached
+    cached_at: Instant,
+}
 
 /// A trace identifier that tries to identify addresses using Etherscan.
 pub struct EtherscanIdentifier {
@@ -35,6 +45,8 @@ pub struct EtherscanIdentifier {
     invalid_api_key: Arc<AtomicBool>,
     pub contracts: BTreeMap<Address, Metadata>,
     pub sources: BTreeMap<u32, String>,
+    /// Cache for compiled contracts to avoid re-fetching and re-compiling
+    compiled_cache: Arc<Mutex<HashMap<Address, CachedContract>>>,
 }
 
 impl EtherscanIdentifier {
@@ -63,45 +75,123 @@ impl EtherscanIdentifier {
             invalid_api_key: Arc::new(AtomicBool::new(false)),
             contracts: BTreeMap::new(),
             sources: BTreeMap::new(),
+            compiled_cache: Arc::new(Mutex::new(HashMap::new())),
         }))
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
+    ///
+    /// This implementation includes caching to avoid re-fetching and re-compiling contracts.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        // TODO: Add caching so we dont double-fetch contracts.
-        let outputs_fut = self
-            .contracts
-            .iter()
-            // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| async move {
-                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
-                let root = tempfile::tempdir()?;
-                let root_path = root.path();
-                let project = etherscan_project(metadata, root_path)?;
-                let output = project.compile()?;
-
-                if output.has_compiler_errors() {
-                    eyre::bail!("{output}")
-                }
-
-                Ok((project, output, root))
-            })
-            .collect::<Vec<_>>();
-
-        // poll all the futures concurrently
-        let outputs = join_all(outputs_fut).await;
-
+        // Cache expiry time (1 hour)
+        const CACHE_DURATION_SECS: u64 = 3600;
+        
         let mut sources: ContractSources = Default::default();
+        let mut to_compile = Vec::new();
+        
+        // First pass: check cache and collect contracts that need compilation
+        {
+            let mut cache = self.compiled_cache.lock().unwrap();
+            let now = Instant::now();
+            
+            // Clean up expired entries
+            cache.retain(|_, entry| {
+                now.duration_since(entry.cached_at).as_secs() < CACHE_DURATION_SECS
+            });
+            
+            for (address, metadata) in &self.contracts {
+                // Skip vyper files
+                if metadata.is_vyper() {
+                    continue;
+                }
+                
+                // Check if we have a valid cached version
+                if let Some(cached) = cache.get(address) {
+                    // Merge cached sources into result
+                    for (build_id, source_map) in &cached.sources.sources_by_id {
+                        sources.sources_by_id
+                            .entry(build_id.clone())
+                            .or_insert_with(HashMap::new)
+                            .extend(source_map.clone());
+                    }
+                    for (name, artifacts) in &cached.sources.artifacts_by_name {
+                        sources.artifacts_by_name
+                            .entry(name.clone())
+                            .or_insert_with(Vec::new)
+                            .extend(artifacts.clone());
+                    }
+                    trace!(target: "traces::etherscan", ?address, "using cached compiled contract");
+                } else {
+                    to_compile.push((*address, metadata));
+                }
+            }
+        }
+        
+        // Second pass: compile contracts that weren't in cache
+        if !to_compile.is_empty() {
+            let outputs_fut = to_compile
+                .iter()
+                .map(|(address, metadata)| async move {
+                    sh_println!("Compiling: {} {address}", metadata.contract_name)?;
+                    let root = tempfile::tempdir()?;
+                    let root_path = root.path();
+                    let project = etherscan_project(metadata, root_path)?;
+                    let output = project.compile()?;
 
-        // construct the map
-        for res in outputs {
-            let (project, output, _root) = res?;
-            sources.insert(&output, project.root(), None)?;
+                    if output.has_compiler_errors() {
+                        eyre::bail!("{output}")
+                    }
+
+                    Ok((*address, project, output, root))
+                })
+                .collect::<Vec<_>>();
+
+            // Poll all the futures concurrently
+            let outputs = join_all(outputs_fut).await;
+
+            // Process compilation results and update cache
+            let mut cache = self.compiled_cache.lock().unwrap();
+            let now = Instant::now();
+            
+            for res in outputs {
+                let (address, project, output, _root) = res?;
+                
+                // Create a temporary ContractSources for this contract
+                let mut contract_sources = ContractSources::default();
+                contract_sources.insert(&output, project.root(), None)?;
+                
+                // Cache the compiled contract
+                cache.insert(address, CachedContract {
+                    sources: contract_sources.clone(),
+                    cached_at: now,
+                });
+                
+                // Merge into final result
+                for (build_id, source_map) in contract_sources.sources_by_id {
+                    sources.sources_by_id
+                        .entry(build_id)
+                        .or_insert_with(HashMap::new)
+                        .extend(source_map);
+                }
+                for (name, artifacts) in contract_sources.artifacts_by_name {
+                    sources.artifacts_by_name
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .extend(artifacts);
+                }
+                
+                trace!(target: "traces::etherscan", ?address, "compiled and cached contract");
+            }
         }
 
         Ok(sources)
+    }
+    
+    /// Clear the compilation cache
+    pub fn clear_cache(&self) {
+        self.compiled_cache.lock().unwrap().clear();
+        trace!(target: "traces::etherscan", "cleared compilation cache");
     }
 
     fn identify_from_metadata(
