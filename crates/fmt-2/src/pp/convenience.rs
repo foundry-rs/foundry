@@ -38,10 +38,6 @@ impl Printer {
         self.scan_string(w.into());
     }
 
-    pub fn word_without_indent(&mut self, w: impl Into<Cow<'static, str>>) {
-        self.scan_string_no_indent(w.into())
-    }
-
     fn spaces(&mut self, n: usize) {
         self.break_offset(n, 0);
     }

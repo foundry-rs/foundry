@@ -75,13 +75,13 @@ pub(crate) const SIZE_INFINITY: isize = 0xffff;
 #[derive(Debug)]
 pub struct Printer {
     out: String,
-    /// Number of spaces left on line
+    /// Number of spaces left on line.
     space: isize,
-    /// Ring-buffer of tokens and calculated sizes
+    /// Ring-buffer of tokens and calculated sizes.
     buf: RingBuffer<BufEntry>,
-    /// Running size of stream "...left"
+    /// Running size of stream "...left".
     left_total: isize,
-    /// Running size of stream "...right"
+    /// Running size of stream "...right".
     right_total: isize,
     /// Pseudo-stack, really a ring too. Holds the
     /// primary-ring-buffers index of the Begin that started the
@@ -90,20 +90,20 @@ pub struct Printer {
     /// bottom as it becomes irrelevant due to the primary ring-buffer
     /// advancing.
     scan_stack: VecDeque<usize>,
-    /// Stack of blocks-in-progress being flushed by print
+    /// Stack of blocks-in-progress being flushed by print.
     print_stack: Vec<PrintFrame>,
-    /// Level of indentation of current line
+    /// Level of indentation of current line.
     indent: usize,
-    /// Buffered indentation to avoid writing trailing whitespace
+    /// Buffered indentation to avoid writing trailing whitespace.
     pending_indentation: usize,
     /// The token most recently popped from the left boundary of the
-    /// ring-buffer for printing
+    /// ring-buffer for printing.
     last_printed: Option<Token>,
 
     /// Target line width.
     margin: isize,
-    /// Indentation configuration (with_tab, width)
-    indent_config: (bool, usize),
+    /// If `Some(tab_width)` the printer will use tabs for indentation.
+    indent_config: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -113,7 +113,7 @@ pub struct BufEntry {
 }
 
 impl Printer {
-    pub fn new(margin: usize, indent_with_tab: bool, indent_width: usize) -> Self {
+    pub fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             out: String::new(),
@@ -128,7 +128,7 @@ impl Printer {
             last_printed: None,
 
             margin,
-            indent_config: (indent_with_tab, indent_width),
+            indent_config: use_tab_with_size,
         }
     }
 
@@ -444,33 +444,15 @@ impl Printer {
 
     fn print_indent(&mut self) {
         self.out.reserve(self.pending_indentation);
-        if self.indent_config.0 {
-            let num_tabs = self.pending_indentation / self.indent_config.1;
-            let remainder = self.pending_indentation % self.indent_config.1;
-            if num_tabs == 0 {
-                self.out.extend(iter::repeat_n(' ', remainder));
-            } else {
-                self.out.extend(iter::repeat_n('\t', num_tabs));
-            }
+        if let Some(tab_width) = self.indent_config {
+            let num_tabs = self.pending_indentation / tab_width;
+            self.out.extend(iter::repeat_n('\t', num_tabs));
+
+            let remainder = self.pending_indentation % tab_width;
+            self.out.extend(iter::repeat_n(' ', remainder));
         } else {
             self.out.extend(iter::repeat_n(' ', self.pending_indentation));
         }
         self.pending_indentation = 0;
-    }
-
-    fn print_string_no_indent(&mut self, string: &str) {
-        self.pending_indentation = 0;
-        self.out.push_str(string);
-        self.space -= string.len() as isize;
-    }
-
-    // TODO: do properly, check with dani
-    fn scan_string_no_indent(&mut self, string: Cow<'static, str>) {
-        if self.scan_stack.is_empty() {
-            self.print_string_no_indent(&string);
-        } else {
-            self.check_stream();
-            self.print_string_no_indent(&string);
-        }
     }
 }

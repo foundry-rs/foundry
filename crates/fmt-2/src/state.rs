@@ -80,8 +80,11 @@ impl<'sess> State<'sess, '_> {
         Self {
             s: pp::Printer::new(
                 config.line_length,
-                matches!(config.style, IndentStyle::Tab),
-                config.tab_width,
+                if matches!(config.style, IndentStyle::Tab) {
+                    Some(config.tab_width)
+                } else {
+                    None
+                },
             ),
             ind: config.tab_width as isize,
             sm,
@@ -2793,10 +2796,20 @@ impl<'ast> State<'_, 'ast> {
         if !skip_opening_brace {
             self.print_word("{");
         }
+
+        let mut i = if block.is_empty() { 0 } else { block.len() - 1 };
         self.print_block_inner(
             block,
             BlockFormat::NoBraces(Some(self.ind)),
-            Self::print_yul_stmt,
+            |s, stmt| {
+                s.print_yul_stmt(stmt);
+                s.print_comments(stmt.span.hi(), CommentConfig::default());
+                s.print_trailing_comment(stmt.span.hi(), None);
+                if i != 0 {
+                    s.hardbreak_if_not_bol();
+                    i -= 1;
+                }
+            },
             |b| b.span,
             span.hi(),
         );
@@ -3339,8 +3352,6 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
         }
-        self.print_comments(span.hi(), CommentConfig::default());
-        self.print_trailing_comment(span.hi(), None);
     }
 
     fn print_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) {
