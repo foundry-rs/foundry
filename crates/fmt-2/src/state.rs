@@ -622,7 +622,10 @@ impl<'sess> State<'sess, '_> {
                 self.cursor.advance_to(first_pos, true);
             }
         }
-        if !skip_first_break {
+
+        if let Some(sym) = format.prev_symbol() {
+            self.word_space(sym);
+        } else if !skip_first_break {
             format.add_break(true, values.len(), &mut self.s);
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
@@ -677,10 +680,19 @@ impl<'sess> State<'sess, '_> {
             self.end();
         }
         if !skip_last_break {
-            format.add_break(true, values.len(), &mut self.s);
-            self.s.offset(-self.ind);
+            if let Some(sym) = format.post_symbol() {
+                format.add_break(false, values.len(), &mut self.s);
+                self.s.offset(-self.ind);
+                self.word(sym);
+            } else {
+                format.add_break(true, values.len(), &mut self.s);
+                self.s.offset(-self.ind);
+            }
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
+        } else if let Some(sym) = format.post_symbol() {
+            self.nbsp();
+            self.word(sym);
         }
         self.end();
         self.cursor.advance_to(pos_hi, true);
@@ -2405,7 +2417,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_sep(Separator::Nbsp);
                     }
                 }
-                self.print_yul_block(block, block.span);
+                self.print_yul_block(block, block.span, false);
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
             ast::StmtKind::DeclMulti(vars, expr) => {
@@ -2768,12 +2780,19 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_yul_block(&mut self, block: &'ast [yul::Stmt<'ast>], span: Span) {
+    fn print_yul_block(
+        &mut self,
+        block: &'ast [yul::Stmt<'ast>],
+        span: Span,
+        skip_opening_brace: bool,
+    ) {
         if self.handle_span(span, false) {
             return;
         }
 
-        self.print_word("{");
+        if !skip_opening_brace {
+            self.print_word("{");
+        }
         self.print_block_inner(
             block,
             BlockFormat::NoBraces(Some(self.ind)),
@@ -3192,7 +3211,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span),
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
@@ -3209,32 +3228,34 @@ impl<'ast> State<'_, 'ast> {
                     ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
-                self.word(" := ");
-                self.neverbreak();
+                self.word(" :=");
+                self.space();
+                self.s.offset(self.ind);
+                self.ibox(0);
                 self.print_yul_expr_call(expr_call);
+                self.end();
             }
             yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call),
             yul::StmtKind::If(expr, stmts) => {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
-                self.print_yul_block(stmts, span);
+                self.print_yul_block(stmts, span, false);
             }
             yul::StmtKind::For { init, cond, step, body } => {
-                // TODO(dani): boxes
                 self.ibox(0);
 
                 self.word("for ");
-                self.print_yul_block(init, span);
+                self.print_yul_block(init, span, false);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, span);
+                self.print_yul_block(step, span, false);
 
                 self.space();
-                self.print_yul_block(body, span);
+                self.print_yul_block(body, span, false);
 
                 self.end();
             }
@@ -3249,7 +3270,7 @@ impl<'ast> State<'_, 'ast> {
                     self.word("case ");
                     self.print_lit(constant);
                     self.nbsp();
-                    self.print_yul_block(body, span);
+                    self.print_yul_block(body, span, false);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
@@ -3257,7 +3278,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(default_case) = default_case {
                     self.hardbreak_if_not_bol();
                     self.word("default ");
-                    self.print_yul_block(default_case, span);
+                    self.print_yul_block(default_case, span, false);
                 }
             }
             yul::StmtKind::Leave => self.word("leave"),
@@ -3279,20 +3300,21 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.nbsp();
                 if !returns.is_empty() {
-                    self.word("-> ");
                     self.commasep(
                         returns,
                         stmt.span.lo(),
                         stmt.span.hi(),
                         Self::print_ident,
                         get_span!(),
-                        ListFormat::Consistent { cmnts_break: false, with_space: false },
+                        ListFormat::Yul { sym_prev: Some("->"), sym_post: Some("{") },
                         false,
                     );
-                    self.space_if_not_bol();
+                    self.end();
+                    self.print_yul_block(body, span, true);
+                } else {
+                    self.end();
+                    self.print_yul_block(body, span, false);
                 }
-                self.end();
-                self.print_yul_block(body, span);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
@@ -3319,7 +3341,6 @@ impl<'ast> State<'_, 'ast> {
         }
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
-        self.hardbreak_if_not_bol();
     }
 
     fn print_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) {
@@ -3345,7 +3366,7 @@ impl<'ast> State<'_, 'ast> {
             Self::print_yul_expr,
             get_span!(),
             ListFormat::Consistent { cmnts_break: false, with_space: false },
-            false,
+            true,
         );
     }
 
@@ -3428,12 +3449,17 @@ pub(crate) enum ListFormat {
     /// If the list contains just one element, it will print unboxed (will not break).
     /// Otherwise, will break consistently.
     Inline,
+    /// Since yul return values aren't wrapped in parenthesis, we need to manually handle the
+    /// adjacent symbols to achieve the desired format.
+    ///
+    /// Behaves like `Self::Consistent`.
+    Yul { sym_prev: Option<&'static str>, sym_post: Option<&'static str> },
 }
 
 impl ListFormat {
     pub(crate) fn breaks_comments(&self) -> bool {
         match self {
-            Self::AlwaysBreak { .. } => true,
+            Self::AlwaysBreak { .. } | Self::Yul { .. } => true,
             Self::Consistent { cmnts_break, .. } => *cmnts_break,
             Self::Compact { cmnts_break, .. } => *cmnts_break,
             Self::Inline => false,
@@ -3445,8 +3471,16 @@ impl ListFormat {
             Self::AlwaysBreak { with_space, .. } => *with_space,
             Self::Consistent { with_space, .. } => *with_space,
             Self::Compact { with_space, .. } => *with_space,
-            Self::Inline => false,
+            Self::Inline | Self::Yul { .. } => false,
         }
+    }
+
+    pub(crate) fn prev_symbol(&self) -> Option<&'static str> {
+        if let Self::Yul { sym_prev, .. } = self { *sym_prev } else { None }
+    }
+
+    pub(crate) fn post_symbol(&self) -> Option<&'static str> {
+        if let Self::Yul { sym_post, .. } = self { *sym_post } else { None }
     }
 
     fn add_break(&self, soft: bool, elems: usize, p: &mut pp::Printer) {
