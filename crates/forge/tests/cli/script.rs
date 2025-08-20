@@ -3563,18 +3563,6 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_panicsWithoutSelectedFork() public {
-        vm.readForkChain();
-    }
-    function test_panicsWithUnknownVar() public {
-        vm.createSelectFork("<url>");
-        bool invalid = vm.readForkBool("invalid");
-    }
-    function test_panicsWhenNotArray() public {
-        vm.createSelectFork("<url>");
-        bool[] memory invalid = vm.readForkBoolArray("bool");
-    }
-
     function test_forkVars() public {
         vm.createSelectFork("<url>");
 
@@ -3658,7 +3646,7 @@ contract ForkTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvv", "ForkTest"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS] test_forkVars() ([GAS])
 Logs:
@@ -3677,14 +3665,6 @@ Logs:
        > addr_array[0]: 0x1111111111111111111111111111111111111111
        > string_array[0]: hello
 ...
-Failing tests:
-Encountered 3 failing tests in src/ForkTest.t.sol:ForkTest
-[FAIL: vm.readForkBoolArray: variable 'bool' in '[fork.<chain_id: 1>]' must be an array] test_panicsWhenNotArray() ([GAS])
-[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_panicsWithUnknownVar() ([GAS])
-[FAIL: vm.readForkChain: a fork must be selected] test_panicsWithoutSelectedFork() ([GAS])
-
-Encountered a total of 3 failing tests, 1 tests succeeded
-
 "#]]);
 });
 
@@ -3721,9 +3701,23 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_throwsErrorWhen() public {
+    function test_throwsErrorWithoutSelectedFork() public {
+        vm.readForkChain();
+    }
+
+    function test_throwsErrorWithUnknownVar() public {
+        vm.createSelectFork("<url>");
+        bool invalid = vm.readForkBool("invalid");
+    }
+
+    function test_throwsErrorWhenInvalidAddressLength() public {
         vm.createSelectFork("<url>");
         address owner = vm.readForkAddress("owner");
+    }
+
+    function test_throwsErrorWhenNotArray() public {
+        vm.createSelectFork("<url>");
+        string[] memory invalid = vm.readForkStringArray("owner");
     }
 }
        "#
@@ -3733,10 +3727,17 @@ contract ForkTest is DSTest {
 
     cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.readForkAddress: Failed to parse 'owner' in [fork.mainnet]: failed parsing "0xdeadbeef" as type `address`: parser error:
+Failing tests:
+Encountered 4 failing tests in src/ForkTest.t.sol:ForkTest
+[FAIL: vm.readForkAddress: failed to parse 'owner' in '[fork.<chain_id: 1>]': failed parsing "0xdeadbeef" as type `address`: parser error:
 0xdeadbeef
 ^
-invalid string length] test_throwsErrorWhen() ([GAS])
+invalid string length] test_throwsErrorWhenInvalidAddressLength() ([GAS])
+[FAIL: vm.readForkStringArray: variable 'owner' in '[fork.<chain_id: 1>]' must be an array] test_throwsErrorWhenNotArray() ([GAS])
+[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_throwsErrorWithUnknownVar() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_throwsErrorWithoutSelectedFork() ([GAS])
+
+Encountered a total of 4 failing tests, 0 tests succeeded
 ...
 "#]]);
 });
