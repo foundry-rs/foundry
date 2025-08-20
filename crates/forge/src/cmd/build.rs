@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    opts::{BuildOpts, solar_pcx_from_build_opts},
+    opts::{BuildOpts, configure_pcx},
     utils::{LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
@@ -171,12 +171,7 @@ impl BuildArgs {
                 let mut compiler = linter.init();
                 compiler.enter_mut(|compiler| -> Result<()> {
                     let mut pcx = compiler.parse();
-                    solar_pcx_from_build_opts(
-                        &mut pcx,
-                        &self.build,
-                        Some(project),
-                        Some(&input_files),
-                    )?;
+                    configure_pcx(&mut pcx, config, Some(project), Some(&input_files))?;
                     pcx.parse();
                     let _ = compiler.lower_asts();
                     Ok(())

@@ -1,7 +1,10 @@
 use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{BuildOpts, solar_pcx_from_build_opts};
+use foundry_cli::{
+    opts::{BuildOpts, configure_pcx},
+    utils::LoadConfig,
+};
 use serde::Serialize;
 use solar_parse::interface::Session;
 use solar_sema::{
@@ -52,6 +55,8 @@ impl Display for Eip712Output {
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
+        let config = self.build.load_config()?;
+
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
         let mut compiler = solar_sema::Compiler::new(sess);
@@ -59,12 +64,7 @@ impl Eip712Args {
         compiler.enter_mut(|compiler| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
             let mut pcx = compiler.parse();
-            solar_pcx_from_build_opts(
-                &mut pcx,
-                &self.build,
-                None,
-                Some(slice::from_ref(&self.target_path)),
-            )?;
+            configure_pcx(&mut pcx, &config, None, Some(slice::from_ref(&self.target_path)))?;
 
             // Parse and resolve
             pcx.parse();

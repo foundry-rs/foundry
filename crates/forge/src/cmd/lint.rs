@@ -5,7 +5,7 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::{BuildOpts, solar_pcx_from_build_opts},
+    opts::{BuildOpts, configure_pcx},
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
@@ -97,7 +97,7 @@ impl LintArgs {
         // Override default severity config with user-defined severity
         let severity = match self.severity {
             Some(target) => target,
-            None => config.lint.severity,
+            None => config.lint.severity.clone(),
         };
 
         if project.compiler.solc.is_none() {
@@ -115,7 +115,7 @@ impl LintArgs {
         let mut compiler = linter.init();
         compiler.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            solar_pcx_from_build_opts(&mut pcx, &self.build, Some(&project), Some(&input))?;
+            configure_pcx(&mut pcx, &config, Some(&project), Some(&input))?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())

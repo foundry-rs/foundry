@@ -2,7 +2,7 @@ use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{BuildOpts, solar_pcx_from_solc_project},
+    opts::{BuildOpts, configure_pcx_from_solc},
     utils::LoadConfig,
 };
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
@@ -153,7 +153,7 @@ impl BindJsonArgs {
         compiler.enter_mut(|compiler| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
             let mut pcx = compiler.parse();
-            solar_pcx_from_solc_project(&mut pcx, project, &input, false);
+            configure_pcx_from_solc(&mut pcx, project, &input, false);
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
