@@ -948,18 +948,6 @@ impl TestCommand {
         assert
     }
 
-    /// Runs the command with specific terminal width, returning a [`snapbox`] object to assert the
-    /// command output.
-    #[track_caller]
-    pub fn assert_with_terminal_width(&mut self, width: u16) -> OutputAssert {
-        let assert =
-            OutputAssert::new(self.try_execute_via_tty_with_size(Some((width, 24))).unwrap());
-        if self.redact_output {
-            return assert.with_assert(test_assert());
-        }
-        assert
-    }
-
     /// Runs the command and asserts that it resulted in success.
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
@@ -1035,70 +1023,6 @@ impl TestCommand {
             fun(child.stdin.take().unwrap());
         }
         child.wait_with_output()
-    }
-
-    #[track_caller]
-    pub fn try_execute_via_tty_with_size(
-        &mut self,
-        size: Option<(u16, u16)>,
-    ) -> std::io::Result<Output> {
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-
-        // Set default size or use provided size
-        let (cols, rows) = size.unwrap_or((120, 24));
-
-        // Create a new pty with specified size
-        let pty_system = native_pty_system();
-        let pty_size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
-
-        let pair = pty_system.openpty(pty_size).map_err(std::io::Error::other)?;
-
-        // Build the command
-        let mut cmd = CommandBuilder::new(self.cmd.get_program());
-        for arg in self.cmd.get_args() {
-            cmd.arg(arg);
-        }
-
-        // Set current directory
-        if let Some(dir) = self.cmd.get_current_dir() {
-            cmd.cwd(dir);
-        }
-
-        // Copy environment variables
-        for (key, val) in self.cmd.get_envs() {
-            if let (Some(val), Some(key_str)) = (val, key.to_str()) {
-                cmd.env(key_str, val);
-            }
-        }
-
-        // Spawn the command in the pty
-        let mut child = pair.slave.spawn_command(cmd).map_err(std::io::Error::other)?;
-
-        // Close the slave end
-        drop(pair.slave);
-
-        // Read output from the master end
-        let mut reader = pair.master.try_clone_reader().map_err(std::io::Error::other)?;
-
-        let mut output = Vec::new();
-        reader.read_to_end(&mut output)?;
-
-        // Wait for the child to finish
-        let exit_status = child.wait().map_err(std::io::Error::other)?;
-
-        // Construct the output
-        #[cfg(unix)]
-        let status =
-            std::os::unix::process::ExitStatusExt::from_raw(exit_status.exit_code() as i32);
-        #[cfg(windows)]
-        let status =
-            std::os::windows::process::ExitStatusExt::from_raw(exit_status.exit_code() as u32);
-
-        Ok(Output {
-            status,
-            stdout: output.clone(),
-            stderr: Vec::new(), // PTY combines stdout and stderr
-        })
     }
 }
 

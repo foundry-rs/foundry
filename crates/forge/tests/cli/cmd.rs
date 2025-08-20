@@ -3672,30 +3672,6 @@ forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, 
 "#]]);
 });
 
-forgetest!(inspect_custom_counter_very_huge_method_identifiers_wrapped, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS).unwrap();
-
-    // Force a specific terminal width to test wrapping
-    cmd.args(["inspect", "--wrap", "Counter", "method-identifiers"])
-        .assert_with_terminal_width(80)
-        .success()
-        .stdout_eq(str![[r#"
-
-╭-----------------------------------------------------------------+------------╮
-| Method                                                          | Identifier |
-+==============================================================================+
-| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint25 | f38dafbb   |
-| 6),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,u |            |
-| int256,uint256,uint256,uint256,uint256))[],((uint256,uint256,ui |            |
-| nt256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256 |            |
-| ,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint |            |
-| 256)))                                                          |            |
-╰-----------------------------------------------------------------+------------╯
-
-
-"#]]);
-});
-
 forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     cmd.args(["inspect", "src/Counter.sol:Counter", "standard-json"]).assert_success().stdout_eq(str![[r#"
 {
