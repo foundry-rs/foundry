@@ -54,8 +54,7 @@ pub fn configure_pcx(
     Ok(())
 }
 
-/// Configures a Solar [`solar_sema::ParsingContext`] from a [`foundry_compilers::Project`] and a
-/// [`SolcVersionedInput`].
+/// Configures a [`ParsingContext`] from a [`Project`] and [`SolcVersionedInput`].
 ///
 /// - Configures include paths, remappings.
 /// - Source files are added if `add_source_file` is set

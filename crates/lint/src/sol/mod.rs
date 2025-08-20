@@ -222,13 +222,13 @@ impl<'a> Linter for SolidityLinter<'a> {
 
     fn configure(&self, compiler: &mut Compiler) {
         let dcx = compiler.dcx_mut();
+        let sm = dcx.source_map_mut().unwrap().clone();
         dcx.set_emitter(if self.with_json_emitter {
             let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
-            let json_emitter =
-                JsonEmitter::new(writer, Default::default()).rustc_like(true).ui_testing(false);
+            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(false);
             Box::new(json_emitter)
         } else {
-            Box::new(HumanEmitter::stderr(Default::default()))
+            Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
         });
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
     }
