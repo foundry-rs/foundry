@@ -52,7 +52,10 @@ fn resolve_rpc_url(chain: Chain, state: &mut crate::Cheatcodes) -> Result {
         return Ok(rpc.url()?.abi_encode());
     }
 
-    bail!("'rpc_endpoint' not found in [fork.{chain}] subsection of 'foundry.toml'")
+    bail!(
+        "'rpc_endpoint' not found in '[fork.<chain_id: {chain}>]' subsection of 'foundry.toml'",
+        chain = chain.id()
+    )
 }
 
 impl Cheatcode for readForkChainRpcUrlCall {
@@ -176,7 +179,10 @@ fn get_toml_value<'a>(
     state: &'a crate::Cheatcodes,
 ) -> Result<&'a toml::Value> {
     let config = state.config.forks.get(&chain).ok_or_else(|| {
-        fmt_err!("[fork.{chain}] subsection not found in [fork] of 'foundry.toml'")
+        fmt_err!(
+            "'[fork.<chain_id: {chain}>]' subsection not found in 'foundry.toml'",
+            chain = chain.id()
+        )
     })?;
     let value = config.vars.get(key).ok_or_else(|| {
         fmt_err!("variable '{key}' not found in '[fork.<chain_id: {chain}>]'", chain = chain.id())
@@ -221,10 +227,11 @@ fn get_array(
 fn parse_toml_element(
     elem: &toml::Value,
     element_ty: &DynSolType,
-    context: &str,
+    key: &str,
     chain: Chain,
 ) -> Result<DynSolValue> {
     // Convert TOML value to JSON value and use existing JSON parsing logic
-    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty)
-        .map_err(|e| fmt_err!("Failed to parse '{context}' in [fork.{chain}]: {e}"))
+    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty).map_err(|e| {
+        fmt_err!("failed to parse '{key}' in '[fork.<chain_id: {chain}>]': {e}", chain = chain.id())
+    })
 }
