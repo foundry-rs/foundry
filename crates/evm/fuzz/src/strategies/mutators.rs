@@ -115,6 +115,36 @@ impl GaussianNoiseMutator for I256 {
     }
 }
 
+/// Mutator that changes the current value of an uint or int by applying gaussian noise.
+pub(crate) trait BoundMutator: Sized + Copy + Debug {
+    fn mutate_in_logspace(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self>;
+}
+
+impl BoundMutator for U256 {
+    fn mutate_in_logspace(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
+        if min > max || self < min || self > max || min == max {
+            return None;
+        }
+
+        let rng = test_runner.rng();
+
+        for _ in 0..100 {
+            let bits = rng.random_range(0..=256);
+            let mask = (U256::ONE << bits) - U256::ONE;
+            let candidate = U256::from(rng.random::<u128>()) & mask;
+
+            // Map to range
+            let candidate = min + (candidate % (max - min + U256::ONE));
+
+            if candidate != self {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+}
+
 /// Mutator that changes the current value by flipping a random bit.
 pub(crate) trait BitMutator: Sized + Copy + Debug {
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
