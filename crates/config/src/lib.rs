@@ -5197,8 +5197,8 @@ mod tests {
             // By default, it has read-only permissions.
             assert_eq!(config.forks.access, ForkConfigPermission::Read);
 
-            let expected: HashMap<String, ForkChainConfig> = vec![(
-                "mainnet".to_string(),
+            let expected: HashMap<Chain, ForkChainConfig> = vec![(
+                Chain::mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         "mainnet-rpc".to_string(),
@@ -5231,12 +5231,12 @@ mod tests {
             .collect();
 
             assert_eq!(
-                config.forks.chain_configs.keys().sorted().collect::<Vec<_>>(),
-                expected.keys().sorted().collect::<Vec<_>>(),
+                config.forks.chain_configs.keys().map(|c| c.id()).sorted().collect::<Vec<_>>(),
+                expected.keys().map(|c| c.id()).sorted().collect::<Vec<_>>(),
             );
 
-            let expected_mainnet = expected.get("mainnet").unwrap();
-            let mainnet = config.forks.get("mainnet").unwrap();
+            let expected_mainnet = expected.get(&Chain::mainnet()).unwrap();
+            let mainnet = config.forks.get(&Chain::mainnet()).unwrap();
 
             // Verify that rpc_endpoint is now resolved to the actual value
             if let Some(rpc) = &mainnet.rpc_endpoint {

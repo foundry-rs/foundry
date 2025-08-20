@@ -4,12 +4,13 @@ use crate::{
     Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*, json::parse_json_as,
     toml::toml_to_json_value,
 };
+use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
-use eyre::OptionExt;
-use foundry_config::{Config, fork_config::ForkConfigPermission};
+use foundry_config::Config;
 use foundry_evm_core::ContextExt;
 use std::{
+    borrow::Cow,
     fs,
     path::{Path, PathBuf},
 };
@@ -19,22 +20,21 @@ use std::{
 // Check if fork variables exist
 impl Cheatcode for checkForkVarCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let chain = get_active_fork_chain_id(ccx)?;
+        let chain = get_active_fork_chain(ccx)?;
         check_var_exists(chain, &self.key, ccx.state)
     }
 }
 
 impl Cheatcode for checkForkChainVarCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-        check_var_exists(self.chain.to::<u64>(), &self.key, state)
+        check_var_exists(Chain::from_id(self.chain.to::<u64>()), &self.key, state)
     }
 }
 
 /// Helper to check if a variable exists in the TOML config.
-fn check_var_exists(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
+fn check_var_exists(chain: Chain, key: &str, state: &crate::Cheatcodes) -> Result {
     let forks = state.config.forks.read().map_err(|_| fmt_err!("Failed to acquire read lock"))?;
-    let exists = forks.get(name).and_then(|config| config.vars.get(key)).is_some();
+    let exists = forks.get(&chain).and_then(|config| config.vars.get(key)).is_some();
     Ok(exists.abi_encode())
 }
 
@@ -42,27 +42,29 @@ fn check_var_exists(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result 
 
 impl Cheatcode for readForkChainIdsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self {} = self;
         let forks =
             state.config.forks.read().map_err(|_| fmt_err!("Failed to acquire read lock"))?;
-        Ok(forks
-            .keys()
-            .map(|name| alloy_chains::Chain::from_named(name.parse().unwrap()).id())
-            .collect::<Vec<_>>()
-            .abi_encode())
+        Ok(forks.keys().map(|chain| chain.id()).collect::<Vec<_>>().abi_encode())
     }
 }
 
 impl Cheatcode for readForkChainsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+        let Self {} = self;
         let forks =
             state.config.forks.read().map_err(|_| fmt_err!("Failed to acquire read lock"))?;
-        Ok(forks.keys().collect::<Vec<_>>().abi_encode())
+        Ok(forks
+            .keys()
+            .map(|chain| get_chain_name(chain).to_string())
+            .collect::<Vec<_>>()
+            .abi_encode())
     }
 }
 
 impl Cheatcode for readForkChainCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        Ok(get_active_fork_chain_name(ccx)?.abi_encode())
+        Ok(get_chain_name(&get_active_fork_chain(ccx)?).to_string().abi_encode())
     }
 }
 
@@ -72,43 +74,39 @@ impl Cheatcode for readForkChainIdCall {
     }
 }
 
-fn resolve_rpc_url(name: &'static str, state: &mut crate::Cheatcodes) -> Result {
-    // Get the chain ID from the chain_configs
+fn resolve_rpc_url(chain: Chain, state: &mut crate::Cheatcodes) -> Result {
     let forks = state.config.forks.read().map_err(|_| fmt_err!("Failed to acquire read lock"))?;
-    if let Some(config) = forks.get(name) {
+    if let Some(config) = forks.get(&chain) {
         let rpc = match config.rpc_endpoint {
             Some(ref url) => url.clone().resolve(),
-            None => state.config.rpc_endpoint(name)?,
+            None => state.config.rpc_endpoint(&get_chain_name(&chain))?,
         };
 
         return Ok(rpc.url()?.abi_encode());
     }
 
-    bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
+    bail!(
+        "'rpc_endpoint' not found in '[fork.<chain_id: {chain}>]' subsection of 'foundry.toml'",
+        chain = chain.id()
+    )
 }
 
 impl Cheatcode for readForkChainRpcUrlCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { id } = self;
-        let name = get_chain_name(id.to::<u64>())?;
-        resolve_rpc_url(name, state)
+        resolve_rpc_url(Chain::from_id(id.to::<u64>()), state)
     }
 }
 
 impl Cheatcode for readForkRpcUrlCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let name = get_active_fork_chain_name(ccx)?;
-        resolve_rpc_url(name, ccx.state)
+        resolve_rpc_url(get_active_fork_chain(ccx)?, ccx.state)
     }
 }
 
 /// Gets the alloy chain name for a given chain id.
-fn get_chain_name(id: u64) -> Result<&'static str> {
-    let chain = alloy_chains::Chain::from_id(id)
-        .named()
-        .ok_or_eyre("unknown name for active forked chain")?;
-
-    Ok(chain.as_str())
+fn get_chain_name(chain: &Chain) -> Cow<'static, str> {
+    chain.named().map_or(Cow::Owned(chain.id().to_string()), |name| Cow::Borrowed(name.as_str()))
 }
 
 // Helper macros to generate cheatcode implementations
@@ -117,7 +115,7 @@ macro_rules! impl_get_value_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
+                let chain = get_active_fork_chain(ccx)?;
                 get_and_encode_toml_value(chain, key, $sol_type, false, ccx.state)
             }
         }
@@ -126,7 +124,13 @@ macro_rules! impl_get_value_cheatcode {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key } = self;
-                get_and_encode_toml_value(chain.to::<u64>(), key, $sol_type, false, state)
+                get_and_encode_toml_value(
+                    Chain::from_id(chain.to::<u64>()),
+                    key,
+                    $sol_type,
+                    false,
+                    state,
+                )
             }
         }
     };
@@ -137,7 +141,7 @@ macro_rules! impl_get_array_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
+                let chain = get_active_fork_chain(ccx)?;
                 get_and_encode_toml_value(chain, key, $sol_type, true, ccx.state)
             }
         }
@@ -146,7 +150,13 @@ macro_rules! impl_get_array_cheatcode {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key } = self;
-                get_and_encode_toml_value(chain.to::<u64>(), key, $sol_type, true, state)
+                get_and_encode_toml_value(
+                    Chain::from_id(chain.to::<u64>()),
+                    key,
+                    $sol_type,
+                    true,
+                    state,
+                )
             }
         }
     };
@@ -202,7 +212,7 @@ macro_rules! impl_write_value_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key, value } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
+                let chain = get_active_fork_chain(ccx)?;
                 let toml_value = $toml_converter((*value).clone());
                 write_toml_value(chain, key, toml_value, ccx.state)
             }
@@ -213,7 +223,7 @@ macro_rules! impl_write_value_cheatcode {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key, value } = self;
                 let toml_value = $toml_converter((*value).clone());
-                write_toml_value((*chain).to::<u64>(), key, toml_value, state)
+                write_toml_value(Chain::from_id((*chain).to::<u64>()), key, toml_value, state)
             }
         }
     };
@@ -224,7 +234,7 @@ macro_rules! impl_write_array_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key, value } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
+                let chain = get_active_fork_chain(ccx)?;
                 let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
                 write_toml_value(chain, key, toml::Value::Array(toml_array), ccx.state)
             }
@@ -235,7 +245,12 @@ macro_rules! impl_write_array_cheatcode {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key, value } = self;
                 let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
-                write_toml_value((*chain).to::<u64>(), key, toml::Value::Array(toml_array), state)
+                write_toml_value(
+                    Chain::from_id((*chain).to::<u64>()),
+                    key,
+                    toml::Value::Array(toml_array),
+                    state,
+                )
             }
         }
     };
@@ -443,39 +458,43 @@ impl_write_array_cheatcode!(
 /// Returns the ABI-encoded value(s) from the TOML configuration, parsed according to the specified
 /// Solidity type.
 fn get_and_encode_toml_value(
-    chain: u64,
+    chain: Chain,
     key: &str,
     ty: &DynSolType,
     is_array: bool,
     state: &crate::Cheatcodes,
 ) -> Result {
-    let name = get_chain_name(chain)?;
     let forks = state.config.forks.read().map_err(|_| fmt_err!("Failed to acquire read lock"))?;
-    let config = forks.get(name).ok_or_else(|| {
-        fmt_err!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
+    let config = forks.get(&chain).ok_or_else(|| {
+        fmt_err!(
+            "'[fork.<chain_id: {chain}>]' subsection not found in 'foundry.toml'",
+            chain = chain.id()
+        )
     })?;
-    let value = config
-        .vars
-        .get(key)
-        .ok_or_else(|| fmt_err!("Variable '{key}' not found in [fork.{name}] configuration"))?;
+    let value = config.vars.get(key).ok_or_else(|| {
+        fmt_err!("variable '{key}' not found in '[fork.<chain_id: {chain}>]'", chain = chain.id())
+    })?;
 
     if is_array {
-        let arr = value
-            .as_array()
-            .ok_or_else(|| fmt_err!("Variable '{key}' in [fork.{name}] must be an array"))?;
+        let arr = value.as_array().ok_or_else(|| {
+            fmt_err!(
+                "variable '{key}' in '[fork.<chain_id: {id}>]' must be an array",
+                id = chain.id()
+            )
+        })?;
 
         let result: Result<Vec<_>> = arr
             .iter()
             .enumerate()
             .map(|(i, elem)| {
                 let context = format!("{key}[{i}]");
-                parse_toml_element(elem, ty, &context, name)
+                parse_toml_element(elem, ty, &context, chain)
             })
             .collect();
 
         Ok(DynSolValue::Array(result?).abi_encode())
     } else {
-        let sol_value = parse_toml_element(value, ty, key, name)?;
+        let sol_value = parse_toml_element(value, ty, key, chain)?;
         Ok(sol_value.abi_encode())
     }
 }
@@ -485,87 +504,156 @@ fn parse_toml_element(
     elem: &toml::Value,
     element_ty: &DynSolType,
     key: &str,
-    fork_name: &str,
+    chain: Chain,
 ) -> Result<DynSolValue> {
     // Convert TOML value to JSON value and use existing JSON parsing logic
-    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty)
-        .map_err(|e| fmt_err!("Failed to parse '{key}' in [fork.{fork_name}]: {e}"))
+    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty).map_err(|e| {
+        fmt_err!("failed to parse '{key}' in '[fork.<chain_id: {chain}>]': {e}", chain = chain.id())
+    })
 }
 
-/// A resolver to determine the correct configuration file to modify for a given fork chain.
-struct ForkConfigResolver<'a> {
+/// A writer struct that, for a given fork chain, determines the correct toml file to modify.
+struct ForkConfigWriter<'a> {
     root: &'a Path,
-    chain: &'a str,
+    chain: Cow<'static, str>,
+    key: &'a str,
+    value: &'a toml::Value,
 }
 
-impl<'a> ForkConfigResolver<'a> {
-    /// Creates a new resolver for a specific fork chain.
-    fn new(root: &'a Path, chain_name: &'a str) -> Self {
-        Self { root, chain: chain_name }
+impl<'a> ForkConfigWriter<'a> {
+    fn new(
+        root: &'a Path,
+        chain_name: Cow<'static, str>,
+        key: &'a str,
+        value: &'a toml::Value,
+    ) -> Self {
+        Self { root, chain: chain_name, key, value }
     }
 
-    /// Determines the correct config file and returns its path and parsed content.
+    /// Persists the variable to the appropriate config file.
     ///
     /// The logic is as follows:
-    /// 1. Check if the section `[forks.<chain_name>]` exists in `foundry.toml`. If so, it is the
-    ///    target.
-    /// 2. If not, check if `foundry.toml` `extends` a base file and if that base file contains the
-    ///    section. If so, the base file is the target.
-    /// 3. If the section exists in neither, `foundry.toml` is the default target for creation.
+    /// 1. Check if `[forks.<chain_name>]` exists in `foundry.toml`. If so, write there.
+    /// 2. If not, check if `foundry.toml` `extends` a base file and if that file contains the
+    ///    section. If so, write to the base file.
+    /// 3. If the section exists in neither, write to the local `foundry.toml`.
     ///
-    /// Returns `Ok(None)` if the local `foundry.toml` doesn't exist.
-    fn resolve_and_load(&self) -> eyre::Result<Option<(PathBuf, toml_edit::DocumentMut)>> {
+    /// Returns `Result<bool>` where the boolean indicates if a value was overwritten.
+    /// Returns an error if `foundry.toml` cannot be found or written to.
+    fn persist(&self) -> Result<bool> {
         let local_path = self.root.join(Config::FILE_NAME);
         if !local_path.exists() {
-            return Ok(None);
+            bail!("failed to find a 'foundry.toml' file to write to in root: {:?}", self.root);
         }
 
-        let local_content = fs::read_to_string(&local_path)?;
-        let mut local_doc: toml_edit::DocumentMut = local_content.parse()?;
+        let (target_path, mut doc) = self.resolve_target_doc(&local_path)?;
 
-        // 1. Local file has precedence. If the section exists here, this is our target.
-        if get_toml_section(&local_doc.into_item(), self.chain).is_some() {
-            return Ok(Some((local_path, local_doc)));
+        let vars_table = self.get_or_create_vars_table(&mut doc)?;
+
+        let previous_value =
+            vars_table.insert(self.key, to_toml_edit_value(self.value.clone()).into());
+        let overwritten = previous_value.is_some();
+
+        fs::write(&target_path, doc.to_string())?;
+
+        Ok(overwritten)
+    }
+
+    /// Resolves the correct TOML document and its path.
+    fn resolve_target_doc(
+        &self,
+        local_path: &Path,
+    ) -> eyre::Result<(PathBuf, toml_edit::DocumentMut)> {
+        let local_content = fs::read_to_string(local_path)?;
+        let local_doc: toml_edit::DocumentMut = local_content.parse()?;
+
+        // 1. Local file has precedence.
+        if get_toml_section(&local_doc.as_item(), &self.chain).is_some() {
+            return Ok((local_path.to_path_buf(), local_doc));
         }
 
-        // 2. If not local, check the base file specified by `extends`.
-        let extends_path_str = local_doc
+        // 2. Check the base file specified by `extends`.
+        if let Some(base_path_str) = local_doc
             .get("profile")
             .and_then(|p| p.as_table())
-            .and_then(|profiles| profiles.values().find_map(|p| p.get("extends")?.as_str()));
-
-        if let Some(extends_path_str) = extends_path_str {
+            .and_then(|p| p.iter().find_map(|(_, p)| p.get("extends")?.as_str()))
+        {
             if let Some(parent) = local_path.parent() {
-                let base_path =
-                    foundry_compilers::utils::canonicalize(parent.join(extends_path_str))?;
+                let base_path = foundry_compilers::utils::canonicalize(parent.join(base_path_str))?;
                 if base_path.exists() {
                     let base_content = fs::read_to_string(&base_path)?;
                     let base_doc: toml_edit::DocumentMut = base_content.parse()?;
-                    // If the section exists in the base, that's our target.
-                    if get_toml_section(&base_doc.into_item(), self.chain).is_some() {
-                        return Ok(Some((base_path, base_doc)));
+                    if get_toml_section(&base_doc.as_item(), &self.chain).is_some() {
+                        return Ok((base_path, base_doc));
                     }
                 }
             }
         }
 
-        // 3. Default to local file if the section is not found in either place.
-        Ok(Some((local_path, local_doc)))
+        // 3. Default to local file.
+        Ok((local_path.to_path_buf(), local_doc))
+    }
+
+    /// Navigates to `[forks.<chain>.vars]`, creating tables if needed.
+    fn get_or_create_vars_table<'doc>(
+        &self,
+        doc: &'doc mut toml_edit::DocumentMut,
+    ) -> Result<&'doc mut toml_edit::Table> {
+        let forks_table = doc["forks"]
+            .or_insert(toml_edit::table())
+            .as_table_mut()
+            .ok_or_else(|| eyre::eyre!("'forks' must be a table."))?;
+        let chain_table = forks_table
+            .entry(&self.chain)
+            .or_insert(toml_edit::table())
+            .as_table_mut()
+            .ok_or_else(|| fmt_err!("'[forks.{}]' must be a table.", self.chain))?;
+        chain_table
+            .entry("vars")
+            .or_insert(toml_edit::table())
+            .as_table_mut()
+            .ok_or_else(|| fmt_err!("'[forks.{}.vars]' must be a table.", self.chain))
+    }
+}
+
+/// Converts a `toml::Value` to a `toml_edit::Value`.
+///
+/// This is necessary because the in-memory representation uses `toml::Value` for
+/// convenience, but the file persistence requires `toml_edit::Value` to avoid
+/// clobbering formatting.
+fn to_toml_edit_value(value: toml::Value) -> toml_edit::Value {
+    match value {
+        toml::Value::String(s) => toml_edit::Value::from(s),
+        toml::Value::Integer(i) => toml_edit::Value::from(i),
+        toml::Value::Float(f) => toml_edit::Value::from(f),
+        toml::Value::Boolean(b) => toml_edit::Value::from(b),
+        toml::Value::Datetime(d) => toml_edit::Value::from(d),
+        toml::Value::Array(arr) => {
+            let values = arr.into_iter().map(to_toml_edit_value).collect::<Vec<_>>();
+            toml_edit::Value::Array(toml_edit::Array::from_iter(values))
+        }
+        toml::Value::Table(map) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (k, v) in map {
+                table.insert(k, to_toml_edit_value(v));
+            }
+            toml_edit::Value::InlineTable(table)
+        }
     }
 }
 
 /// Generic helper to write value(s) to the in-memory config and disk.
 ///
 /// # Arguments
-/// * `chain`: The chain ID to write the configuration for
+/// * `chain`: The chain to write the configuration for
 /// * `key`: The variable key to write in the fork configuration
-/// * `value`: The TOML value to write (already converted)
+/// * `value`: The TOML value to write (already converted from solidity types)
 /// * `state`: The cheatcodes state containing the fork configurations
 ///
 /// # Returns
 /// Returns ABI-encoded tuple of (success: bool, overwrote: bool)
 fn write_toml_value(
-    chain: u64,
+    chain: Chain,
     key: &str,
     value: toml::Value,
     state: &mut crate::Cheatcodes,
@@ -574,83 +662,26 @@ fn write_toml_value(
         bail!("'{key}' cannot be modified with cheatcodes");
     }
 
-    let overwrote = false;
-    let name = get_chain_name(chain)?;
-
-    // Update in-memory config first to calculate `overwrote` for the return value.
-    {
-        state
-            .config
-            .forks
-            .write()
-            .map_err(|_| fmt_err!("Failed to acquire write lock"))?
-            .chain_configs
-            .entry(name.to_string())
-            .and_modify(|v| {
-                overwrote = true;
-                v = value;
-            })
-            .or_insert(value);
+    if !state.config.forks.read().unwrap().access.can_write() {
+        return Ok((false, false).abi_encode());
     }
 
-    // The `overwrote` flag is NOT passed down, if the disk update is unsuccessful.
-    let (success, overworte) = match persist_fork_config_to_file(chain, key, &value, state) {
+    // Attempt to update the config file.
+    let writer = ForkConfigWriter::new(&state.config.root, get_chain_name(&chain), key, &value);
+    let overwritten = match writer.persist() {
+        Ok(overwritten) => overwritten,
         Err(e) => {
-            eprintln!("Warning: Failed to persist fork config to disk: {e}");
-            (false, false)
+            warn!("warning: failed to write '{key}' to disk: {e}");
+            return Ok((false, false).abi_encode());
         }
-        Ok(()) => (true, overwrote),
     };
 
-    Ok((success, overwrote).abi_encode())
-}
+    // Update the in-memory state.
+    let mut forks = state.config.forks.write().unwrap();
+    let fork_chain_config = forks.chain_configs.entry(chain).or_default();
+    fork_chain_config.vars.insert(key.to_string(), value);
 
-/// Orchestrates persisting a fork variable by finding the correct config file.
-fn persist_fork_config_to_file(
-    chain: u64,
-    key: &str,
-    value: &toml::Value,
-    state: &crate::Cheatcodes,
-) -> Result<()> {
-    if !state
-        .config
-        .forks
-        .read()
-        .map_err(|_| eyre::eyre!("Failed to acquire read lock for fork configs"))?
-        .access
-        .can_write()
-    {
-        return Ok(());
-    }
-
-    let chain_name = get_chain_name(chain)?;
-
-    // Use the resolver to determine the correct file to write to.
-    let resolver = ForkConfigResolver::new(&state.config.root, chain_name);
-    if let Some((target_path, mut doc)) = resolver.resolve_and_load()? {
-        // Modify the document.
-        let forks_table = doc
-            .entry("forks")
-            .or_insert(toml_edit::table())
-            .as_table_mut()
-            .ok_or_else(|| eyre::eyre!("Invalid TOML: root 'forks' entry must be a table"))?;
-
-        let chain_table =
-            forks_table.entry(chain_name).or_insert(toml_edit::table()).as_table_mut().ok_or_else(
-                || eyre::eyre!("Invalid TOML: '[forks.{chain_name}]' must be a table"),
-            )?;
-
-        let vars_table =
-            chain_table.entry("vars").or_insert(toml_edit::table()).as_table_mut().ok_or_else(
-                || eyre::eyre!("Invalid TOML: '[forks.{chain_name}.vars]' must be a table"),
-            )?;
-
-        // Insert the value and write back to the file.
-        vars_table[key] = toml_edit::value(value);
-        fs::write(&target_path, doc.to_string())?;
-    }
-
-    Ok(())
+    Ok((true, overwritten).abi_encode())
 }
 
 /// Helper to safely traverse a TOML document to find a specific fork chain's section.
@@ -658,7 +689,7 @@ fn get_toml_section<'a>(doc: &'a toml_edit::Item, chain_name: &str) -> Option<&'
     doc.get("forks")?.get(chain_name)
 }
 
-/// Gets the chain id of the active fork. Panics if no fork is selected.
+/// Gets the chain id of the active fork. Bails if no fork is selected.
 fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
     let (db, _, env) = ccx.as_db_env_and_journal();
     if !db.is_forked_mode() {
@@ -667,7 +698,7 @@ fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
     Ok(env.cfg.chain_id)
 }
 
-/// Gets the alloy chain name for the active fork. Panics if no fork is selected.
-fn get_active_fork_chain_name(ccx: &mut CheatsCtxt) -> Result<&'static str> {
-    get_chain_name(get_active_fork_chain_id(ccx)?)
+/// Gets the alloy chain for the active fork. Bails if no fork is selected.
+fn get_active_fork_chain(ccx: &mut CheatsCtxt) -> Result<Chain> {
+    get_active_fork_chain_id(ccx).map(Chain::from_id)
 }

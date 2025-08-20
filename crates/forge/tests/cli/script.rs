@@ -1,6 +1,7 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_chains::Chain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
@@ -3246,7 +3247,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
     prj.update_config(|config| {
         config.forks.chain_configs = vec![
             (
-                "mainnet".to_string(),
+                Chain::mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         "mainnet-rpc".to_string(),
@@ -3283,7 +3284,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                 },
             ),
             (
-                "optimism".to_string(),
+                Chain::optimism_mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: None,
                     vars: vec![
@@ -3469,7 +3470,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
     prj.update_config(|config| {
         config.forks.chain_configs = vec![
             (
-                "mainnet".to_string(),
+                Chain::mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         mainnet_endpoint.clone(),
@@ -3506,7 +3507,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                 },
             ),
             (
-                "optimism".to_string(),
+                Chain::optimism_mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: None,
                     vars: vec![
@@ -3680,7 +3681,7 @@ forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
 
     prj.update_config(|config| {
         config.forks.chain_configs = vec![(
-            "mainnet".to_string(),
+            Chain::mainnet(),
             ForkChainConfig {
                 rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
                 vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),

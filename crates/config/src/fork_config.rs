@@ -4,6 +4,7 @@ use crate::{
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 
+use alloy_chains::Chain;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, fmt, ops::Deref, str::FromStr};
 
@@ -15,7 +16,7 @@ pub struct ForkConfigs {
     pub access: ForkConfigPermission,
     // Individual configs for each chain.
     #[serde(flatten)]
-    pub chain_configs: HashMap<String, ForkChainConfig>,
+    pub chain_configs: HashMap<Chain, ForkChainConfig>,
 }
 
 impl ForkConfigs {
@@ -43,7 +44,7 @@ impl ForkConfigs {
 }
 
 impl Deref for ForkConfigs {
-    type Target = HashMap<String, ForkChainConfig>;
+    type Target = HashMap<Chain, ForkChainConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.chain_configs
