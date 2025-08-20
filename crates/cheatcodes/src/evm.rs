@@ -247,7 +247,6 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                let slot = format_slot(slot);
                 match (&slot_changes.slot_info, &slot_changes.decoded) {
                     (Some(slot_info), Some(decoded)) => {
                         // Have both slot info and decoded values - only show decoded values
@@ -255,7 +254,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.dyn_sol_type,
                             format_dyn_sol_value_raw(&decoded.previous_value),
                             format_dyn_sol_value_raw(&decoded.new_value)
                         )?;
@@ -266,7 +265,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.dyn_sol_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -1722,38 +1721,38 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
         // If it's a struct, enhance it with CustomStruct variant
         if storage_type.label.starts_with("struct ")
             && let Some(struct_name) = storage_type.label.strip_prefix("struct ")
-                && let Some(members_value) = storage_type.other.get("members")
-                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
-            {
-                let mut prop_names = Vec::new();
-                let mut member_types = Vec::new();
+            && let Some(members_value) = storage_type.other.get("members")
+            && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+        {
+            let mut prop_names = Vec::new();
+            let mut member_types = Vec::new();
 
-                for member in &members {
-                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type) {
-                        // For struct members, we need special handling
-                        let member_type = if member_type_info.label.starts_with("struct ") {
-                            // For nested structs, create a placeholder Tuple type
-                            // The actual struct will be handled when its slot is accessed
-                            DynSolType::Tuple(vec![])
-                        } else if let Ok(parsed) = DynSolType::parse(&member_type_info.label) {
-                            parsed
-                        } else {
-                            continue;
-                        };
-                        prop_names.push(member.label.clone());
-                        member_types.push(member_type);
-                    }
-                }
-
-                // Only create CustomStruct if we successfully parsed all members
-                if member_types.len() == members.len() {
-                    parsed_type = DynSolType::CustomStruct {
-                        name: struct_name.to_string(),
-                        prop_names,
-                        tuple: member_types,
+            for member in &members {
+                if let Some(member_type_info) = storage_layout.types.get(&member.storage_type) {
+                    // For struct members, we need special handling
+                    let member_type = if member_type_info.label.starts_with("struct ") {
+                        // For nested structs, create a placeholder Tuple type
+                        // The actual struct will be handled when its slot is accessed
+                        DynSolType::Tuple(vec![])
+                    } else if let Ok(parsed) = DynSolType::parse(&member_type_info.label) {
+                        parsed
+                    } else {
+                        continue;
                     };
+                    prop_names.push(member.label.clone());
+                    member_types.push(member_type);
                 }
             }
+
+            // Only create CustomStruct if we successfully parsed all members
+            if member_types.len() == members.len() {
+                parsed_type = DynSolType::CustomStruct {
+                    name: struct_name.to_string(),
+                    prop_names,
+                    tuple: member_types,
+                };
+            }
+        }
 
         trace!("Parsed type '{}' for slot {} as: {:?}", storage_type.label, slot_str, parsed_type);
 
@@ -1834,26 +1833,26 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
                                     inner_members.iter().find(|m| m.slot == "0")
                                     && let Some(inner_first_type_info) =
                                         storage_layout.types.get(&inner_first_member.storage_type)
-                                        && let Ok(inner_first_type) =
-                                            DynSolType::parse(&inner_first_type_info.label)
-                                    {
-                                        return Some(SlotInfo {
-                                            label: format!(
-                                                "{}.{}.{}",
-                                                storage.label,
-                                                first_member.label,
-                                                inner_first_member.label
-                                            ),
-                                            slot_type: SlotType {
-                                                label: inner_first_type_info.label.clone(),
-                                                dyn_sol_type: inner_first_type,
-                                            },
-                                            offset: inner_first_member.offset,
-                                            slot: storage.slot.clone(),
-                                            members: None,
-                                            decoded: None,
-                                        });
-                                    }
+                                    && let Ok(inner_first_type) =
+                                        DynSolType::parse(&inner_first_type_info.label)
+                                {
+                                    return Some(SlotInfo {
+                                        label: format!(
+                                            "{}.{}.{}",
+                                            storage.label,
+                                            first_member.label,
+                                            inner_first_member.label
+                                        ),
+                                        slot_type: SlotType {
+                                            label: inner_first_type_info.label.clone(),
+                                            dyn_sol_type: inner_first_type,
+                                        },
+                                        offset: inner_first_member.offset,
+                                        slot: storage.slot.clone(),
+                                        members: None,
+                                        decoded: None,
+                                    });
+                                }
                             } else {
                                 // The first member is a single-slot struct, return it with its
                                 // label We can't parse struct types
@@ -1955,20 +1954,20 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
                 // Check if this is the slot we're looking for
                 if member_slot == slot
                     && let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
-                        && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
-                    {
-                        return Some(SlotInfo {
-                            label: format!("{}.{}", storage.label, member.label),
-                            slot_type: SlotType {
-                                label: member_type_info.label.clone(),
-                                dyn_sol_type: member_type,
-                            },
-                            offset: member.offset,
-                            slot: slot_str,
-                            members: None,
-                            decoded: None,
-                        });
-                    }
+                    && let Ok(member_type) = DynSolType::parse(&member_type_info.label)
+                {
+                    return Some(SlotInfo {
+                        label: format!("{}.{}", storage.label, member.label),
+                        slot_type: SlotType {
+                            label: member_type_info.label.clone(),
+                            dyn_sol_type: member_type,
+                        },
+                        offset: member.offset,
+                        slot: slot_str,
+                        members: None,
+                        decoded: None,
+                    });
+                }
             }
         }
 
@@ -2007,24 +2006,24 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
                                     member_members.iter().find(|m| m.slot == "0")
                                     && let Some(first_member_type_info) =
                                         storage_layout.types.get(&first_member.storage_type)
-                                        && let Ok(first_member_type) =
-                                            DynSolType::parse(&first_member_type_info.label)
-                                    {
-                                        return Some(SlotInfo {
-                                            label: format!(
-                                                "{}.{}.{}",
-                                                storage.label, member.label, first_member.label
-                                            ),
-                                            slot_type: SlotType {
-                                                label: first_member_type_info.label.clone(),
-                                                dyn_sol_type: first_member_type,
-                                            },
-                                            offset: first_member.offset,
-                                            slot: slot_str,
-                                            members: None,
-                                            decoded: None,
-                                        });
-                                    }
+                                    && let Ok(first_member_type) =
+                                        DynSolType::parse(&first_member_type_info.label)
+                                {
+                                    return Some(SlotInfo {
+                                        label: format!(
+                                            "{}.{}.{}",
+                                            storage.label, member.label, first_member.label
+                                        ),
+                                        slot_type: SlotType {
+                                            label: first_member_type_info.label.clone(),
+                                            dyn_sol_type: first_member_type,
+                                        },
+                                        offset: first_member.offset,
+                                        slot: slot_str,
+                                        members: None,
+                                        decoded: None,
+                                    });
+                                }
                             } else {
                                 // Single-slot nested struct - decode as a struct with members
                                 if let Ok(member_type) = DynSolType::parse(&member_type_info.label)
@@ -2079,24 +2078,24 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
                         if sub_member_absolute_slot == slot
                             && let Some(sub_member_type_info) =
                                 storage_layout.types.get(&sub_member.storage_type)
-                                && let Ok(sub_member_type) =
-                                    DynSolType::parse(&sub_member_type_info.label)
-                            {
-                                return Some(SlotInfo {
-                                    label: format!(
-                                        "{}.{}.{}",
-                                        storage.label, member.label, sub_member.label
-                                    ),
-                                    slot_type: SlotType {
-                                        label: sub_member_type_info.label.clone(),
-                                        dyn_sol_type: sub_member_type,
-                                    },
-                                    offset: sub_member.offset,
-                                    slot: slot_str,
-                                    members: None,
-                                    decoded: None,
-                                });
-                            }
+                            && let Ok(sub_member_type) =
+                                DynSolType::parse(&sub_member_type_info.label)
+                        {
+                            return Some(SlotInfo {
+                                label: format!(
+                                    "{}.{}.{}",
+                                    storage.label, member.label, sub_member.label
+                                ),
+                                slot_type: SlotType {
+                                    label: sub_member_type_info.label.clone(),
+                                    dyn_sol_type: sub_member_type,
+                                },
+                                offset: sub_member.offset,
+                                slot: slot_str,
+                                members: None,
+                                decoded: None,
+                            });
+                        }
                     }
                 }
             }
@@ -2202,19 +2201,6 @@ fn decode_storage_value(
 
     // Use abi_decode to decode the value for non-struct types
     actual_type.abi_decode(&value.0).ok()
-}
-
-/// Helper function to format B256 slot values by stripping leading zeros
-fn format_slot(slot: &B256) -> String {
-    // Find the first non-zero byte
-    let first_non_zero = slot.0.iter().position(|&b| b != 0);
-
-    if let Some(pos) = first_non_zero {
-        hex::encode_prefixed(&slot.0[pos..])
-    } else {
-        // All zeros - display as 0x00
-        "0x00".to_string()
-    }
 }
 
 /// Helper function to format DynSolValue as raw string without type information
