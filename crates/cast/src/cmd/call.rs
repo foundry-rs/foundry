@@ -165,6 +165,12 @@ pub struct CallArgs {
     /// Override the block number.
     #[arg(long = "block.number", value_name = "NUMBER")]
     pub block_number: Option<u64>,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.
+    #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub use_explicit_data_field: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -216,6 +222,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             disable_labels,
+            use_explicit_data_field,
             ..
         } = self;
 
@@ -244,7 +251,7 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
+        let (tx, func) = CastTxBuilder::new(&provider, tx, &config, use_explicit_data_field)
             .await?
             .with_to(to)
             .await?

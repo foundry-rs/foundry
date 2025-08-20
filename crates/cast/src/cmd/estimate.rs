@@ -45,6 +45,12 @@ pub struct EstimateArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.
+    #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub use_explicit_data_field: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -74,7 +80,7 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, cost, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, cost, eth, command, use_explicit_data_field } = self;
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
@@ -97,7 +103,7 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, use_explicit_data_field)
             .await?
             .with_to(to)
             .await?

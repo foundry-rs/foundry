@@ -1423,6 +1423,60 @@ access list:
 "#]]);
 });
 
+casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+        "--use-explicit-data-field",
+        "input"
+    ])
+    .assert_success();
+});
+
+casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+        "--use-explicit-data-field",
+        "data"
+    ])
+    .assert_success();
+});
+
+casttest!(access_list_explicit_data_field_invalid, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+        "--use-explicit-data-field",
+        "blah"
+    ])
+    .assert_failure().stderr_eq(str![[r#"
+Error: invalid value for data field: blah
+
+"#]]);
+});
+
 casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
@@ -1514,6 +1568,79 @@ casttest!(mktx, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]).assert_success().stdout_eq(str![[r#"
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
+});
+
+casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--use-explicit-data-field",
+        "input"
+    ]).assert_success();
+});
+
+casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--use-explicit-data-field",
+        "data"
+    ]).assert_success();
+});
+
+casttest!(mktx_explicit_data_field_invalid, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--use-explicit-data-field",
+        "blah"
+    ])
+    .assert_failure().stderr_eq(str![[r#"
+Error: invalid value for data field: blah
 
 "#]]);
 });
@@ -2317,6 +2444,69 @@ casttest!(send_eip7702, async |_prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
+
+"#]]);
+});
+
+casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--use-explicit-data-field",
+        "input"
+    ])
+    .assert_success();
+});
+
+casttest!(send_eip7702_explicit_data_field_data, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--use-explicit-data-field",
+        "data"
+    ])
+    .assert_success();
+});
+
+casttest!(send_eip7702_explicit_data_field_invalid, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--use-explicit-data-field",
+        "blah"
+    ])
+    .assert_failure().stderr_eq(str![[r#"
+Error: invalid value for data field: blah
 
 "#]]);
 });
@@ -3395,6 +3585,48 @@ Warning: Contract code is empty
 "#]]);
 });
 
+casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "call",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--use-explicit-data-field",
+        "input",
+    ])
+    .assert_success();
+});
+
+casttest!(cast_call_explicit_data_field_data, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "call",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--use-explicit-data-field",
+        "data",
+    ])
+    .assert_success();
+});
+
+casttest!(cast_call_explicit_data_field_invalid, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "call",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--use-explicit-data-field",
+        "blah",
+    ])
+    .assert_failure().stderr_eq(str![[r#"
+Error: invalid value for data field: blah
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10740>
 casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
     cmd.args([
@@ -3840,6 +4072,54 @@ casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
     .assert_success();
 });
 
+casttest!(cast_estimate_explicit_data_field_input, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "estimate",
+        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "rebalance(int64)",
+        "-8888",
+        "--rpc-url",
+        rpc.as_str(),
+        "--use-explicit-data-field",
+        "input"
+    ])
+    .assert_success();
+});
+
+casttest!(cast_estimate_explicit_data_field_data, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "estimate",
+        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "rebalance(int64)",
+        "-8888",
+        "--rpc-url",
+        rpc.as_str(),
+        "--use-explicit-data-field",
+        "data"
+    ])
+    .assert_success();
+});
+
+casttest!(cast_estimate_explicit_data_field_invalid, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "estimate",
+        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "rebalance(int64)",
+        "-8888",
+        "--rpc-url",
+        rpc.as_str(),
+        "--use-explicit-data-field",
+        "blah"
+    ])
+    .assert_failure().stderr_eq(str![[r#"
+Error: invalid value for data field: blah
+
+"#]]);
+});
+
 // Test cast mktx with negative numbers
 casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
@@ -3871,3 +4151,4 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
     ])
     .assert_success();
 });
+

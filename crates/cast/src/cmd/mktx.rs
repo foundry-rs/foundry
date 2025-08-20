@@ -56,6 +56,12 @@ pub struct MakeTxArgs {
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.
+    #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub use_explicit_data_field: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -77,7 +83,7 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign, use_explicit_data_field } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -98,7 +104,7 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
+        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config, use_explicit_data_field)
             .await?
             .with_to(to)
             .await?

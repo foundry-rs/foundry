@@ -67,6 +67,12 @@ pub struct SendTxArgs {
         help_heading = "Transaction options"
     )]
     path: Option<PathBuf>,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.
+    #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub use_explicit_data_field: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -100,6 +106,7 @@ impl SendTxArgs {
             unlocked,
             path,
             timeout,
+            use_explicit_data_field
         } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -135,7 +142,7 @@ impl SendTxArgs {
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
 
-        let builder = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config, use_explicit_data_field)
             .await?
             .with_to(to)
             .await?
