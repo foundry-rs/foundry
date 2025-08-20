@@ -106,10 +106,13 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
-    /// Decoded Slot Values
+    /// Decoded values according to the Solidity type (e.g., uint256, address).
+    /// Only present when storage layout is available and decoding succeeds.
     #[serde(skip_serializing_if = "Option::is_none")]
     decoded: Option<DecodedSlotValues>,
-    /// Slot Info
+
+    /// Storage layout metadata (variable name, type, offset).
+    /// Only present when contract has storage layout output.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
 }
@@ -1367,20 +1370,10 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
 
         // Also get storage layout if available
-        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
-            trace!("Found contract data for {:?}: {:?}", address, artifact_id);
-            if let Some(storage_layout) = &contract_data.storage_layout {
-                trace!(
-                    "Found storage layout for {:?} with {} storage items",
-                    address,
-                    storage_layout.storage.len()
-                );
-                storage_layouts.insert(address, storage_layout.clone());
-            } else {
-                trace!("No storage layout found for {:?}", address);
-            }
-        } else {
-            trace!("No contract data found for {:?}", address);
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
+            && let Some(storage_layout) = &contract_data.storage_layout
+        {
+            storage_layouts.insert(address, storage_layout.clone());
         }
     }
 
@@ -1652,24 +1645,12 @@ fn get_contract_data<'a>(
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
-    trace!(
-        "Looking for artifact for address {:?} with code hash: {:?}",
-        address,
-        keccak256(&code_bytes)
-    );
     if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
-        trace!("Found exact match for {:?}: {:?}", address, result.0);
         return Some(result);
     }
 
     // Fallback to fuzzy matching if exact match fails
-    let fuzzy_result = artifacts.find_by_deployed_code(&code_bytes);
-    if let Some(ref result) = fuzzy_result {
-        trace!("Found fuzzy match for {:?}: {:?}", address, result.0);
-    } else {
-        trace!("No match found for {:?}", address);
-    }
-    fuzzy_result
+    artifacts.find_by_deployed_code(&code_bytes)
 }
 
 /// Gets storage layout info for a specific slot.
