@@ -5,6 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract DiffTest {
+    // slot 0
     struct TestStruct {
         uint128 a;
         uint128 b;
@@ -12,16 +13,16 @@ contract DiffTest {
 
     // Multi-slot struct (spans 3 slots)
     struct MultiSlotStruct {
-        uint256 value1; // slot 0
-        address addr; // slot 1 (takes 20 bytes, but uses full slot)
-        uint256 value2; // slot 2
+        uint256 value1; // slot 1
+        address addr; // slot 2 (takes 20 bytes, but uses full slot)
+        uint256 value2; // slot 3
     }
 
     // Nested struct with MultiSlotStruct as inner
     struct NestedStruct {
-        MultiSlotStruct inner; // slots 0-2 (spans 3 slots)
-        uint256 value; // slot 3
-        address owner; // slot 4
+        MultiSlotStruct inner; // slots 4-6 (spans 3 slots)
+        uint256 value; // slot 7
+        address owner; // slot 8
     }
 
     TestStruct internal testStruct;
@@ -39,13 +40,7 @@ contract DiffTest {
         multiSlotStruct.value2 = v2;
     }
 
-    function setNestedStruct(
-        uint256 v1,
-        address a,
-        uint256 v2,
-        uint256 v,
-        address o
-    ) public {
+    function setNestedStruct(uint256 v1, address a, uint256 v2, uint256 v, address o) public {
         nestedStruct.inner.value1 = v1;
         nestedStruct.inner.addr = a;
         nestedStruct.inner.value2 = v2;
@@ -72,45 +67,25 @@ contract StateDiffStructTest is DSTest {
         // Get the state diff as JSON
         string memory stateDiffJson = vm.getStateDiffJson();
 
+        // Debug: log the JSON for inspection
+        emit log_string("State diff JSON (testdata):");
+        emit log_string(stateDiffJson);
+
         // Check that the struct is properly labeled
-        assertContains(
-            stateDiffJson,
-            '"label":"testStruct"',
-            "Should contain 'testStruct' label"
-        );
+        assertContains(stateDiffJson, '"label":"testStruct"', "Should contain 'testStruct' label");
 
         // Check that the type is correctly identified as a struct
-        assertContains(
-            stateDiffJson,
-            '"type":"struct DiffTest.TestStruct"',
-            "Should contain struct type"
-        );
+        assertContains(stateDiffJson, '"type":"struct DiffTest.TestStruct"', "Should contain struct type");
 
         // Check for members field - structs have members with individual decoded values
-        assertContains(
-            stateDiffJson,
-            '"members":',
-            "Should contain members field for struct"
-        );
+        assertContains(stateDiffJson, '"members":', "Should contain members field for struct");
 
         // Check that member 'a' is properly decoded
-        assertContains(
-            stateDiffJson,
-            '"label":"a"',
-            "Should contain member 'a' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"uint128"',
-            "Should contain uint128 type for members"
-        );
+        assertContains(stateDiffJson, '"label":"a"', "Should contain member 'a' label");
+        assertContains(stateDiffJson, '"type":"uint128"', "Should contain uint128 type for members");
 
         // Check that member 'b' is properly decoded
-        assertContains(
-            stateDiffJson,
-            '"label":"b"',
-            "Should contain member 'b' label"
-        );
+        assertContains(stateDiffJson, '"label":"b"', "Should contain member 'b' label");
 
         // The members should have decoded values
         // Check specific decoded values for each member in the members array
@@ -147,28 +122,15 @@ contract StateDiffStructTest is DSTest {
         bool foundStructAccess = false;
         for (uint256 i = 0; i < accesses.length; i++) {
             if (accesses[i].account == address(test)) {
-                for (
-                    uint256 j = 0;
-                    j < accesses[i].storageAccesses.length;
-                    j++
-                ) {
-                    Vm.StorageAccess memory access = accesses[i]
-                        .storageAccesses[j];
+                for (uint256 j = 0; j < accesses[i].storageAccesses.length; j++) {
+                    Vm.StorageAccess memory access = accesses[i].storageAccesses[j];
                     if (access.slot == bytes32(uint256(0)) && access.isWrite) {
                         foundStructAccess = true;
                         // Verify the storage values
-                        assertEq(
-                            access.previousValue,
-                            bytes32(uint256(0)),
-                            "Previous value should be 0"
-                        );
+                        assertEq(access.previousValue, bytes32(uint256(0)), "Previous value should be 0");
                         assertEq(
                             access.newValue,
-                            bytes32(
-                                uint256(
-                                    0x0000000000000000000200000000000000000000000000000001
-                                )
-                            ),
+                            bytes32(uint256(0x0000000000000000000200000000000000000000000000000001)),
                             "New value should pack a=1 and b=2"
                         );
                     }
@@ -176,10 +138,7 @@ contract StateDiffStructTest is DSTest {
             }
         }
 
-        assertTrue(
-            foundStructAccess,
-            "Should have found struct storage access"
-        );
+        assertTrue(foundStructAccess, "Should have found struct storage access");
     }
 
     function testMultiSlotStruct() public {
@@ -202,9 +161,7 @@ contract StateDiffStructTest is DSTest {
 
         // Check that the struct's first member is properly labeled
         assertContains(
-            stateDiffJson,
-            '"label":"multiSlotStruct.value1"',
-            "Should contain 'multiSlotStruct.value1' label"
+            stateDiffJson, '"label":"multiSlotStruct.value1"', "Should contain 'multiSlotStruct.value1' label"
         );
 
         // For multi-slot structs, the base slot now shows the first member's type
@@ -220,28 +177,12 @@ contract StateDiffStructTest is DSTest {
             '"label":"multiSlotStruct.value1"',
             "Should contain multiSlotStruct.value1 label for first slot"
         );
-        assertContains(
-            stateDiffJson,
-            '"label":"multiSlotStruct.addr"',
-            "Should contain member 'addr' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"multiSlotStruct.value2"',
-            "Should contain member 'value2' label"
-        );
+        assertContains(stateDiffJson, '"label":"multiSlotStruct.addr"', "Should contain member 'addr' label");
+        assertContains(stateDiffJson, '"label":"multiSlotStruct.value2"', "Should contain member 'value2' label");
 
         // Check member types
-        assertContains(
-            stateDiffJson,
-            '"type":"uint256"',
-            "Should contain uint256 type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"address"',
-            "Should contain address type"
-        );
+        assertContains(stateDiffJson, '"type":"uint256"', "Should contain uint256 type");
+        assertContains(stateDiffJson, '"type":"address"', "Should contain address type");
 
         // Check that value1 is properly decoded from slot 1
         assertContains(
@@ -249,7 +190,7 @@ contract StateDiffStructTest is DSTest {
             '"decoded":{"previousValue":"0","newValue":"123456789"}',
             "value1 should be decoded from slot 1"
         );
-        
+
         // Also verify the raw hex value
         assertContains(
             stateDiffJson,
@@ -291,87 +232,44 @@ contract StateDiffStructTest is DSTest {
         // Get the state diff as JSON
         string memory stateDiffJson = vm.getStateDiffJson();
 
-        // Check that the struct is properly labeled
+        // Debug: log the JSON for inspection
+        emit log_string("State diff JSON (testdata):");
+        emit log_string(stateDiffJson);
+
         assertContains(
             stateDiffJson,
-            '"label":"nestedStruct"',
-            "Should contain 'nestedStruct' label"
+            '"decoded":{"previousValue":"0","newValue":"111111111"},"label":"nestedStruct.inner.value1"',
+            "Should decode inner.value1 correctly"
         );
 
-        // Check that the type is correctly identified as a struct
         assertContains(
             stateDiffJson,
-            '"type":"struct DiffTest.NestedStruct"',
-            "Should contain struct type"
+            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000cafE"},"label":"nestedStruct.inner.addr"',
+            "Should decode inner.addr correctly"
         );
 
-        // Nested struct with multi-slot inner struct doesn't have members field either
-        // Each member appears as a separate slot
-
-        // Check that nested struct labels are properly set
         assertContains(
             stateDiffJson,
-            '"label":"nestedStruct"',
-            "Should contain nestedStruct label"
+            '"decoded":{"previousValue":"0","newValue":"222222222"},"label":"nestedStruct.inner.value2"',
+            "Should decode inner.value2 correctly"
         );
 
-        // Check other members have proper labels
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.value"',
-            "Should contain member 'value' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.owner"',
-            "Should contain member 'owner' label"
-        );
-
-        // The inner struct members are in slots 4, 5, 6 but we only see their storage diffs
-        // They don't appear with member labels in this test since they're part of the nested struct
-
-        // Check that slot 4 has the first value
         assertContains(
             stateDiffJson,
             "0x00000000000000000000000000000000000000000000000000000000069f6bc7",
             "Slot 4 should contain inner.value1 in hex"
         );
-        // Note: addresses in slots 5 and 6 may not have labels due to nested struct complexity
-        // But the important values are decoded correctly
 
-        // Check decoded values for outer struct members
-        // Slot 7 should have nestedStruct.value decoded with previous=0 and new=333333333
         assertContains(
             stateDiffJson,
-            '"label":"nestedStruct.value"',
-            "Should have nestedStruct.value label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"slot":"7"',
-            "nestedStruct.value should be in slot 7"
-        );
-        assertContains(
-            stateDiffJson,
-            '"previousValue":"0","newValue":"333333333"',
+            '"decoded":{"previousValue":"0","newValue":"333333333"},"label":"nestedStruct.value"',
             "Should decode nestedStruct.value correctly"
         );
 
-        // Slot 8 should have nestedStruct.owner decoded
         assertContains(
             stateDiffJson,
-            '"label":"nestedStruct.owner"',
-            "Should have nestedStruct.owner label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"slot":"8"',
-            "nestedStruct.owner should be in slot 8"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"0x000000000000000000000000000000000000bEEF"',
-            "Should decode owner address correctly"
+            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000bEEF"},"label":"nestedStruct.owner"',
+            "Should decode nestedStruct.owner correctly"
         );
 
         // Stop recording
@@ -379,11 +277,7 @@ contract StateDiffStructTest is DSTest {
     }
 
     // Helper function to check if a string contains a substring
-    function assertContains(
-        string memory haystack,
-        string memory needle,
-        string memory message
-    ) internal pure {
+    function assertContains(string memory haystack, string memory needle, string memory message) internal pure {
         bytes memory haystackBytes = bytes(haystack);
         bytes memory needleBytes = bytes(needle);
 
@@ -392,11 +286,7 @@ contract StateDiffStructTest is DSTest {
         }
 
         bool found = false;
-        for (
-            uint256 i = 0;
-            i <= haystackBytes.length - needleBytes.length;
-            i++
-        ) {
+        for (uint256 i = 0; i <= haystackBytes.length - needleBytes.length; i++) {
             bool isMatch = true;
             for (uint256 j = 0; j < needleBytes.length; j++) {
                 if (haystackBytes[i + j] != needleBytes[j]) {

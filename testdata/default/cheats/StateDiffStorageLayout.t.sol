@@ -86,11 +86,7 @@ contract TwoDArrayStorage {
         matrix[i][j] = value;
     }
 
-    function setAddresses2D(
-        address[2] memory row0,
-        address[2] memory row1,
-        address[2] memory row2
-    ) public {
+    function setAddresses2D(address[2] memory row0, address[2] memory row1, address[2] memory row2) public {
         addresses2D[0] = row0;
         addresses2D[1] = row1;
         addresses2D[2] = row2;
@@ -155,86 +151,31 @@ contract StateDiffStorageLayoutTest is DSTest {
 
         // The JSON should contain storage layout info for all slots
         // We check the JSON contains expected substrings for the labels and types
-        assertContains(
-            stateDiffJson,
-            '"label":"value"',
-            "Should contain 'value' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"owner"',
-            "Should contain 'owner' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"values[0]"',
-            "Should contain 'values[0]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"values[1]"',
-            "Should contain 'values[1]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"values[2]"',
-            "Should contain 'values[2]' label"
-        );
+        assertContains(stateDiffJson, '"label":"value"', "Should contain 'value' label");
+        assertContains(stateDiffJson, '"label":"owner"', "Should contain 'owner' label");
+        assertContains(stateDiffJson, '"label":"values[0]"', "Should contain 'values[0]' label");
+        assertContains(stateDiffJson, '"label":"values[1]"', "Should contain 'values[1]' label");
+        assertContains(stateDiffJson, '"label":"values[2]"', "Should contain 'values[2]' label");
 
-        assertContains(
-            stateDiffJson,
-            '"type":"uint256"',
-            "Should contain uint256 type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"address"',
-            "Should contain address type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"uint256[3]"',
-            "Should contain uint256[3] type"
-        );
+        assertContains(stateDiffJson, '"type":"uint256"', "Should contain uint256 type");
+        assertContains(stateDiffJson, '"type":"address"', "Should contain address type");
+        assertContains(stateDiffJson, '"type":"uint256[3]"', "Should contain uint256[3] type");
 
         // Check for decoded values
-        assertContains(
-            stateDiffJson,
-            '"decoded":',
-            "Should contain decoded values"
-        );
+        assertContains(stateDiffJson, '"decoded":', "Should contain decoded values");
 
         // Check specific decoded values within the decoded object
         // The value 42 should be decoded in the first slot
-        assertContains(
-            stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"42"}',
-            "Should decode value 42"
-        );
+        assertContains(stateDiffJson, '"decoded":{"previousValue":"0","newValue":"42"}', "Should decode value 42");
 
         // Check that array values are decoded properly (they will have separate decoded objects)
-        assertContains(
-            stateDiffJson,
-            '"newValue":"100"',
-            "Should decode array value 100"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"200"',
-            "Should decode array value 200"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"300"',
-            "Should decode array value 300"
-        );
+        assertContains(stateDiffJson, '"newValue":"100"', "Should decode array value 100");
+        assertContains(stateDiffJson, '"newValue":"200"', "Should decode array value 200");
+        assertContains(stateDiffJson, '"newValue":"300"', "Should decode array value 300");
 
         // Stop recording and verify we get the expected account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
-        assertTrue(
-            accesses.length >= 3,
-            "Should have at least 3 account accesses for the calls"
-        );
+        assertTrue(accesses.length >= 3, "Should have at least 3 account accesses for the calls");
 
         // Verify storage accesses for SimpleStorage
         bool foundValueSlot = false;
@@ -245,11 +186,7 @@ contract StateDiffStorageLayoutTest is DSTest {
 
         for (uint256 i = 0; i < accesses.length; i++) {
             if (accesses[i].account == address(simpleStorage)) {
-                for (
-                    uint256 j = 0;
-                    j < accesses[i].storageAccesses.length;
-                    j++
-                ) {
+                for (uint256 j = 0; j < accesses[i].storageAccesses.length; j++) {
                     bytes32 slot = accesses[i].storageAccesses[j].slot;
                     if (slot == bytes32(uint256(0))) foundValueSlot = true;
                     if (slot == bytes32(uint256(1))) foundOwnerSlot = true;
@@ -281,88 +218,32 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiffJson = vm.getStateDiffJson();
 
         // Verify all array types are properly labeled with indices
-        assertContains(
-            stateDiffJson,
-            '"label":"numbers[0]"',
-            "Should contain 'numbers[0]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"numbers[1]"',
-            "Should contain 'numbers[1]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"numbers[2]"',
-            "Should contain 'numbers[2]' label"
-        );
+        assertContains(stateDiffJson, '"label":"numbers[0]"', "Should contain 'numbers[0]' label");
+        assertContains(stateDiffJson, '"label":"numbers[1]"', "Should contain 'numbers[1]' label");
+        assertContains(stateDiffJson, '"label":"numbers[2]"', "Should contain 'numbers[2]' label");
 
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses[0]"',
-            "Should contain 'addresses[0]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses[1]"',
-            "Should contain 'addresses[1]' label"
-        );
+        assertContains(stateDiffJson, '"label":"addresses[0]"', "Should contain 'addresses[0]' label");
+        assertContains(stateDiffJson, '"label":"addresses[1]"', "Should contain 'addresses[1]' label");
 
-        assertContains(
-            stateDiffJson,
-            '"label":"flags[0]"',
-            "Should contain 'flags[0]' label"
-        );
+        assertContains(stateDiffJson, '"label":"flags[0]"', "Should contain 'flags[0]' label");
 
-        assertContains(
-            stateDiffJson,
-            '"label":"hashes[0]"',
-            "Should contain 'hashes[0]' label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"hashes[1]"',
-            "Should contain 'hashes[1]' label"
-        );
+        assertContains(stateDiffJson, '"label":"hashes[0]"', "Should contain 'hashes[0]' label");
+        assertContains(stateDiffJson, '"label":"hashes[1]"', "Should contain 'hashes[1]' label");
 
         // Verify types are correctly identified
-        assertContains(
-            stateDiffJson,
-            '"type":"uint256[3]"',
-            "Should contain uint256[3] type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"address[2]"',
-            "Should contain address[2] type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"bool[5]"',
-            "Should contain bool[5] type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"bytes32[2]"',
-            "Should contain bytes32[2] type"
-        );
+        assertContains(stateDiffJson, '"type":"uint256[3]"', "Should contain uint256[3] type");
+        assertContains(stateDiffJson, '"type":"address[2]"', "Should contain address[2] type");
+        assertContains(stateDiffJson, '"type":"bool[5]"', "Should contain bool[5] type");
+        assertContains(stateDiffJson, '"type":"bytes32[2]"', "Should contain bytes32[2] type");
 
         // Check decoded values
-        assertContains(
-            stateDiffJson,
-            '"decoded":',
-            "Should contain decoded values"
-        );
+        assertContains(stateDiffJson, '"decoded":', "Should contain decoded values");
         // Check addresses are decoded as raw hex strings
         assertContains(
-            stateDiffJson,
-            '"newValue":"0x0000000000000000000000000000000000000001"',
-            "Should decode address 1"
+            stateDiffJson, '"newValue":"0x0000000000000000000000000000000000000001"', "Should decode address 1"
         );
         assertContains(
-            stateDiffJson,
-            '"newValue":"0x0000000000000000000000000000000000000002"',
-            "Should decode address 2"
+            stateDiffJson, '"newValue":"0x0000000000000000000000000000000000000002"', "Should decode address 2"
         );
 
         // Stop recording and verify account accesses
@@ -381,36 +262,12 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiffJson = vm.getStateDiffJson();
 
         // Check JSON structure contains expected fields
-        assertContains(
-            stateDiffJson,
-            '"previousValue":',
-            "JSON should contain previousValue field"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":',
-            "JSON should contain newValue field"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":',
-            "JSON should contain label field"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":',
-            "JSON should contain type field"
-        );
-        assertContains(
-            stateDiffJson,
-            '"offset":',
-            "JSON should contain offset field"
-        );
-        assertContains(
-            stateDiffJson,
-            '"slot":',
-            "JSON should contain slot field"
-        );
+        assertContains(stateDiffJson, '"previousValue":', "JSON should contain previousValue field");
+        assertContains(stateDiffJson, '"newValue":', "JSON should contain newValue field");
+        assertContains(stateDiffJson, '"label":', "JSON should contain label field");
+        assertContains(stateDiffJson, '"type":', "JSON should contain type field");
+        assertContains(stateDiffJson, '"offset":', "JSON should contain offset field");
+        assertContains(stateDiffJson, '"slot":', "JSON should contain slot field");
 
         vm.stopAndReturnStateDiff();
     }
@@ -430,80 +287,24 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiffJson = vm.getStateDiffJson();
 
         // Verify the labels for 2D array elements
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[0][0]"',
-            "Should contain matrix[0][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[0][1]"',
-            "Should contain matrix[0][1] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[0][2]"',
-            "Should contain matrix[0][2] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[1][0]"',
-            "Should contain matrix[1][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[1][1]"',
-            "Should contain matrix[1][1] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"matrix[1][2]"',
-            "Should contain matrix[1][2] label"
-        );
+        assertContains(stateDiffJson, '"label":"matrix[0][0]"', "Should contain matrix[0][0] label");
+        assertContains(stateDiffJson, '"label":"matrix[0][1]"', "Should contain matrix[0][1] label");
+        assertContains(stateDiffJson, '"label":"matrix[0][2]"', "Should contain matrix[0][2] label");
+        assertContains(stateDiffJson, '"label":"matrix[1][0]"', "Should contain matrix[1][0] label");
+        assertContains(stateDiffJson, '"label":"matrix[1][1]"', "Should contain matrix[1][1] label");
+        assertContains(stateDiffJson, '"label":"matrix[1][2]"', "Should contain matrix[1][2] label");
 
         // Check that we have the right type
-        assertContains(
-            stateDiffJson,
-            '"type":"uint256[3][2]"',
-            "Should contain 2D array type"
-        );
+        assertContains(stateDiffJson, '"type":"uint256[3][2]"', "Should contain 2D array type");
 
         // Check decoded values for 2D arrays
-        assertContains(
-            stateDiffJson,
-            '"decoded":',
-            "Should contain decoded values"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"100"',
-            "Should decode matrix[0][0] = 100"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"101"',
-            "Should decode matrix[0][1] = 101"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"102"',
-            "Should decode matrix[0][2] = 102"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"200"',
-            "Should decode matrix[1][0] = 200"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"201"',
-            "Should decode matrix[1][1] = 201"
-        );
-        assertContains(
-            stateDiffJson,
-            '"newValue":"202"',
-            "Should decode matrix[1][2] = 202"
-        );
+        assertContains(stateDiffJson, '"decoded":', "Should contain decoded values");
+        assertContains(stateDiffJson, '"newValue":"100"', "Should decode matrix[0][0] = 100");
+        assertContains(stateDiffJson, '"newValue":"101"', "Should decode matrix[0][1] = 101");
+        assertContains(stateDiffJson, '"newValue":"102"', "Should decode matrix[0][2] = 102");
+        assertContains(stateDiffJson, '"newValue":"200"', "Should decode matrix[1][0] = 200");
+        assertContains(stateDiffJson, '"newValue":"201"', "Should decode matrix[1][1] = 201");
+        assertContains(stateDiffJson, '"newValue":"202"', "Should decode matrix[1][2] = 202");
 
         vm.stopAndReturnStateDiff();
     }
@@ -526,60 +327,20 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiffJson = vm.getStateDiffJson();
 
         // Check for proper types
-        assertContains(
-            stateDiffJson,
-            '"type":"address[2][3]"',
-            "Should contain address 2D array type"
-        );
-        assertContains(
-            stateDiffJson,
-            '"type":"bytes32[2][4]"',
-            "Should contain bytes32 2D array type"
-        );
+        assertContains(stateDiffJson, '"type":"address[2][3]"', "Should contain address 2D array type");
+        assertContains(stateDiffJson, '"type":"bytes32[2][4]"', "Should contain bytes32 2D array type");
 
         // Verify address 2D array labels
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses2D[0][0]"',
-            "Should contain addresses2D[0][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses2D[0][1]"',
-            "Should contain addresses2D[0][1] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses2D[1][0]"',
-            "Should contain addresses2D[1][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"addresses2D[2][1]"',
-            "Should contain addresses2D[2][1] label"
-        );
+        assertContains(stateDiffJson, '"label":"addresses2D[0][0]"', "Should contain addresses2D[0][0] label");
+        assertContains(stateDiffJson, '"label":"addresses2D[0][1]"', "Should contain addresses2D[0][1] label");
+        assertContains(stateDiffJson, '"label":"addresses2D[1][0]"', "Should contain addresses2D[1][0] label");
+        assertContains(stateDiffJson, '"label":"addresses2D[2][1]"', "Should contain addresses2D[2][1] label");
 
         // Verify data 2D array labels
-        assertContains(
-            stateDiffJson,
-            '"label":"data2D[0][0]"',
-            "Should contain data2D[0][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"data2D[0][1]"',
-            "Should contain data2D[0][1] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"data2D[1][0]"',
-            "Should contain data2D[1][0] label"
-        );
-        assertContains(
-            stateDiffJson,
-            '"label":"data2D[1][1]"',
-            "Should contain data2D[1][1] label"
-        );
+        assertContains(stateDiffJson, '"label":"data2D[0][0]"', "Should contain data2D[0][0] label");
+        assertContains(stateDiffJson, '"label":"data2D[0][1]"', "Should contain data2D[0][1] label");
+        assertContains(stateDiffJson, '"label":"data2D[1][0]"', "Should contain data2D[1][0] label");
+        assertContains(stateDiffJson, '"label":"data2D[1][1]"', "Should contain data2D[1][1] label");
 
         vm.stopAndReturnStateDiff();
     }
@@ -597,64 +358,24 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiff = vm.getStateDiff();
 
         // Check that slots are formatted compactly (e.g., @ 0x00, @ 0x01, @ 0x02)
-        assertContains(
-            stateDiff,
-            "@ 0x00 (value",
-            "Slot 0 should be formatted as 0x00"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x01 (owner",
-            "Slot 1 should be formatted as 0x01"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x02 (values[0]",
-            "Slot 2 should be formatted as 0x02"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x03 (values[1]",
-            "Slot 3 should be formatted as 0x03"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x04 (values[2]",
-            "Slot 4 should be formatted as 0x04"
-        );
+        assertContains(stateDiff, "@ 0x00 (value", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, "@ 0x01 (owner", "Slot 1 should be formatted as 0x01");
+        assertContains(stateDiff, "@ 0x02 (values[0]", "Slot 2 should be formatted as 0x02");
+        assertContains(stateDiff, "@ 0x03 (values[1]", "Slot 3 should be formatted as 0x03");
+        assertContains(stateDiff, "@ 0x04 (values[2]", "Slot 4 should be formatted as 0x04");
 
         // Test that decoded values are shown in the string format
         // The output uses Unicode arrow →
         // For uint256 values, should show decoded value "42"
-        assertContains(
-            stateDiff,
-            unicode"0 → 42",
-            "Should show decoded uint256 value"
-        );
+        assertContains(stateDiff, unicode"0 → 42", "Should show decoded uint256 value");
 
         // For addresses, should show decoded address format
-        assertContains(
-            stateDiff,
-            "0x000000000000000000000000000000000000bEEF",
-            "Should show decoded address"
-        );
+        assertContains(stateDiff, "0x000000000000000000000000000000000000bEEF", "Should show decoded address");
 
         // For array elements, should show decoded values
-        assertContains(
-            stateDiff,
-            unicode"0 → 100",
-            "Should show decoded array value 100"
-        );
-        assertContains(
-            stateDiff,
-            unicode"0 → 200",
-            "Should show decoded array value 200"
-        );
-        assertContains(
-            stateDiff,
-            unicode"0 → 300",
-            "Should show decoded array value 300"
-        );
+        assertContains(stateDiff, unicode"0 → 100", "Should show decoded array value 100");
+        assertContains(stateDiff, unicode"0 → 200", "Should show decoded array value 200");
+        assertContains(stateDiff, unicode"0 → 300", "Should show decoded array value 300");
 
         vm.stopAndReturnStateDiff();
     }
@@ -675,16 +396,8 @@ contract StateDiffStorageLayoutTest is DSTest {
         emit log_string(stateDiff);
 
         // Check that slot numbers are formatted compactly
-        assertContains(
-            stateDiff,
-            "@ 0x00 (value",
-            "Slot 0 should be formatted as 0x00"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x01 (owner",
-            "Slot 1 should be formatted as 0x01"
-        );
+        assertContains(stateDiff, "@ 0x00 (value", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, "@ 0x01 (owner", "Slot 1 should be formatted as 0x01");
 
         vm.stopAndReturnStateDiff();
     }
@@ -704,39 +417,19 @@ contract StateDiffStorageLayoutTest is DSTest {
         string memory stateDiff = vm.getStateDiff();
 
         // The normal storage variable should have layout info
-        assertContains(
-            stateDiff,
-            "@ 0x00 (normalValue",
-            "Slot 0 should be formatted as 0x00"
-        );
-        assertContains(
-            stateDiff,
-            unicode"0 → 42",
-            "Should show decoded value 42"
-        );
+        assertContains(stateDiff, "@ 0x00 (normalValue", "Slot 0 should be formatted as 0x00");
+        assertContains(stateDiff, unicode"0 → 42", "Should show decoded value 42");
 
         // For slots accessed via assembly without storage layout, they'll show raw format
         // but the slot numbers should still be compact with even number of hex digits
-        assertContains(
-            stateDiff,
-            "@ 0x0123456789abcdef:",
-            "Large slot should be compact"
-        );
-        assertContains(
-            stateDiff,
-            "@ 0x1000:",
-            "Medium slot should be compact with even digits"
-        );
+        assertContains(stateDiff, "@ 0x0123456789abcdef:", "Large slot should be compact");
+        assertContains(stateDiff, "@ 0x1000:", "Medium slot should be compact with even digits");
 
         vm.stopAndReturnStateDiff();
     }
 
     // Helper function to check if a string contains a substring
-    function assertContains(
-        string memory haystack,
-        string memory needle,
-        string memory message
-    ) internal pure {
+    function assertContains(string memory haystack, string memory needle, string memory message) internal pure {
         bytes memory haystackBytes = bytes(haystack);
         bytes memory needleBytes = bytes(needle);
 
@@ -745,11 +438,7 @@ contract StateDiffStorageLayoutTest is DSTest {
         }
 
         bool found = false;
-        for (
-            uint256 i = 0;
-            i <= haystackBytes.length - needleBytes.length;
-            i++
-        ) {
+        for (uint256 i = 0; i <= haystackBytes.length - needleBytes.length; i++) {
             bool isMatch = true;
             for (uint256 j = 0; j < needleBytes.length; j++) {
                 if (haystackBytes[i + j] != needleBytes[j]) {
