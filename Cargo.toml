@@ -411,8 +411,8 @@ foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branc
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "50683eb" }
 
 ## solar
-solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
-solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
-solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
-solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
 solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
+solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
+solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
+solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
+solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/compiler-interface" }
