@@ -48,26 +48,124 @@ static INTERESTING_32: &[i32] = &[
 /// original value.
 static THREE_SIGMA_MULTIPLIERS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0];
 
-/// ABI mutator that changes current value by flipping a random bit and randomly injecting
-/// interesting words (for uint, int, address and fixed bytes.) - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
-/// Randomly increments / decrements and mutates with gaussian noise (for uint and int).
-pub(crate) trait AbiMutator: Sized + Copy + Debug {
-    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
-    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
-    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
-    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
-    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+/// Mutator that randomly increments or decrements an uint or int.
+pub(crate) trait IncrementDecrementMutator: Sized + Copy + Debug {
+    fn validate(old: Self, new: Self, size: usize) -> Option<Self>;
+
+    #[instrument(name = "mutator::increment_decrement", skip(size, test_runner), ret)]
+    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mutated = if test_runner.rng().random::<bool>() {
+            self.wrapping_add(Self::ONE)
+        } else {
+            self.wrapping_sub(Self::ONE)
+        };
+        Self::validate(self, mutated, size)
+    }
+
+    fn wrapping_add(self, rhs: Self) -> Self;
+    fn wrapping_sub(self, rhs: Self) -> Self;
+    const ONE: Self;
+}
+
+macro_rules! impl_increment_decrement_mutator {
+    ($ty:ty, $validate_fn:path) => {
+        impl IncrementDecrementMutator for $ty {
+            fn validate(old: Self, new: Self, size: usize) -> Option<Self> {
+                $validate_fn(old, new, size)
+            }
+
+            fn wrapping_add(self, rhs: Self) -> Self {
+                Self::wrapping_add(self, rhs)
+            }
+
+            fn wrapping_sub(self, rhs: Self) -> Self {
+                Self::wrapping_sub(self, rhs)
+            }
+
+            const ONE: Self = Self::ONE;
+        }
+    };
+}
+
+impl_increment_decrement_mutator!(U256, validate_uint_mutation);
+impl_increment_decrement_mutator!(I256, validate_int_mutation);
+
+/// Mutator that changes the current value of an uint or int by applying gaussian noise.
+pub(crate) trait GaussianNoiseMutator: Sized + Copy + Debug {
     fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
-impl AbiMutator for U256 {
+impl GaussianNoiseMutator for U256 {
+    #[instrument(name = "U256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+}
+
+impl GaussianNoiseMutator for I256 {
+    #[instrument(name = "I256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+}
+
+/// Mutator that changes the current value by flipping a random bit.
+pub(crate) trait BitMutator: Sized + Copy + Debug {
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+}
+
+impl BitMutator for U256 {
     #[instrument(name = "U256::flip_random_bit", skip(size, test_runner), ret)]
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
+}
 
+impl BitMutator for I256 {
+    #[instrument(name = "I256::flip_random_bit", skip(size, test_runner), ret)]
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+}
+
+impl BitMutator for Address {
+    #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
+    fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut mutated = self;
+        flip_random_bit_in_slice(mutated.as_mut_slice(), test_runner)?;
+        (self != mutated).then_some(mutated)
+    }
+}
+
+impl BitMutator for Word {
+    #[instrument(name = "Word::flip_random_bit", skip(size, test_runner), ret)]
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes = self;
+        let slice = &mut bytes[..size];
+        flip_random_bit_in_slice(slice, test_runner)?;
+        (self != bytes).then_some(bytes)
+    }
+}
+
+/// Mutator that changes the current value by randomly injecting interesting words (for uint, int,
+/// address and fixed bytes) - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
+pub(crate) trait InterestingWordMutator: Sized + Copy + Debug {
+    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+}
+
+impl InterestingWordMutator for U256 {
     #[instrument(name = "U256::mutate_interesting_byte", skip(size, test_runner), ret)]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
@@ -88,34 +186,9 @@ impl AbiMutator for U256 {
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
-
-    #[instrument(name = "U256::increment_decrement", skip(size, test_runner), ret)]
-    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mutated = if test_runner.rng().random::<bool>() {
-            self.wrapping_add(Self::ONE)
-        } else {
-            self.wrapping_sub(Self::ONE)
-        };
-        validate_uint_mutation(self, mutated, size)
-    }
-
-    #[instrument(name = "U256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
-    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
-        let mut bytes: [u8; 32] = self.to_be_bytes();
-        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
-        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
-    }
 }
 
-impl AbiMutator for I256 {
-    #[instrument(name = "I256::flip_random_bit", skip(size, test_runner), ret)]
-    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 32] = self.to_be_bytes();
-        flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
-    }
-
+impl InterestingWordMutator for I256 {
     #[instrument(name = "I256::mutate_interesting_byte", skip(size, test_runner), ret)]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
@@ -136,34 +209,9 @@ impl AbiMutator for I256 {
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_int_mutation(self, Self::from_be_bytes(bytes), size)
     }
-
-    #[instrument(name = "I256::increment_decrement", skip(size, test_runner), ret)]
-    fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mutated = if test_runner.rng().random::<bool>() {
-            self.wrapping_add(Self::ONE)
-        } else {
-            self.wrapping_sub(Self::ONE)
-        };
-        validate_int_mutation(self, mutated, size)
-    }
-
-    #[instrument(name = "I256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
-    fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
-        let mut bytes: [u8; 32] = self.to_be_bytes();
-        apply_scale_to_bytes(&mut bytes[32 - size / 8..], scale_factor)?;
-        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
-    }
 }
 
-impl AbiMutator for Address {
-    #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
-    fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut mutated = self;
-        flip_random_bit_in_slice(mutated.as_mut_slice(), test_runner)?;
-        (self != mutated).then_some(mutated)
-    }
-
+impl InterestingWordMutator for Address {
     #[instrument(name = "Address::mutate_interesting_byte", skip(_size, test_runner), ret)]
     fn mutate_interesting_byte(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut mutated = self;
@@ -184,29 +232,9 @@ impl AbiMutator for Address {
         mutate_interesting_dword_slice(mutated.as_mut_slice(), test_runner)?;
         (self != mutated).then_some(mutated)
     }
-
-    fn increment_decrement(self, _size: usize, _test_runner: &mut TestRunner) -> Option<Self> {
-        None
-    }
-
-    fn mutate_with_gaussian_noise(
-        self,
-        _size: usize,
-        _test_runner: &mut TestRunner,
-    ) -> Option<Self> {
-        None
-    }
 }
 
-impl AbiMutator for Word {
-    #[instrument(name = "Word::flip_random_bit", skip(size, test_runner), ret)]
-    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes = self;
-        let slice = &mut bytes[..size];
-        flip_random_bit_in_slice(slice, test_runner)?;
-        (self != bytes).then_some(bytes)
-    }
-
+impl InterestingWordMutator for Word {
     #[instrument(name = "Word::mutate_interesting_byte", skip(size, test_runner), ret)]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes = self;
@@ -229,18 +257,6 @@ impl AbiMutator for Word {
         let slice = &mut bytes[..size];
         mutate_interesting_dword_slice(slice, test_runner)?;
         (self != bytes).then_some(bytes)
-    }
-
-    fn increment_decrement(self, _size: usize, _test_runner: &mut TestRunner) -> Option<Self> {
-        None
-    }
-
-    fn mutate_with_gaussian_noise(
-        self,
-        _size: usize,
-        _test_runner: &mut TestRunner,
-    ) -> Option<Self> {
-        None
     }
 }
 

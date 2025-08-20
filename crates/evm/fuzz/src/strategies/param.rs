@@ -1,5 +1,7 @@
 use super::state::EvmFuzzState;
-use crate::strategies::mutators::AbiMutator;
+use crate::strategies::mutators::{
+    BitMutator, GaussianNoiseMutator, IncrementDecrementMutator, InterestingWordMutator,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Word};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
