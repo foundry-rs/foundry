@@ -133,6 +133,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 pub mod extend;
 use extend::Extends;
 
+pub use semver;
+
 /// Foundry configuration
 ///
 /// # Defaults
