@@ -80,9 +80,7 @@ impl EyreHandler for Handler {
 /// Panics are always caught by the more debug-centric handler.
 pub fn install() {
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        unsafe {
-            std::env::set_var("RUST_BACKTRACE", "1");
-        }
+        std::env::set_var("RUST_BACKTRACE", "1");
     }
 
     let panic_section =
