@@ -33,7 +33,7 @@ const OTHER_CONTRACT: &str = r#"
     import { ContractWithLints } from "./ContractWithLints.sol";
 
     contract OtherContractWithLints {
-        uint256 VARIABLE_MIXED_CASE_INFO;
+        function functionMIXEDCaseInfo() public {}
     }
         "#;
 
@@ -78,6 +78,7 @@ forgetest!(can_use_config, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
@@ -105,16 +106,17 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:9:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-9 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -126,6 +128,25 @@ note[mixed-case-variable]: mutable variables should use mixedCase
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into(), "src/OtherContract.sol".into()],
             lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+});
+
+forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+
+    // Check config for `ignore`
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/ContractWithLints.sol".into()],
+            lint_on_build: true,
+            mixed_case_exceptions: vec!["MIXED".to_string()],
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -143,16 +164,17 @@ forgetest!(can_override_config_severity, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:9:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-9 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -170,6 +192,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
@@ -197,6 +220,7 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
@@ -225,6 +249,7 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -288,6 +313,7 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -306,6 +332,7 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -334,6 +361,7 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: false,
+            ..Default::default()
         };
     });
 
