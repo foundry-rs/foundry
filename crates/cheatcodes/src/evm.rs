@@ -124,7 +124,7 @@ struct SlotInfo {
     ///
     /// For top-level variables: just the variable name (e.g., "myVariable")
     /// For struct members: dotted path (e.g., "myStruct.memberName")
-    /// For array elements: name with indices (e.g., "myArray[0]", "matrix[1][2]")
+    /// For array elements: name with indices (e.g., "myArray\[0\]", "matrix\[1\]\[2\]")
     /// For nested structures: full path (e.g., "outer.inner.field")
     label: String,
     #[serde(rename = "type", serialize_with = "serialize_slot_type")]
@@ -143,7 +143,7 @@ struct SlotInfo {
 ///
 /// We need both because:
 /// - `label`: Contains the exact Solidity type string from the storage layout (e.g., "struct
-///   Contract.StructName", "uint256", "address[2][3]")
+///   Contract.StructName", "uint256", "address\[2\]\[3\]")
 /// - `dyn_sol_type`: The parsed type used for actual value decoding
 #[derive(Debug)]
 struct StorageTypeInfo {
