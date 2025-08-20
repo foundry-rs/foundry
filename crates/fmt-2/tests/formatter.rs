@@ -162,26 +162,26 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions, // OK? Is it acceptable? (data loc keyword won't have a span in solar)
+    ArrayExpressions, // OK (data loc keyword won't have a span in solar)
     BlockComments, // OK
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, //OK
     ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
-    ContractDefinition, // OK? Is it acceptable?
-    DocComments, // OK? is it acceptable?
+    ContractDefinition, // OK
+    DocComments, // OK
     DoWhileStatement, // OK
-    EmitStatement, // OK? is it acceptable? (matches perfectly with `ListFormat::Compact`, but test `EventDefinition` doesn't match)
+    EmitStatement, // OK
     EnumDefinition, // OK
     EnumVariants, // OK
     ErrorDefinition, // OK
     EventDefinition, // OK
     ForStatement, // OK
     FunctionCall, // OK
-    FunctionCallArgsStatement, // OK? Is it acceptable?
+    FunctionCallArgsStatement, // OK
     FunctionDefinition, // OK?
     FunctionDefinitionWithFunctionReturns, // OK
-    FunctionType, // OK? Is it acceptable? TODO: support all configs
+    FunctionType, // OK
     HexUnderscore, // OK
     IfStatement, // Ok
     IfStatement2, // OK
@@ -191,27 +191,27 @@ fmt_tests! {
     LiteralExpression, // OK
     MappingType, // OK
     ModifierDefinition, // OK
-    NamedFunctionCallExpression, // Okish. Is it acceptable?
+    NamedFunctionCallExpression, // OK
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
     Repros, // OK
-    ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
-    RevertNamedArgsStatement, // OK? (properly break long calls?)
+    ReturnStatement, // OK (inline block logic is inconsistent with 'if stmt' unit test)
+    RevertNamedArgsStatement, // OK (properly break long calls?)
     RevertStatement, // OK
     SimpleComments, // OK
     SortedImports, // OK
     StatementBlock, // OK
     StructDefinition, // OK
-    ThisExpression, // OK? is it acceptable?
+    ThisExpression, // OK
     TrailingComma, // OK (solar error)
     TryStatement, // OK
     TypeDefinition, // OK
     UnitExpression, // OK (subdenom word won't have a span in solar)
     UsingDirective, // OK
-    VariableAssignment, // OK? is it acceptable?
-    VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)
+    VariableAssignment, // OK
+    VariableDefinition, // OK (solar forces constants to be initialized)
     WhileStatement,  // OK
-    Yul, // FIX: spacing
+    Yul, // OK
     YulStrings, // OK
 }
