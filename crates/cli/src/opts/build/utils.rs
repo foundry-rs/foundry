@@ -8,13 +8,13 @@ use foundry_config::Config;
 use solar_sema::ParsingContext;
 use std::path::PathBuf;
 
-/// Configures a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].
+/// Configures a [`ParsingContext`] from [`Config`].
 ///
-/// * Configures include paths, remappings and registers all in-memory sources so that solar can
-///   operate without touching disk.
-/// * If no `project` is provided, it will spin up a new ephemeral project.
-/// * If no `target_paths` are provided, all project files are processed.
-/// * Only processes the subset of sources with the most up-to-date Solitidy version.
+/// - Configures include paths, remappings
+/// - Source files are added if `add_source_file` is set
+/// - If no `project` is provided, it will spin up a new ephemeral project.
+/// - If no `target_paths` are provided, all project files are processed.
+/// - Only processes the subset of sources with the most up-to-date Solidity version.
 pub fn configure_pcx(
     pcx: &mut ParsingContext<'_>,
     config: &Config,
@@ -57,8 +57,8 @@ pub fn configure_pcx(
 /// Configures a Solar [`solar_sema::ParsingContext`] from a [`foundry_compilers::Project`] and a
 /// [`SolcVersionedInput`].
 ///
-/// * Configures include paths, remappings.
-/// * Source files can be manually added if the param `add_source_file` is set to `false`.
+/// - Configures include paths, remappings.
+/// - Source files are added if `add_source_file` is set
 pub fn configure_pcx_from_solc(
     pcx: &mut ParsingContext<'_>,
     project: &Project,
