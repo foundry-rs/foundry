@@ -120,9 +120,15 @@ struct SlotStateDiff {
 
 #[derive(Serialize, Debug)]
 struct SlotInfo {
+    /// The variable name from the storage layout.
+    ///
+    /// For top-level variables: just the variable name (e.g., "myVariable")
+    /// For struct members: dotted path (e.g., "myStruct.memberName")
+    /// For array elements: name with indices (e.g., "myArray[0]", "matrix[1][2]")
+    /// For nested structures: full path (e.g., "outer.inner.field")
     label: String,
     #[serde(rename = "type", serialize_with = "serialize_slot_type")]
-    slot_type: SlotType,
+    slot_type: StorageTypeInfo,
     offset: i64,
     slot: String,
     /// For struct members, contains nested SlotInfo for each member
@@ -133,18 +139,21 @@ struct SlotInfo {
     decoded: Option<DecodedSlotValues>,
 }
 
-/// Wrapper type that holds both the original type label and the DynSolType
+/// Wrapper type that holds both the original type label and the parsed DynSolType.
+///
+/// We need both because:
+/// - `label`: Contains the exact Solidity type string from the storage layout (e.g., "struct
+///   Contract.StructName", "uint256", "address[2][3]")
+/// - `dyn_sol_type`: The parsed type used for actual value decoding
 #[derive(Debug)]
-struct SlotType {
-    /// Parent type label from storage layout specifically used for structs.
-    ///
-    /// As members / fields of a struct have different labels.
+struct StorageTypeInfo {
+    /// This label is used during serialization to ensure the output matches
+    /// what users expect to see in the state diff JSON.
     label: String,
-    /// Parsed dynamic type for decoding
     dyn_sol_type: DynSolType,
 }
 
-fn serialize_slot_type<S>(slot_type: &SlotType, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_slot_type<S>(slot_type: &StorageTypeInfo, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -1651,203 +1660,6 @@ fn get_contract_data<'a>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
-/// Recursively processes a struct and finds the slot info for the requested slot.
-/// This handles both accessing the struct itself and accessing its members at any depth.
-fn handle_struct_recursive(
-    storage_layout: &StorageLayout,
-    base_label: &str,
-    storage_type: &StorageType,
-    base_slot: U256,
-    requested_slot: U256,
-    offset: i64,
-    slot_str: &str,
-    depth: usize,
-) -> Option<SlotInfo> {
-    // Limit recursion depth to prevent stack overflow
-    const MAX_DEPTH: usize = 10;
-    if depth > MAX_DEPTH {
-        return None;
-    }
-
-    let members = storage_type
-        .other
-        .get("members")
-        .and_then(|v| serde_json::from_value::<Vec<Storage>>(v.clone()).ok())?;
-
-    // If this is the exact slot we're looking for (struct's base slot)
-    if base_slot == requested_slot {
-        // For structs, we need to determine what to return:
-        // - If all members are in the same slot (single-slot struct), return the struct with member
-        //   info
-        // - If members span multiple slots, return the first member at this slot
-
-        // Find the member at slot offset 0 (the member that starts at this slot)
-        if let Some(first_member) = members.iter().find(|m| m.slot == "0") {
-            let member_type_info = storage_layout.types.get(&first_member.storage_type)?;
-
-            // Check if we have a single-slot struct (all members have slot "0")
-            let is_single_slot = members.iter().all(|m| m.slot == "0");
-
-            if is_single_slot {
-                // Build member info for single-slot struct
-                let mut member_infos = Vec::new();
-                for member in &members {
-                    if let Some(member_type_info) = storage_layout.types.get(&member.storage_type)
-                        && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
-                    {
-                        member_infos.push(SlotInfo {
-                            label: member.label.clone(),
-                            slot_type: SlotType {
-                                label: member_type_info.label.clone(),
-                                dyn_sol_type: member_type,
-                            },
-                            offset: member.offset,
-                            slot: slot_str.to_string(),
-                            members: None,
-                            decoded: None,
-                        });
-                    }
-                }
-
-                // Build the CustomStruct type
-                let struct_name =
-                    storage_type.label.strip_prefix("struct ").unwrap_or(&storage_type.label);
-                let prop_names: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
-                let member_types: Vec<DynSolType> =
-                    member_infos.iter().map(|info| info.slot_type.dyn_sol_type.clone()).collect();
-
-                let parsed_type = DynSolType::CustomStruct {
-                    name: struct_name.to_string(),
-                    prop_names,
-                    tuple: member_types,
-                };
-
-                return Some(SlotInfo {
-                    label: base_label.to_string(),
-                    slot_type: SlotType {
-                        label: storage_type.label.clone(),
-                        dyn_sol_type: parsed_type,
-                    },
-                    offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: if member_infos.is_empty() { None } else { Some(member_infos) },
-                });
-            } else {
-                // Multi-slot struct - return the first member.
-                let member_label = format!("{}.{}", base_label, first_member.label);
-
-                // If the first member is itself a struct, recurse
-                if member_type_info.label.starts_with("struct ") {
-                    return handle_struct_recursive(
-                        storage_layout,
-                        &member_label,
-                        member_type_info,
-                        base_slot, // First member is at the same slot
-                        requested_slot,
-                        first_member.offset,
-                        slot_str,
-                        depth + 1,
-                    );
-                }
-
-                // Return the first member as a primitive
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: SlotType {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
-                    },
-                    offset: first_member.offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: None,
-                });
-            }
-        }
-    }
-
-    // Not the base slot - search through members
-    for member in &members {
-        let member_slot_offset = U256::from_str(&member.slot).ok()?;
-        let member_slot = base_slot + member_slot_offset;
-        let member_type_info = storage_layout.types.get(&member.storage_type)?;
-        let member_label = format!("{}.{}", base_label, member.label);
-
-        if member_slot == requested_slot {
-            // Found the exact member slot
-
-            // If this member is a struct, recurse into it
-            if member_type_info.label.starts_with("struct ") {
-                return handle_struct_recursive(
-                    storage_layout,
-                    &member_label,
-                    member_type_info,
-                    member_slot,
-                    requested_slot,
-                    member.offset,
-                    slot_str,
-                    depth + 1,
-                );
-            }
-
-            // Regular member
-            let member_type = DynSolType::parse(&member_type_info.label).ok()?;
-            return Some(SlotInfo {
-                label: member_label,
-                slot_type: SlotType {
-                    label: member_type_info.label.clone(),
-                    dyn_sol_type: member_type,
-                },
-                offset: member.offset,
-                slot: slot_str.to_string(),
-                members: None,
-                decoded: None,
-            });
-        }
-
-        // If this member is a struct and the requested slot might be inside it, recurse
-        if member_type_info.label.starts_with("struct ")
-            && let Some(slot_info) = handle_struct_recursive(
-                storage_layout,
-                &member_label,
-                member_type_info,
-                member_slot,
-                requested_slot,
-                member.offset,
-                slot_str,
-                depth + 1,
-            )
-        {
-            return Some(slot_info);
-        }
-    }
-
-    None
-}
-
-/// Handles struct slot decoding for both direct and member slot access.
-fn handle_struct(
-    storage: &Storage,
-    storage_type: &StorageType,
-    storage_layout: &StorageLayout,
-    requested_slot: U256,
-    slot_str: &str,
-) -> Option<SlotInfo> {
-    let base_slot = U256::from_str(&storage.slot).ok()?;
-
-    handle_struct_recursive(
-        storage_layout,
-        &storage.label,
-        storage_type,
-        base_slot,
-        requested_slot,
-        storage.offset,
-        slot_str,
-        0, // Start with depth 0
-    )
-}
-
 /// Gets storage layout info for a specific slot.
 fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
     let slot = U256::from_be_bytes(slot.0);
@@ -1875,7 +1687,7 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
 
             return Some(SlotInfo {
                 label,
-                slot_type: SlotType {
+                slot_type: StorageTypeInfo {
                     label: storage_type.label.clone(),
                     dyn_sol_type: parsed_type,
                 },
@@ -1887,12 +1699,12 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
         }
 
         // Handle the case where the accessed `slot` if maybe different from the base slot.
-        let base_slot = U256::from_str(&storage.slot).ok()?;
+        let array_start_slot = U256::from_str(&storage.slot).ok()?;
 
         if let Some(parsed_type) = dyn_type
             && let DynSolType::FixedArray(_, _) = parsed_type
             && let Some(slot_info) =
-                handle_array_slot(storage, storage_type, slot, base_slot, &slot_str)
+                handle_array_slot(storage, storage_type, slot, array_start_slot, &slot_str)
         {
             return Some(slot_info);
         }
@@ -1914,21 +1726,38 @@ fn handle_array_slot(
     storage: &Storage,
     storage_type: &StorageType,
     slot: U256,
-    base_slot: U256,
+    array_start_slot: U256, // The slot where this array begins
     slot_str: &str,
 ) -> Option<SlotInfo> {
     // Check if slot is within array bounds
     let total_bytes = storage_type.number_of_bytes.parse::<u64>().ok()?;
     let total_slots = total_bytes.div_ceil(32);
 
-    if slot >= base_slot && slot < base_slot + U256::from(total_slots) {
+    if slot >= array_start_slot && slot < array_start_slot + U256::from(total_slots) {
         let parsed_type = DynSolType::parse(&storage_type.label).ok()?;
-        let index = (slot - base_slot).to::<u64>();
-        let label = format_array_element_label(&storage.label, &parsed_type, index);
+        let index = (slot - array_start_slot).to::<u64>();
+        // Format the array element label based on array dimensions
+        let label = match &parsed_type {
+            DynSolType::FixedArray(inner, _) => {
+                if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
+                    // 2D array: calculate row and column
+                    let row = index / (*inner_size as u64);
+                    let col = index % (*inner_size as u64);
+                    format!("{}[{row}][{col}]", storage.label)
+                } else {
+                    // 1D array
+                    format!("{}[{index}]", storage.label)
+                }
+            }
+            _ => storage.label.clone(),
+        };
 
         return Some(SlotInfo {
             label,
-            slot_type: SlotType { label: storage_type.label.clone(), dyn_sol_type: parsed_type },
+            slot_type: StorageTypeInfo {
+                label: storage_type.label.clone(),
+                dyn_sol_type: parsed_type,
+            },
             offset: 0,
             slot: slot_str.to_string(),
             members: None,
@@ -1955,22 +1784,201 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     }
 }
 
-/// Helper function to format an array element label given its index
-fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u64) -> String {
-    match dyn_type {
-        DynSolType::FixedArray(inner, _) => {
-            if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
-                // 2D array: calculate row and column
-                let row = index / (*inner_size as u64);
-                let col = index % (*inner_size as u64);
-                format!("{base_label}[{row}][{col}]")
+/// Context for recursive struct processing
+struct StructContext<'a> {
+    storage_layout: &'a StorageLayout,
+    target_slot: U256, // The slot we're trying to decode
+    slot_str: String,  // String representation of target_slot
+}
+
+/// Recursively processes a struct and finds the slot info for the requested slot.
+/// This handles both accessing the struct itself and accessing its members at any depth.
+fn handle_struct_recursive(
+    ctx: &StructContext,
+    base_label: &str,
+    storage_type: &StorageType,
+    struct_start_slot: U256, // The slot where this struct begins
+    offset: i64,
+    depth: usize,
+) -> Option<SlotInfo> {
+    // Limit recursion depth to prevent stack overflow
+    const MAX_DEPTH: usize = 10;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+
+    let members = storage_type
+        .other
+        .get("members")
+        .and_then(|v| serde_json::from_value::<Vec<Storage>>(v.clone()).ok())?;
+
+    // If this is the exact slot we're looking for (struct's base slot)
+    if struct_start_slot == ctx.target_slot {
+        // For structs, we need to determine what to return:
+        // - If all members are in the same slot (single-slot struct), return the struct with member
+        //   info
+        // - If members span multiple slots, return the first member at this slot
+
+        // Find the member at slot offset 0 (the member that starts at this slot)
+        if let Some(first_member) = members.iter().find(|m| m.slot == "0") {
+            let member_type_info = ctx.storage_layout.types.get(&first_member.storage_type)?;
+
+            // Check if we have a single-slot struct (all members have slot "0")
+            let is_single_slot = members.iter().all(|m| m.slot == "0");
+
+            if is_single_slot {
+                // Build member info for single-slot struct
+                let mut member_infos = Vec::new();
+                for member in &members {
+                    if let Some(member_type_info) =
+                        ctx.storage_layout.types.get(&member.storage_type)
+                        && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
+                    {
+                        member_infos.push(SlotInfo {
+                            label: member.label.clone(),
+                            slot_type: StorageTypeInfo {
+                                label: member_type_info.label.clone(),
+                                dyn_sol_type: member_type,
+                            },
+                            offset: member.offset,
+                            slot: ctx.slot_str.clone(),
+                            members: None,
+                            decoded: None,
+                        });
+                    }
+                }
+
+                // Build the CustomStruct type
+                let struct_name =
+                    storage_type.label.strip_prefix("struct ").unwrap_or(&storage_type.label);
+                let prop_names: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
+                let member_types: Vec<DynSolType> =
+                    member_infos.iter().map(|info| info.slot_type.dyn_sol_type.clone()).collect();
+
+                let parsed_type = DynSolType::CustomStruct {
+                    name: struct_name.to_string(),
+                    prop_names,
+                    tuple: member_types,
+                };
+
+                return Some(SlotInfo {
+                    label: base_label.to_string(),
+                    slot_type: StorageTypeInfo {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: parsed_type,
+                    },
+                    offset,
+                    slot: ctx.slot_str.clone(),
+                    decoded: None,
+                    members: if member_infos.is_empty() { None } else { Some(member_infos) },
+                });
             } else {
-                // 1D array
-                format!("{base_label}[{index}]")
+                // Multi-slot struct - return the first member.
+                let member_label = format!("{}.{}", base_label, first_member.label);
+
+                // If the first member is itself a struct, recurse
+                if member_type_info.label.starts_with("struct ") {
+                    return handle_struct_recursive(
+                        ctx,
+                        &member_label,
+                        member_type_info,
+                        struct_start_slot, // First member is at the same slot
+                        first_member.offset,
+                        depth + 1,
+                    );
+                }
+
+                // Return the first member as a primitive
+                return Some(SlotInfo {
+                    label: member_label,
+                    slot_type: StorageTypeInfo {
+                        label: member_type_info.label.clone(),
+                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
+                    },
+                    offset: first_member.offset,
+                    slot: ctx.slot_str.clone(),
+                    decoded: None,
+                    members: None,
+                });
             }
         }
-        _ => base_label.to_string(),
     }
+
+    // Not the base slot - search through members
+    for member in &members {
+        let member_slot_offset = U256::from_str(&member.slot).ok()?;
+        let member_slot = struct_start_slot + member_slot_offset;
+        let member_type_info = ctx.storage_layout.types.get(&member.storage_type)?;
+        let member_label = format!("{}.{}", base_label, member.label);
+
+        if member_slot == ctx.target_slot {
+            // Found the exact member slot
+
+            // If this member is a struct, recurse into it
+            if member_type_info.label.starts_with("struct ") {
+                return handle_struct_recursive(
+                    ctx,
+                    &member_label,
+                    member_type_info,
+                    member_slot,
+                    member.offset,
+                    depth + 1,
+                );
+            }
+
+            // Regular member
+            let member_type = DynSolType::parse(&member_type_info.label).ok()?;
+            return Some(SlotInfo {
+                label: member_label,
+                slot_type: StorageTypeInfo {
+                    label: member_type_info.label.clone(),
+                    dyn_sol_type: member_type,
+                },
+                offset: member.offset,
+                slot: ctx.slot_str.clone(),
+                members: None,
+                decoded: None,
+            });
+        }
+
+        // If this member is a struct and the requested slot might be inside it, recurse
+        if member_type_info.label.starts_with("struct ")
+            && let Some(slot_info) = handle_struct_recursive(
+                ctx,
+                &member_label,
+                member_type_info,
+                member_slot,
+                member.offset,
+                depth + 1,
+            )
+        {
+            return Some(slot_info);
+        }
+    }
+
+    None
+}
+
+/// Handles struct slot decoding for both direct and member slot access.
+fn handle_struct(
+    storage: &Storage,
+    storage_type: &StorageType,
+    storage_layout: &StorageLayout,
+    target_slot: U256,
+    slot_str: &str,
+) -> Option<SlotInfo> {
+    let struct_start_slot = U256::from_str(&storage.slot).ok()?;
+
+    let ctx = StructContext { storage_layout, target_slot, slot_str: slot_str.to_string() };
+
+    handle_struct_recursive(
+        &ctx,
+        &storage.label,
+        storage_type,
+        struct_start_slot,
+        storage.offset,
+        0,
+    )
 }
 
 /// Helper function to decode a single storage value using its DynSolType
