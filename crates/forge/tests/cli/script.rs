@@ -3189,14 +3189,12 @@ contract CounterScript is Script {
         )
         .unwrap();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _) = spawn(NodeConfig::test()).await;
     cmd.args([
         "script",
         &deploy_script.display().to_string(),
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
         "--slow",
         "--broadcast",
         "--private-key",
@@ -3216,7 +3214,7 @@ Traces:
 
   [..] CounterScript::run()
     ├─ [..] VM::createSelectFork("<rpc url>")
-    │   └─ ← [Return] 1
+    │   └─ ← [Return] 0
     ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [..] → new Counter@[..]
@@ -3224,12 +3222,13 @@ Traces:
     ├─ [..] VM::stopBroadcast()
     │   └─ ← [Return]
     ├─ [..] VM::createSelectFork("<rpc url>")
-    │   └─ ← [Return] 2
+    │   └─ ← [Return] 1
     ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
     └─ ← [Revert] call to non-contract address [..]
 
 
+[GAS]
 
 "#]])
     .stderr_eq(str![[r#"

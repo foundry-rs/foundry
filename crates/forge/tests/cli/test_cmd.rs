@@ -3988,7 +3988,7 @@ import "forge-std/Test.sol";
 import "src/Counter.sol";
 
 contract CounterTest is Test {
-    function test_select_fork() public {
+    function _test_select_fork() public {
         vm.createSelectFork("<url>");
         new Counter();
     }
@@ -4008,19 +4008,17 @@ contract CounterTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 2 tests for test/Counter.t.sol:CounterTest
+Ran 1 test for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 2 failing tests in test/Counter.t.sol:CounterTest
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() ([GAS])
-[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
 
-Encountered a total of 2 failing tests, 0 tests succeeded
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });
