@@ -168,23 +168,20 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
-                let sess = linter.init();
-
-                let pcx = solar_pcx_from_build_opts(
-                    &sess,
-                    &self.build,
-                    Some(project),
-                    Some(&input_files),
-                )?;
-                linter.early_lint(&input_files, pcx);
-
-                let pcx = solar_pcx_from_build_opts(
-                    &sess,
-                    &self.build,
-                    Some(project),
-                    Some(&input_files),
-                )?;
-                linter.late_lint(&input_files, pcx);
+                let mut compiler = linter.init();
+                compiler.enter_mut(|compiler| -> Result<()> {
+                    let mut pcx = compiler.parse();
+                    solar_pcx_from_build_opts(
+                        &mut pcx,
+                        &self.build,
+                        Some(project),
+                        Some(&input_files),
+                    )?;
+                    pcx.parse();
+                    let _ = compiler.lower_asts();
+                    Ok(())
+                })?;
+                linter.lint(&input_files, &mut compiler);
             }
         }
 

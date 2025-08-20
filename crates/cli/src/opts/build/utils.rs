@@ -1,28 +1,27 @@
 use crate::{opts::BuildOpts, utils::LoadConfig};
-
 use eyre::Result;
 use foundry_compilers::{
     CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SolcLanguage, SolcVersionedInput},
 };
-use solar_sema::{ParsingContext, interface::Session};
+use solar_sema::ParsingContext;
 use std::path::PathBuf;
 
-/// Builds a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].
+/// Configures a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].
 ///
 /// * Configures include paths, remappings and registers all in-memory sources so that solar can
 ///   operate without touching disk.
 /// * If no `project` is provided, it will spin up a new ephemeral project.
 /// * If no `target_paths` are provided, all project files are processed.
 /// * Only processes the subset of sources with the most up-to-date Solitidy version.
-pub fn solar_pcx_from_build_opts<'sess>(
-    sess: &'sess Session,
+pub fn solar_pcx_from_build_opts(
+    pcx: &mut ParsingContext<'_>,
     build: &BuildOpts,
     project: Option<&Project>,
     target_paths: Option<&[PathBuf]>,
-) -> Result<ParsingContext<'sess>> {
+) -> Result<()> {
     // Process build options
     let config = build.load_config()?;
     let project = match project {
@@ -46,7 +45,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
     };
 
     // Only process sources with latest Solidity version to avoid conflicts.
-    let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
+    let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
     let (version, sources, _) = graph
         // resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
@@ -68,23 +67,23 @@ pub fn solar_pcx_from_build_opts<'sess>(
         version,
     );
 
-    Ok(solar_pcx_from_solc_project(sess, project, &solc, true))
+    solar_pcx_from_solc_project(pcx, project, &solc, true);
+
+    Ok(())
 }
 
-/// Builds a Solar [`solar_sema::ParsingContext`] from a  [`foundry_compilers::Project`] and a
+/// Configures a Solar [`solar_sema::ParsingContext`] from a [`foundry_compilers::Project`] and a
 /// [`SolcVersionedInput`].
 ///
 /// * Configures include paths, remappings.
 /// * Source files can be manually added if the param `add_source_file` is set to `false`.
-pub fn solar_pcx_from_solc_project<'sess>(
-    sess: &'sess Session,
+pub fn solar_pcx_from_solc_project(
+    pcx: &mut ParsingContext<'_>,
     project: &Project,
     solc: &SolcVersionedInput,
     add_source_files: bool,
-) -> ParsingContext<'sess> {
+) {
     // Configure the parsing context with the paths, remappings and sources
-    let mut pcx = ParsingContext::new(sess);
-
     pcx.file_resolver
         .set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&project.paths.root));
     for remapping in &project.paths.remappings {
@@ -99,12 +98,10 @@ pub fn solar_pcx_from_solc_project<'sess>(
     if add_source_files {
         for (path, source) in &solc.input.sources {
             if let Ok(src_file) =
-                sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str())
             {
                 pcx.add_file(src_file);
             }
         }
     }
-
-    pcx
 }

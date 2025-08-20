@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::{Graph, resolver::parse::SolData};
+use foundry_compilers::{Graph, resolver::parse::SolParser};
 use foundry_config::{Config, impl_figment_convert_basic};
 use itertools::Itertools;
 use solar_parse::{ast, ast::visit::Visit, interface::Session};
@@ -53,7 +53,7 @@ impl GeigerArgs {
         let mut sources: Vec<PathBuf> = {
             if self.paths.is_empty() {
                 let paths = config.project_paths();
-                Graph::<SolData>::resolve(&paths)?
+                Graph::<SolParser>::resolve(&paths)?
                     .files()
                     .keys()
                     .filter(|f| !paths.has_library_ancestor(f))

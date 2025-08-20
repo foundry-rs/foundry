@@ -112,13 +112,15 @@ impl LintArgs {
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
-        let sess = linter.init();
-
-        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-        linter.early_lint(&input, pcx);
-
-        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-        linter.late_lint(&input, pcx);
+        let mut compiler = linter.init();
+        compiler.enter_mut(|compiler| -> Result<()> {
+            let mut pcx = compiler.parse();
+            solar_pcx_from_build_opts(&mut pcx, &self.build, Some(&project), Some(&input))?;
+            pcx.parse();
+            let _ = compiler.lower_asts();
+            Ok(())
+        })?;
+        linter.lint(&input, &mut compiler);
 
         Ok(())
     }

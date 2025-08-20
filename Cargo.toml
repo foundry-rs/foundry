@@ -409,6 +409,7 @@ idna_adapter = "=1.1.0"
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "e09cb89" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "50683eb" }
+foundry-compilers = { path = "../compilers/crates/compilers" }
 
 ## solar
 # solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
@@ -416,3 +417,8 @@ idna_adapter = "=1.1.0"
 # solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
 # solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
 # solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar-ast = { path = "../../paradigmxyz/solar/crates/ast" }
+solar-parse = { path = "../../paradigmxyz/solar/crates/parse" }
+solar-interface = { path = "../../paradigmxyz/solar/crates/interface" }
+solar-sema = { path = "../../paradigmxyz/solar/crates/sema" }
+solar-data-structures = { path = "../../paradigmxyz/solar/crates/data-structures" }

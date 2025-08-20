@@ -10,7 +10,7 @@ use solar_interface::{
     Session, Span,
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
 };
-use solar_sema::ParsingContext;
+use solar_sema::Compiler;
 use std::path::PathBuf;
 
 use crate::inline_config::InlineConfig;
@@ -26,7 +26,7 @@ use crate::inline_config::InlineConfig;
 ///
 /// # Required Methods
 ///
-/// - `init`: Creates a new solar `Session` with the appropriate linter configuration.
+/// - `init`: Creates a new solar `Compiler` with the appropriate linter configuration.
 /// - `early_lint`: Scans the source files (using the AST) emitting a diagnostic for lints found.
 /// - `late_lint`: Scans the source files (using the HIR) emitting a diagnostic for lints found.
 ///
@@ -37,9 +37,16 @@ pub trait Linter: Send + Sync {
     type Language: Language;
     type Lint: Lint;
 
-    fn init(&self) -> Session;
-    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
-    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
+    /// Build a solar [`Compiler`] from the given linter config.
+    fn init(&self) -> Compiler {
+        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+        self.configure(&mut compiler);
+        compiler
+    }
+    /// Configure a solar [`Compiler`] from the given linter config.
+    fn configure(&self, compiler: &mut Compiler);
+    /// Run all lints.
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
 }
 
 pub trait Lint {
@@ -49,10 +56,10 @@ pub trait Lint {
     fn help(&self) -> &'static str;
 }
 
-pub struct LintContext<'s> {
+pub struct LintContext<'s, 'c> {
     sess: &'s Session,
     with_description: bool,
-    pub config: LinterConfig<'s>,
+    pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
 }
 
@@ -61,11 +68,11 @@ pub struct LinterConfig<'s> {
     pub mixed_case_exceptions: &'s [String],
 }
 
-impl<'s> LintContext<'s> {
+impl<'s, 'c> LintContext<'s, 'c> {
     pub fn new(
         sess: &'s Session,
         with_description: bool,
-        config: LinterConfig<'s>,
+        config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
     ) -> Self {
         Self { sess, with_description, config, active_lints }
@@ -192,7 +199,7 @@ pub enum Snippet {
 }
 
 impl Snippet {
-    pub fn to_note(self, ctx: &LintContext<'_>) -> Vec<(DiagMsg, Style)> {
+    pub fn to_note(self, ctx: &LintContext) -> Vec<(DiagMsg, Style)> {
         let mut output = if let Some(desc) = self.desc() {
             vec![(DiagMsg::from(desc), Style::NoStyle), (DiagMsg::from("\n\n"), Style::NoStyle)]
         } else {

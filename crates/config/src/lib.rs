@@ -36,7 +36,7 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
 };
 use regex::Regex;
@@ -990,7 +990,7 @@ impl Config {
             return Ok(BTreeMap::new());
         }
 
-        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let graph = Graph::<MultiCompilerParser>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
 
         for res in &self.compilation_restrictions {
