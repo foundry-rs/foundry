@@ -1,6 +1,6 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, eyre};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::{BuildOpts, solar_pcx_from_build_opts},
@@ -112,17 +112,18 @@ impl BuildArgs {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
-        // Only run the `SolidityLinter` if there are no compilation errors
-        if output.output().errors.iter().all(|e| !e.is_error()) {
-            self.lint(&project, &config)?;
+        // Only run the `SolidityLinter` if lint on build and no compilation errors.
+        if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
+            self.lint(&project, &config, self.paths.as_deref())
+                .map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
         Ok(output)
     }
 
-    fn lint(&self, project: &Project, config: &Config) -> Result<()> {
+    fn lint(&self, project: &Project, config: &Config, files: Option<&[PathBuf]>) -> Result<()> {
         let format_json = shell::is_json();
-        if project.compiler.solc.is_some() && config.lint.lint_on_build && !shell::is_quiet() {
+        if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
                 .with_json_emitter(format_json)
                 .with_description(!format_json)
@@ -156,6 +157,10 @@ impl BuildArgs {
                 .project_paths::<SolcLanguage>()
                 .input_files_iter()
                 .filter(|p| {
+                    // Lint only specified build files, if any.
+                    if let Some(files) = files {
+                        return files.iter().any(|file| &curr_dir.join(file) == p);
+                    }
                     skip.is_match(p)
                         && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
                 })
