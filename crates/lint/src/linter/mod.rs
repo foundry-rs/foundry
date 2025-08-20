@@ -16,25 +16,13 @@ use std::path::PathBuf;
 use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
-/// code files. A linter can be implemented for any smart contract language supported by Foundry.
+/// code files.
 ///
-/// # Type Parameters
-///
-/// - `Language`: Represents the target programming language. Must implement the [`Language`] trait.
-/// - `Lint`: Represents the types of lints performed by the linter. Must implement the [`Lint`]
-///   trait.
-///
-/// # Required Methods
-///
-/// - `init`: Creates a new solar `Compiler` with the appropriate linter configuration.
-/// - `early_lint`: Scans the source files (using the AST) emitting a diagnostic for lints found.
-/// - `late_lint`: Scans the source files (using the HIR) emitting a diagnostic for lints found.
-///
-/// # Note:
-///
-/// - For `early_lint` and `late_lint`, the `ParsingContext` should have the sources pre-loaded.
+/// A linter can be implemented for any smart contract language supported by Foundry.
 pub trait Linter: Send + Sync {
+    /// The target [`Language`].
     type Language: Language;
+    /// The [`Lint`] type.
     type Lint: Lint;
 
     /// Build a solar [`Compiler`] from the given linter config.
@@ -43,9 +31,13 @@ pub trait Linter: Send + Sync {
         self.configure(&mut compiler);
         compiler
     }
+
     /// Configure a solar [`Compiler`] from the given linter config.
     fn configure(&self, compiler: &mut Compiler);
+
     /// Run all lints.
+    ///
+    /// The `compiler` should have already been configured with all the sources necessary.
     fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
 }
 
