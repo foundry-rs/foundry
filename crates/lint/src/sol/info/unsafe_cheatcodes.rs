@@ -44,12 +44,11 @@ impl<'ast> Visit<'ast> for UnsafeCheatcodeChecker<'_, '_> {
     type BreakValue = ();
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Call(lhs, _args) = &expr.kind {
-            if let ExprKind::Member(_lhs, member) = &lhs.kind {
-                if self.unsafe_cheatcodes.iter().any(|&c| c == member.as_str()) {
-                    self.ctx.emit(&UNSAFE_CHEATCODE_USAGE, member.span);
-                }
-            }
+        if let ExprKind::Call(lhs, _args) = &expr.kind
+            && let ExprKind::Member(_lhs, member) = &lhs.kind
+            && self.unsafe_cheatcodes.iter().any(|&c| c == member.as_str())
+        {
+            self.ctx.emit(&UNSAFE_CHEATCODE_USAGE, member.span);
         }
         self.walk_expr(expr)
     }

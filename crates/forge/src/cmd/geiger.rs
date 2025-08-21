@@ -40,7 +40,9 @@ impl GeigerArgs {
             sh_warn!("`--full` is deprecated as reports are not generated anymore\n")?;
         }
 
-        sh_println!("Running forge geiger (alias for: forge lint --only-lint unsafe-cheatcode)\n")?;
+        sh_warn!(
+            "`forge geiger` is just an alias for `forge lint --only-lint unsafe-cheatcode`\n"
+        )?;
 
         // Convert geiger command to lint command with specific lint filter
         let lint_args = crate::cmd::lint::LintArgs {
