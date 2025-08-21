@@ -217,23 +217,23 @@ impl Printer {
         if self.scan_stack.is_empty() {
             self.print_end();
         } else {
-            if !self.buf.is_empty() {
-                if let Token::Break(break_token) = self.buf.last().token {
-                    if self.buf.len() >= 2 {
-                        if let Token::Begin(_) = self.buf.second_last().token {
-                            self.buf.pop_last();
-                            self.buf.pop_last();
-                            self.scan_stack.pop_back();
-                            self.scan_stack.pop_back();
-                            self.right_total -= break_token.blank_space as isize;
-                            return;
-                        }
-                    }
-                    if break_token.if_nonempty {
-                        self.buf.pop_last();
-                        self.scan_stack.pop_back();
-                        self.right_total -= break_token.blank_space as isize;
-                    }
+            if !self.buf.is_empty()
+                && let Token::Break(break_token) = self.buf.last().token
+            {
+                if self.buf.len() >= 2
+                    && let Token::Begin(_) = self.buf.second_last().token
+                {
+                    self.buf.pop_last();
+                    self.buf.pop_last();
+                    self.scan_stack.pop_back();
+                    self.scan_stack.pop_back();
+                    self.right_total -= break_token.blank_space as isize;
+                    return;
+                }
+                if break_token.if_nonempty {
+                    self.buf.pop_last();
+                    self.scan_stack.pop_back();
+                    self.right_total -= break_token.blank_space as isize;
                 }
             }
             let right = self.buf.push(BufEntry { token: Token::End, size: -1 });
@@ -362,15 +362,13 @@ impl Printer {
                 Breaks::Consistent => '«',
                 Breaks::Inconsistent => '‹',
             });
-            if DEBUG_INDENT {
-                if let IndentStyle::Block { offset } = token.indent {
-                    self.out.extend(offset.to_string().chars().map(|ch| match ch {
-                        '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
-                            [(ch as u8 - b'0') as usize],
-                        '-' => '₋',
-                        _ => unreachable!(),
-                    }));
-                }
+            if DEBUG_INDENT && let IndentStyle::Block { offset } = token.indent {
+                self.out.extend(offset.to_string().chars().map(|ch| match ch {
+                    '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+                        [(ch as u8 - b'0') as usize],
+                    '-' => '₋',
+                    _ => unreachable!(),
+                }));
             }
         }
 

@@ -228,18 +228,17 @@ fn parse_inline_config<'ast>(
     let items = comments.iter().flat_map(|cmnt| {
         let mut found_items = Vec::with_capacity(2);
         // Always process the first line.
-        if let Some(line) = cmnt.lines.first() {
-            if let Some(item) = parse_item(line, cmnt) {
-                found_items.push(item);
-            }
+        if let Some(line) = cmnt.lines.first()
+            && let Some(item) = parse_item(line, cmnt)
+        {
+            found_items.push(item);
         }
         // If the comment has more than one line, process the last line.
-        if cmnt.lines.len() > 1 {
-            if let Some(line) = cmnt.lines.last() {
-                if let Some(item) = parse_item(line, cmnt) {
-                    found_items.push(item);
-                }
-            }
+        if cmnt.lines.len() > 1
+            && let Some(line) = cmnt.lines.last()
+            && let Some(item) = parse_item(line, cmnt)
+        {
+            found_items.push(item);
         }
         found_items
     });

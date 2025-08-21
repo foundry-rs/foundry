@@ -77,13 +77,13 @@ impl Printer {
     }
 
     pub fn last_token_is_space(&self) -> bool {
-        if let Some(token) = self.last_token() {
-            if token.is_space() {
-                return true;
-            }
+        if let Some(token) = self.last_token()
+            && token.is_space()
+        {
+            return true;
         }
-        let res = self.out.ends_with(" ");
-        res
+
+        self.out.ends_with(" ")
     }
 
     pub fn is_beginning_of_line(&self) -> bool {
@@ -172,7 +172,7 @@ impl Printer {
     }
 
     pub fn last_brace_is_closed(&self, kw: &str) -> bool {
-        self.out.rsplit_once(kw).map_or(true, |(_, relevant)| {
+        self.out.rsplit_once(kw).is_none_or(|(_, relevant)| {
             let open = relevant.chars().filter(|c| *c == '{').count();
             let close = relevant.chars().filter(|c| *c == '}').count();
             open == close
