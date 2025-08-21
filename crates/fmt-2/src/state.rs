@@ -726,7 +726,7 @@ impl State<'_, '_> {
                 if cmnt.style.is_trailing() {
                     self.nbsp();
                 }
-                self.print_span_cold(cmnt.span, false);
+                self.print_span_cold(cmnt.span);
                 if cmnt.style.is_isolated() || cmnt.style.is_trailing() {
                     self.print_sep(Separator::Hardbreak);
                 }
@@ -753,7 +753,7 @@ impl State<'_, '_> {
             // println!("> SNIPPET: '{}'",
             // self.sm.span_to_snippet(cursor_span).unwrap_or_default());
 
-            self.print_span_cold(cursor_span, false);
+            self.print_span_cold(cursor_span);
             return true;
         }
         if self.inline_config.is_disabled(span) {
@@ -761,7 +761,7 @@ impl State<'_, '_> {
             // println!("> DISABLED: true");
             // println!("> SPAN: {span:?}");
             // println!("> SNIPPET: {}", self.sm.span_to_snippet(span).unwrap_or_default());
-            self.print_span_cold(span, true);
+            self.print_span_cold(span);
             return true;
         }
         // println!("------------");
@@ -772,11 +772,11 @@ impl State<'_, '_> {
     }
 
     #[cold]
-    fn print_span_cold(&mut self, span: Span, skip_ind: bool) {
-        self.print_span(span, skip_ind);
+    fn print_span_cold(&mut self, span: Span) {
+        self.print_span(span);
     }
 
-    fn print_span(&mut self, span: Span, skip_ind: bool) {
+    fn print_span(&mut self, span: Span) {
         match self.sm.span_to_snippet(span) {
             Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
                 snippet_with_tabs(s, self.config.tab_width)
@@ -1610,7 +1610,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_tokens(&mut self, tokens: &[token::Token]) {
         // Leave unchanged.
         let span = Span::join_first_last(tokens.iter().map(|t| t.span));
-        self.print_span(span, false);
+        self.print_span(span);
     }
 
     fn print_word(&mut self, w: impl Into<Cow<'static, str>>) {
@@ -3607,7 +3607,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
         state: &mut State<'_, 'ast>,
         header: &'ast ast::FunctionHeader<'ast>,
     ) -> (HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>, Vec<AttributeInfo<'ast>>, BytePos) {
-        let (first_attr, empty_override) = self.collect_attributes(header);
+        let first_attr = self.collect_attributes(header);
         self.cache_comments(state);
         (self.map(), self.attributes, first_attr)
     }
@@ -3638,8 +3638,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
         map
     }
 
-    fn collect_attributes(&mut self, header: &'ast ast::FunctionHeader<'ast>) -> (BytePos, bool) {
-        let mut empty_override = true;
+    fn collect_attributes(&mut self, header: &'ast ast::FunctionHeader<'ast>) -> BytePos {
         let mut first_pos = BytePos(u32::MAX);
         if let Some(v) = header.visibility {
             if v.span.lo() < first_pos {
@@ -3665,9 +3664,6 @@ impl<'ast> AttributeCommentMapper<'ast> {
             if o.span.lo() < first_pos {
                 first_pos = o.span.lo()
             }
-            if o.paths.len() != 0 {
-                empty_override = false;
-            }
             self.attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
         }
         for m in header.modifiers.iter() {
@@ -3678,7 +3674,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
                 .push(AttributeInfo { kind: AttributeKind::Modifier(m), span: m.span() });
         }
         self.attributes.sort_by_key(|attr| attr.span.lo());
-        (first_pos, empty_override)
+        first_pos
     }
 
     fn cache_comments(&mut self, state: &mut State<'_, 'ast>) {
