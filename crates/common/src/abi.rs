@@ -53,11 +53,14 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-
     let args: Vec<S> = args.into_iter().collect();
 
     if func.inputs.len() != args.len() {
-        eyre::bail!("encode length mismatch: expected {} types, got {}", func.inputs.len(), args.len())
+        eyre::bail!(
+            "encode length mismatch: expected {} types, got {}",
+            func.inputs.len(),
+            args.len(),
+        );
     }
 
     let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
@@ -290,7 +293,7 @@ mod tests {
             },
         ];
 
-        // Less arguments than parameters 
+        // Less arguments than parameters
         let args = vec!["1"];
         let res = encode_args(&params, &args);
         assert!(res.is_err());
