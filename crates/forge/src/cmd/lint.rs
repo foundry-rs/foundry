@@ -17,25 +17,25 @@ use std::path::PathBuf;
 pub struct LintArgs {
     /// Path to the file to be checked. Overrides the `ignore` project config.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
-    paths: Vec<PathBuf>,
+    pub(crate) paths: Vec<PathBuf>,
 
     /// Specifies which lints to run based on severity. Overrides the `severity` project config.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
-    severity: Option<Vec<Severity>>,
+    pub(crate) severity: Option<Vec<Severity>>,
 
     /// Specifies which lints to run based on their ID (e.g., "incorrect-shift"). Overrides the
     /// `exclude_lints` project config.
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
-    lint: Option<Vec<String>>,
+    pub(crate) lint: Option<Vec<String>>,
 
     /// Activates the linter's JSON formatter (rustc-compatible).
     #[arg(long)]
-    json: bool,
+    pub(crate) json: bool,
 
     #[command(flatten)]
-    build: BuildOpts,
+    pub(crate) build: BuildOpts,
 }
 
 foundry_config::impl_figment_convert!(LintArgs, build);
