@@ -130,13 +130,6 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Flatten(cmd) => cmd.run(),
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
-        ForgeSubcommand::Geiger(cmd) => {
-            let n = cmd.run()?;
-            if n > 0 {
-                std::process::exit(n as i32);
-            }
-            Ok(())
-        }
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_doc(cmd))

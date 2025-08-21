@@ -18,7 +18,6 @@ pub mod doc;
 pub mod eip712;
 pub mod flatten;
 pub mod fmt;
-pub mod geiger;
 pub mod generate;
 pub mod init;
 pub mod inspect;
