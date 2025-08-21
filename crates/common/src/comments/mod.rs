@@ -298,10 +298,10 @@ impl<'ast> CommentGatherer<'ast> {
             if !pos.is_last {
                 res.push(format_doc_block_comment(&line, self.tab_width));
             } else {
-                if let Some((first, _)) = line.split_once("*/") {
-                    if !first.trim().is_empty() {
-                        res.push(format_doc_block_comment(first, self.tab_width));
-                    }
+                if let Some((first, _)) = line.split_once("*/")
+                    && !first.trim().is_empty()
+                {
+                    res.push(format_doc_block_comment(first, self.tab_width));
                 }
                 res.push(" */".to_string());
             }

@@ -291,16 +291,16 @@ where
     where
         I::Item: std::borrow::Borrow<str>,
     {
-        if let Some(ranges) = self.disabled_ranges.get(id) {
-            if ranges.iter().any(|range| range.includes(span.to_range())) {
-                return true;
-            }
+        if let Some(ranges) = self.disabled_ranges.get(id)
+            && ranges.iter().any(|range| range.includes(span.to_range()))
+        {
+            return true;
         }
 
-        if let Some(ranges) = self.disabled_ranges.get("all") {
-            if ranges.iter().any(|range| range.includes(span.to_range())) {
-                return true;
-            }
+        if let Some(ranges) = self.disabled_ranges.get("all")
+            && ranges.iter().any(|range| range.includes(span.to_range()))
+        {
+            return true;
         }
 
         false

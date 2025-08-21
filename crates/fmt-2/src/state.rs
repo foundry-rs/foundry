@@ -15,7 +15,7 @@ use solar_parse::{
     ast::{self, Span, token, yul},
     interface::{BytePos, SourceMap},
 };
-use std::{borrow::Cow, collections::HashMap, fmt::Debug, u32};
+use std::{borrow::Cow, collections::HashMap, fmt::Debug};
 
 struct SourcePos {
     pos: BytePos,
