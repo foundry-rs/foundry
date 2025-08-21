@@ -132,6 +132,8 @@ impl InitArgs {
                 // write the contract file
                 let contract_path = src.join("Counter.vy");
                 fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.vy"))?;
+                let interface_path = src.join("ICounter.sol");
+                fs::write(interface_path, include_str!("../../assets/vyper/ICounterTemplate.sol"))?;
 
                 // write the tests
                 let contract_path = test.join("Counter.t.sol");

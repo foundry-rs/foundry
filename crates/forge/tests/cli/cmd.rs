@@ -792,6 +792,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
 
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("src").join("Counter.vy").exists());
+    assert!(prj.root().join("src").join("ICounter.sol").exists());
 
     assert!(prj.root().join("test").exists());
     assert!(prj.root().join("test").join("Counter.t.sol").exists());
