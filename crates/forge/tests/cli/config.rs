@@ -125,7 +125,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
-        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],

@@ -102,7 +102,7 @@ impl CloneArgs {
         let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, etherscan_api_key.clone());
+        let client = Client::new(chain, etherscan_api_key.clone())?;
 
         // step 1. get the metadata from client
         sh_println!("Downloading the source code of {address} from Etherscan...")?;
