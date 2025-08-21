@@ -1171,7 +1171,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
-    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
         config.ignored_error_codes = vec![];
