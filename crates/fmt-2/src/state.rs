@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     FormatterConfig, InlineConfig,
     pp::{self, BreakToken, SIZE_INFINITY, Token},
@@ -2355,9 +2357,9 @@ impl<'ast> State<'_, 'ast> {
                 s.cbox(ind);
                 s.print_ident(&arg.name);
                 s.word(":");
-                if s.same_source_line(arg.name.span.hi(), arg.value.span.hi()) {
-                    s.nbsp();
-                } else if !s.print_trailing_comment(arg.name.span.hi(), None) {
+                if s.same_source_line(arg.name.span.hi(), arg.value.span.hi())
+                    || !s.print_trailing_comment(arg.name.span.hi(), None)
+                {
                     s.nbsp();
                 }
                 s.print_comments(
@@ -3312,7 +3314,9 @@ impl<'ast> State<'_, 'ast> {
                     false,
                 );
                 self.nbsp();
-                if !returns.is_empty() {
+                let has_returns = !returns.is_empty();
+                let skip_opening_brace = has_returns;
+                if has_returns {
                     self.commasep(
                         returns,
                         stmt.span.lo(),
@@ -3322,12 +3326,9 @@ impl<'ast> State<'_, 'ast> {
                         ListFormat::Yul { sym_prev: Some("->"), sym_post: Some("{") },
                         false,
                     );
-                    self.end();
-                    self.print_yul_block(body, span, true);
-                } else {
-                    self.end();
-                    self.print_yul_block(body, span, false);
                 }
+                self.end();
+                self.print_yul_block(body, span, skip_opening_brace);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
@@ -3346,10 +3347,8 @@ impl<'ast> State<'_, 'ast> {
                     self.word(" :=");
                     self.space();
                     self.print_yul_expr(expr);
-                    self.end();
-                } else {
-                    self.end();
                 }
+                self.end();
             }
         }
     }
@@ -3595,6 +3594,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn build(
         mut self,
         state: &mut State<'_, 'ast>,

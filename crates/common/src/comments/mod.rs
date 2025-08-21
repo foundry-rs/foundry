@@ -289,7 +289,7 @@ impl<'ast> CommentGatherer<'ast> {
             }
         }
 
-        for (pos, line) in lines.into_iter().delimited() {
+        for (pos, line) in lines.delimited() {
             let line = normalize_block_comment_ws(line, col).trim_end().to_string();
             if !is_doc {
                 res.push(line);
@@ -377,7 +377,7 @@ fn format_doc_block_comment(line: &str, tab_width: Option<usize>) -> String {
         line_with_tabs(&mut normalized, line, tab_width, Some(Consolidation::WithoutSpaces));
         normalized
     } else {
-        format!(" * {}", line)
+        format!(" * {line}")
     }
 }
 
@@ -423,8 +423,8 @@ pub fn line_with_tabs(
     };
 
     // Append the normalized indentation and the rest of the line to the output
-    output.extend(std::iter::repeat('\t').take(num_tabs));
-    output.extend(std::iter::repeat(' ').take(num_spaces));
+    output.extend(std::iter::repeat_n('\t', num_tabs));
+    output.extend(std::iter::repeat_n(' ', num_spaces));
     output.push_str(rest_of_line);
 }
 
