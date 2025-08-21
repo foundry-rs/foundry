@@ -69,7 +69,6 @@ impl EtherscanIdentifier {
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        // TODO: Add caching so we dont double-fetch contracts.
         let outputs_fut = self
             .contracts
             .iter()
