@@ -95,7 +95,7 @@ impl Printer {
 
     /// Attempts to identify whether the current position is:
     ///   1. the beginning of a line (empty)
-    ///   2. a line with only indendation (just whitespaces)
+    ///   2. a line with only indentation (just whitespaces)
     ///
     /// NOTE: this is still an educated guess, based on a heuristic.
     pub fn is_bol_or_only_ind(&self) -> bool {

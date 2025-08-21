@@ -1465,7 +1465,7 @@ impl<'ast> State<'_, 'ast> {
         let init_space_left = self.space_left();
         let mut pre_init_size = self.estimate_size(ty.span);
 
-        // Non-elementary types use commasep which has it's own padding.
+        // Non-elementary types use commasep which has its own padding.
         self.s.ibox(0);
         if override_.is_some() {
             self.s.cbox(self.ind);
@@ -1548,7 +1548,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(init);
             } else {
                 self.s.ibox(if pre_init_size + 3 > init_space_left { self.ind } else { 0 });
-                if has_complex_succesor(&init.kind, true)
+                if has_complex_successor(&init.kind, true)
                     && !matches!(&init.kind, ast::ExprKind::Member(..))
                 {
                     // delegate breakpoints to `self.commasep(..)`
@@ -1595,9 +1595,8 @@ impl<'ast> State<'_, 'ast> {
         );
     }
 
-    // NOTE(rusowsky): is this needed?
     fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
-        // Handled with `self.comments`.
+        // Intetionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
 
@@ -1637,8 +1636,8 @@ impl<'ast> State<'_, 'ast> {
         self.word(ident.to_string());
     }
 
-    fn print_path(&mut self, path: &'ast ast::PathSlice, break_consisten: bool) {
-        if break_consisten {
+    fn print_path(&mut self, path: &'ast ast::PathSlice, consistent_break: bool) {
+        if consistent_break {
             self.s.cbox(self.ind);
         } else {
             self.s.ibox(self.ind);
@@ -1723,10 +1722,10 @@ impl<'ast> State<'_, 'ast> {
         let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
-        let strip_undescores = !config.is_preserve();
-        let mut val = &strip_underscores_if(strip_undescores, val)[..];
-        let mut exp = &strip_underscores_if(strip_undescores, exp)[..];
-        let mut fract = &strip_underscores_if(strip_undescores, fract)[..];
+        let strip_underscores = !config.is_preserve();
+        let mut val = &strip_underscores_if(strip_underscores, val)[..];
+        let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
+        let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
 
         // strip any padded 0's
         let mut exp_sign = "";
@@ -2041,7 +2040,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
-                self.s.ibox(if has_complex_succesor(&rhs.kind, false) { 0 } else { self.ind });
+                self.s.ibox(if has_complex_successor(&rhs.kind, false) { 0 } else { self.ind });
                 self.print_expr(lhs);
                 self.word(" = ");
                 self.neverbreak();
@@ -2075,18 +2074,19 @@ impl<'ast> State<'_, 'ast> {
                     self.word(bin_op.kind.to_str());
                 }
 
-                // box expressions with complex sucessors to accomodate their own indentation
+                // box expressions with complex successors to accommodate their own indentation
                 if !is_child && is_parent {
-                    if has_complex_succesor(&rhs.kind, true) {
+                    if has_complex_successor(&rhs.kind, true) {
                         self.s.ibox(-self.ind);
-                    } else if has_complex_succesor(&rhs.kind, false) {
+                    } else if has_complex_successor(&rhs.kind, false) {
                         self.s.ibox(0);
                     }
                 }
                 self.nbsp();
                 self.print_expr(rhs);
 
-                if (has_complex_succesor(&rhs.kind, false) || has_complex_succesor(&rhs.kind, true))
+                if (has_complex_successor(&rhs.kind, false)
+                    || has_complex_successor(&rhs.kind, true))
                     && (!is_child && is_parent)
                 {
                     self.end();
@@ -2396,7 +2396,7 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        // return statements can't have a preceeding comment in the same line.
+        // return statements can't have a preceding comment in the same line.
         let force_break = matches!(kind, ast::StmtKind::Return(..))
             && self.peek_comment_before(span.lo()).is_some_and(|cmnt| cmnt.style.is_mixed());
 
@@ -2547,7 +2547,11 @@ impl<'ast> State<'_, 'ast> {
                     self.hardbreak_if_not_bol();
                 }
                 if let Some(expr) = expr {
-                    self.s.ibox(if !has_complex_succesor(&expr.kind, true) { self.ind } else { 0 });
+                    self.s.ibox(if !has_complex_successor(&expr.kind, true) {
+                        self.ind
+                    } else {
+                        0
+                    });
                     self.print_word("return");
                     if let Some(cmnt) = self.print_comments(
                         expr.span.lo(),
@@ -2556,7 +2560,7 @@ impl<'ast> State<'_, 'ast> {
                             .mixed_prev_space()
                             .mixed_post_nbsp(),
                     ) {
-                        if cmnt.is_trailing() && has_complex_succesor(&expr.kind, true) {
+                        if cmnt.is_trailing() && has_complex_successor(&expr.kind, true) {
                             self.s.offset(self.ind);
                         }
                     } else {
@@ -2694,7 +2698,7 @@ impl<'ast> State<'_, 'ast> {
         inline: bool,
     ) {
         // NOTE(rusowsky): unless we add bracket spans to solar,
-        // using `then.span.lo()` consumes "cmnt12" of the IfStatement test inside the preceeding
+        // using `then.span.lo()` consumes "cmnt12" of the IfStatement test inside the preceding
         // clause: `self.print_if_cond("if", cond, cond.span.hi());`
         if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), true) {
             self.print_if_cond("if", cond, then.span.lo());
@@ -2979,7 +2983,7 @@ impl<'ast> State<'_, 'ast> {
                 continue;
             }
             // when this stmt is disabled and the next one is enabled, break if there is no
-            // enabled preceeding comment. Otherwise the breakpoint is handled by the comment.
+            // enabled preceding comment. Otherwise the breakpoint is handled by the comment.
             if is_disabled
                 && next_enabled
                 && let Some(next_lo) = next_lo
@@ -3438,7 +3442,7 @@ impl<'ast> State<'_, 'ast> {
             return size;
         }
 
-        span.hi().to_usize() - span.lo().to_usize()
+        span.to_range().len()
     }
 
     fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
@@ -3522,7 +3526,7 @@ pub(crate) enum BlockFormat {
     /// use braces or not.
     Compact(bool),
     /// Doesn't print braces. Flags the offset that should be applied before opening the block box.
-    /// Usefull when the caller needs to manually handle the braces.
+    /// Useful when the caller needs to manually handle the braces.
     NoBraces(Option<isize>),
 }
 
@@ -3766,16 +3770,16 @@ fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
-fn has_complex_succesor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
+fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     match expr_kind {
         ast::ExprKind::Binary(lhs, _, rhs) => {
             if left {
-                has_complex_succesor(&lhs.kind, left)
+                has_complex_successor(&lhs.kind, left)
             } else {
-                has_complex_succesor(&rhs.kind, left)
+                has_complex_successor(&rhs.kind, left)
             }
         }
-        ast::ExprKind::Unary(_, expr) => has_complex_succesor(&expr.kind, left),
+        ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
         _ => true,
     }
@@ -3882,7 +3886,7 @@ impl Separator {
 }
 
 fn snippet_with_tabs(s: String, tab_width: usize) -> String {
-    // proces leading breaks
+    // process leading breaks
     let trimmed = s.trim_start_matches(|c| c == '\n');
     let num_breaks = s.len() - trimmed.len();
     let mut formatted = std::iter::repeat_n('\n', num_breaks).collect::<String>();
