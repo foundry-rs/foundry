@@ -1194,7 +1194,6 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
-  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",

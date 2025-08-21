@@ -508,7 +508,7 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), ETHERSCAN_V2_API_BASE_URL);
 
         assert!(format!("{client:?}").contains("dummykey"));
 
