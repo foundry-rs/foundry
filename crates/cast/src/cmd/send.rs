@@ -1,6 +1,6 @@
 use crate::{
     Cast,
-    tx::{self, CastTxBuilder},
+    tx::{self, CastTxBuilder, TxDataField},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
@@ -72,7 +72,7 @@ pub struct SendTxArgs {
     /// by default both are populated.  Set this to populate one or the
     /// other.
     #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
-    pub use_explicit_data_field: Option<String>,
+    pub use_explicit_data_field: Option<TxDataField>,
 }
 
 #[derive(Debug, Parser)]

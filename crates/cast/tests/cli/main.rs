@@ -1624,7 +1624,10 @@ casttest!(mktx_explicit_data_field_invalid, |_prj, cmd| {
         "blah"
     ])
     .assert_failure().stderr_eq(str![[r#"
-Error: invalid value for data field: blah
+error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+  [possible values: input, data, both]
+
+For more information, try '--help'.
 
 "#]]);
 });
@@ -2630,7 +2633,10 @@ casttest!(send_eip7702_explicit_data_field_invalid, async |_prj, cmd| {
         "blah"
     ])
     .assert_failure().stderr_eq(str![[r#"
-Error: invalid value for data field: blah
+error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+  [possible values: input, data, both]
+
+For more information, try '--help'.
 
 "#]]);
 });
@@ -3815,7 +3821,10 @@ casttest!(cast_call_explicit_data_field_invalid, |_prj, cmd| {
         "blah",
     ])
     .assert_failure().stderr_eq(str![[r#"
-Error: invalid value for data field: blah
+error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+  [possible values: input, data, both]
+
+For more information, try '--help'.
 
 "#]]);
 });

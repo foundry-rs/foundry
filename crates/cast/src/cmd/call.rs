@@ -1,7 +1,7 @@
 use crate::{
     Cast,
     traces::TraceKind,
-    tx::{CastTxBuilder, SenderKind},
+    tx::{CastTxBuilder, SenderKind, TxDataField},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -170,7 +170,7 @@ pub struct CallArgs {
     /// by default both are populated.  Set this to populate one or the
     /// other.
     #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
-    pub use_explicit_data_field: Option<String>,
+    pub use_explicit_data_field: Option<TxDataField>,
 }
 
 #[derive(Debug, Parser)]

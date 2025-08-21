@@ -1,4 +1,4 @@
-use crate::tx::{CastTxBuilder, SenderKind};
+use crate::tx::{CastTxBuilder, SenderKind, TxDataField};
 use alloy_ens::NameOrAddress;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
@@ -97,7 +97,7 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, Option::None)
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, Some(TxDataField::Both))
             .await?
             .with_to(to)
             .await?

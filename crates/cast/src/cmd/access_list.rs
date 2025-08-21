@@ -1,6 +1,6 @@
 use crate::{
     Cast,
-    tx::{CastTxBuilder, SenderKind},
+    tx::{CastTxBuilder, SenderKind, TxDataField},
 };
 use alloy_ens::NameOrAddress;
 use alloy_rpc_types::BlockId;
@@ -51,7 +51,7 @@ impl AccessListArgs {
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, Option::None)
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, Some(TxDataField::Both))
             .await?
             .with_to(to)
             .await?
