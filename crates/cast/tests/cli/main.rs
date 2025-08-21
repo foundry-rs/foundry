@@ -1520,6 +1520,208 @@ casttest!(mktx, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(estimate_explicit_data_field_input, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_estimateGas"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    cmd.args([
+        "estimate",
+        "--rpc-url",
+        server.url("/").as_str(),
+        "--use-explicit-data-field",
+        "input",
+        "--create",
+        "0000",
+        "ERC20(uint256,string,string)",
+        "100",
+        "Test",
+        "TST",
+    ]).assert_success();
+
+    mock.assert();
+});
+
+casttest!(estimate_explicit_data_field_data, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_estimateGas"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    cmd.args([
+        "estimate",
+        "--rpc-url",
+        server.url("/").as_str(),
+        "--use-explicit-data-field",
+        "data",
+        "--create",
+        "0000",
+        "ERC20(uint256,string,string)",
+        "100",
+        "Test",
+        "TST",
+    ]).assert_success();
+
+    mock.assert();
+});
+
+casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_createAccessList"}"#);
+        then.status(200).body(r#"{
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+              "accessList": [
+                {
+                  "address": "0xa02457e5dfd32bda5fc7e1f1b008aa5979568150",
+                  "storageKeys": [
+                    "0x0000000000000000000000000000000000000000000000000000000000000081"
+                  ]
+                }
+              ],
+              "gasUsed": "0x125f8"
+            }
+          }"#);
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    cmd.args([
+        "access-list",
+        "0x9999999999999999999999999999999999999999",
+        "adjustPosition(int128)",
+        "-33333",
+        "--rpc-url",
+        server.url("/").as_str(),
+        "--use-explicit-data-field",
+        "input"
+    ]).assert_success();
+
+    mock.assert();
+});
+
+casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_createAccessList"}"#);
+        then.status(200).body(r#"{
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+              "accessList": [
+                {
+                  "address": "0xa02457e5dfd32bda5fc7e1f1b008aa5979568150",
+                  "storageKeys": [
+                    "0x0000000000000000000000000000000000000000000000000000000000000081"
+                  ]
+                }
+              ],
+              "gasUsed": "0x125f8"
+            }
+          }"#);
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+    cmd.args([
+        "access-list",
+        "0x9999999999999999999999999999999999999999",
+        "adjustPosition(int128)",
+        "-33333",
+        "--rpc-url",
+        server.url("/").as_str(),
+        "--use-explicit-data-field",
+        "data"
+    ]).assert_success();
+
+    mock.assert();
+});
+
 casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
