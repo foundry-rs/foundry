@@ -253,13 +253,16 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
     Ok(sig)
 }
 
-// Signs `digest` on secp256k1 using a user-supplied ephemeral nonce `k` (no RFC6979).
-// - `private_key` and `nonce` must be in (0, n)
-// - `digest` is a 32-byte prehash.
-// WARNING: Use sign_with_nonce with extreme caution!
-// Reusing the same nonce (k) with the same private key in ECDSA will leak the private key.
-// Always generate `nonce` with a cryptographically secure RNG, and never reuse it across
-// signatures.
+/// Signs `digest` on secp256k1 using a user-supplied ephemeral nonce `k` (no RFC6979).
+/// - `private_key` and `nonce` must be in (0, n)
+/// - `digest` is a 32-byte prehash.
+/// 
+/// # Warning 
+///
+/// Use [`sign_with_nonce`] with extreme caution!
+/// Reusing the same nonce (`k`) with the same private key in ECDSA will leak the private key.
+/// Always generate `nonce` with a cryptographically secure RNG, and never reuse it across
+/// signatures.
 fn sign_with_nonce(
     private_key: &U256,
     digest: &B256,
