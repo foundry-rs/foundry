@@ -79,7 +79,9 @@ mod tests {
         let args: Anvil = Anvil::parse_from(["anvil", "completions", "bash"]);
         assert!(matches!(
             args.cmd,
-            Some(AnvilSubcommand::Completions { shell: clap_complete::Shell::Bash })
+            Some(AnvilSubcommand::Completions {
+                shell: foundry_common::clap::Shell::ClapCompleteShell(clap_complete::Shell::Bash)
+            })
         ));
     }
 }

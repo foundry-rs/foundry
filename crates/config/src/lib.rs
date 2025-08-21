@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -81,6 +81,9 @@ pub use lint::{LinterConfig, Severity as LintSeverity};
 pub mod fs_permissions;
 pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
+
+pub mod fork_config;
+pub use fork_config::{ForkChainConfig, ForkConfigs};
 
 pub mod error;
 use error::ExtractConfigError;
@@ -447,7 +450,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
     /// Fork configuration
-    pub forks: HashMap<String, ForkConfig>,
+    pub forks: ForkConfigs,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -561,18 +564,6 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
-}
-
-/// Fork-scoped config for tests and scripts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ForkConfig {
-    // Optional RPC endpoint for the fork.
-    //
-    // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
-    // for the name of the forked chain.
-    pub rpc_endpoint: Option<RpcEndpoint>,
-    // Any arbitrary key-value pair of variables.
-    pub vars: HashMap<String, toml::Value>,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -698,6 +689,7 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
+        config.forks.resolve_env_vars()?;
 
         Ok(config)
     }
@@ -2643,7 +2635,7 @@ mod tests {
     use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write};
+    use std::{collections::HashMap, fs::File, io::Write};
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -5159,7 +5151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_script_config() {
+    fn test_get_fork_config() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -5167,48 +5159,243 @@ mod tests {
                     [forks]
 
                     [forks.mainnet]
-                    rpc_endpoint = "mainnet-rpc"
+                    rpc_endpoint = "${MAINNET_RPC}"
 
                     [forks.mainnet.vars]
-                    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                    weth = "${WETH_MAINNET}"
                     usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
                     pool_name = "USDC-ETH"
                     pool_fee = 3000
                     max_slippage = 500
+
+                    # Array configurations for testing array support
+                    bool_array = [true, false, true]
+                    int_array = [-100, 200, -300]
+                    uint_array = [100, 200, 300]
+                    addr_array = [
+                        "${ADDR_1}",
+                        "0x2222222222222222222222222222222222222222"
+                    ]
+                    bytes32_array = [
+                        "0x1111111111111111111111111111111111111111111111111111111111111111",
+                        "0x2222222222222222222222222222222222222222222222222222222222222222"
+                    ]
+                    bytes_array = ["0x1234", "0x5678", "0xabcd"]
+                    string_array = ["hello", "world", "test"]
+
+                    [forks.10]
+                    rpc_endpoint = "${OPTIMISM_RPC}"
+
+                    [forks.10.vars]
+                    weth = "${WETH_OPTIMISM}"
                 "#,
             )?;
+
+            // Now set the environment variables
+            jail.set_env("MAINNET_RPC", "mainnet-rpc");
+            jail.set_env("OPTIMISM_RPC", "optimism-rpc");
+            jail.set_env("WETH_MAINNET", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+            jail.set_env("WETH_OPTIMISM", "0x4200000000000000000000000000000000000006");
+            jail.set_env("ADDR_1", "0x1111111111111111111111111111111111111111");
+
+            // Reload the config with env vars set
             let config = Config::load().unwrap();
 
-            let expected: HashMap<String, ForkConfig> = vec![(
-                "mainnet".to_string(),
-                ForkConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        "mainnet-rpc".to_string(),
-                    ))),
-                    vars: vec![
+            let expected: HashMap<Chain, ForkChainConfig> = vec![
+                (
+                    Chain::mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            "mainnet-rpc".to_string(),
+                        ))),
+                        vars: vec![
                         ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
                         ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
                         ("pool_name".into(), "USDC-ETH".into()),
                         ("pool_fee".into(), 3000.into()),
                         ("max_slippage".into(), 500.into()),
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec![-100i64, 200, -300].into()),
+                        ("uint_array".into(), vec![100i64, 200, 300].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
                     ]
-                    .into_iter()
-                    .collect(),
-                },
-            )]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                (
+                    Chain::optimism_mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            "optimism-rpc".to_string(),
+                        ))),
+                        vars: vec![(
+                            "weth".into(),
+                            "0x4200000000000000000000000000000000000006".into(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+            ]
             .into_iter()
             .collect();
             assert_eq!(
-                expected.keys().sorted().collect::<Vec<_>>(),
-                config.forks.keys().sorted().collect::<Vec<_>>()
+                expected.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>(),
+                config.forks.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>()
             );
 
-            let expected_mainnet = expected.get("mainnet").unwrap();
-            let mainnet = config.forks.get("mainnet").unwrap();
-            assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
+            let expected_mainnet = expected.get(&Chain::mainnet()).unwrap();
+            let expected_optimism = expected.get(&Chain::optimism_mainnet()).unwrap();
+            let mainnet = config.forks.get(&Chain::mainnet()).unwrap();
+            let optimism = config.forks.get(&Chain::optimism_mainnet()).unwrap();
+
+            // Verify that rpc_endpoints are resolved to their actual value
+            if let Some(rpc) = &mainnet.rpc_endpoint {
+                let resolved_url = rpc.to_owned().resolve().url().unwrap();
+                assert_eq!(resolved_url, "mainnet-rpc");
+            }
+            if let Some(rpc) = &optimism.rpc_endpoint {
+                let resolved_url = rpc.to_owned().resolve().url().unwrap();
+                assert_eq!(resolved_url, "optimism-rpc");
+            }
+
+            // Verify that weth placeholders are resolved to their actual addresses
+            assert_eq!(
+                mainnet.vars.get("weth").unwrap().as_str().unwrap(),
+                expected_mainnet.vars.get("weth").unwrap().as_str().unwrap(),
+            );
+            assert_eq!(
+                optimism.vars.get("weth").unwrap().as_str().unwrap(),
+                expected_optimism.vars.get("weth").unwrap().as_str().unwrap(),
+            );
+
+            // Check all other vars match expected values
             for (k, v) in &expected_mainnet.vars {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }
+
+            // Verify array values are properly loaded
+            let bool_array = mainnet.vars.get("bool_array").unwrap();
+            assert!(bool_array.as_array().is_some());
+            assert_eq!(bool_array.as_array().unwrap().len(), 3);
+
+            let int_array = mainnet.vars.get("int_array").unwrap();
+            assert!(int_array.as_array().is_some());
+            assert_eq!(int_array.as_array().unwrap().len(), 3);
+
+            let uint_array = mainnet.vars.get("uint_array").unwrap();
+            assert!(uint_array.as_array().is_some());
+            assert_eq!(uint_array.as_array().unwrap().len(), 3);
+
+            // Verify that the environment variable in the array was resolved
+            let addr_array = mainnet.vars.get("addr_array").unwrap();
+            assert!(addr_array.as_array().is_some());
+            assert_eq!(addr_array.as_array().unwrap().len(), 2);
+            assert_eq!(
+                addr_array.as_array().unwrap()[0].as_str().unwrap(),
+                "0x1111111111111111111111111111111111111111"
+            );
+            assert_eq!(
+                addr_array.as_array().unwrap()[1].as_str().unwrap(),
+                "0x2222222222222222222222222222222222222222"
+            );
+
+            let bytes32_array = mainnet.vars.get("bytes32_array").unwrap();
+            assert!(bytes32_array.as_array().is_some());
+            assert_eq!(bytes32_array.as_array().unwrap().len(), 2);
+
+            let bytes_array = mainnet.vars.get("bytes_array").unwrap();
+            assert!(bytes_array.as_array().is_some());
+            assert_eq!(bytes_array.as_array().unwrap().len(), 3);
+
+            let string_array = mainnet.vars.get("string_array").unwrap();
+            assert!(string_array.as_array().is_some());
+            assert_eq!(string_array.as_array().unwrap().len(), 3);
+            assert_eq!(string_array.as_array().unwrap()[0].as_str().unwrap(), "hello");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_config_invalid_chain_fails() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                        [forks]
+
+                        [forks.randomchain]
+                        rpc_endpoint = "random-chain-rpc"
+                        [forks.randomchain.vars]
+                        some_value = "some_value"
+                    "#,
+            )?;
+            let result = Config::load();
+            assert!(result.is_err());
+            let err_str = result.unwrap_err().to_string();
+
+            // Check the error message
+            assert!(err_str.contains("`forks.randomchain`"));
+
+            Ok(())
+        });
+
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                        [forks]
+
+                        [forks.0]
+                        rpc_endpoint = "random-chain-rpc"
+                        [forks.0.vars]
+                        some_value = "some_value"
+                    "#,
+            )?;
+            let result = Config::load();
+            // Despite there is no `NamedChain` associated with `0` id, it is a valid u64
+            assert!(result.is_ok());
+            assert!(result.unwrap().forks.get(&Chain::from_id_unchecked(0)).is_some());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_config_missing_env_var_fails() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [forks]
+                    [forks.mainnet]
+                    rpc_endpoint = "${MISSING_RPC_VAR}"
+
+                    [forks.mainnet.vars]
+                    some_value = "${MISSING_VAR}"
+                "#,
+            )?;
+            let result = Config::load();
+            assert!(result.is_err());
+            let err_str = result.unwrap_err().to_string();
+
+            // Check that the error message contains the chain name and specific variable name
+            assert!(
+                err_str.contains("[forks.mainnet]")
+                    && (err_str.contains("MISSING_RPC_VAR") || err_str.contains("MISSING_VAR"))
+            );
+
             Ok(())
         });
     }

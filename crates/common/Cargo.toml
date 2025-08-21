@@ -50,6 +50,8 @@ solar-sema.workspace = true
 tower.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete.workspace = true
+clap_complete_nushell.workspace = true
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true

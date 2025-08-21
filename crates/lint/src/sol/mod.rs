@@ -2,6 +2,7 @@ use crate::{
     inline_config::{InlineConfig, InlineConfigItem},
     linter::{
         EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
+        LinterConfig,
     },
 };
 use foundry_common::comments::Comments;
@@ -45,25 +46,27 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
-#[derive(Debug, Clone)]
-pub struct SolidityLinter {
+#[derive(Debug)]
+pub struct SolidityLinter<'a> {
     path_config: ProjectPathsConfig,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
+    mixed_case_exceptions: &'a [String],
 }
 
-impl SolidityLinter {
+impl<'a> SolidityLinter<'a> {
     pub fn new(path_config: ProjectPathsConfig) -> Self {
         Self {
             path_config,
+            with_description: true,
             severity: None,
             lints_included: None,
             lints_excluded: None,
-            with_description: true,
             with_json_emitter: false,
+            mixed_case_exceptions: &[],
         }
     }
 
@@ -92,6 +95,15 @@ impl SolidityLinter {
         self
     }
 
+    pub fn with_mixed_case_exceptions(mut self, exceptions: &'a [String]) -> Self {
+        self.mixed_case_exceptions = exceptions;
+        self
+    }
+
+    fn config(&self, inline: InlineConfig) -> LinterConfig<'_> {
+        LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
+    }
+
     fn include_lint(&self, lint: SolLint) -> bool {
         self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
             && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
@@ -99,7 +111,7 @@ impl SolidityLinter {
     }
 
     fn process_source_ast<'ast>(
-        &self,
+        &'ast self,
         sess: &'ast Session,
         ast: &'ast ast::SourceUnit<'ast>,
         file: &SourceFile,
@@ -139,7 +151,7 @@ impl SolidityLinter {
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
+        let ctx = LintContext::new(sess, self.with_description, self.config(inline_config), lints);
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
         early_visitor.post_source_unit(ast);
@@ -191,7 +203,7 @@ impl SolidityLinter {
             parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 
         // Run late lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
+        let ctx = LintContext::new(sess, self.with_description, self.config(inline_config), lints);
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source
@@ -201,7 +213,7 @@ impl SolidityLinter {
     }
 }
 
-impl Linter for SolidityLinter {
+impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
