@@ -26,27 +26,21 @@ jobs:
 
       - name: Setup Python
         uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          architecture: x64
 
       - name: Install Vyper
-        run: pip install git+https://github.com/vyperlang/vyper.git@master
+        run: pip install git+https://github.com/vyperlang/vyper.git@v0.4.3
 
       - name: Show the Vyper version
         run: vyper --version
 
       - name: Run Forge fmt
-        run: |
-          forge fmt --check
+        run: forge fmt --check
         id: fmt
 
       - name: Run Forge build
-        run: |
-          forge build --sizes
+        run: forge build --sizes
         id: build
 
       - name: Run Forge tests
-        run: |
-          forge test -vvv
+        run: forge test -vvv
         id: test
