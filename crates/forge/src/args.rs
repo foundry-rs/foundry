@@ -130,6 +130,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Flatten(cmd) => cmd.run(),
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
+        ForgeSubcommand::Geiger(cmd) => cmd.run(),
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_doc(cmd))

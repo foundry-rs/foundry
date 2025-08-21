@@ -9,7 +9,7 @@ use std::ops::ControlFlow;
 declare_forge_lint!(
     UNSAFE_CHEATCODE_USAGE,
     Severity::Info,
-    "geiger-unsafe-cheatcode",
+    "unsafe-cheatcode",
     "usage of unsafe cheatcodes that can perform dangerous operations"
 );
 

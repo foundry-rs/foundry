@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
+    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
 };
@@ -143,6 +143,11 @@ pub enum ForgeSubcommand {
     /// Display a tree visualization of the project's dependency graph.
     #[command(visible_alias = "tr")]
     Tree(tree::TreeArgs),
+
+    /// Detects usage of unsafe cheat codes in a project and its dependencies.
+    ///
+    /// This is an alias for `forge lint --only-lint unsafe-cheatcode`.
+    Geiger(geiger::GeigerArgs),
 
     /// Generate documentation for the project.
     Doc(DocArgs),
