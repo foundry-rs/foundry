@@ -4,12 +4,13 @@ use crate::{
     resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 
+use alloy_chains::Chain;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, ops::Deref};
 
 /// Fork-scoped config for tests and scripts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct ForkConfigs(pub HashMap<String, ForkChainConfig>);
+pub struct ForkConfigs(pub HashMap<Chain, ForkChainConfig>);
 
 impl ForkConfigs {
     /// Resolve environment variables in all fork config fields
@@ -36,7 +37,7 @@ impl ForkConfigs {
 }
 
 impl Deref for ForkConfigs {
-    type Target = HashMap<String, ForkChainConfig>;
+    type Target = HashMap<Chain, ForkChainConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
