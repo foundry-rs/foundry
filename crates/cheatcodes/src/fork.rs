@@ -4,34 +4,35 @@ use crate::{
     Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*, json::parse_json_as,
     toml::toml_to_json_value,
 };
+use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_sol_types::SolValue;
-use eyre::OptionExt;
 use foundry_evm_core::ContextExt;
+use std::borrow::Cow;
 
 impl Cheatcode for readForkChainIdsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(state
-            .config
-            .forks
-            .keys()
-            .map(|name| alloy_chains::Chain::from_named(name.parse().unwrap()).id())
-            .collect::<Vec<_>>()
-            .abi_encode())
+        Ok(state.config.forks.keys().map(|chain| chain.id()).collect::<Vec<_>>().abi_encode())
     }
 }
 
 impl Cheatcode for readForkChainsCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(state.config.forks.keys().collect::<Vec<_>>().abi_encode())
+        Ok(state
+            .config
+            .forks
+            .keys()
+            .map(|chain| get_chain_name(chain).to_string())
+            .collect::<Vec<_>>()
+            .abi_encode())
     }
 }
 
 impl Cheatcode for readForkChainCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        Ok(get_active_fork_chain_name(ccx)?.abi_encode())
+        Ok(get_chain_name(&get_active_fork_chain(ccx)?).to_string().abi_encode())
     }
 }
 
@@ -41,42 +42,38 @@ impl Cheatcode for readForkChainIdCall {
     }
 }
 
-fn resolve_rpc_url(name: &'static str, state: &mut crate::Cheatcodes) -> Result {
-    // Get the chain ID from the chain_configs
-    if let Some(config) = state.config.forks.get(name) {
+fn resolve_rpc_url(chain: Chain, state: &mut crate::Cheatcodes) -> Result {
+    if let Some(config) = state.config.forks.get(&chain) {
         let rpc = match config.rpc_endpoint {
             Some(ref url) => url.clone().resolve(),
-            None => state.config.rpc_endpoint(name)?,
+            None => state.config.rpc_endpoint(&get_chain_name(&chain))?,
         };
 
         return Ok(rpc.url()?.abi_encode());
     }
 
-    bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
+    bail!(
+        "'rpc_endpoint' not found in '[fork.<chain_id: {chain}>]' subsection of 'foundry.toml'",
+        chain = chain.id()
+    )
 }
 
 impl Cheatcode for readForkChainRpcUrlCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { id } = self;
-        let name = get_chain_name(id.to::<u64>())?;
-        resolve_rpc_url(name, state)
+        resolve_rpc_url(Chain::from_id(id.to::<u64>()), state)
     }
 }
 
 impl Cheatcode for readForkRpcUrlCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let name = get_active_fork_chain_name(ccx)?;
-        resolve_rpc_url(name, ccx.state)
+        resolve_rpc_url(get_active_fork_chain(ccx)?, ccx.state)
     }
 }
 
 /// Gets the alloy chain name for a given chain id.
-fn get_chain_name(id: u64) -> Result<&'static str> {
-    let chain = alloy_chains::Chain::from_id(id)
-        .named()
-        .ok_or_eyre("unknown name for active forked chain")?;
-
-    Ok(chain.as_str())
+fn get_chain_name(chain: &Chain) -> Cow<'static, str> {
+    chain.named().map_or(Cow::Owned(chain.id().to_string()), |name| Cow::Borrowed(name.as_str()))
 }
 
 /// Gets the chain id of the active fork. Panics if no fork is selected.
@@ -88,9 +85,9 @@ fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
     Ok(env.cfg.chain_id)
 }
 
-/// Gets the alloy chain name for the active fork. Panics if no fork is selected.
-fn get_active_fork_chain_name(ccx: &mut CheatsCtxt) -> Result<&'static str> {
-    get_chain_name(get_active_fork_chain_id(ccx)?)
+/// Gets the alloy chain for the active fork. Panics if no fork is selected.
+fn get_active_fork_chain(ccx: &mut CheatsCtxt) -> Result<Chain> {
+    get_active_fork_chain_id(ccx).map(Chain::from_id)
 }
 
 // Helper macros to generate cheatcode implementations
@@ -99,7 +96,7 @@ macro_rules! impl_get_value_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
+                let chain = get_active_fork_chain(ccx)?;
                 get_value(chain, key, $sol_type, ccx.state)
             }
         }
@@ -108,7 +105,7 @@ macro_rules! impl_get_value_cheatcode {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key } = self;
-                get_value(chain.to::<u64>(), key, $sol_type, state)
+                get_value(Chain::from_id(chain.to::<u64>()), key, $sol_type, state)
             }
         }
     };
@@ -119,8 +116,7 @@ macro_rules! impl_get_array_cheatcode {
         impl Cheatcode for $struct {
             fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
                 let Self { key } = self;
-                let chain = get_active_fork_chain_id(ccx)?;
-                get_array(chain, key, $sol_type, ccx.state)
+                get_array(get_active_fork_chain(ccx)?, key, $sol_type, ccx.state)
             }
         }
     };
@@ -128,7 +124,7 @@ macro_rules! impl_get_array_cheatcode {
         impl Cheatcode for $struct {
             fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
                 let Self { chain, key } = self;
-                get_array(chain.to::<u64>(), key, $sol_type, state)
+                get_array(Chain::from(chain.to::<u64>()), key, $sol_type, state)
             }
         }
     };
@@ -178,44 +174,49 @@ impl_get_array_cheatcode!(readForkStringArrayCall, &DynSolType::String, stateful
 
 /// Generic helper to get any value from the TOML config.
 fn get_toml_value<'a>(
-    name: &'a str,
+    chain: Chain,
     key: &'a str,
     state: &'a crate::Cheatcodes,
 ) -> Result<&'a toml::Value> {
-    let config = state.config.forks.get(name).ok_or_else(|| {
-        fmt_err!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
+    let config = state.config.forks.get(&chain).ok_or_else(|| {
+        fmt_err!(
+            "'[fork.<chain_id: {chain}>]' subsection not found in 'foundry.toml'",
+            chain = chain.id()
+        )
     })?;
-    let value = config
-        .vars
-        .get(key)
-        .ok_or_else(|| fmt_err!("Variable '{key}' not found in [fork.{name}] configuration"))?;
+    let value = config.vars.get(key).ok_or_else(|| {
+        fmt_err!("variable '{key}' not found in '[fork.<chain_id: {chain}>]'", chain = chain.id())
+    })?;
 
     Ok(value)
 }
 
 /// Generic helper to get any single value from the TOML config.
-fn get_value(chain: u64, key: &str, ty: &DynSolType, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
-    let value = get_toml_value(name, key, state)?;
-    let sol_value = parse_toml_element(value, ty, key, name)?;
+fn get_value(chain: Chain, key: &str, ty: &DynSolType, state: &crate::Cheatcodes) -> Result {
+    let value = get_toml_value(chain, key, state)?;
+    let sol_value = parse_toml_element(value, ty, key, chain)?;
     Ok(sol_value.abi_encode())
 }
 
 /// Generic helper to get an array of values from the TOML config.
-fn get_array(chain: u64, key: &str, element_ty: &DynSolType, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
-    let value = get_toml_value(name, key, state)?;
-
-    let arr = value
-        .as_array()
-        .ok_or_else(|| fmt_err!("Variable '{key}' in [fork.{name}] must be an array"))?;
-
+fn get_array(
+    chain: Chain,
+    key: &str,
+    element_ty: &DynSolType,
+    state: &crate::Cheatcodes,
+) -> Result {
+    let arr = get_toml_value(chain, key, state)?.as_array().ok_or_else(|| {
+        fmt_err!(
+            "variable '{key}' in '[fork.<chain_id: {chain}>]' must be an array",
+            chain = chain.id()
+        )
+    })?;
     let result: Result<Vec<_>> = arr
         .iter()
         .enumerate()
         .map(|(i, elem)| {
             let context = format!("{key}[{i}]");
-            parse_toml_element(elem, element_ty, &context, name)
+            parse_toml_element(elem, element_ty, &context, chain)
         })
         .collect();
 
@@ -226,10 +227,11 @@ fn get_array(chain: u64, key: &str, element_ty: &DynSolType, state: &crate::Chea
 fn parse_toml_element(
     elem: &toml::Value,
     element_ty: &DynSolType,
-    context: &str,
-    fork_name: &str,
+    key: &str,
+    chain: Chain,
 ) -> Result<DynSolValue> {
     // Convert TOML value to JSON value and use existing JSON parsing logic
-    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty)
-        .map_err(|e| fmt_err!("Failed to parse '{context}' in [fork.{fork_name}]: {e}"))
+    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty).map_err(|e| {
+        fmt_err!("failed to parse '{key}' in '[fork.<chain_id: {chain}>]': {e}", chain = chain.id())
+    })
 }
