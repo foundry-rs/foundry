@@ -59,7 +59,8 @@ pub struct MakeTxArgs {
 
     /// When calling an RPC with optionally an "input" or a "data" field,
     /// by default both are populated.  Set this to populate one or the
-    /// other.
+    /// other.  Some nodes do not allow both to exist, hardhat "fork a network"
+    /// is an example.
     #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
     pub use_explicit_data_field: Option<TxDataField>,
 }
