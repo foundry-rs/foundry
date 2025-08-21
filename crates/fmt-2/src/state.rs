@@ -855,36 +855,39 @@ impl<'ast> State<'_, 'ast> {
         self.print_remaining_comments();
     }
 
+    /// Prints a hardbreak if the item needs an isolated line break.
     fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>, advance: bool) {
-        // Since this function forces the hardbreaks, we don't update the cursor
-        if item_needs_iso(&next_item.kind) {
-            let cmnts = self
-                .comments
-                .iter()
-                .filter_map(|c| if c.pos() < next_item.span.lo() { Some(c.style) } else { None })
-                .collect::<Vec<_>>();
+        if !item_needs_iso(&next_item.kind) {
+            return;
+        }
+        let span = next_item.span;
 
-            if let Some(first) = cmnts.first()
-                && let Some(last) = cmnts.last()
-            {
-                if !(first.is_blank() || last.is_blank()) {
-                    self.hardbreak();
-                    return;
-                }
-                if advance {
-                    if self.peek_comment_before(next_item.span.lo()).is_some() {
-                        self.print_comments(next_item.span.lo(), CommentConfig::default());
-                    } else if self.inline_config.is_disabled(Span::new(
-                        next_item.span.lo(),
-                        next_item.span.lo() + BytePos(1),
-                    )) {
-                        self.hardbreak();
-                        self.cursor.advance_to(next_item.span.lo(), true);
-                    }
-                }
-            } else {
+        let cmnts = self
+            .comments
+            .iter()
+            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .collect::<Vec<_>>();
+
+        if let Some(first) = cmnts.first()
+            && let Some(last) = cmnts.last()
+        {
+            if !(first.is_blank() || last.is_blank()) {
                 self.hardbreak();
+                return;
             }
+            if advance {
+                if self.peek_comment_before(span.lo()).is_some() {
+                    self.print_comments(span.lo(), CommentConfig::default());
+                } else if self
+                    .inline_config
+                    .is_disabled(Span::new(span.lo(), span.lo() + BytePos(1)))
+                {
+                    self.hardbreak();
+                    self.cursor.advance_to(span.lo(), true);
+                }
+            }
+        } else {
+            self.hardbreak();
         }
     }
 
@@ -3723,6 +3726,7 @@ fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     }
 }
 
+/// Returns `true` if the item needs an isolated line break.
 fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     match item {
         ast::ItemKind::Pragma(..)
@@ -3733,10 +3737,11 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
         | ast::ItemKind::Enum(..)
         | ast::ItemKind::Error(..)
         | ast::ItemKind::Event(..) => false,
+
         ast::ItemKind::Contract(..) => true,
-        // is this logic correct? that's what i figured out based on unit tests
+
+        // TODO: is this logic correct? that's what i figured out based on unit tests
         ast::ItemKind::Struct(strukt) => !strukt.fields.is_empty(),
-        // is this logic correct? that's what i figured out based on unit tests
         ast::ItemKind::Function(func) => {
             func.body.as_ref().is_some_and(|b| !b.is_empty())
                 && !matches!(func.kind, ast::FunctionKind::Modifier)
