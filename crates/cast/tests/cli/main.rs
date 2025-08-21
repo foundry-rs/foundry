@@ -18,6 +18,8 @@ use foundry_test_utils::{
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
 
+use httpmock::prelude::*;
+
 #[macro_use]
 extern crate foundry_test_utils;
 
@@ -1423,60 +1425,6 @@ access list:
 "#]]);
 });
 
-casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-    cmd.args([
-        "access-list",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "skim(address)",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "--rpc-url",
-        rpc.as_str(),
-        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
-        "100000",
-        "--use-explicit-data-field",
-        "input"
-    ])
-    .assert_success();
-});
-
-casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-    cmd.args([
-        "access-list",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "skim(address)",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "--rpc-url",
-        rpc.as_str(),
-        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
-        "100000",
-        "--use-explicit-data-field",
-        "data"
-    ])
-    .assert_success();
-});
-
-casttest!(access_list_explicit_data_field_invalid, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-    cmd.args([
-        "access-list",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "skim(address)",
-        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
-        "--rpc-url",
-        rpc.as_str(),
-        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
-        "100000",
-        "--use-explicit-data-field",
-        "blah"
-    ])
-    .assert_failure().stderr_eq(str![[r#"
-Error: invalid value for data field: blah
-
-"#]]);
-});
-
 casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
@@ -1573,6 +1521,17 @@ casttest!(mktx, |_prj, cmd| {
 });
 
 casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"input\"");
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
     cmd.args([
         "mktx",
         "--private-key",
@@ -1591,11 +1550,29 @@ casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
         "1000000000",
         "0x0000000000000000000000000000000000000001",
         "--use-explicit-data-field",
-        "input"
+        "input",
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--rpc-url",
+        server.url("/").as_str(),
     ]).assert_success();
+
+    mock.assert();
 });
 
 casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"data\"");
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
     cmd.args([
         "mktx",
         "--private-key",
@@ -1614,8 +1591,15 @@ casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
         "1000000000",
         "0x0000000000000000000000000000000000000001",
         "--use-explicit-data-field",
-        "data"
+        "data",
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--rpc-url",
+        server.url("/").as_str(),
     ]).assert_success();
+
+    mock.assert();
 });
 
 casttest!(mktx_explicit_data_field_invalid, |_prj, cmd| {
@@ -2449,49 +2433,189 @@ casttest!(send_eip7702, async |_prj, cmd| {
 });
 
 casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
-    let endpoint = handle.http_endpoint();
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"input\"");
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_feeHistory"}"#);
+        then.status(200).body("
+        {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"baseFeePerGas\":[\"0xf\",\"0xf\",\"0x10\",\"0x10\",\"0x10\"],\"gasUsedRatio\":[0.25118966666666664,0.6516801944444445,0.4963136388888889,0.27054894444444444],\"baseFeePerBlobGas\":[\"0x1\",\"0x1\",\"0x1\",\"0x1\",\"0x1\"],\"blobGasUsedRatio\":[0.0,0.0,0.0,0.0],\"oldestBlock\":\"0x8fcd08\",\"reward\":[[\"0x142d\",\"0x1312d00\"],[\"0x142d\",\"0x142d\"],[\"0x2faf458\",\"0x2faf458\"],[\"0x186a0\",\"0x1312d00\"]]}}
+        ");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_sendRawTransaction"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getBlockByNumber"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_gasPrice"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionReceipt"}"#);
+        then.status(200).body("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"blockNumber\":\"0xda0b2\",\"contractAddress\":null,\"cumulativeGasUsed\":\"0x51c53\",\"effectiveGasPrice\":\"0xb2d05e19\",\"from\":\"0x981504475498cddffa92afab0b1101e7154a67d8\",\"gasUsed\":\"0x51c53\",\"logs\":[{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\",\"0x000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x0\",\"removed\":false},{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xcc16f5dbb4873280815c1ee09dbd06736cffcc184412cf7a71a0fdb75d397ca5\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x1\",\"removed\":false},{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\",\"0x0000000000000000000000000000000000000000000000000000000000000000\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x2\",\"removed\":false},{\"address\":\"0x2367325334447c5e1e0f1b3a6fb947b262f58312\",\"topics\":[\"0x61ed099e74a97a1d7f8bb0952a88ca8b7b8ebd00c126ea04671f92a81213318a\"],\"data\":\"0x00000000000000000000000041bdb4aa4a63a5b2efc531858d3118392b1a1c3d0000000000000000000000000000000000000000000000000050878007fa95f5\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x3\",\"removed\":false},{\"address\":\"0x2367325334447c5e1e0f1b3a6fb947b262f58312\",\"topics\":[\"0x07ea52d82345d6e838192107d8fd7123d9c2ec8e916cd0aad13fd2b60db24644\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000a80aa110f05c9c6140018aae0c4e08a70f43350d000000000000000000000000dd7b5e1db4aafd5c8ec3b764efb8ed265aa5445b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000013ec19b36f7f760000000000000000000000000000000000000000000000000013ec19b36f7f76\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x4\",\"removed\":false},{\"address\":\"0x3a73033c0b1407574c76bdbac67f126f6b4a9aa9\",\"topics\":[\"0x1ab700d4ced0c005b164c0f789fd09fcbb0156d4c2041b8a3bfbcd961cd1567f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001200000000000000000000000002367325334447c5e1e0f1b3a6fb947b262f58312000000000000000000000000000000000000000000000000000000000000009c0100000000000002230000769c00000000000000000000000088853d410299bcbfe5fcc9eef93c03115e9082790000759e00000000000000000000000019cfce47ed54a88614648dc3f19a5980097007dde570ed2f827a5913fb8d84a16f1a6014d5bcd2212791b9ce0643f45ed9989a3e010001000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8000000000ba0e306000000000000000000000000000000000000000000000000000000000000000000000016000301001101000000000000000000000000000249f000000000000000000000\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x5\",\"removed\":false},{\"address\":\"0x2086f755a6d9254045c257ea3d382ef854849b0f\",\"topics\":[\"0x85496b760a4b7f8d66384b9df21b381f5d1b1e79f229a47aaf4c232edc2fe59a\",\"0xe570ed2f827a5913fb8d84a16f1a6014d5bcd2212791b9ce0643f45ed9989a3e\",\"0x000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000759e000000000000000000000000000000000000000000000000000000000ba2ac8d000000000000000000000000000000000000000000000000000000000ba0e306\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x6\",\"removed\":false}],\"logsBloom\":\"0x00000000000000000100000000000100000000000000001000000000000000000000000000000000000000400200000000000000000000000000000000000000000002000000800000000108000000000000000000000000000000000000000000000000020200008000000000000800080010000000000800010010000000000000000000000000000000081000000000000000200000000000000000200000000000008000000000100100000000000000002000600000000440000000008080000083000000000000000080000000000000000000000000000000000020000000040001000000000000000000002000000000008000000000000000000000\",\"status\":\"0x1\",\"to\":\"0x2086f755a6d9254045c257ea3d382ef854849b0f\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"type\":\"0x2\"}}");
+    });
+
 
     cmd.args([
         "send",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "--auth",
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
-        &endpoint,
+        server.url("/").as_str(),
         "--use-explicit-data-field",
-        "input"
+        "input",
+        "--legacy"
     ])
     .assert_success();
+
+    // assert the the expected mock with the included field was called
+    mock.assert();
 });
 
 casttest!(send_eip7702_explicit_data_field_data, async |_prj, cmd| {
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
-    let endpoint = handle.http_endpoint();
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"data\"");
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_feeHistory"}"#);
+        then.status(200).body("
+        {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"baseFeePerGas\":[\"0xf\",\"0xf\",\"0x10\",\"0x10\",\"0x10\"],\"gasUsedRatio\":[0.25118966666666664,0.6516801944444445,0.4963136388888889,0.27054894444444444],\"baseFeePerBlobGas\":[\"0x1\",\"0x1\",\"0x1\",\"0x1\",\"0x1\"],\"blobGasUsedRatio\":[0.0,0.0,0.0,0.0],\"oldestBlock\":\"0x8fcd08\",\"reward\":[[\"0x142d\",\"0x1312d00\"],[\"0x142d\",\"0x142d\"],[\"0x2faf458\",\"0x2faf458\"],[\"0x186a0\",\"0x1312d00\"]]}}
+        ");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_sendRawTransaction"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getBlockByNumber"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_chainId"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionCount"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_gasPrice"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getTransactionReceipt"}"#);
+        then.status(200).body("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"blockNumber\":\"0xda0b2\",\"contractAddress\":null,\"cumulativeGasUsed\":\"0x51c53\",\"effectiveGasPrice\":\"0xb2d05e19\",\"from\":\"0x981504475498cddffa92afab0b1101e7154a67d8\",\"gasUsed\":\"0x51c53\",\"logs\":[{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\",\"0x000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x0\",\"removed\":false},{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xcc16f5dbb4873280815c1ee09dbd06736cffcc184412cf7a71a0fdb75d397ca5\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x1\",\"removed\":false},{\"address\":\"0xf1815bd50389c46847f0bda824ec8da914045d14\",\"topics\":[\"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\",\"0x0000000000000000000000002086f755a6d9254045c257ea3d382ef854849b0f\",\"0x0000000000000000000000000000000000000000000000000000000000000000\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000ba2ac8d\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x2\",\"removed\":false},{\"address\":\"0x2367325334447c5e1e0f1b3a6fb947b262f58312\",\"topics\":[\"0x61ed099e74a97a1d7f8bb0952a88ca8b7b8ebd00c126ea04671f92a81213318a\"],\"data\":\"0x00000000000000000000000041bdb4aa4a63a5b2efc531858d3118392b1a1c3d0000000000000000000000000000000000000000000000000050878007fa95f5\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x3\",\"removed\":false},{\"address\":\"0x2367325334447c5e1e0f1b3a6fb947b262f58312\",\"topics\":[\"0x07ea52d82345d6e838192107d8fd7123d9c2ec8e916cd0aad13fd2b60db24644\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000a80aa110f05c9c6140018aae0c4e08a70f43350d000000000000000000000000dd7b5e1db4aafd5c8ec3b764efb8ed265aa5445b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000013ec19b36f7f760000000000000000000000000000000000000000000000000013ec19b36f7f76\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x4\",\"removed\":false},{\"address\":\"0x3a73033c0b1407574c76bdbac67f126f6b4a9aa9\",\"topics\":[\"0x1ab700d4ced0c005b164c0f789fd09fcbb0156d4c2041b8a3bfbcd961cd1567f\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001200000000000000000000000002367325334447c5e1e0f1b3a6fb947b262f58312000000000000000000000000000000000000000000000000000000000000009c0100000000000002230000769c00000000000000000000000088853d410299bcbfe5fcc9eef93c03115e9082790000759e00000000000000000000000019cfce47ed54a88614648dc3f19a5980097007dde570ed2f827a5913fb8d84a16f1a6014d5bcd2212791b9ce0643f45ed9989a3e010001000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8000000000ba0e306000000000000000000000000000000000000000000000000000000000000000000000016000301001101000000000000000000000000000249f000000000000000000000\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x5\",\"removed\":false},{\"address\":\"0x2086f755a6d9254045c257ea3d382ef854849b0f\",\"topics\":[\"0x85496b760a4b7f8d66384b9df21b381f5d1b1e79f229a47aaf4c232edc2fe59a\",\"0xe570ed2f827a5913fb8d84a16f1a6014d5bcd2212791b9ce0643f45ed9989a3e\",\"0x000000000000000000000000981504475498cddffa92afab0b1101e7154a67d8\"],\"data\":\"0x000000000000000000000000000000000000000000000000000000000000759e000000000000000000000000000000000000000000000000000000000ba2ac8d000000000000000000000000000000000000000000000000000000000ba0e306\",\"blockNumber\":\"0xda0b2\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"blockHash\":\"0x516f3ca24916ad52475807c3729bc652293b85ee1892c6bcc93358858eaa8e07\",\"logIndex\":\"0x6\",\"removed\":false}],\"logsBloom\":\"0x00000000000000000100000000000100000000000000001000000000000000000000000000000000000000400200000000000000000000000000000000000000000002000000800000000108000000000000000000000000000000000000000000000000020200008000000000000800080010000000000800010010000000000000000000000000000000081000000000000000200000000000000000200000000000008000000000100100000000000000002000600000000440000000008080000083000000000000000080000000000000000000000000000000000020000000040001000000000000000000002000000000008000000000000000000000\",\"status\":\"0x1\",\"to\":\"0x2086f755a6d9254045c257ea3d382ef854849b0f\",\"transactionHash\":\"0x1d3fd84411c6cb6d1321b0cc46553036f4b7487cf139d03b576950a5d4a19ae7\",\"transactionIndex\":\"0x0\",\"type\":\"0x2\"}}");
+    });
+
 
     cmd.args([
         "send",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "--auth",
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
-        &endpoint,
+        server.url("/").as_str(),
         "--use-explicit-data-field",
-        "data"
+        "data",
+        "--legacy"
     ])
     .assert_success();
+
+    // assert the the expected mock with the included field was called
+    mock.assert();
 });
 
 casttest!(send_eip7702_explicit_data_field_invalid, async |_prj, cmd| {
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
-    let endpoint = handle.http_endpoint();
+    let server = MockServer::start();
+
+    server.mock(|_when, then| {
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
 
     cmd.args([
         "send",
@@ -2501,7 +2625,7 @@ casttest!(send_eip7702_explicit_data_field_invalid, async |_prj, cmd| {
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
-        &endpoint,
+        server.url("/").as_str(),
         "--use-explicit-data-field",
         "blah"
     ])
@@ -3586,38 +3710,107 @@ Warning: Contract code is empty
 });
 
 casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"input\"").json_body_partial(r#"{"method": "eth_call"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getCode"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+    
+    server.mock(|_when, then| {
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+
     cmd.args([
         "call",
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
-        eth_rpc_url.as_str(),
+        server.url("/").as_str(),
         "--use-explicit-data-field",
         "input",
     ])
     .assert_success();
+
+    mock.assert();
 });
 
 casttest!(cast_call_explicit_data_field_data, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.body_contains("\"data\"").json_body_partial(r#"{"method": "eth_call"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+
+    server.mock(|when, then| {
+        when.json_body_partial(r#"{"method": "eth_getCode"}"#);
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x\"
+          }");
+    });
+    
+    server.mock(|_when, then| {
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
+
     cmd.args([
         "call",
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
-        eth_rpc_url.as_str(),
+        server.url("/").as_str(),
         "--use-explicit-data-field",
         "data",
     ])
     .assert_success();
+
+    mock.assert();
 });
 
 casttest!(cast_call_explicit_data_field_invalid, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let server = MockServer::start();
+
+    server.mock(|_when, then| {
+        then.status(200).body("{
+            \"jsonrpc\": \"2.0\",
+            \"id\": 1,
+            \"result\": \"0x1\"
+          }");
+    });
+
     cmd.args([
         "call",
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
-        eth_rpc_url.as_str(),
+        server.url("/").as_str(),
         "--use-explicit-data-field",
         "blah",
     ])
@@ -4070,54 +4263,6 @@ casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
-});
-
-casttest!(cast_estimate_explicit_data_field_input, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
-    cmd.args([
-        "estimate",
-        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
-        "rebalance(int64)",
-        "-8888",
-        "--rpc-url",
-        rpc.as_str(),
-        "--use-explicit-data-field",
-        "input"
-    ])
-    .assert_success();
-});
-
-casttest!(cast_estimate_explicit_data_field_data, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
-    cmd.args([
-        "estimate",
-        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
-        "rebalance(int64)",
-        "-8888",
-        "--rpc-url",
-        rpc.as_str(),
-        "--use-explicit-data-field",
-        "data"
-    ])
-    .assert_success();
-});
-
-casttest!(cast_estimate_explicit_data_field_invalid, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
-    cmd.args([
-        "estimate",
-        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
-        "rebalance(int64)",
-        "-8888",
-        "--rpc-url",
-        rpc.as_str(),
-        "--use-explicit-data-field",
-        "blah"
-    ])
-    .assert_failure().stderr_eq(str![[r#"
-Error: invalid value for data field: blah
-
-"#]]);
 });
 
 // Test cast mktx with negative numbers

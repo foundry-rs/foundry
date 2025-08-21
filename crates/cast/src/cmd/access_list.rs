@@ -41,23 +41,17 @@ pub struct AccessListArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
-
-    /// When calling an RPC with optionally an "input" or a "data" field,
-    /// by default both are populated.  Set this to populate one or the
-    /// other.
-    #[arg(long = "use-explicit-data-field", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
-    pub use_explicit_data_field: Option<String>,
 }
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, sig, args, tx, eth, block, use_explicit_data_field } = self;
+        let Self { to, sig, args, tx, eth, block } = self;
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, use_explicit_data_field)
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, Option::None)
             .await?
             .with_to(to)
             .await?
