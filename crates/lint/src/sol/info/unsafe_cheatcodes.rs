@@ -12,7 +12,7 @@ declare_forge_lint!(
     "usage of unsafe cheatcodes that can perform dangerous operations"
 );
 
-const UNSAFE_CHEATCODES: [&'static str; 9] = [
+const UNSAFE_CHEATCODES: [&str; 9] = [
     "ffi",
     "readFile",
     "readLine",
