@@ -99,7 +99,10 @@ fn select_random_sender(
         ]
         .prop_map(move |addr| {
             let mut addr = addr.as_address().unwrap();
-            // Make sure the selected address is not in list of excluded senders.
+            // Make sure the selected address is not in the list of excluded senders.
+            // We don't use proptest's filter to avoid reaching the `PROPTEST_MAX_LOCAL_REJECTS`
+            // max rejects and exiting test before all runs completes.
+            // See <https://github.com/foundry-rs/foundry/issues/11369>.
             loop {
                 if !senders.excluded.contains(&addr) {
                     break;
