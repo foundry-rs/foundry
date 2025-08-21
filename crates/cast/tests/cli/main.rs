@@ -1523,6 +1523,11 @@ casttest!(mktx, |_prj, cmd| {
 casttest!(estimate_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""data""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_estimateGas"}"#);
         then.status(200).body("{
@@ -1570,6 +1575,11 @@ casttest!(estimate_explicit_data_field_input, |_prj, cmd| {
 casttest!(estimate_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""input""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_estimateGas"}"#);
         then.status(200).body("{
@@ -1616,6 +1626,11 @@ casttest!(estimate_explicit_data_field_data, |_prj, cmd| {
 
 casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
+
+    server.mock(|when, then| {
+        when.body_contains(r#""data""#);
+        then.status(500);
+    });
 
     let mock = server.mock(|when, then| {
         when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_createAccessList"}"#);
@@ -1671,6 +1686,11 @@ casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
 casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""input""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_createAccessList"}"#);
         then.status(200).body(r#"{
@@ -1725,6 +1745,11 @@ casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
 casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""data""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_signTransaction"}"#);
         then.status(200).body("{
@@ -1765,6 +1790,11 @@ casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
 
 casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
+
+    server.mock(|when, then| {
+        when.body_contains(r#""input""#);
+        then.status(500);
+    });
 
     let mock = server.mock(|when, then| {
         when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_signTransaction"}"#);
@@ -2640,6 +2670,11 @@ casttest!(send_eip7702, async |_prj, cmd| {
 casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""data""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.json_body_partial(r#"{"method": "eth_estimateGas"}"#).body_contains(r#""input""#);
         then.status(200).body("{
@@ -2726,6 +2761,11 @@ casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
 
 casttest!(send_eip7702_explicit_data_field_data, async |_prj, cmd| {
     let server = MockServer::start();
+
+    server.mock(|when, then| {
+        when.body_contains(r#""input""#);
+        then.status(500);
+    });
 
     let mock = server.mock(|when, then| {
         when.json_body_partial(r#"{"method": "eth_estimateGas"}"#).body_contains(r#""data""#);
@@ -3920,6 +3960,11 @@ Warning: Contract code is empty
 casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
+    server.mock(|when, then| {
+        when.body_contains(r#""data""#);
+        then.status(500);
+    });
+
     let mock = server.mock(|when, then| {
         when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_call"}"#);
         then.status(200).body("{
@@ -3962,6 +4007,11 @@ casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
 
 casttest!(cast_call_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
+
+    server.mock(|when, then| {
+        when.body_contains(r#""input""#);
+        then.status(500);
+    });
 
     let mock = server.mock(|when, then| {
         when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_call"}"#);
