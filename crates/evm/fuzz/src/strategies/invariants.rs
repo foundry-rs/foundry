@@ -97,9 +97,17 @@ fn select_random_sender(
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
-        .prop_map(move |addr| addr.as_address().unwrap())
-        // Too many exclusions can slow down testing.
-        .prop_filter("excluded sender", move |addr| !senders.excluded.contains(addr))
+        .prop_map(move |addr| {
+            let mut addr = addr.as_address().unwrap();
+            // Make sure the selected address is not in list of excluded senders.
+            loop {
+                if !senders.excluded.contains(&addr) {
+                    break;
+                }
+                addr = Address::random();
+            }
+            addr
+        })
         .boxed()
     }
 }
