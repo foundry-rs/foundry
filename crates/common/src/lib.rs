@@ -18,6 +18,7 @@ pub use foundry_common_fmt as fmt;
 
 pub mod abi;
 pub mod calc;
+pub mod clap;
 pub mod comments;
 pub mod compile;
 pub mod constants;

@@ -33,7 +33,7 @@ use crate::inline_config::InlineConfig;
 /// # Note:
 ///
 /// - For `early_lint` and `late_lint`, the `ParsingContext` should have the sources pre-loaded.
-pub trait Linter: Send + Sync + Clone {
+pub trait Linter: Send + Sync {
     type Language: Language;
     type Lint: Lint;
 
@@ -52,18 +52,23 @@ pub trait Lint {
 pub struct LintContext<'s> {
     sess: &'s Session,
     with_description: bool,
-    pub inline_config: InlineConfig,
+    pub config: LinterConfig<'s>,
     active_lints: Vec<&'static str>,
+}
+
+pub struct LinterConfig<'s> {
+    pub inline: InlineConfig,
+    pub mixed_case_exceptions: &'s [String],
 }
 
 impl<'s> LintContext<'s> {
     pub fn new(
         sess: &'s Session,
         with_description: bool,
-        config: InlineConfig,
+        config: LinterConfig<'s>,
         active_lints: Vec<&'static str>,
     ) -> Self {
-        Self { sess, with_description, inline_config: config, active_lints }
+        Self { sess, with_description, config, active_lints }
     }
 
     pub fn session(&self) -> &'s Session {
@@ -80,7 +85,7 @@ impl<'s> LintContext<'s> {
 
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
@@ -101,7 +106,7 @@ impl<'s> LintContext<'s> {
     /// For Diff snippets, if no span is provided, it will use the lint's span.
     /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 

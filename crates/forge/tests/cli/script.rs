@@ -1,10 +1,12 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_chains::Chain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
+use foundry_config::{ForkChainConfig, ForkConfigs, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -408,6 +410,41 @@ contract Demo {
         .arg("2")
         .assert_success()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
+});
+
+// Tests that the run command can run functions with arguments without specifying the signature
+// <https://github.com/foundry-rs/foundry/issues/11240>
+forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -3100,4 +3137,607 @@ contract FactoryScript is Script {
         .first()
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
+});
+
+// Tests that can access the fork config for each chain from `foundry.toml`
+forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+
+    prj.update_config(|config| {
+        config.forks = ForkConfigs(
+            vec![
+                (
+                    Chain::mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            "mainnet-rpc".to_string(),
+                        ))),
+                        vars: vec![
+                        ("i256".into(), "-1234".into()),
+                        ("u256".into(), 1234.into()),
+                        ("bool".into(), true.into()),
+                        (
+                            "b256".into(),
+                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
+                                .into(),
+                        ),
+                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
+                        ("bytes".into(), "0x00000000000f00".into()),
+                        ("str".into(), "bar".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
+                        ("uint_array".into(), vec!["100", "200", "300"].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
+                    ]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                (
+                    Chain::optimism_mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: None,
+                        vars: vec![
+                        ("i256".into(), "-4321".into()),
+                        ("u256".into(), 4321.into()),
+                        ("bool".into(), "false".into()),
+                        (
+                            "b256".into(),
+                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
+                                .into(),
+                        ),
+                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
+                        ("bytes".into(), "0x00f00000000000".into()),
+                        ("str".into(), "bazz".into()),
+                        // Array configurations for testing new array cheatcodes
+                        ("bool_array".into(), vec![false, true, false].into()),
+                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
+                        ("uint_array".into(), vec!["400", "500", "600"].into()),
+                        ("addr_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
+                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
+                    ]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    prj.add_source(
+            "ForkScript.s.sol",
+            r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkScript is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function run() public view {
+        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.readForkChainIds(), vm.readForkChains());
+
+        for (uint256 i = 0; i < chains.length; i++) {
+            assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
+            assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
+            console.log("chain:", chains[i]);
+            console.log("id:", chainIds[i]);
+
+            string memory rpc = vm.readForkChainRpcUrl(chainIds[i]);
+            int256 i256 = vm.readForkChainInt(chainIds[i], "i256");
+            uint256 u256 = vm.readForkChainUint(chainIds[i], "u256");
+            bool boolean = vm.readForkChainBool(chainIds[i], "bool");
+            address addr = vm.readForkChainAddress(chainIds[i], "addr");
+            bytes32 b256 = vm.readForkChainBytes32(chainIds[i], "b256");
+            bytes memory byytes = vm.readForkChainBytes(chainIds[i], "bytes");
+            string memory str = vm.readForkChainString(chainIds[i], "str");
+
+            console.log(" > rpc:", rpc);
+            console.log(" > vars:");
+            console.log("   > i256:", i256);
+            console.log("   > u256:", u256);
+            console.log("   > bool:", boolean);
+            console.log("   > addr:", addr);
+            console.log("   > string:", str);
+
+            assert(
+                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+                    || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+            );
+        }
+
+        // Test array cheatcodes in a separate function to avoid stack too deep
+        testArrayCheatcodes();
+    }
+
+    function testArrayCheatcodes() public view {
+        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+
+        for (uint256 i = 0; i < chains.length; i++) {
+            console.log("Testing arrays for chain:", chains[i]);
+
+            // Test bool array
+            bool[] memory boolArray = vm.readForkChainBoolArray(chainIds[i], "bool_array");
+            assert(boolArray.length == 3);
+            console.log("  > bool_array[0]:", boolArray[0]);
+
+            // Test int array
+            int256[] memory intArray = vm.readForkChainIntArray(chainIds[i], "int_array");
+            assert(intArray.length == 3);
+            console.log("  > int_array[0]:", intArray[0]);
+
+            // Test uint array
+            uint256[] memory uintArray = vm.readForkChainUintArray(chainIds[i], "uint_array");
+            assert(uintArray.length == 3);
+            console.log("  > uint_array[0]:", uintArray[0]);
+
+            // Test address array
+            address[] memory addrArray = vm.readForkChainAddressArray(chainIds[i], "addr_array");
+            assert(addrArray.length == 2);
+            console.log("  > addr_array[0]:", addrArray[0]);
+
+            // Test bytes32 array
+            bytes32[] memory bytes32Array = vm.readForkChainBytes32Array(chainIds[i], "bytes32_array");
+            assert(bytes32Array.length == 2);
+
+            // Test bytes array
+            bytes[] memory bytesArray = vm.readForkChainBytesArray(chainIds[i], "bytes_array");
+            assert(bytesArray.length == 3);
+
+            // Test string array
+            string[] memory stringArray = vm.readForkChainStringArray(chainIds[i], "string_array");
+            assert(stringArray.length == 3);
+            console.log("  > string_array[0]:", stringArray[0]);
+        }
+    }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
+        "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg("ForkScript").assert_success().stdout_eq(str![[r#"
+...
+  chain: mainnet
+  id: 1
+   > rpc: mainnet-rpc
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
+  chain: optimism
+  id: 10
+   > rpc: optimism-rpc
+   > vars:
+     > i256: -4321
+     > u256: 4321
+     > bool: false
+     > addr: 0x00000000000000000000000000000000DeaDBeef
+     > string: bazz
+  Testing arrays for chain: mainnet
+    > bool_array[0]: true
+    > int_array[0]: -100
+    > uint_array[0]: 100
+    > addr_array[0]: 0x1111111111111111111111111111111111111111
+    > string_array[0]: hello
+  Testing arrays for chain: optimism
+    > bool_array[0]: false
+    > int_array[0]: -400
+    > uint_array[0]: 400
+    > addr_array[0]: 0x3333333333333333333333333333333333333333
+    > string_array[0]: foo
+
+"#]]);
+});
+
+// Tests that can derive chain id of the active fork + get the config from `foundry.toml`
+forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.update_config(|config| {
+        config.forks = ForkConfigs(
+            vec![
+                (
+                    Chain::mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            mainnet_endpoint.clone(),
+                        ))),
+                        vars: vec![
+                        ("i256".into(), "-1234".into()),
+                        ("u256".into(), 1234.into()),
+                        ("bool".into(), true.into()),
+                        (
+                            "b256".into(),
+                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
+                                .into(),
+                        ),
+                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
+                        ("bytes".into(), "0x00000000000f00".into()),
+                        ("str".into(), "bar".into()),
+                        ("bool_array".into(), vec![true, false, true].into()),
+                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
+                        ("uint_array".into(), vec!["100", "200", "300"].into()),
+                        ("addr_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x1111111111111111111111111111111111111111111111111111111111111111",
+                            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
+                        ("string_array".into(), vec!["hello", "world", "test"].into()),
+                    ]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                (
+                    Chain::optimism_mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: None,
+                        vars: vec![
+                        ("i256".into(), "-4321".into()),
+                        ("u256".into(), 4321.into()),
+                        ("bool".into(), "false".into()),
+                        (
+                            "b256".into(),
+                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
+                                .into(),
+                        ),
+                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
+                        ("bytes".into(), "0x00f00000000000".into()),
+                        ("str".into(), "bazz".into()),
+                        ("bool_array".into(), vec![false, true, false].into()),
+                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
+                        ("uint_array".into(), vec!["400", "500", "600"].into()),
+                        ("addr_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes32_array".into(), vec![
+                            "0x3333333333333333333333333333333333333333333333333333333333333333",
+                            "0x4444444444444444444444444444444444444444444444444444444444444444"
+                        ].into()),
+                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
+                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
+                    ]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    prj.add_source(
+        "ForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_forkVars() public {
+        vm.createSelectFork("<url>");
+
+        console.log("chain:", vm.readForkChain());
+        console.log("id:", vm.readForkChainId());
+        assert(eqString(vm.readForkRpcUrl(), "<url>"));
+
+        int256 i256 = vm.readForkInt("i256");
+        uint256 u256 = vm.readForkUint("u256");
+        bool boolean = vm.readForkBool("bool");
+        address addr = vm.readForkAddress("addr");
+        bytes32 b256 = vm.readForkBytes32("b256");
+        bytes memory byytes = vm.readForkBytes("bytes");
+        string memory str = vm.readForkString("str");
+
+        console.log(" > vars:");
+        console.log("   > i256:", i256);
+        console.log("   > u256:", u256);
+        console.log("   > bool:", boolean);
+        console.log("   > addr:", addr);
+        console.log("   > string:", str);
+
+        assert(
+            b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+        );
+
+        // Test array cheatcodes in a separate function to avoid stack too deep
+        testArrayCheatcodes();
+    }
+
+    function testArrayCheatcodes() private {
+        // Test array cheatcodes without specifying chain (uses active fork)
+        console.log("   > Arrays:");
+
+        // Test bool array
+        bool[] memory boolArray = vm.readForkBoolArray("bool_array");
+        assert(boolArray.length == 3);
+        assert(boolArray[0] == true);
+        console.log("     > bool_array[0]:", boolArray[0]);
+
+        // Test int array
+        int256[] memory intArray = vm.readForkIntArray("int_array");
+        assert(intArray.length == 3);
+        assert(intArray[0] == -100);
+        console.log("     > int_array[0]:", intArray[0]);
+
+        // Test uint array
+        uint256[] memory uintArray = vm.readForkUintArray("uint_array");
+        assert(uintArray.length == 3);
+        assert(uintArray[0] == 100);
+        console.log("     > uint_array[0]:", uintArray[0]);
+
+        // Test address array
+        address[] memory addrArray = vm.readForkAddressArray("addr_array");
+        assert(addrArray.length == 2);
+        assert(addrArray[0] == 0x1111111111111111111111111111111111111111);
+        console.log("     > addr_array[0]:", addrArray[0]);
+
+        // Test bytes32 array
+        bytes32[] memory bytes32Array = vm.readForkBytes32Array("bytes32_array");
+        assert(bytes32Array.length == 2);
+
+        // Test bytes array
+        bytes[] memory bytesArray = vm.readForkBytesArray("bytes_array");
+        assert(bytesArray.length == 3);
+
+        // Test string array
+        string[] memory stringArray = vm.readForkStringArray("string_array");
+        assert(stringArray.length == 3);
+        assert(eqString(stringArray[0], "hello"));
+        console.log("     > string_array[0]:", stringArray[0]);
+    }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvv", "ForkTest"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_forkVars() ([GAS])
+Logs:
+  chain: mainnet
+  id: 1
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
+     > Arrays:
+       > bool_array[0]: true
+       > int_array[0]: -100
+       > uint_array[0]: 100
+       > addr_array[0]: 0x1111111111111111111111111111111111111111
+       > string_array[0]: hello
+...
+"#]]);
+});
+
+// Tests that it will throw an error when reading an address that is not 20 bytes
+forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.update_config(|config| {
+        config.forks = ForkConfigs(
+            vec![(
+                Chain::mainnet(),
+                ForkChainConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        mainnet_endpoint.clone(),
+                    ))),
+                    vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
+    });
+
+    prj.add_source(
+        "ForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_throwsErrorWithoutSelectedFork() public {
+        vm.readForkChain();
+    }
+
+    function test_throwsErrorWithUnknownVar() public {
+        vm.createSelectFork("<url>");
+        bool invalid = vm.readForkBool("invalid");
+    }
+
+    function test_throwsErrorWhenInvalidAddressLength() public {
+        vm.createSelectFork("<url>");
+        address owner = vm.readForkAddress("owner");
+    }
+
+    function test_throwsErrorWhenNotArray() public {
+        vm.createSelectFork("<url>");
+        string[] memory invalid = vm.readForkStringArray("owner");
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 4 failing tests in src/ForkTest.t.sol:ForkTest
+[FAIL: vm.readForkAddress: failed to parse 'owner' in '[fork.<chain_id: 1>]': failed parsing "0xdeadbeef" as type `address`: parser error:
+0xdeadbeef
+^
+invalid string length] test_throwsErrorWhenInvalidAddressLength() ([GAS])
+[FAIL: vm.readForkStringArray: variable 'owner' in '[fork.<chain_id: 1>]' must be an array] test_throwsErrorWhenNotArray() ([GAS])
+[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_throwsErrorWithUnknownVar() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_throwsErrorWithoutSelectedFork() ([GAS])
+
+Encountered a total of 4 failing tests, 0 tests succeeded
+...
+"#]]);
 });

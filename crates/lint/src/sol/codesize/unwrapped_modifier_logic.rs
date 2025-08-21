@@ -8,7 +8,7 @@ use solar_sema::hir::{self, Res};
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
-    Severity::Gas,
+    Severity::CodeSize,
     "unwrapped-modifier-logic",
     "wrap modifier logic to reduce code size"
 );

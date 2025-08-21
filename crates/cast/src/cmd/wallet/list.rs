@@ -87,6 +87,7 @@ impl ListArgs {
         list_senders!(list_opts.ledgers(), "Ledger");
         list_senders!(list_opts.trezors(), "Trezor");
         list_senders!(list_opts.aws_signers(), "AWS");
+        list_senders!(list_opts.gcp_signers(), "GCP");
 
         Ok(())
     }
