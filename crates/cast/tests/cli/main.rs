@@ -3146,29 +3146,33 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(fetch_src_blockscout, |_prj, cmd| {
-    let url = "https://eth.blockscout.com/api";
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_blockscout,
+    |_prj, cmd| {
+        let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-    cmd.args([
-        "source",
-        &weth.to_string(),
-        "--chain-id",
-        "1",
-        "--explorer-api-url",
-        url,
-        "--flatten",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--chain-id",
+            "1",
+            "--explorer-api-url",
+            url,
+            "--flatten",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 contract WETH9 {
     string public name     = "Wrapped Ether";
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+    }
+);
 
 casttest!(fetch_src_default, |_prj, cmd| {
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
