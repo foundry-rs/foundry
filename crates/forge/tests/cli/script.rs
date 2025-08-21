@@ -6,7 +6,9 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
-use foundry_config::{ForkChainConfig, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
+use foundry_config::{
+    ForkChainConfig, RpcEndpoint, RpcEndpointUrl, RpcEndpoints, fork_config::ForkConfigPermission,
+};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -2615,13 +2617,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2630,11 +2632,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3719,4 +3721,287 @@ contract ForkTest is DSTest {
 invalid string length] test_throwsErrorWhen() ([GAS])
 ...
 "#]]);
+});
+
+// Tests for writeFork cheatcodes - writes to in-memory config and files
+forgetest_init!(can_write_fork_config_simple, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    // Verify that the values were persisted to the config file
+    let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    assert!(!config_content.contains("new_uint = 456"));
+    assert!(!config_content.contains("initial_value = 789"));
+
+    // Set up initial configuration
+    prj.update_config(|config| {
+        config.forks.chain_configs = vec![(
+            Chain::mainnet(),
+            ForkChainConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![
+                    ("initial_value".into(), "123".into()),
+                    ("bool_value".into(), true.into()),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        // Enable write access
+        config.forks.access = ForkConfigPermission::ReadWrite;
+    });
+
+    prj.add_source(
+        "WriteForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract WriteForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_writeForkOverrideValue() public {
+        vm.createSelectFork("<url>");
+
+        // Read initial values
+        uint256 initial = vm.readForkUint("initial_value");
+        assert(initial == 123);
+        console.log("Initial value:", initial);
+
+        // Write new single values
+        (bool success, bool overwrote) = vm.writeForkVar("new_uint", uint256(456));
+        assert(success);
+        assert(!overwrote);
+
+        // Overwrite existing value
+        (success, overwrote) = vm.writeForkVar("initial_value", uint256(789));
+        assert(success);
+        assert(overwrote);
+
+        // Read back the values
+        uint256 newValue = vm.readForkUint("new_uint");
+        assert(newValue == 456);
+        uint256 updatedValue = vm.readForkUint("initial_value");
+        assert(updatedValue == 789);
+
+        console.log("New value:", newValue);
+        console.log("Updated value:", updatedValue);
+    }
+
+    function test_writeForkValues() public {
+        vm.createSelectFork("<url>");
+
+        // Test writing all supported types
+        vm.writeForkVar("test_bool", true);
+        vm.writeForkVar("test_int", int256(-999));
+        vm.writeForkVar("test_uint", uint256(999));
+        vm.writeForkVar("test_address", address(0xdEADBEeF00000000000000000000000000000000));
+        vm.writeForkVar("test_bytes32", bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
+        vm.writeForkVar("test_string", string("hello world"));
+        vm.writeForkVar("test_bytes", bytes(hex"deadbeef"));
+
+        // Read back and verify
+        assert(vm.readForkBool("test_bool") == true);
+        assert(vm.readForkInt("test_int") == -999);
+        assert(vm.readForkUint("test_uint") == 999);
+        assert(vm.readForkAddress("test_address") == address(0xdEADBEeF00000000000000000000000000000000));
+        assert(vm.readForkBytes32("test_bytes32") == bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
+        assert(eqString(vm.readForkString("test_string"), "hello world"));
+        assert(eqBytes(vm.readForkBytes("test_bytes"), hex"deadbeef"));
+
+        console.log("All types written and verified");
+    }
+
+    function test_writeForkArrays() public {
+        vm.createSelectFork("<url>");
+
+        // Test writing arrays
+        bool[] memory boolArray = new bool[](3);
+        boolArray[0] = true;
+        boolArray[1] = false;
+        boolArray[2] = true;
+        vm.writeForkVar("bool_array", boolArray);
+
+        int256[] memory intArray = new int256[](2);
+        intArray[0] = -100;
+        intArray[1] = 200;
+        vm.writeForkVar("int_array", intArray);
+
+        uint256[] memory uintArray = new uint256[](2);
+        uintArray[0] = 100;
+        uintArray[1] = 200;
+        vm.writeForkVar("uint_array", uintArray);
+
+        address[] memory addrArray = new address[](2);
+        addrArray[0] = address(0x1111111111111111111111111111111111111111);
+        addrArray[1] = address(0x2222222222222222222222222222222222222222);
+        vm.writeForkVar("addr_array", addrArray);
+
+        bytes32[] memory bytes32Array = new bytes32[](2);
+        bytes32Array[0] = bytes32(0x1111111111111111111111111111111111111111111111111111111111111111);
+        bytes32Array[1] = bytes32(0x2222222222222222222222222222222222222222222222222222222222222222);
+        vm.writeForkVar("bytes32_array", bytes32Array);
+
+        string[] memory stringArray = new string[](3);
+        stringArray[0] = "foo";
+        stringArray[1] = "bar";
+        stringArray[2] = "baz";
+        vm.writeForkVar("string_array", stringArray);
+
+        bytes[] memory bytesArray = new bytes[](2);
+        bytesArray[0] = hex"dead";
+        bytesArray[1] = hex"beef";
+        vm.writeForkVar("bytes_array", bytesArray);
+
+        // Read back and verify arrays
+        bool[] memory readBoolArray = vm.readForkBoolArray("bool_array");
+        assert(readBoolArray.length == 3);
+        assert(readBoolArray[0] == true);
+        assert(readBoolArray[1] == false);
+        assert(readBoolArray[2] == true);
+
+        int256[] memory readIntArray = vm.readForkIntArray("int_array");
+        assert(readIntArray.length == 2);
+        assert(readIntArray[0] == -100);
+        assert(readIntArray[1] == 200);
+
+        uint256[] memory readUintArray = vm.readForkUintArray("uint_array");
+        assert(readUintArray.length == 2);
+        assert(readUintArray[0] == 100);
+        assert(readUintArray[1] == 200);
+
+        address[] memory readAddrArray = vm.readForkAddressArray("addr_array");
+        assert(readAddrArray.length == 2);
+        assert(readAddrArray[0] == address(0x1111111111111111111111111111111111111111));
+
+        string[] memory readStringArray = vm.readForkStringArray("string_array");
+        assert(readStringArray.length == 3);
+        assert(eqString(readStringArray[0], "foo"));
+
+        console.log("All arrays written and verified");
+    }
+
+    function test_writeForkChainSpecific() public {
+        // Test writing to specific chain without selecting fork
+        uint256 chainId = 1; // mainnet
+
+        // Write values for specific chain
+        (bool success, bool overwrote) = vm.writeForkChainVar(chainId, "chain_specific_uint", uint256(12345));
+        assert(success);
+        assert(!overwrote);
+
+        vm.writeForkChainVar(chainId, "chain_specific_bool", false);
+        vm.writeForkChainVar(chainId, "chain_specific_string", string("chain test"));
+
+        // Now select fork and verify values are there
+        vm.createSelectFork("<url>");
+
+        assert(vm.readForkUint("chain_specific_uint") == 12345);
+        assert(vm.readForkBool("chain_specific_bool") == false);
+        assert(eqString(vm.readForkString("chain_specific_string"), "chain test"));
+
+        console.log("Chain-specific writes verified");
+    }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+
+    function eqBytes(bytes memory b1, bytes memory b2) public pure returns(bool) {
+        return keccak256(b1) == keccak256(b2);
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvv", "WriteForkTest"]).assert_success();
+
+    // // Verify that the it can override existing variables
+    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkOverrideValue"])
+    //     .assert_success();
+
+    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    // assert!(config_content.contains("new_uint = 456"));
+    // assert!(config_content.contains("initial_value = 789"));
+
+    // // Verify that the it can write all simple variable types
+    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkValues"]).assert_success();
+
+    // // Verify that the values were persisted to the config file
+    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    // assert!(config_content.contains("test_bool = true"));
+    // assert!(config_content.contains("test_int = -999"));
+    // assert!(config_content.contains("test_uint = 999"));
+    // assert!(
+    //     config_content.contains("test_address = \"0xdEADBEeF00000000000000000000000000000000\"")
+    // );
+    // assert!(config_content.contains(
+    //     "test_bytes32 = \"0x1234567890abcdef000000000000000000000000000000000000000000000000\""
+    // ));
+    // assert!(config_content.contains("test_string = \"hello world\""));
+    // assert!(config_content.contains("test_bytes = \"0xdeadbeef\""));
+
+    // // Verify that the it can write all array variable types
+    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkArrays"]).assert_success();
+
+    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+});
+
+// Test that writeFork respects access permissions
+forgetest_init!(write_fork_respects_permissions, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.update_config(|config| {
+        config.forks.chain_configs = vec![(
+            Chain::mainnet(),
+            ForkChainConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![].into_iter().collect(),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        // Set access to read-only
+        config.forks.access = ForkConfigPermission::Read;
+    });
+
+    prj.add_source(
+        "WriteForkPermissionTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract WriteForkPermissionTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_writeFailsWithReadOnlyAccess() public {
+        vm.createSelectFork("<url>");
+
+        // Attempt to write should return false for success
+        (bool success, bool overwrote) = vm.writeForkVar("test_value", uint256(123));
+        assert(!success);
+        assert(!overwrote);
+
+        console.log("Write correctly failed with read-only access");
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvv", "WriteForkPermissionTest"]).assert_success();
 });

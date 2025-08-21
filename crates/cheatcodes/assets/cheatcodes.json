@@ -3482,6 +3482,46 @@
     },
     {
       "func": {
+        "id": "checkForkChainVar",
+        "description": "Checks if a key exists in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.",
+        "declaration": "function checkForkChainVar(uint256 chain, string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "checkForkChainVar(uint256,string)",
+        "selector": "0x3a960d11",
+        "selectorBytes": [
+          58,
+          150,
+          13,
+          17
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "checkForkVar",
+        "description": "Checks if a key exists in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.",
+        "declaration": "function checkForkVar(string calldata key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "checkForkVar(string)",
+        "selector": "0xc38ddaf7",
+        "selectorBytes": [
+          195,
+          141,
+          218,
+          247
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "clearMockedCalls",
         "description": "Clears all mocked calls.",
         "declaration": "function clearMockedCalls() external;",
@@ -11869,6 +11909,566 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_0",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bool value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bool)",
+        "selector": "0x6d18473a",
+        "selectorBytes": [
+          109,
+          24,
+          71,
+          58
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_1",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bool[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bool[])",
+        "selector": "0x68fb34c6",
+        "selectorBytes": [
+          104,
+          251,
+          52,
+          198
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_10",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, string calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,string)",
+        "selector": "0x2453e78a",
+        "selectorBytes": [
+          36,
+          83,
+          231,
+          138
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_11",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, string[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,string[])",
+        "selector": "0x2076daa0",
+        "selectorBytes": [
+          32,
+          118,
+          218,
+          160
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_12",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bytes calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bytes)",
+        "selector": "0xb45a32cc",
+        "selectorBytes": [
+          180,
+          90,
+          50,
+          204
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_13",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bytes[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bytes[])",
+        "selector": "0x7b6a6449",
+        "selectorBytes": [
+          123,
+          106,
+          100,
+          73
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_2",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, int256 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,int256)",
+        "selector": "0x8bf986d1",
+        "selectorBytes": [
+          139,
+          249,
+          134,
+          209
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_3",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, int256[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,int256[])",
+        "selector": "0x43bc151c",
+        "selectorBytes": [
+          67,
+          188,
+          21,
+          28
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_4",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, uint256 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,uint256)",
+        "selector": "0x8177bc4a",
+        "selectorBytes": [
+          129,
+          119,
+          188,
+          74
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_5",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, uint256[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,uint256[])",
+        "selector": "0x2bdc5307",
+        "selectorBytes": [
+          43,
+          220,
+          83,
+          7
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_6",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, address value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,address)",
+        "selector": "0x79147518",
+        "selectorBytes": [
+          121,
+          20,
+          117,
+          24
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_7",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, address[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,address[])",
+        "selector": "0x01505eac",
+        "selectorBytes": [
+          1,
+          80,
+          94,
+          172
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_8",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bytes32 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bytes32)",
+        "selector": "0xbd84f102",
+        "selectorBytes": [
+          189,
+          132,
+          241,
+          2
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkChainVar_9",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the specified chain.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkChainVar(uint256 chain, string calldata key, bytes32[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkChainVar(uint256,string,bytes32[])",
+        "selector": "0x47b23e31",
+        "selectorBytes": [
+          71,
+          178,
+          62,
+          49
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_0",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bool value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bool)",
+        "selector": "0x7c78a73c",
+        "selectorBytes": [
+          124,
+          120,
+          167,
+          60
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_1",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bool[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bool[])",
+        "selector": "0xfbe0e233",
+        "selectorBytes": [
+          251,
+          224,
+          226,
+          51
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_10",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, string calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,string)",
+        "selector": "0x0ff6105b",
+        "selectorBytes": [
+          15,
+          246,
+          16,
+          91
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_11",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, string[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,string[])",
+        "selector": "0x85b39c3d",
+        "selectorBytes": [
+          133,
+          179,
+          156,
+          61
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_12",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bytes calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bytes)",
+        "selector": "0xec6616bf",
+        "selectorBytes": [
+          236,
+          102,
+          22,
+          191
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_13",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bytes[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bytes[])",
+        "selector": "0xc9c229f3",
+        "selectorBytes": [
+          201,
+          194,
+          41,
+          243
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_2",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, int256 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,int256)",
+        "selector": "0x18c0e0d5",
+        "selectorBytes": [
+          24,
+          192,
+          224,
+          213
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_3",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, int256[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,int256[])",
+        "selector": "0x5cb9cbbf",
+        "selectorBytes": [
+          92,
+          185,
+          203,
+          191
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_4",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, uint256 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,uint256)",
+        "selector": "0xcdbfdce5",
+        "selectorBytes": [
+          205,
+          191,
+          220,
+          229
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_5",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, uint256[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,uint256[])",
+        "selector": "0xf7e9969b",
+        "selectorBytes": [
+          247,
+          233,
+          150,
+          155
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_6",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, address value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,address)",
+        "selector": "0xa2314a80",
+        "selectorBytes": [
+          162,
+          49,
+          74,
+          128
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_7",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, address[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,address[])",
+        "selector": "0x1b07f6aa",
+        "selectorBytes": [
+          27,
+          7,
+          246,
+          170
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_8",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bytes32 value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bytes32)",
+        "selector": "0x2bf6f2c3",
+        "selectorBytes": [
+          43,
+          246,
+          242,
+          195
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "writeForkVar_9",
+        "description": "Sets the value for the key `key` in the `[fork.<chain>]` section of `foundry.toml` for the currently active fork.\nReturns (success, overwrote) - success is true if the operation succeeded, overwrote is true if a value was overwritten.",
+        "declaration": "function writeForkVar(string calldata key, bytes32[] calldata value) external returns (bool success, bool overwrote);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeForkVar(string,bytes32[])",
+        "selector": "0x1b7eb39f",
+        "selectorBytes": [
+          27,
+          126,
+          179,
+          159
+        ]
+      },
+      "group": "forking",
       "status": "stable",
       "safety": "safe"
     },
