@@ -416,3 +416,6 @@ test_repro!(10586);
 
 // https://github.com/foundry-rs/foundry/issues/10957
 test_repro!(10957);
+
+// https://github.com/foundry-rs/foundry/issues/11353
+test_repro!(11353);

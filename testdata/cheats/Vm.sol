@@ -19,7 +19,7 @@ interface Vm {
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct Chain { string name; uint256 chainId; string chainAlias; string rpcUrl; }
-    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; uint64 oldNonce; uint64 newNonce; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
@@ -316,6 +316,7 @@ interface Vm {
     function getRecordedLogs() external returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
+    function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
     function getWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
@@ -423,6 +424,40 @@ interface Vm {
     function readDir(string calldata path, uint64 maxDepth, bool followLinks) external view returns (DirEntry[] memory entries);
     function readFile(string calldata path) external view returns (string memory data);
     function readFileBinary(string calldata path) external view returns (bytes memory data);
+    function readForkAddress(string calldata key) external view returns (address);
+    function readForkAddressArray(string calldata key) external view returns (address[] memory);
+    function readForkBool(string calldata key) external view returns (bool);
+    function readForkBoolArray(string calldata key) external view returns (bool[] memory);
+    function readForkBytes(string calldata key) external view returns (bytes memory);
+    function readForkBytes32(string calldata key) external view returns (bytes32);
+    function readForkBytes32Array(string calldata key) external view returns (bytes32[] memory);
+    function readForkBytesArray(string calldata key) external view returns (bytes[] memory);
+    function readForkChain() external view returns (string memory);
+    function readForkChainAddress(uint256 chain, string calldata key) external view returns (address);
+    function readForkChainAddressArray(uint256 chain, string calldata key) external view returns (address[] memory);
+    function readForkChainBool(uint256 chain, string calldata key) external view returns (bool);
+    function readForkChainBoolArray(uint256 chain, string calldata key) external view returns (bool[] memory);
+    function readForkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
+    function readForkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
+    function readForkChainBytes32Array(uint256 chain, string calldata key) external view returns (bytes32[] memory);
+    function readForkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);
+    function readForkChainId() external view returns (uint256);
+    function readForkChainIds() external view returns (uint256[] memory);
+    function readForkChainInt(uint256 chain, string calldata key) external view returns (int256);
+    function readForkChainIntArray(uint256 chain, string calldata key) external view returns (int256[] memory);
+    function readForkChainRpcUrl(uint256 id) external view returns (string memory);
+    function readForkChainString(uint256 chain, string calldata key) external view returns (string memory);
+    function readForkChainStringArray(uint256 chain, string calldata key) external view returns (string[] memory);
+    function readForkChainUint(uint256 chain, string calldata key) external view returns (uint256);
+    function readForkChainUintArray(uint256 chain, string calldata key) external view returns (uint256[] memory);
+    function readForkChains() external view returns (string[] memory);
+    function readForkInt(string calldata key) external view returns (int256);
+    function readForkIntArray(string calldata key) external view returns (int256[] memory);
+    function readForkRpcUrl() external view returns (string memory);
+    function readForkString(string calldata key) external view returns (string memory);
+    function readForkStringArray(string calldata key) external view returns (string[] memory);
+    function readForkUint(string calldata key) external view returns (uint256);
+    function readForkUintArray(string calldata key) external view returns (uint256[] memory);
     function readLine(string calldata path) external view returns (string memory line);
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
