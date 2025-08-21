@@ -691,7 +691,6 @@ impl Backend {
     }
 
     /// Returns the current database implementation as a `&dyn` value.
-    #[inline(always)]
     pub fn db(&self) -> &dyn Database<Error = DatabaseError> {
         match self.active_fork_db() {
             Some(fork_db) => fork_db,
@@ -700,7 +699,6 @@ impl Backend {
     }
 
     /// Returns the current database implementation as a `&mut dyn` value.
-    #[inline(always)]
     pub fn db_mut(&mut self) -> &mut dyn Database<Error = DatabaseError> {
         match self.active_fork_ids.map(|(_, idx)| &mut self.inner.get_fork_mut(idx).db) {
             Some(fork_db) => fork_db,

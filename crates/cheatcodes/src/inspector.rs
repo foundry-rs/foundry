@@ -195,7 +195,6 @@ impl Clone for TestContext {
 
 impl TestContext {
     /// Clears the context.
-    #[inline]
     pub fn clear(&mut self) {
         self.opened_read_files.clear();
     }
@@ -1049,7 +1048,6 @@ impl Cheatcodes {
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
-    #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.

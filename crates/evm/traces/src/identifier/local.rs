@@ -19,7 +19,6 @@ pub struct LocalTraceIdentifier<'a> {
 
 impl<'a> LocalTraceIdentifier<'a> {
     /// Creates a new local trace identifier.
-    #[inline]
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         let mut ordered_ids = known_contracts
             .iter()
