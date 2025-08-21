@@ -2860,7 +2860,6 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signWithNonce(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
-
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
