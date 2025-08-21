@@ -111,7 +111,7 @@ impl WalletOpts {
             let key_name = get_env("GCP_NAME")?;
             let key_version = get_env("GCP_KEY_VERSION")?
                 .parse()
-                .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be be parsed into u64"))?;
+                .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
