@@ -942,6 +942,10 @@ impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
+        // Enable mapping recording to track mapping slot accesses
+        if state.mapping_slots.is_none() {
+            state.mapping_slots = Some(Default::default());
+        }
         Ok(Default::default())
     }
 }
@@ -1458,8 +1462,16 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
                                 // Get storage layout info for this slot
-                                let slot_info = layout
-                                    .and_then(|layout| get_slot_info(layout, &storage_access.slot));
+                                // Include mapping slots if available for the account
+                                let mapping_slots = ccx
+                                    .state
+                                    .mapping_slots
+                                    .as_ref()
+                                    .and_then(|slots| slots.get(&storage_access.account));
+
+                                let slot_info = layout.and_then(|layout| {
+                                    get_slot_info(layout, &storage_access.slot, mapping_slots)
+                                });
 
                                 // Try to decode values if we have slot info
                                 let (decoded, slot_info_with_decoded) = if let Some(mut info) =
@@ -1660,17 +1672,16 @@ fn get_contract_data<'a>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
-/// Gets storage layout info for a specific slot.
-fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
-    let slot = U256::from_be_bytes(slot.0);
-    let slot_str = slot.to_string();
+/// Gets storage layout info for a specific slot
+fn get_slot_info(
+    storage_layout: &StorageLayout,
+    slot: &B256,
+    mapping_slots: Option<&mapping::MappingSlots>,
+) -> Option<SlotInfo> {
+    let slot_u256 = U256::from_be_bytes(slot.0);
+    let slot_str = slot_u256.to_string();
 
     for storage in &storage_layout.storage {
-        trace!(
-            "Checking storage item: label={}, slot={}, type={}",
-            storage.label, storage.slot, storage.storage_type
-        );
-
         let storage_type = storage_layout.types.get(&storage.storage_type)?;
         let dyn_type = DynSolType::parse(&storage_type.label).ok();
 
@@ -1704,7 +1715,7 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
         if let Some(parsed_type) = dyn_type
             && let DynSolType::FixedArray(_, _) = parsed_type
             && let Some(slot_info) =
-                handle_array_slot(storage, storage_type, slot, array_start_slot, &slot_str)
+                handle_array_slot(storage, storage_type, slot_u256, array_start_slot, &slot_str)
         {
             return Some(slot_info);
         }
@@ -1712,13 +1723,88 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
         // If type parsing fails and the label is a struct
         if storage_type.label.starts_with("struct ")
             && let Some(slot_info) =
-                handle_struct(storage, storage_type, storage_layout, slot, &slot_str)
+                handle_struct(storage, storage_type, storage_layout, slot_u256, &slot_str)
+        {
+            return Some(slot_info);
+        }
+
+        // Check if this is a mapping slot
+        if let Some(mapping_slots) = mapping_slots
+            && let Some(slot_info) = handle_mapping(
+                storage,
+                storage_type,
+                slot,
+                &slot_str,
+                mapping_slots,
+                storage_layout,
+            )
         {
             return Some(slot_info);
         }
     }
 
     None
+}
+
+/// Handles mapping slot access by checking if the given slot is a known mapping entry
+/// and decoding the key to create a readable label.
+fn handle_mapping(
+    storage: &Storage,
+    storage_type: &StorageType,
+    slot: &B256,
+    slot_str: &str,
+    mapping_slots: &mapping::MappingSlots,
+    storage_layout: &StorageLayout,
+) -> Option<SlotInfo> {
+    trace!(
+        "handle_mapping: storage.slot={}, slot={:?}, has_keys={}, has_parents={}",
+        storage.slot,
+        slot,
+        mapping_slots.keys.contains_key(slot),
+        mapping_slots.parent_slots.contains_key(slot)
+    );
+
+    // Verify it's actually a mapping type
+    if storage_type.encoding != "mapping" {
+        return None;
+    }
+
+    // Check if this slot is a known mapping entry
+    let (key, parent) = mapping_slots.keys.get(slot).zip(mapping_slots.parent_slots.get(slot))?;
+
+    // Cross check the parent / base slot of a mapping. This slot is empty but it is used to
+    // calculate the storage slot hash: h(key . parent)
+    let storage_slot_b256 = B256::from(U256::from_str(&storage.slot).ok()?);
+    if storage_slot_b256 != *parent {
+        trace!("Mapping slot {} does not match parent slot {:?}", storage.slot, parent);
+        return None;
+    }
+
+    // Decode the key based on the mapping's key type
+    // Resolve the key type through the storage layout
+    // TODO: For structs and nested mappings we must recurse through storage_layout.types to get the
+    // final types and decode them.
+    let key_type = storage_layout.types.get(storage_type.key.as_ref()?)?;
+    let value_type = storage_layout.types.get(storage_type.value.as_ref()?)?;
+    // Decode key and create the label
+    let label = if let Ok(sol_type) = DynSolType::parse(&key_type.label)
+        && let Ok(decoded) = sol_type.abi_decode(&key.0)
+    {
+        format!("{}[{}]", storage.label, format_dyn_sol_value_raw(&decoded))
+    } else {
+        trace!(key = ?key_type.label, "failed to decode mapping key");
+        format!("{}[{}]", storage.label, hex::encode_prefixed(key))
+    };
+    let dyn_sol_type = DynSolType::parse(&value_type.label).unwrap_or(DynSolType::Bytes);
+
+    Some(SlotInfo {
+        label,
+        slot_type: StorageTypeInfo { label: storage_type.label.clone(), dyn_sol_type },
+        offset: storage.offset,
+        slot: slot_str.to_string(),
+        members: None,
+        decoded: None,
+    })
 }
 
 /// Handles array slot access.
