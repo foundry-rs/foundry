@@ -10672,18 +10672,18 @@
     },
     {
       "func": {
-        "id": "signWithNonce",
+        "id": "signWithNonceUnsafe",
         "description": "Signs `digest` with `privateKey` on the secp256k1 curve, using the given `nonce`\nas the raw ephemeral k value in ECDSA (instead of deriving it deterministically).",
-        "declaration": "function signWithNonce(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "declaration": "function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "signWithNonce(uint256,bytes32,uint256)",
-        "selector": "0xe11cb8fc",
+        "signature": "signWithNonceUnsafe(uint256,bytes32,uint256)",
+        "selector": "0x2012783a",
         "selectorBytes": [
-          225,
-          28,
-          184,
-          252
+          32,
+          18,
+          120,
+          58
         ]
       },
       "group": "crypto",
