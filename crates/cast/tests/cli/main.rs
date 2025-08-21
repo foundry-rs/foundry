@@ -3174,11 +3174,20 @@ contract WETH9 {
     }
 );
 
-casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_etherscan_api_key();
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_default,
+    |_prj, cmd| {
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let etherscan_api_key = next_etherscan_api_key();
 
-    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--flatten",
+            "--etherscan-api-key",
+            &etherscan_api_key,
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3187,7 +3196,8 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
