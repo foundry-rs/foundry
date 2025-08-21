@@ -91,13 +91,11 @@ pub enum OutputMode {
 
 impl OutputMode {
     /// Returns true if the output mode is `Normal`.
-    #[inline]
     pub fn is_normal(self) -> bool {
         self == Self::Normal
     }
 
     /// Returns true if the output mode is `Quiet`.
-    #[inline]
     pub fn is_quiet(self) -> bool {
         self == Self::Quiet
     }
@@ -115,13 +113,11 @@ pub enum OutputFormat {
 
 impl OutputFormat {
     /// Returns true if the output format is `Text`.
-    #[inline]
     pub fn is_text(self) -> bool {
         self == Self::Text
     }
 
     /// Returns true if the output format is `Json`.
-    #[inline]
     pub fn is_json(self) -> bool {
         self == Self::Json
     }
@@ -190,7 +186,6 @@ pub enum ColorChoice {
 }
 
 impl Default for Shell {
-    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -199,7 +194,6 @@ impl Default for Shell {
 impl Shell {
     /// Creates a new shell (color choice and verbosity), defaulting to 'auto' color and verbose
     /// output.
-    #[inline]
     pub fn new() -> Self {
         Self::new_with(
             OutputFormat::Text,
@@ -210,7 +204,6 @@ impl Shell {
     }
 
     /// Creates a new shell with the given color choice and verbosity.
-    #[inline]
     pub fn new_with(
         format: OutputFormat,
         mode: OutputMode,
@@ -232,7 +225,6 @@ impl Shell {
     }
 
     /// Creates a shell that ignores all output.
-    #[inline]
     pub fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
@@ -263,7 +255,6 @@ impl Shell {
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
-    #[inline]
     pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
         self.needs_clear.swap(needs_clear, Ordering::Relaxed)
     }
@@ -279,19 +270,16 @@ impl Shell {
     }
 
     /// Returns `true` if the `needs_clear` flag is set.
-    #[inline]
     pub fn needs_clear(&self) -> bool {
         self.needs_clear.load(Ordering::Relaxed)
     }
 
     /// Returns `true` if the `needs_clear` flag is unset.
-    #[inline]
     pub fn is_cleared(&self) -> bool {
         !self.needs_clear()
     }
 
     /// Returns the width of the terminal in spaces, if any.
-    #[inline]
     pub fn err_width(&self) -> TtyWidth {
         match self.output {
             ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
@@ -300,19 +288,16 @@ impl Shell {
     }
 
     /// Gets the output format of the shell.
-    #[inline]
     pub fn output_format(&self) -> OutputFormat {
         self.output_format
     }
 
     /// Gets the output mode of the shell.
-    #[inline]
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
 
     /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
-    #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
@@ -326,7 +311,6 @@ impl Shell {
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
     /// choice has been set to something else.
-    #[inline]
     pub fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
@@ -335,7 +319,6 @@ impl Shell {
     }
 
     /// Returns `true` if stderr is a tty.
-    #[inline]
     pub fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
@@ -344,7 +327,6 @@ impl Shell {
     }
 
     /// Whether `stderr` supports color.
-    #[inline]
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
@@ -353,7 +335,6 @@ impl Shell {
     }
 
     /// Whether `stdout` supports color.
-    #[inline]
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
@@ -489,7 +470,6 @@ impl ShellOut {
     }
 
     /// Gets stdout as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stdout(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stdout, .. } => stdout,
@@ -498,7 +478,6 @@ impl ShellOut {
     }
 
     /// Gets stderr as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stderr(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stderr, .. } => stderr,
@@ -534,7 +513,6 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
-    #[inline]
     fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
@@ -544,7 +522,6 @@ impl ColorChoice {
     }
 }
 
-#[inline]
 fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
         anstream::ColorChoice::Always
