@@ -37,7 +37,8 @@ pub trait Linter: Send + Sync {
 
     /// Run all lints.
     ///
-    /// The `compiler` should have already been configured with all the sources necessary.
+    /// The `compiler` should have already been configured with all the sources necessary,
+    /// as well as having performed parsing and lowering.
     fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
 }
 
