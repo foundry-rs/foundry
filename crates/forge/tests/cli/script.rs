@@ -1,6 +1,7 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_chains::Chain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
@@ -3247,7 +3248,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
         config.forks = ForkConfigs(
             vec![
                 (
-                    "mainnet".to_string(),
+                    Chain::mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             "mainnet-rpc".to_string(),
@@ -3284,7 +3285,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                     },
                 ),
                 (
-                    "optimism".to_string(),
+                    Chain::optimism_mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: None,
                         vars: vec![
@@ -3472,7 +3473,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
         config.forks = ForkConfigs(
             vec![
                 (
-                    "mainnet".to_string(),
+                    Chain::mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                             mainnet_endpoint.clone(),
@@ -3489,7 +3490,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![true, false, true].into()),
                         ("int_array".into(), vec!["-100", "200", "-300"].into()),
                         ("uint_array".into(), vec!["100", "200", "300"].into()),
@@ -3509,7 +3509,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                     },
                 ),
                 (
-                    "optimism".to_string(),
+                    Chain::optimism_mainnet(),
                     ForkChainConfig {
                         rpc_endpoint: None,
                         vars: vec![
@@ -3524,7 +3524,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
                         ("bytes".into(), "0x00f00000000000".into()),
                         ("str".into(), "bazz".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![false, true, false].into()),
                         ("int_array".into(), vec!["-400", "500", "-600"].into()),
                         ("uint_array".into(), vec!["400", "500", "600"].into()),
@@ -3564,10 +3563,6 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_panicsWhithoutSelectedFork() public {
-        vm.readForkChain();
-    }
-
     function test_forkVars() public {
         vm.createSelectFork("<url>");
 
@@ -3599,7 +3594,7 @@ contract ForkTest is DSTest {
         testArrayCheatcodes();
     }
 
-    function testArrayCheatcodes() public {
+    function testArrayCheatcodes() private {
         // Test array cheatcodes without specifying chain (uses active fork)
         console.log("   > Arrays:");
 
@@ -3651,7 +3646,7 @@ contract ForkTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvv", "ForkTest"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS] test_forkVars() ([GAS])
 Logs:
@@ -3669,8 +3664,6 @@ Logs:
        > uint_array[0]: 100
        > addr_array[0]: 0x1111111111111111111111111111111111111111
        > string_array[0]: hello
-
-[FAIL: vm.readForkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
 ...
 "#]]);
 });
@@ -3685,7 +3678,7 @@ forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
     prj.update_config(|config| {
         config.forks = ForkConfigs(
             vec![(
-                "mainnet".to_string(),
+                Chain::mainnet(),
                 ForkChainConfig {
                     rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
                         mainnet_endpoint.clone(),
@@ -3708,9 +3701,23 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_throwsErrorWhen() public {
+    function test_throwsErrorWithoutSelectedFork() public {
+        vm.readForkChain();
+    }
+
+    function test_throwsErrorWithUnknownVar() public {
+        vm.createSelectFork("<url>");
+        bool invalid = vm.readForkBool("invalid");
+    }
+
+    function test_throwsErrorWhenInvalidAddressLength() public {
         vm.createSelectFork("<url>");
         address owner = vm.readForkAddress("owner");
+    }
+
+    function test_throwsErrorWhenNotArray() public {
+        vm.createSelectFork("<url>");
+        string[] memory invalid = vm.readForkStringArray("owner");
     }
 }
        "#
@@ -3720,10 +3727,17 @@ contract ForkTest is DSTest {
 
     cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.readForkAddress: Failed to parse 'owner' in [fork.mainnet]: failed parsing "0xdeadbeef" as type `address`: parser error:
+Failing tests:
+Encountered 4 failing tests in src/ForkTest.t.sol:ForkTest
+[FAIL: vm.readForkAddress: failed to parse 'owner' in '[fork.<chain_id: 1>]': failed parsing "0xdeadbeef" as type `address`: parser error:
 0xdeadbeef
 ^
-invalid string length] test_throwsErrorWhen() ([GAS])
+invalid string length] test_throwsErrorWhenInvalidAddressLength() ([GAS])
+[FAIL: vm.readForkStringArray: variable 'owner' in '[fork.<chain_id: 1>]' must be an array] test_throwsErrorWhenNotArray() ([GAS])
+[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_throwsErrorWithUnknownVar() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_throwsErrorWithoutSelectedFork() ([GAS])
+
+Encountered a total of 4 failing tests, 0 tests succeeded
 ...
 "#]]);
 });

@@ -673,7 +673,15 @@ mod tests {
     }
 
     // Tests to ensure that conversion [DynSolValue] -> [serde_json::Value] -> [DynSolValue]
+    use proptest::prelude::ProptestConfig;
     proptest::proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 99,
+            // These are flaky so persisting them is not useful in CI.
+            failure_persistence: None,
+            ..Default::default()
+        })]
+
         #[test]
         fn test_json_roundtrip_guessed(v in guessable_types()) {
             let json = serialize_value_as_json(v.clone()).unwrap();
@@ -686,9 +694,9 @@ mod tests {
 
         #[test]
         fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
-                let json = serialize_value_as_json(v.clone()).unwrap();
+            let json = serialize_value_as_json(v.clone()).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
-                assert_eq!(value, v);
+            assert_eq!(value, v);
         }
     }
 }

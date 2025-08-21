@@ -25,7 +25,13 @@ pub struct LinterConfig {
     ///
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
+
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Default's to ["ERC"] to allow common names like `rescueERC20` or `ERC721TokenReceiver`.
+    pub mixed_case_exceptions: Vec<String>,
 }
+
 impl Default for LinterConfig {
     fn default() -> Self {
         Self {
@@ -33,6 +39,7 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            mixed_case_exceptions: vec!["ERC".to_string()],
         }
     }
 }

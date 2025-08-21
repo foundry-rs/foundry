@@ -1809,10 +1809,7 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         }
     }
 
@@ -1842,10 +1839,7 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         };
         Ok(format!("0x{encoded}"))
     }

@@ -143,7 +143,8 @@ impl BuildArgs {
                             .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
                             .collect(),
                     )
-                });
+                })
+                .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
             // Expand ignore globs and canonicalize from the get go
             let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
