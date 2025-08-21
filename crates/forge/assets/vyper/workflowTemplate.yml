@@ -21,11 +21,12 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Show Forge version
-        run: |
-          forge --version
+        run: forge --version
 
       - name: Setup Python
         uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Install Vyper
         run: pip install git+https://github.com/vyperlang/vyper.git@v0.4.3
