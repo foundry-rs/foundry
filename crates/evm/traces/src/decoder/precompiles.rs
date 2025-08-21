@@ -147,6 +147,11 @@ impl Precompile for Sha256 {
     fn signature(&self) -> &'static str {
         sha256Call::SIGNATURE
     }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = sha256Call::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
 }
 
 struct Ripemd160;
@@ -157,6 +162,11 @@ impl Precompile for Ripemd160 {
 
     fn signature(&self) -> &'static str {
         ripemdCall::SIGNATURE
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = ripemdCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
     }
 }
 
