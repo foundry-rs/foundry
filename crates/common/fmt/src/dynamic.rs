@@ -168,7 +168,8 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
                 // Use `serde_json::Number` if the number can be accurately represented.
                 Ok(Value::Number(n.into()))
             } else {
-                // Otherwise, fallback to its string representation
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
                 Ok(Value::String(i.to_string()))
             }
         }
@@ -177,7 +178,8 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
                 // Use `serde_json::Number` if the number can be accurately represented.
                 Ok(Value::Number(n.into()))
             } else {
-                // Otherwise, fallback to its string representation
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
                 Ok(Value::String(i.to_string()))
             }
         }
