@@ -1524,7 +1524,7 @@ casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"input\"");
+        when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_signTransaction"}"#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
@@ -1565,7 +1565,7 @@ casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"data\"");
+        when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_signTransaction"}"#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
@@ -2439,7 +2439,7 @@ casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"input\"");
+        when.json_body_partial(r#"{"method": "eth_estimateGas"}"#).body_contains(r#""input""#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
@@ -2526,7 +2526,7 @@ casttest!(send_eip7702_explicit_data_field_data, async |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"data\"");
+        when.json_body_partial(r#"{"method": "eth_estimateGas"}"#).body_contains(r#""data""#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
@@ -3719,7 +3719,7 @@ casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"input\"").json_body_partial(r#"{"method": "eth_call"}"#);
+        when.body_contains(r#""input""#).json_body_partial(r#"{"method": "eth_call"}"#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
@@ -3762,7 +3762,7 @@ casttest!(cast_call_explicit_data_field_data, |_prj, cmd| {
     let server = MockServer::start();
 
     let mock = server.mock(|when, then| {
-        when.body_contains("\"data\"").json_body_partial(r#"{"method": "eth_call"}"#);
+        when.body_contains(r#""data""#).json_body_partial(r#"{"method": "eth_call"}"#);
         then.status(200).body("{
             \"jsonrpc\": \"2.0\",
             \"id\": 1,
