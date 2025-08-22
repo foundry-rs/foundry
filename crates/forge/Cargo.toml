@@ -31,6 +31,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-core.workspace = true
 foundry-linking.workspace = true
+enscribe.workspace = true
 
 comfy-table.workspace = true
 eyre.workspace = true
@@ -102,8 +103,12 @@ quick-junit = "0.5.1"
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
+foundry-cheatcodes-spec.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
+alloy-contract.workspace = true
+alloy-ens.workspace = true
+alloy-sol-types.workspace = true
 foundry-wallets.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json"] }
