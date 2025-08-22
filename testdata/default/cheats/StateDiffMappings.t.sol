@@ -88,6 +88,13 @@ contract StateDiffMappingsTest is DSTest {
             "JSON should decode balance value correctly (1000 ether = 1000000000000000000000 wei)"
         );
 
+        // Check that the key field is present for simple mapping
+        assertContains(
+            json,
+            '"key":"0x0000000000000000000000000000000000001234"',
+            "JSON should contain decoded key field for simple mapping"
+        );
+
         // Stop recording and verify we have account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
         assertTrue(accesses.length > 0, "Should have account accesses");
@@ -150,6 +157,9 @@ contract StateDiffMappingsTest is DSTest {
         assertContains(
             json, '"decoded":{"previousValue":"false","newValue":"true"}', "Should decode flag bool value correctly"
         );
+
+        // Check that the key field is present for uint256 key mapping
+        assertContains(json, '"key":"12345"', "JSON should contain decoded key field for uint256 mapping");
 
         // Stop recording
         vm.stopAndReturnStateDiff();
@@ -249,6 +259,25 @@ contract StateDiffMappingsTest is DSTest {
         // Check the type is correctly identified for all entries
         assertContains(
             json, '"type":"mapping(address => mapping(address => uint256))"', "Should contain nested mapping type"
+        );
+
+        // Check that the keys field is present for nested mappings
+        assertContains(
+            json,
+            '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000002222"]',
+            "JSON should contain decoded keys array for owner1->spender1 nested mapping"
+        );
+
+        assertContains(
+            json,
+            '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000003333"]',
+            "JSON should contain decoded keys array for owner1->spender2 nested mapping"
+        );
+
+        assertContains(
+            json,
+            '"keys":["0x0000000000000000000000000000000000004444","0x0000000000000000000000000000000000005555"]',
+            "JSON should contain decoded keys array for owner2->spender3 nested mapping"
         );
 
         // Stop recording

@@ -118,6 +118,31 @@ struct SlotStateDiff {
     slot_info: Option<SlotInfo>,
 }
 
+/// Wrapper for mapping keys that serializes as "key" for single, "keys" for multiple
+#[derive(Debug)]
+struct MappingKeys(Vec<String>);
+
+impl Serialize for MappingKeys {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        if self.0.len() == 1 {
+            // Single key: serialize as "key": "value"
+            map.serialize_entry("key", &self.0[0])?;
+        } else {
+            // Multiple keys: serialize as "keys": ["value1", "value2", ...]
+            map.serialize_entry("keys", &self.0)?;
+        }
+
+        map.end()
+    }
+}
+
 #[derive(Serialize, Debug)]
 struct SlotInfo {
     /// The variable name from the storage layout.
@@ -126,6 +151,7 @@ struct SlotInfo {
     /// For struct members: dotted path (e.g., "myStruct.memberName")
     /// For array elements: name with indices (e.g., "myArray\[0\]", "matrix\[1\]\[2\]")
     /// For nested structures: full path (e.g., "outer.inner.field")
+    /// For mappings: base name only (e.g., "balances"), keys are in mapping_info
     label: String,
     #[serde(rename = "type", serialize_with = "serialize_slot_type")]
     slot_type: StorageTypeInfo,
@@ -137,6 +163,9 @@ struct SlotInfo {
     /// Decoded values (if available) - used for struct members
     #[serde(skip_serializing_if = "Option::is_none")]
     decoded: Option<DecodedSlotValues>,
+    /// Decoded mapping keys (serialized as "key" for single, "keys" for multiple)
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    keys: Option<MappingKeys>,
 }
 
 /// Wrapper type that holds both the original type label and the parsed DynSolType.
@@ -1706,6 +1735,7 @@ fn get_slot_info(
                 slot: storage.slot.clone(),
                 members: None,
                 decoded: None,
+                keys: None,
             });
         }
 
@@ -1860,19 +1890,24 @@ fn handle_mapping(
     // Reverse keys to process from outermost to innermost
     keys_to_decode.reverse();
 
-    // Build the label with decoded keys
+    // Build the label with decoded keys and collect decoded key values
     let mut label = storage.label.clone();
+    let mut decoded_keys = Vec::new();
 
     // Decode each key using the corresponding type
     for (i, key) in keys_to_decode.iter().enumerate() {
-        label = if let Some(key_type_label) = key_types.get(i)
+        if let Some(key_type_label) = key_types.get(i)
             && let Ok(sol_type) = DynSolType::parse(key_type_label)
             && let Ok(decoded) = sol_type.abi_decode(&key.0)
         {
-            format!("{}[{}]", label, format_dyn_sol_value_raw(&decoded))
+            let decoded_key_str = format_dyn_sol_value_raw(&decoded);
+            decoded_keys.push(decoded_key_str.clone());
+            label = format!("{}[{}]", label, decoded_key_str);
         } else {
-            format!("{}[{}]", label, hex::encode_prefixed(key.0))
-        };
+            let hex_key = hex::encode_prefixed(key.0);
+            decoded_keys.push(hex_key.clone());
+            label = format!("{}[{}]", label, hex_key);
+        }
     }
 
     // Parse the final value type for decoding
@@ -1885,6 +1920,7 @@ fn handle_mapping(
         slot: slot_str.to_string(),
         members: None,
         decoded: None,
+        keys: Some(MappingKeys(decoded_keys)),
     })
 }
 
@@ -1929,6 +1965,7 @@ fn handle_array_slot(
             slot: slot_str.to_string(),
             members: None,
             decoded: None,
+            keys: None,
         });
     }
 
@@ -2011,6 +2048,7 @@ fn handle_struct_recursive(
                             slot: ctx.slot_str.clone(),
                             members: None,
                             decoded: None,
+                            keys: None,
                         });
                     }
                 }
@@ -2038,6 +2076,7 @@ fn handle_struct_recursive(
                     slot: ctx.slot_str.clone(),
                     decoded: None,
                     members: if member_infos.is_empty() { None } else { Some(member_infos) },
+                    keys: None,
                 });
             } else {
                 // Multi-slot struct - return the first member.
@@ -2066,6 +2105,7 @@ fn handle_struct_recursive(
                     slot: ctx.slot_str.clone(),
                     decoded: None,
                     members: None,
+                    keys: None,
                 });
             }
         }
@@ -2105,6 +2145,7 @@ fn handle_struct_recursive(
                 slot: ctx.slot_str.clone(),
                 members: None,
                 decoded: None,
+                keys: None,
             });
         }
 
