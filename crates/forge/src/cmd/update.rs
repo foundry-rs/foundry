@@ -203,7 +203,7 @@ impl UpdateArgs {
         // Checkout and track the remote branch to ensure we have the latest commit
         // Using checkout -B ensures the local branch tracks origin/branch
         git.cmd_at(path)
-            .args(["checkout", "-B", branch, &format!("origin/{}", branch)])
+            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
             .exec()
             .wrap_err(format!(
                 "Could not checkout and track origin/{} for submodule at {}",
