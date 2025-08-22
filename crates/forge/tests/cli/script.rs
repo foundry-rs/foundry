@@ -3241,13 +3241,23 @@ Error: script failed: call to non-contract address [..]
 });
 
 // Tests that can access the fork config for each chain from `foundry.toml`
-forgetest_init!(can_read_fork_config_chain_ids, |prj, cmd| {
+forgetest_init!(can_read_fork_config_for_given_chain_ids, |prj, cmd| {
     prj.insert_vm();
     prj.insert_console();
     prj.insert_ds_test();
 
+    // Configure an optimism url in the `[rpc_endpoints]` section
     prj.update_config(|config| {
-        config.forks.chain_configs = vec![
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    // Leave optimsm rpc endpoint unconfigured
+    prj.config_deployment_toml(
+        ForkConfigPermission::Read,
+        vec![
             (
                 Chain::mainnet(),
                 ForkChainConfig {
@@ -3319,15 +3329,8 @@ forgetest_init!(can_read_fork_config_chain_ids, |prj, cmd| {
                     .collect(),
                 },
             ),
-        ]
-        .into_iter()
-        .collect();
-
-        config.rpc_endpoints = RpcEndpoints::new(vec![(
-            "optimism",
-            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
-        )]);
-    });
+        ],
+    );
 
     prj.add_source(
             "ForkScript.s.sol",
@@ -3468,8 +3471,18 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
     prj.insert_ds_test();
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
+    // Configure an optimism url in the `[rpc_endpoints]` section
     prj.update_config(|config| {
-        config.forks.chain_configs = vec![
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    // Leave optimsm rpc endpoint unconfigured
+    prj.config_deployment_toml(
+        ForkConfigPermission::Read,
+        vec![
             (
                 Chain::mainnet(),
                 ForkChainConfig {
@@ -3540,15 +3553,8 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                     .collect(),
                 },
             ),
-        ]
-        .into_iter()
-        .collect();
-
-        config.rpc_endpoints = RpcEndpoints::new(vec![(
-            "optimism",
-            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
-        )]);
-    });
+        ],
+    );
 
     prj.add_source(
         "ForkTest.t.sol",
@@ -3739,40 +3745,23 @@ Encountered a total of 4 failing tests, 0 tests succeeded
 "#]]);
 });
 
-// Tests for writeFork cheatcodes - writes to in-memory config and files
-forgetest_init!(can_write_fork_config, |prj, cmd| {
+// Tests that `writeFork` cheatcodes can only be used when scripting
+forgetest_init!(write_fork_config_forbidden_unless_scripting, |prj, cmd| {
     prj.insert_vm();
     prj.insert_console();
     prj.insert_ds_test();
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
-    // Verify that the values were persisted to the config file
-    let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
-    assert!(
-        !(config_content.contains("new_uint = 456")
-            || config_content.contains("initial_value = 789"))
-    );
-
-    // Set up initial configuration
-    prj.update_config(|config| {
-        config.forks.chain_configs = vec![(
+    prj.config_deployment_toml(
+        ForkConfigPermission::ReadWrite,
+        vec![(
             Chain::mainnet(),
             ForkChainConfig {
                 rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
-                vars: vec![
-                    ("initial_value".into(), "123".into()),
-                    ("bool_value".into(), true.into()),
-                ]
-                .into_iter()
-                .collect(),
+                vars: vec![("bool_value".into(), true.into())].into_iter().collect(),
             },
-        )]
-        .into_iter()
-        .collect();
-
-        // Enable write access
-        config.forks.access = ForkConfigPermission::ReadWrite;
-    });
+        )],
+    );
 
     prj.add_source(
         "WriteForkTest.t.sol",
@@ -3784,7 +3773,56 @@ import {console} from "./console.sol";
 contract WriteForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_writeForkOverrideValue() public {
+    function test_run() public {
+        vm.createSelectFork("<url>");
+
+        vm._expectCheatcodeRevert("vm.writeForkVar: forbidden context: 'Test' --> 'writeFork' cheatcodes are only allowed when scripting.");
+        (bool success, bool overwrote) = vm.writeForkVar("new_uint", uint256(456));
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    // Verify that the it can override existing variables
+    cmd.args(["test", "-vvv", "WriteForkTest"]).assert_success();
+});
+
+// Tests for writeFork cheatcodes writes to in-memory config and files, overriding existing values.
+forgetest_init!(write_fork_config_overrides_existing_values, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.config_deployment_toml(
+        ForkConfigPermission::ReadWrite,
+        vec![(
+            Chain::mainnet(),
+            ForkChainConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![
+                    ("initial_value".into(), "123".into()),
+                    ("bool_value".into(), true.into()),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        )],
+    );
+
+    prj.add_source(
+        "WriteForkScript.s.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract WriteForkScript is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function run() public {
         vm.createSelectFork("<url>");
 
         // Read initial values
@@ -3811,6 +3849,132 @@ contract WriteForkTest is DSTest {
         console.log("New value:", newValue);
         console.log("Updated value:", updatedValue);
     }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    // Verify that the it can override existing variables
+    cmd.args(["script", "-vvv", "WriteForkScript"]).assert_success();
+
+    let config_content = fs::read_to_string(prj.root().join("deployments.toml")).unwrap();
+    assert!(config_content.contains("new_uint = 456"));
+    assert!(config_content.contains("initial_value = 789"));
+});
+
+// Tests for writeFork cheatcodes writes to in-memory config and files, creating new values.
+forgetest_init!(write_fork_config_creates_new_values, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.config_deployment_toml(
+        ForkConfigPermission::ReadWrite,
+        vec![(
+            Chain::mainnet(),
+            ForkChainConfig {
+                rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                vars: vec![("bool_value".into(), true.into())].into_iter().collect(),
+            },
+        )],
+    );
+
+    prj.add_source(
+        "WriteForkScript.s.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract WriteForkScript is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function run() public {
+        vm.createSelectFork("<url>");
+
+        // Test writing all simple types
+        vm.writeForkVar("test_bool", true);
+        vm.writeForkVar("test_int", int256(-999));
+        vm.writeForkVar("test_uint", uint256(999));
+        vm.writeForkVar("test_address", address(0xdEADBEeF00000000000000000000000000000000));
+        vm.writeForkVar("test_bytes32", bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
+        vm.writeForkVar("test_string", string("hello world"));
+        vm.writeForkVar("test_bytes", bytes(hex"deadbeef"));
+
+        // Read back and verify
+        assert(vm.readForkBool("test_bool") == true);
+        assert(vm.readForkInt("test_int") == -999);
+        assert(vm.readForkUint("test_uint") == 999);
+        assert(vm.readForkAddress("test_address") == address(0xdEADBEeF00000000000000000000000000000000));
+        assert(vm.readForkBytes32("test_bytes32") == bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
+        assert(eqString(vm.readForkString("test_string"), "hello world"));
+        assert(eqBytes(vm.readForkBytes("test_bytes"), hex"deadbeef"));
+
+        // Test writing arrays
+        bool[] memory boolArray = new bool[](3);
+        boolArray[0] = true;
+        boolArray[1] = false;
+        boolArray[2] = true;
+        vm.writeForkVar("bool_array", boolArray);
+
+        int256[] memory intArray = new int256[](2);
+        intArray[0] = -100;
+        intArray[1] = 200;
+        vm.writeForkVar("int_array", intArray);
+
+        uint256[] memory uintArray = new uint256[](2);
+        uintArray[0] = 100;
+        uintArray[1] = 200;
+        vm.writeForkVar("uint_array", uintArray);
+
+        address[] memory addrArray = new address[](2);
+        addrArray[0] = address(0x1111111111111111111111111111111111111111);
+        addrArray[1] = address(0x2222222222222222222222222222222222222222);
+        vm.writeForkVar("addr_array", addrArray);
+
+        bytes32[] memory bytes32Array = new bytes32[](2);
+        bytes32Array[0] = bytes32(0x1111111111111111111111111111111111111111111111111111111111111111);
+        bytes32Array[1] = bytes32(0x2222222222222222222222222222222222222222222222222222222222222222);
+        vm.writeForkVar("bytes32_array", bytes32Array);
+
+        string[] memory stringArray = new string[](3);
+        stringArray[0] = "foo";
+        stringArray[1] = "bar";
+        stringArray[2] = "baz";
+        vm.writeForkVar("string_array", stringArray);
+
+        bytes[] memory bytesArray = new bytes[](2);
+        bytesArray[0] = hex"dead";
+        bytesArray[1] = hex"beef";
+        vm.writeForkVar("bytes_array", bytesArray);
+
+        // Read back and verify arrays
+        bool[] memory readBoolArray = vm.readForkBoolArray("bool_array");
+        assert(readBoolArray.length == 3);
+        assert(readBoolArray[0] == true);
+        assert(readBoolArray[1] == false);
+        assert(readBoolArray[2] == true);
+
+        int256[] memory readIntArray = vm.readForkIntArray("int_array");
+        assert(readIntArray.length == 2);
+        assert(readIntArray[0] == -100);
+        assert(readIntArray[1] == 200);
+
+        uint256[] memory readUintArray = vm.readForkUintArray("uint_array");
+        assert(readUintArray.length == 2);
+        assert(readUintArray[0] == 100);
+        assert(readUintArray[1] == 200);
+
+        address[] memory readAddrArray = vm.readForkAddressArray("addr_array");
+        assert(readAddrArray.length == 2);
+        assert(readAddrArray[0] == address(0x1111111111111111111111111111111111111111));
+
+        string[] memory readStringArray = vm.readForkStringArray("string_array");
+        assert(readStringArray.length == 3);
+        assert(eqString(readStringArray[0], "foo"));
+    }
 
     function eqString(string memory s1, string memory s2) public pure returns(bool) {
         return keccak256(bytes(s1)) == keccak256(bytes(s2));
@@ -3826,34 +3990,34 @@ contract WriteForkTest is DSTest {
     .unwrap();
 
     // Verify that the it can override existing variables
-    cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkOverrideValue"])
-        .assert_success();
+    cmd.args(["script", "-vvv", "WriteForkScript"]).assert_success();
 
-    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
-    // assert!(config_content.contains("new_uint = 456"));
-    // assert!(config_content.contains("initial_value = 789"));
+    // Verify that the new values were written to the config file
+    let config_content = fs::read_to_string(prj.root().join("deployments.toml")).unwrap();
+    assert!(config_content.contains("test_bool = true"));
+    assert!(config_content.contains("test_int = -999"));
+    assert!(config_content.contains("test_uint = 999"));
+    assert!(
+        config_content.contains(r#"test_address = "0xdEADBEeF00000000000000000000000000000000""#)
+    );
+    assert!(config_content.contains(
+        r#"test_bytes32 = "0x1234567890abcdef000000000000000000000000000000000000000000000000""#
+    ));
+    assert!(config_content.contains(r#"test_string = "hello world""#));
+    assert!(config_content.contains(r#"test_bytes = "0xdeadbeef""#));
 
-    // // Verify that the it can write all simple variable types
-    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkValues"]).assert_success();
-
-    // // Verify that the values were persisted to the config file
-    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
-    // assert!(config_content.contains("test_bool = true"));
-    // assert!(config_content.contains("test_int = -999"));
-    // assert!(config_content.contains("test_uint = 999"));
-    // assert!(
-    //     config_content.contains("test_address = \"0xdEADBEeF00000000000000000000000000000000\"")
-    // );
-    // assert!(config_content.contains(
-    //     "test_bytes32 = \"0x1234567890abcdef000000000000000000000000000000000000000000000000\""
-    // ));
-    // assert!(config_content.contains("test_string = \"hello world\""));
-    // assert!(config_content.contains("test_bytes = \"0xdeadbeef\""));
-
-    // // Verify that the it can write all array variable types
-    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkArrays"]).assert_success();
-
-    // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    // Verify arrays were written to the config file
+    assert!(config_content.contains("bool_array = [true, false, true]"));
+    assert!(config_content.contains("int_array = [-100, 200]"));
+    assert!(config_content.contains("uint_array = [100, 200]"));
+    assert!(config_content.contains(
+            r#"addr_array = ["0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222"]"#
+        ));
+    assert!(config_content.contains(
+            r#"bytes32_array = ["0x1111111111111111111111111111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222222222222222222222222222"]"#
+        ));
+    assert!(config_content.contains(r#"string_array = ["foo", "bar", "baz"]"#));
+    assert!(config_content.contains(r#"bytes_array = ["0xdead", "0xbeef"]"#));
 });
 
 // Test that writeFork respects access permissions
@@ -3904,5 +4068,5 @@ contract WriteForkPermissionTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvv", "WriteForkPermissionTest"]).assert_success();
+    cmd.args(["script", "-vvv", "WriteForkPermissionTest"]).assert_success();
 });

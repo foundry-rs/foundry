@@ -689,7 +689,13 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
-        config.forks.resolve_env_vars()?;
+        config
+            .forks
+            .load_from_root(
+                &config.root,
+                config.extends.as_ref().map(|ext| PathBuf::from(ext.path())),
+            )
+            .map_err(|e| ExtractConfigError::new(figment::Error::from(e.to_string())))?;
 
         Ok(config)
     }
@@ -5157,12 +5163,18 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [forks]
+                    path = "deployments.toml"
+                "#,
+            )?;
 
-                    [forks.mainnet]
-                    rpc_endpoint = "${_MAINNET_RPC}"
+            jail.create_file(
+                "deployments.toml",
+                r#"
+                    [mainnet]
+                    rpc_endpoint = "${MAINNET_RPC}"
 
-                    [forks.mainnet.vars]
-                    weth = "${_WETH_ADDRESS}"
+                    [mainnet.vars]
+                    weth = "${WETH_MAINNET}"
                     usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
                     pool_name = "USDC-ETH"
                     pool_fee = 3000
@@ -5173,7 +5185,7 @@ mod tests {
                     int_array = [-100, 200, -300]
                     uint_array = [100, 200, 300]
                     addr_array = [
-                        "${_ADDR1}",
+                        "${ADDR_1}",
                         "0x2222222222222222222222222222222222222222"
                     ]
                     bytes32_array = [
@@ -5183,10 +5195,10 @@ mod tests {
                     bytes_array = ["0x1234", "0x5678", "0xabcd"]
                     string_array = ["hello", "world", "test"]
 
-                    [forks.10]
+                    [10]
                     rpc_endpoint = "${OPTIMISM_RPC}"
 
-                    [forks.10.vars]
+                    [10.vars]
                     weth = "${WETH_OPTIMISM}"
                 "#,
             )?;
@@ -5332,25 +5344,22 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_config_invalid_chain_fails() {
+    fn test_invalid_fork_config() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                        [forks]
-
-                        [forks.randomchain]
-                        rpc_endpoint = "random-chain-rpc"
-                        [forks.randomchain.vars]
-                        some_value = "some_value"
-                    "#,
+            [forks]
+            path = "deployments.toml"
+        "#,
             )?;
             let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
 
             // Check the error message
-            assert!(err_str.contains("`forks.randomchain`"));
+            assert!(result.is_err_and(|e| {
+                let err_str = e.to_string();
+                err_str.contains("fork config file not found")
+            }));
 
             Ok(())
         });
@@ -5359,46 +5368,85 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                        [forks]
+                [forks]
+                path = "deployments.toml"
+            "#,
+            )?;
+            jail.create_file(
+                "deployments.toml",
+                r#"
+                [randomchain]
+                rpc_endpoint = "random-chain-rpc"
 
-                        [forks.0]
-                        rpc_endpoint = "random-chain-rpc"
-                        [forks.0.vars]
-                        some_value = "some_value"
-                    "#,
+                [randomchain.vars]
+                some_value = "some_value"
+            "#,
             )?;
             let result = Config::load();
-            // Despite there is no `NamedChain` associated with `0` id, it is a valid u64
-            assert!(result.is_ok());
-            assert!(result.unwrap().forks.get(&Chain::from_id_unchecked(0)).is_some());
+
+            // Check the error message
+            assert!(result.is_err_and(|e| {
+                let err_str = e.to_string();
+                err_str.contains("failed to parse fork config file")
+                    && err_str.contains("[randomchain]")
+            }));
 
             Ok(())
         });
-    }
 
-    #[test]
-    fn test_fork_config_missing_env_var_fails() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [forks]
+                path = "deployments.toml"
+            "#,
+            )?;
+            jail.create_file(
+                "deployments.toml",
+                r#"
+                [0]
+                rpc_endpoint = "random-chain-rpc"
+
+                [0.vars]
+                some_value = "some_value"
+            "#,
+            )?;
+            let result = Config::load();
+
+            // Despite there is no `NamedChain` associated with `0` id, it is a valid u64
+            assert!(result.is_ok_and(|res| res.forks.get(&Chain::from_id_unchecked(0)).is_some()));
+
+            Ok(())
+        });
+
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
                     [forks]
-                    [forks.mainnet]
+                    path = "deployments.toml"
+                "#,
+            )?;
+            jail.create_file(
+                "deployments.toml",
+                r#"
+                    [mainnet]
                     rpc_endpoint = "${MISSING_RPC_VAR}"
 
-                    [forks.mainnet.vars]
+                    [mainnet.vars]
                     some_value = "${MISSING_VAR}"
                 "#,
             )?;
             let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
 
-            // Check that the error message contains the chain name and specific variable name
-            assert!(
-                err_str.contains("[forks.mainnet]")
+            // Check that missing env vars throw an error message contains the chain id and
+            // the name of the unresolved variable
+            assert!(result.is_err_and(|e| {
+                let err_str = e.to_string();
+                err_str.contains("[<chain_id: 1>]")
                     && (err_str.contains("MISSING_RPC_VAR") || err_str.contains("MISSING_VAR"))
-            );
+            }));
 
             Ok(())
         });
