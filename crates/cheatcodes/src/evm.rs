@@ -1471,11 +1471,17 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     state_diffs
 }
 
+/// EIP-1967 implementation storage slot
+const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+/// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
+const EIP1822_PROXIABLE_SLOT: &str =
+    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+
 /// Helper function to get the contract name from the deployed code.
 fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
     // Check if we have available artifacts to match against
     let artifacts = ccx.state.config.available_artifacts.as_ref()?;
-
     // Try to load the account and get its code
     let account = ccx.ecx.journaled_state.load_account(address).ok()?;
     let code = account.info.code.as_ref()?;
@@ -1487,11 +1493,27 @@ fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
+
+    // Check if this is a proxy contract by looking for proxy storage slot patterns
+    let hex_str = hex::encode(&code_bytes);
+
+    let find_by_suffix = |suffix: &str| {
+        artifacts.iter().find_map(|(a, _)| a.identifier().ends_with(suffix).then(|| a.identifier()))
+    };
+
+    // Simple proxy detection based on storage slot patterns
+    if hex_str.contains(EIP1967_IMPL_SLOT) {
+        return find_by_suffix(":TransparentUpgradeableProxy");
+    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT) {
+        return find_by_suffix(":UUPSUpgradeable");
+    }
+
+    // Try exact match
     if let Some((artifact_id, _)) = artifacts.find_by_deployed_code_exact(&code_bytes) {
         return Some(artifact_id.identifier());
     }
 
-    // Fallback to fuzzy matching if exact match fails
+    // Try fuzzy matching
     if let Some((artifact_id, _)) = artifacts.find_by_deployed_code(&code_bytes) {
         return Some(artifact_id.identifier());
     }
@@ -1518,6 +1540,7 @@ fn get_contract_data<'a>(
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
+
     if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
         return Some(result);
     }
