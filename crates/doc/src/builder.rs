@@ -3,6 +3,7 @@ use crate::{
     document::DocumentContent, helpers::merge_toml_table,
 };
 use alloy_primitives::map::HashMap;
+use eyre::{Context, Result};
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{DocConfig, filter::expand_globs};
@@ -89,8 +90,8 @@ impl DocBuilder {
     }
 
     /// Get the output directory
-    pub fn out_dir(&self) -> PathBuf {
-        self.root.join(&self.config.out)
+    pub fn out_dir(&self) -> Result<PathBuf> {
+        Ok(self.root.join(&self.config.out).canonicalize()?)
     }
 
     /// Parse the sources and build the documentation.
@@ -120,6 +121,7 @@ impl DocBuilder {
             .chain(library_sources.iter().map(|path| (path, true)))
             .collect::<Vec<_>>();
 
+        let out_dir = self.out_dir()?;
         let documents = combined_sources
             .par_iter()
             .enumerate()
@@ -180,7 +182,8 @@ impl DocBuilder {
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
-                        let target_path = self.config.out.join(Self::SRC).join(relative_path);
+
+                        let target_path = out_dir.join(Self::SRC).join(relative_path);
                         let ident = item.source.ident();
                         Ok(Document::new(
                             path.clone(),
@@ -205,7 +208,7 @@ impl DocBuilder {
                         name
                     };
                     let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                    let target_path = self.config.out.join(Self::SRC).join(relative_path);
+                    let target_path = out_dir.join(Self::SRC).join(relative_path);
 
                     let identity = match filestem {
                         Some(stem) if stem.to_lowercase().contains("constants") => stem.to_owned(),
@@ -229,7 +232,8 @@ impl DocBuilder {
                     for (ident, funcs) in overloaded {
                         let filename = funcs.first().expect("no overloaded functions").filename();
                         let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                        let target_path = self.config.out.join(Self::SRC).join(relative_path);
+
+                        let target_path = out_dir.join(Self::SRC).join(relative_path);
                         files.push(
                             Document::new(
                                 path.clone(),
@@ -266,7 +270,7 @@ impl DocBuilder {
 
         // Build the book if requested
         if self.should_build {
-            MDBook::load(self.out_dir())
+            MDBook::load(self.out_dir().wrap_err("failed to construct output directory")?)
                 .and_then(|book| book.build())
                 .map_err(|err| eyre::eyre!("failed to build book: {err:?}"))?;
         }
@@ -275,7 +279,7 @@ impl DocBuilder {
     }
 
     fn write_mdbook(&self, documents: Vec<Document>) -> eyre::Result<()> {
-        let out_dir = self.out_dir();
+        let out_dir = self.out_dir().wrap_err("failed to construct output directory")?;
         let out_dir_src = out_dir.join(Self::SRC);
         fs::create_dir_all(&out_dir_src)?;
 
@@ -320,11 +324,11 @@ impl DocBuilder {
         fs::write(out_dir.join("book.css"), include_str!("../static/book.css"))?;
 
         // Write book config
-        fs::write(self.out_dir().join("book.toml"), self.book_config()?)?;
+        fs::write(out_dir.join("book.toml"), self.book_config()?)?;
 
         // Write .gitignore
         let gitignore = "book/";
-        fs::write(self.out_dir().join(".gitignore"), gitignore)?;
+        fs::write(out_dir.join(".gitignore"), gitignore)?;
 
         // Write doc files
         for document in documents {
@@ -426,15 +430,14 @@ impl DocBuilder {
             }
         });
 
+        let out_dir = self.out_dir().wrap_err("failed to construct output directory")?;
         let mut readme = BufWriter::new("\n\n# Contents\n");
         for (path, files) in grouped {
             if path.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default() {
                 for file in files {
                     let ident = &file.identity;
 
-                    let summary_path = file
-                        .target_path
-                        .strip_prefix(self.out_dir().strip_prefix(&self.root)?.join(Self::SRC))?;
+                    let summary_path = &file.target_path.strip_prefix(out_dir.join(Self::SRC))?;
                     summary.write_link_list_item(
                         ident,
                         &summary_path.display().to_string(),
@@ -457,7 +460,7 @@ impl DocBuilder {
         if !readme.is_empty()
             && let Some(path) = base_path
         {
-            let path = self.out_dir().join(Self::SRC).join(path);
+            let path = out_dir.join(Self::SRC).join(path);
             fs::create_dir_all(&path)?;
             fs::write(path.join(Self::README), readme.finish())?;
         }
