@@ -434,7 +434,7 @@ interface Vm {
 
     /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
     #[cheatcode(group = Evm, safety = Safe)]
-    function getStorageAccesses() external view returns (StorageAccess[] memory accesses);
+    function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
 
     // -------- Recording Map Writes --------
 

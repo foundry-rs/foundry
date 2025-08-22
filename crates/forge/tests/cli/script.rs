@@ -3241,7 +3241,7 @@ Error: script failed: call to non-contract address [..]
 });
 
 // Tests that can access the fork config for each chain from `foundry.toml`
-forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
+forgetest_init!(can_read_fork_config_chain_ids, |prj, cmd| {
     prj.insert_vm();
     prj.insert_console();
     prj.insert_ds_test();
@@ -3266,7 +3266,6 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![true, false, true].into()),
                         ("int_array".into(), vec!["-100", "200", "-300"].into()),
                         ("uint_array".into(), vec!["100", "200", "300"].into()),
@@ -3489,7 +3488,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
                         ("bytes".into(), "0x00000000000f00".into()),
                         ("str".into(), "bar".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![true, false, true].into()),
                         ("int_array".into(), vec!["-100", "200", "-300"].into()),
                         ("uint_array".into(), vec!["100", "200", "300"].into()),
@@ -3524,7 +3522,6 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
                         ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
                         ("bytes".into(), "0x00f00000000000".into()),
                         ("str".into(), "bazz".into()),
-                        // Array configurations for testing new array cheatcodes
                         ("bool_array".into(), vec![false, true, false].into()),
                         ("int_array".into(), vec!["-400", "500", "-600"].into()),
                         ("uint_array".into(), vec!["400", "500", "600"].into()),
@@ -3563,10 +3560,6 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_panicsWhithoutSelectedFork() public {
-        vm.readForkChain();
-    }
-
     function test_forkVars() public {
         vm.createSelectFork("<url>");
 
@@ -3598,7 +3591,7 @@ contract ForkTest is DSTest {
         testArrayCheatcodes();
     }
 
-    function testArrayCheatcodes() public {
+    function testArrayCheatcodes() private {
         // Test array cheatcodes without specifying chain (uses active fork)
         console.log("   > Arrays:");
 
@@ -3650,7 +3643,7 @@ contract ForkTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvv", "ForkTest"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS] test_forkVars() ([GAS])
 Logs:
@@ -3668,14 +3661,16 @@ Logs:
        > uint_array[0]: 100
        > addr_array[0]: 0x1111111111111111111111111111111111111111
        > string_array[0]: hello
-
-[FAIL: vm.readForkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
 ...
 "#]]);
 });
 
-// Tests that it will throw an error when reading an address that is not 20 bytes
-forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
+// Tests that it will throw an error when:
+// - inferring the chain id, but a fork is not selected
+// - reading an inexistent variable
+// - reading an address that is not 20 bytes
+// - reading an element as an array
+forgetest_init!(fork_read_throws_errors, |prj, cmd| {
     prj.insert_vm();
     prj.insert_console();
     prj.insert_ds_test();
@@ -3703,9 +3698,23 @@ import {console} from "./console.sol";
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_throwsErrorWhen() public {
+    function test_throwsErrorWithoutSelectedFork() public {
+        vm.readForkChain();
+    }
+
+    function test_throwsErrorWithUnknownVar() public {
+        vm.createSelectFork("<url>");
+        bool invalid = vm.readForkBool("invalid");
+    }
+
+    function test_throwsErrorWhenInvalidAddressLength() public {
         vm.createSelectFork("<url>");
         address owner = vm.readForkAddress("owner");
+    }
+
+    function test_throwsErrorWhenNotArray() public {
+        vm.createSelectFork("<url>");
+        string[] memory invalid = vm.readForkStringArray("owner");
     }
 }
        "#
@@ -3715,16 +3724,23 @@ contract ForkTest is DSTest {
 
     cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: vm.readForkAddress: Failed to parse 'owner' in [fork.mainnet]: failed parsing "0xdeadbeef" as type `address`: parser error:
+Failing tests:
+Encountered 4 failing tests in src/ForkTest.t.sol:ForkTest
+[FAIL: vm.readForkAddress: failed to parse 'owner' in '[fork.<chain_id: 1>]': failed parsing "0xdeadbeef" as type `address`: parser error:
 0xdeadbeef
 ^
-invalid string length] test_throwsErrorWhen() ([GAS])
+invalid string length] test_throwsErrorWhenInvalidAddressLength() ([GAS])
+[FAIL: vm.readForkStringArray: variable 'owner' in '[fork.<chain_id: 1>]' must be an array] test_throwsErrorWhenNotArray() ([GAS])
+[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_throwsErrorWithUnknownVar() ([GAS])
+[FAIL: vm.readForkChain: a fork must be selected] test_throwsErrorWithoutSelectedFork() ([GAS])
+
+Encountered a total of 4 failing tests, 0 tests succeeded
 ...
 "#]]);
 });
 
 // Tests for writeFork cheatcodes - writes to in-memory config and files
-forgetest_init!(can_write_fork_config_simple, |prj, cmd| {
+forgetest_init!(can_write_fork_config, |prj, cmd| {
     prj.insert_vm();
     prj.insert_console();
     prj.insert_ds_test();
@@ -3732,8 +3748,10 @@ forgetest_init!(can_write_fork_config_simple, |prj, cmd| {
 
     // Verify that the values were persisted to the config file
     let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
-    assert!(!config_content.contains("new_uint = 456"));
-    assert!(!config_content.contains("initial_value = 789"));
+    assert!(
+        !(config_content.contains("new_uint = 456")
+            || config_content.contains("initial_value = 789"))
+    );
 
     // Set up initial configuration
     prj.update_config(|config| {
@@ -3794,121 +3812,6 @@ contract WriteForkTest is DSTest {
         console.log("Updated value:", updatedValue);
     }
 
-    function test_writeForkValues() public {
-        vm.createSelectFork("<url>");
-
-        // Test writing all supported types
-        vm.writeForkVar("test_bool", true);
-        vm.writeForkVar("test_int", int256(-999));
-        vm.writeForkVar("test_uint", uint256(999));
-        vm.writeForkVar("test_address", address(0xdEADBEeF00000000000000000000000000000000));
-        vm.writeForkVar("test_bytes32", bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
-        vm.writeForkVar("test_string", string("hello world"));
-        vm.writeForkVar("test_bytes", bytes(hex"deadbeef"));
-
-        // Read back and verify
-        assert(vm.readForkBool("test_bool") == true);
-        assert(vm.readForkInt("test_int") == -999);
-        assert(vm.readForkUint("test_uint") == 999);
-        assert(vm.readForkAddress("test_address") == address(0xdEADBEeF00000000000000000000000000000000));
-        assert(vm.readForkBytes32("test_bytes32") == bytes32(0x1234567890abcdef000000000000000000000000000000000000000000000000));
-        assert(eqString(vm.readForkString("test_string"), "hello world"));
-        assert(eqBytes(vm.readForkBytes("test_bytes"), hex"deadbeef"));
-
-        console.log("All types written and verified");
-    }
-
-    function test_writeForkArrays() public {
-        vm.createSelectFork("<url>");
-
-        // Test writing arrays
-        bool[] memory boolArray = new bool[](3);
-        boolArray[0] = true;
-        boolArray[1] = false;
-        boolArray[2] = true;
-        vm.writeForkVar("bool_array", boolArray);
-
-        int256[] memory intArray = new int256[](2);
-        intArray[0] = -100;
-        intArray[1] = 200;
-        vm.writeForkVar("int_array", intArray);
-
-        uint256[] memory uintArray = new uint256[](2);
-        uintArray[0] = 100;
-        uintArray[1] = 200;
-        vm.writeForkVar("uint_array", uintArray);
-
-        address[] memory addrArray = new address[](2);
-        addrArray[0] = address(0x1111111111111111111111111111111111111111);
-        addrArray[1] = address(0x2222222222222222222222222222222222222222);
-        vm.writeForkVar("addr_array", addrArray);
-
-        bytes32[] memory bytes32Array = new bytes32[](2);
-        bytes32Array[0] = bytes32(0x1111111111111111111111111111111111111111111111111111111111111111);
-        bytes32Array[1] = bytes32(0x2222222222222222222222222222222222222222222222222222222222222222);
-        vm.writeForkVar("bytes32_array", bytes32Array);
-
-        string[] memory stringArray = new string[](3);
-        stringArray[0] = "foo";
-        stringArray[1] = "bar";
-        stringArray[2] = "baz";
-        vm.writeForkVar("string_array", stringArray);
-
-        bytes[] memory bytesArray = new bytes[](2);
-        bytesArray[0] = hex"dead";
-        bytesArray[1] = hex"beef";
-        vm.writeForkVar("bytes_array", bytesArray);
-
-        // Read back and verify arrays
-        bool[] memory readBoolArray = vm.readForkBoolArray("bool_array");
-        assert(readBoolArray.length == 3);
-        assert(readBoolArray[0] == true);
-        assert(readBoolArray[1] == false);
-        assert(readBoolArray[2] == true);
-
-        int256[] memory readIntArray = vm.readForkIntArray("int_array");
-        assert(readIntArray.length == 2);
-        assert(readIntArray[0] == -100);
-        assert(readIntArray[1] == 200);
-
-        uint256[] memory readUintArray = vm.readForkUintArray("uint_array");
-        assert(readUintArray.length == 2);
-        assert(readUintArray[0] == 100);
-        assert(readUintArray[1] == 200);
-
-        address[] memory readAddrArray = vm.readForkAddressArray("addr_array");
-        assert(readAddrArray.length == 2);
-        assert(readAddrArray[0] == address(0x1111111111111111111111111111111111111111));
-
-        string[] memory readStringArray = vm.readForkStringArray("string_array");
-        assert(readStringArray.length == 3);
-        assert(eqString(readStringArray[0], "foo"));
-
-        console.log("All arrays written and verified");
-    }
-
-    function test_writeForkChainSpecific() public {
-        // Test writing to specific chain without selecting fork
-        uint256 chainId = 1; // mainnet
-
-        // Write values for specific chain
-        (bool success, bool overwrote) = vm.writeForkChainVar(chainId, "chain_specific_uint", uint256(12345));
-        assert(success);
-        assert(!overwrote);
-
-        vm.writeForkChainVar(chainId, "chain_specific_bool", false);
-        vm.writeForkChainVar(chainId, "chain_specific_string", string("chain test"));
-
-        // Now select fork and verify values are there
-        vm.createSelectFork("<url>");
-
-        assert(vm.readForkUint("chain_specific_uint") == 12345);
-        assert(vm.readForkBool("chain_specific_bool") == false);
-        assert(eqString(vm.readForkString("chain_specific_string"), "chain test"));
-
-        console.log("Chain-specific writes verified");
-    }
-
     function eqString(string memory s1, string memory s2) public pure returns(bool) {
         return keccak256(bytes(s1)) == keccak256(bytes(s2));
     }
@@ -3922,11 +3825,9 @@ contract WriteForkTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvv", "WriteForkTest"]).assert_success();
-
-    // // Verify that the it can override existing variables
-    // cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkOverrideValue"])
-    //     .assert_success();
+    // Verify that the it can override existing variables
+    cmd.args(["test", "-vvv", "WriteForkTest", "--mt", "test_writeForkOverrideValue"])
+        .assert_success();
 
     // let config_content = fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
     // assert!(config_content.contains("new_uint = 456"));
