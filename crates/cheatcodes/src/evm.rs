@@ -2,7 +2,6 @@
 
 use crate::{
     inspector::{InnerEcx, RecordDebugStepInfo},
-    strategy::CheatcodeInspectorStrategy,
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*,
 };
@@ -867,7 +866,7 @@ impl Cheatcode for setBlockhashCall {
 impl Cheatcode for startDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let mut info = RecordDebugStepInfo {
@@ -898,11 +897,11 @@ impl Cheatcode for startDebugTraceRecordingCall {
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let Some(record_info) = ccx.state.record_debug_steps_info else {
-            return Err(Error::from("nothing recorded"))
+            return Err(Error::from("nothing recorded"));
         };
 
         // Use the trace nodes to flatten the call trace
@@ -1258,19 +1257,7 @@ fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) 
 }
 
 impl Cheatcode for pvmCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { enabled } = self;
-
-        // Switch the strategy based on PVM setting
-        if *enabled {
-            state.strategy = CheatcodeInspectorStrategy::new_pvm();
-            tracing::info!("PVM mode enabled");
-        } else {
-            // Switch back to EVM strategy
-            state.strategy = CheatcodeInspectorStrategy::new_evm();
-            tracing::info!("PVM mode disabled, using EVM");
-        }
-
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(Default::default())
     }
 }

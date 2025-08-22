@@ -53,9 +53,10 @@ pub use invariant::InvariantExecutor;
 mod trace;
 pub use trace::TracingExecutor;
 
-mod strategy;
+pub mod strategy;
 pub use strategy::{
-    EvmExecutorStrategyRunner, ExecutorStrategy, ExecutorStrategyContext, ExecutorStrategyRunner,
+    EvmExecutorStrategyRunner, ExecutorStrategy, ExecutorStrategyContext, ExecutorStrategyExt,
+    ExecutorStrategyRunner,
 };
 
 sol! {

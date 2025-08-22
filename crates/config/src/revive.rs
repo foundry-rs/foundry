@@ -9,6 +9,9 @@ use crate::{Config, SolcReq};
 /// Filename for resolc cache
 pub const RESOLC_SOLIDITY_FILES_CACHE_FILENAME: &str = "resolc-solidity-files-cache.json";
 
+/// Name of the subdirectory for solc artifacts in dual compilation mode
+pub const SOLC_ARTIFACTS_SUBDIR: &str = "solc";
+
 pub const CONTRACT_SIZE_LIMIT: usize = 250_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]

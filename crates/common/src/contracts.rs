@@ -298,7 +298,7 @@ impl ContractsByArtifact {
     pub fn find_abi_by_name_or_src_path(&self, name_or_path: &str) -> Option<(JsonAbi, String)> {
         self.iter()
             .find(|(artifact, _)| {
-                artifact.name == name_or_path || artifact.source == PathBuf::from(name_or_path)
+                artifact.name == name_or_path || artifact.source == Path::new(name_or_path)
             })
             .map(|(_, contract)| (contract.abi.clone(), contract.name.clone()))
     }

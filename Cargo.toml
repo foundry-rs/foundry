@@ -188,8 +188,8 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
-revive-env = { path = "crates/revive-env"}
-revive-strategy = { path = "crates/revive-strategy"}
+revive-env = { path = "crates/revive-env" }
+revive-strategy = { path = "crates/revive-strategy" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.13.3", default-features = false }
@@ -322,7 +322,7 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 serial_test = "2.0"
-polkadot-sdk = { version = "2506.0.0" }
+polkadot-sdk = { version = "2507.1.0" }
 
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used

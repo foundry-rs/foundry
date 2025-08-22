@@ -3,6 +3,9 @@ use std::{any::Any, fmt::Debug};
 use alloy_primitives::{Address, U256};
 use eyre::Result;
 use foundry_cheatcodes::CheatcodesStrategy;
+use foundry_compilers::{
+    compilers::resolc::dual_compiled_contracts::DualCompiledContracts, ProjectCompileOutput,
+};
 use foundry_evm_core::backend::{Backend, BackendResult, BackendStrategy, CowBackend};
 use revm::{
     primitives::{EnvWithHandlerCfg, ResultAndState},
@@ -45,7 +48,7 @@ impl ExecutorStrategyContext for () {
 }
 
 /// Stateless strategy runner for [ExecutorStrategy].
-pub trait ExecutorStrategyRunner: Debug + Send + Sync {
+pub trait ExecutorStrategyRunner: Debug + Send + Sync + ExecutorStrategyExt {
     /// Creates a new [BackendStrategy].
     fn new_backend_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> BackendStrategy;
 
@@ -89,6 +92,24 @@ pub trait ExecutorStrategyRunner: Debug + Send + Sync {
         executor_env: &EnvWithHandlerCfg,
         inspector: &mut InspectorStack,
     ) -> Result<ResultAndState>;
+}
+
+/// Extended trait for Revive/PVM.
+pub trait ExecutorStrategyExt {
+    /// Set [DualCompiledContracts] on the context.
+    fn revive_set_dual_compiled_contracts(
+        &self,
+        _ctx: &mut dyn ExecutorStrategyContext,
+        _dual_compiled_contracts: DualCompiledContracts,
+    ) {
+    }
+
+    fn revive_set_compilation_output(
+        &self,
+        _ctx: &mut dyn ExecutorStrategyContext,
+        _output: ProjectCompileOutput,
+    ) {
+    }
 }
 
 /// Implements [ExecutorStrategyRunner] for EVM.
@@ -158,6 +179,8 @@ impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
         CheatcodesStrategy::new_evm()
     }
 }
+
+impl ExecutorStrategyExt for EvmExecutorStrategyRunner {}
 
 /// Defines the strategy for an [Executor].
 #[derive(Debug)]

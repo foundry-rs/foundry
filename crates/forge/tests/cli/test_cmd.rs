@@ -3699,7 +3699,7 @@ contract CounterTest is Test {
     .unwrap();
 
     // Test that the --resolc flag works for actual compilation and testing
-    cmd.forge_fuse().args(["test", "--resolc"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--resolc"]).assert_success();
 });
 
 // Test that resolc configuration option works
