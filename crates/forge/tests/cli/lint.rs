@@ -440,12 +440,12 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
     prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
 
-    // Both contracts should be linted on build.
+    // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:24
   |
-6 |         uint256 public CounterA_Fail_Lint;
+6 |         uint256 public Counter[..]_Fail_Lint;
   |                        ------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -453,7 +453,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:24
   |
-6 |         uint256 public CounterB_Fail_Lint;
+6 |         uint256 public Counter[..]_Fail_Lint;
   |                        ------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
