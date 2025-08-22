@@ -1290,7 +1290,10 @@ access = false
   },
   "no_storage_caching": false,
   "no_rpc_rate_limit": false,
-  "forks": {},
+  "forks": {
+    "path": null,
+    "access": false
+  },
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
   "cbor_metadata": true,
