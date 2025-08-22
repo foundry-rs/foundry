@@ -1,7 +1,8 @@
 use eyre::Result;
 use foundry_compilers::{
-    CompilerInput, Project,
+    CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
@@ -42,11 +43,27 @@ pub fn configure_pcx(
         None => project.paths.read_input_files()?,
     };
 
+    // Only process sources with latest Solidity version to avoid conflicts.
+    let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+    let (version, sources, _) = graph
+        // resolve graph into mapping language -> version -> sources
+        .into_sources_by_version(project)?
+        .sources
+        .into_iter()
+        // only interested in Solidity sources
+        .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
+        .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
+        .1
+        .into_iter()
+        // always pick the latest version
+        .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
+        .unwrap();
+
     let solc = SolcVersionedInput::build(
         sources,
         config.solc_settings()?,
         SolcLanguage::Solidity,
-        foundry_config::semver::Version::new(0, 0, 0), // Unused
+        version,
     );
 
     configure_pcx_from_solc(pcx, project, &solc, true);
