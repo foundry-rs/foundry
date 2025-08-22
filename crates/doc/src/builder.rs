@@ -96,6 +96,9 @@ impl DocBuilder {
 
     /// Parse the sources and build the documentation.
     pub fn build(self) -> eyre::Result<()> {
+        fs::create_dir_all(self.root.join(&self.config.out))
+            .wrap_err("failed to create output directory")?;
+
         // Expand ignore globs
         let ignored = expand_globs(&self.root, self.config.ignore.iter())?;
 
