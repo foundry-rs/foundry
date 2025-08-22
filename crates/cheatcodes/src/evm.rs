@@ -1502,14 +1502,14 @@ fn get_contract_data<'a>(
     let find_by_suffix =
         |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
     // Simple proxy detection based on storage slot patterns
-    if hex_str.contains(EIP1967_IMPL_SLOT) {
-        if let Some(result) = find_by_suffix(":TransparentUpgradeableProxy") {
-            return Some(result);
-        }
-    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT) {
-        if let Some(result) = find_by_suffix(":UUPSUpgradeable") {
-            return Some(result);
-        }
+    if hex_str.contains(EIP1967_IMPL_SLOT)
+        && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
+    {
+        return Some(result);
+    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && let Some(result) = find_by_suffix(":UUPSUpgradeable")
+    {
+        return Some(result);
     }
 
     // Try exact match
