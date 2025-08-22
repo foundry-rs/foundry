@@ -595,7 +595,7 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     let git = Git::new(prj.root());
 
     let submodules = git.submodules().unwrap();
-    assert!(submodules.0.iter().find(|s| s.rev() == FORGE_STD_REVISION).is_some());
+    assert!(submodules.0.iter().any(|s| s.rev() == FORGE_STD_REVISION));
 
     let mut lockfile = Lockfile::new(prj.root());
     lockfile.read().unwrap();
