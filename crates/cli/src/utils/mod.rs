@@ -117,9 +117,15 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
 }
 
 /// Return an [ExecutorStrategy] via the config.
-pub fn get_executor_strategy(_config: &Config) -> ExecutorStrategy {
-    info!("using evm strategy");
-    ExecutorStrategy::new_evm()
+pub fn get_executor_strategy(config: &Config) -> ExecutorStrategy {
+    // TODO: using resolc compiler: `[FAIL: EvmError: StackUnderflow] constructor() (gas: 0)`
+    if config.resolc.resolc_compile {
+        info!("using revive strategy");
+        use revive_strategy::ReviveExecutorStrategyBuilder;
+        ExecutorStrategy::new_revive()
+    } else {
+        ExecutorStrategy::new_evm()
+    }
 }
 
 pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>

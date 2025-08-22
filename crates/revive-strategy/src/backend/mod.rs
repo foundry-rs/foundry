@@ -7,21 +7,20 @@ use foundry_evm::backend::{
     BackendStrategy, BackendStrategyContext, BackendStrategyRunner, EvmBackendStrategyRunner,
     ForkDB,
 };
-use polkadot_sdk::{sp_core::H160, sp_io};
-use revive_env::ExtBuilder;
+use polkadot_sdk::sp_io;
 use serde::{Deserialize, Serialize};
 
 /// Create revive strategy for [BackendStrategy].
 pub trait ReviveBackendStrategyBuilder {
     /// Create new revive strategy.
-    fn new_revive() -> Self;
+    fn new_revive(test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self;
 }
 
 impl ReviveBackendStrategyBuilder for BackendStrategy {
-    fn new_revive() -> Self {
+    fn new_revive(test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self {
         Self {
             runner: &ReviveBackendStrategyRunner,
-            context: Box::new(ReviveBackendStrategyContext::new()),
+            context: Box::new(ReviveBackendStrategyContext::new(test_externalities)),
         }
     }
 }
@@ -85,14 +84,8 @@ pub struct ReviveBackendStrategyContext {
 }
 
 impl ReviveBackendStrategyContext {
-    fn new() -> Self {
-        Self {
-            revive_test_externalities: Arc::new(Mutex::new(
-                ExtBuilder::default()
-                    .balance_genesis_config(vec![(H160::from_low_u64_be(1), 1000)])
-                    .build(),
-            )),
-        }
+    fn new(revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self {
+        Self { revive_test_externalities }
     }
 }
 

@@ -252,6 +252,10 @@ impl DatabaseExt for CowBackend<'_> {
         self.backend.to_mut().add_persistent_account(account)
     }
 
+    fn persistent_accounts(&self) -> &std::collections::HashSet<Address> {
+        self.backend.persistent_accounts()
+    }
+
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {
         self.backend.to_mut().allow_cheatcode_access(account)
     }

@@ -3699,7 +3699,46 @@ contract CounterTest is Test {
     .unwrap();
 
     // Test that the --resolc flag works for actual compilation and testing
-    cmd.forge_fuse().args(["test", "--resolc"]).assert_success();
+    cmd.forge_fuse().args(["test", "--resolc"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+[COMPILING_FILES] with [RESOLC_VERSION]
+[RESOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
+usually needed in the following cases:
+  1. To detect whether an address belongs to a smart contract.
+  2. To detect whether the deploy code execution has finished.
+Polkadot comes with native account abstraction support (so smart contracts are just accounts
+coverned by code), and you should avoid differentiating between contracts and non-contract
+addresses.
+[FILE]
+Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
+usually needed in the following cases:
+  1. To detect whether an address belongs to a smart contract.
+  2. To detect whether the deploy code execution has finished.
+Polkadot comes with native account abstraction support (so smart contracts are just accounts
+coverned by code), and you should avoid differentiating between contracts and non-contract
+addresses.
+[FILE]
+Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
+usually needed in the following cases:
+  1. To detect whether an address belongs to a smart contract.
+  2. To detect whether the deploy code execution has finished.
+Polkadot comes with native account abstraction support (so smart contracts are just accounts
+coverned by code), and you should avoid differentiating between contracts and non-contract
+addresses.
+[FILE]
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testIncrement() ([GAS])
+[PASS] testSetNumber() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });
 
 // Test that resolc configuration option works

@@ -26,7 +26,7 @@ use serde_json::value::RawValue;
 use std::fmt::Write;
 
 /// Different sender kinds used by [`CastTxBuilder`].
-#[expect(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
@@ -477,7 +477,7 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
                 write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
             }
         }
-        return Ok(Some(decoded_error))
+        return Ok(Some(decoded_error));
     }
     Ok(None)
 }

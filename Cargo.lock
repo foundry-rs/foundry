@@ -5955,6 +5955,7 @@ dependencies = [
  "itertools 0.14.0",
  "rayon",
  "regex",
+ "revive-strategy",
  "rustls",
  "serde",
  "serde_json",

@@ -11,6 +11,7 @@ use crate::executor::{
 };
 
 mod backend;
+mod cheatcodes;
 mod executor;
 
 /// Create Revive strategy for [ExecutorStrategy].
@@ -22,7 +23,8 @@ pub trait ReviveExecutorStrategyBuilder {
 impl ReviveExecutorStrategyBuilder for ExecutorStrategy {
     fn new_revive() -> Self {
         Self {
-            runner: &ReviveExecutorStrategyRunner,
+            // TODO: we need to spawn test externalities for each test
+            runner: Box::leak(Box::new(ReviveExecutorStrategyRunner::new())),
             context: Box::new(ReviveExecutorStrategyContext::default()),
         }
     }

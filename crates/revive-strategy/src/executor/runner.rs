@@ -1,6 +1,7 @@
+use std::sync::{Arc, Mutex};
+
 use alloy_primitives::{Address, U256};
 use foundry_cheatcodes::CheatcodeInspectorStrategy;
-use foundry_common::sh_err;
 use foundry_compilers::{
     compilers::resolc::dual_compiled_contracts::DualCompiledContracts, ProjectCompileOutput,
 };
@@ -12,28 +13,42 @@ use foundry_evm::{
     },
 };
 use polkadot_sdk::{
-    frame_support::traits::fungible::Mutate,
+    frame_support::traits::{fungible::Mutate, Currency},
     pallet_balances,
-    pallet_revive::AddressMapper,
-    polkadot_runtime_common::U256ToBalance,
+    pallet_revive::{AddressMapper, BalanceOf, BalanceWithDust},
     sp_core::{self, H160},
-    sp_runtime::traits::Convert,
+    sp_io,
 };
-use revive_env::{AccountId, Runtime, System};
+use revive_env::{AccountId, ExtBuilder, Runtime, System};
 use revm::primitives::{EnvWithHandlerCfg, ResultAndState};
 
 use crate::{
     backend::{get_backend_ref, ReviveBackendStrategyBuilder, ReviveInspectContext},
+    cheatcodes::PvmCheatcodeInspectorStrategyBuilder,
     executor::context::ReviveExecutorStrategyContext,
 };
 
 /// Defines the [ExecutorStrategyRunner] strategy for Revive.
 #[derive(Debug, Default, Clone)]
-pub struct ReviveExecutorStrategyRunner;
+pub struct ReviveExecutorStrategyRunner {
+    pub revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
+}
+
+impl ReviveExecutorStrategyRunner {
+    pub fn new() -> Self {
+        Self {
+            revive_test_externalities: Arc::new(Mutex::new(
+                ExtBuilder::default()
+                    .balance_genesis_config(vec![(H160::from_low_u64_be(1), 1000)])
+                    .build(),
+            )),
+        }
+    }
+}
 
 impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
     fn new_backend_strategy(&self, _ctx: &dyn ExecutorStrategyContext) -> BackendStrategy {
-        BackendStrategy::new_revive()
+        BackendStrategy::new_revive(self.revive_test_externalities.clone())
     }
 
     fn new_cheatcodes_strategy(
@@ -41,7 +56,7 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         ctx: &dyn ExecutorStrategyContext,
     ) -> foundry_cheatcodes::CheatcodesStrategy {
         let _ctx = get_context_ref(ctx);
-        CheatcodeInspectorStrategy::new_pvm()
+        CheatcodeInspectorStrategy::new_pvm(self.revive_test_externalities.clone())
     }
 
     /// Sets the balance of an account.
@@ -56,19 +71,19 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
     ) -> foundry_evm::backend::BackendResult<()> {
         let amount_pvm =
             sp_core::U256::from_little_endian(&amount.as_le_bytes()).min(u128::MAX.into());
-        let amount_pvm = U256ToBalance::convert(amount_pvm);
-        let amount_evm = U256::from(amount_pvm);
-        if amount != amount_evm {
-            let _ = sh_err!("Amount mismatch {amount} != {amount_evm}, Polkadot balances are u128. Test results may be incorrect.");
-        }
-        EvmExecutorStrategyRunner.set_balance(executor, address, amount_evm)?;
+        let balance_native =
+            BalanceWithDust::<BalanceOf<Runtime>>::from_value::<Runtime>(amount_pvm).unwrap();
+
+        EvmExecutorStrategyRunner.set_balance(executor, address, amount)?;
 
         let backend = get_backend_ref(executor.backend().strategy.context.as_ref());
         let mut ext = backend.revive_test_externalities.lock().unwrap();
+        let min_balance = pallet_balances::Pallet::<Runtime>::minimum_balance();
+
         ext.execute_with(|| {
             pallet_balances::Pallet::<Runtime>::set_balance(
                 &AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice())),
-                amount_pvm,
+                balance_native.into_rounded_balance().saturating_add(min_balance),
             );
         });
         Ok(())
@@ -81,14 +96,6 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
     ) -> foundry_evm::backend::BackendResult<U256> {
         let evm_balance = EvmExecutorStrategyRunner.get_balance(executor, address)?;
 
-        let backend = get_backend_ref(executor.backend().strategy.context.as_ref());
-        let mut ext = backend.revive_test_externalities.lock().unwrap();
-        let balance = ext.execute_with(|| {
-            pallet_balances::Pallet::<Runtime>::free_balance(AccountId::to_fallback_account_id(
-                &H160::from_slice(address.as_slice()),
-            ))
-        });
-        assert_eq!(evm_balance, U256::from(balance));
         Ok(evm_balance)
     }
 

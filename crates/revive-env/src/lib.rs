@@ -50,7 +50,7 @@ impl ExtBuilder {
         .unwrap();
         let mut ext = sp_io::TestExternalities::new(t);
         ext.register_extension(KeystoreExt::new(MemoryKeystore::new()));
-        ext.execute_with(|| System::set_block_number(1));
+        ext.execute_with(|| System::set_block_number(0));
 
         ext
     }
@@ -79,7 +79,7 @@ mod tests {
     fn test_changing_block_number() {
         let mut ext = ExtBuilder::default().build();
         ext.execute_with(|| {
-            assert_eq!(System::block_number(), 1);
+            assert_eq!(System::block_number(), 0);
             System::set_block_number(5);
             assert_eq!(System::block_number(), 5);
         });

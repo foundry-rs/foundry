@@ -330,6 +330,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         }
     }
 
+    /// Returns the persistent accounts.
+    fn persistent_accounts(&self) -> &HashSet<Address>;
+
     /// Grants cheatcode access for the given `account`
     ///
     /// Returns true if the `account` already has access
@@ -1478,6 +1481,10 @@ impl DatabaseExt for Backend {
 
     fn is_persistent(&self, acc: &Address) -> bool {
         self.inner.persistent_accounts.contains(acc)
+    }
+
+    fn persistent_accounts(&self) -> &HashSet<Address> {
+        &self.inner.persistent_accounts
     }
 
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {

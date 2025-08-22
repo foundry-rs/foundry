@@ -47,19 +47,18 @@ mod evm;
 mod fs;
 
 mod inspector;
+pub use inspector::{CommonCreateInput, Ecx, InnerEcx};
 
 mod json;
 
 mod script;
-pub use script::{Wallets, WalletsInner};
+pub use script::{Broadcast, Wallets, WalletsInner};
 
 mod strategy;
 pub use strategy::{
     CheatcodeInspectorStrategy, CheatcodeInspectorStrategyContext,
-    CheatcodeInspectorStrategyRunner, CheatcodesStrategy,
+    CheatcodeInspectorStrategyRunner, CheatcodesStrategy, EvmCheatcodeInspectorStrategyRunner,
 };
-
-mod pvm;
 
 mod string;
 
@@ -98,12 +97,14 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     }
 }
 
-pub trait DynCheatcode: 'static {
+pub trait DynCheatcode: 'static + std::any::Any {
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static>;
 
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result;
+
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
@@ -120,6 +121,11 @@ impl<T: Cheatcode> DynCheatcode for T {
     #[inline]
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         self.apply_full(ccx, executor)
+    }
+
+    #[inline]
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -144,9 +150,9 @@ impl dyn DynCheatcode {
 /// The cheatcode context, used in `Cheatcode`.
 pub struct CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
     /// The cheatcodes inspector state.
-    pub(crate) state: &'cheats mut Cheatcodes,
+    pub state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>,
+    pub ecx: &'evm mut InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>,
     /// The precompiles context.
     pub(crate) precompiles: &'evm mut ContextPrecompiles<&'db mut (dyn DatabaseExt + 'db2)>,
     /// The original `msg.sender`.
