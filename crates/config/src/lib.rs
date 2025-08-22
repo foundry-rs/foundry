@@ -5204,13 +5204,14 @@ mod tests {
             // By default, it has read-only permissions.
             assert_eq!(config.forks.access, ForkConfigPermission::Read);
 
-            let expected: HashMap<Chain, ForkChainConfig> = vec![(
-                Chain::mainnet(),
-                ForkChainConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        "mainnet-rpc".to_string(),
-                    ))),
-                    vars: vec![
+            let expected: HashMap<Chain, ForkChainConfig> = vec![
+                (
+                    Chain::mainnet(),
+                    ForkChainConfig {
+                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                            "mainnet-rpc".to_string(),
+                        ))),
+                        vars: vec![
                         ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
                         ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
                         ("pool_name".into(), "USDC-ETH".into()),
