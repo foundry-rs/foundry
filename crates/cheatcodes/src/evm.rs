@@ -1746,6 +1746,56 @@ fn get_slot_info(
     None
 }
 
+/// Recursively resolves a mapping type reference, handling nested mappings.
+///
+/// For a mapping type like `mapping(address => mapping(uint256 => bool))`, this function
+/// traverses the type hierarchy to extract all key types and the final value type.
+///
+/// # Returns
+/// Returns `Some((key_types, final_value_type, full_type_label))` where:
+/// * `key_types` - A vector of all key types from outermost to innermost (e.g., ["address",
+///   "uint256"])
+/// * `final_value_type` - The ultimate value type at the end of the chain (e.g., "bool")
+/// * `full_type_label` - The complete mapping type label (e.g., "mapping(address => mapping(uint256
+///   => bool))")
+///
+/// Returns `None` if the type reference cannot be resolved.
+fn resolve_mapping_type(
+    type_ref: &str,
+    storage_layout: &StorageLayout,
+) -> Option<(Vec<String>, String, String)> {
+    let storage_type = storage_layout.types.get(type_ref)?;
+
+    if storage_type.encoding != "mapping" {
+        // Not a mapping, return the type as-is
+        return Some((vec![], storage_type.label.clone(), storage_type.label.clone()));
+    }
+
+    // Get key and value type references
+    let key_type_ref = storage_type.key.as_ref()?;
+    let value_type_ref = storage_type.value.as_ref()?;
+
+    // Resolve the key type
+    let key_type = storage_layout.types.get(key_type_ref)?;
+    let mut key_types = vec![key_type.label.clone()];
+
+    // Check if the value is another mapping (nested case)
+    if let Some(value_storage_type) = storage_layout.types.get(value_type_ref) {
+        if value_storage_type.encoding == "mapping" {
+            // Recursively resolve the nested mapping
+            let (nested_keys, final_value, _) =
+                resolve_mapping_type(value_type_ref, storage_layout)?;
+            key_types.extend(nested_keys);
+            return Some((key_types, final_value, storage_type.label.clone()));
+        } else {
+            // Value is not a mapping, we're done
+            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
+        }
+    }
+
+    None
+}
+
 /// Handles mapping slot access by checking if the given slot is a known mapping entry
 /// and decoding the key to create a readable label.
 fn handle_mapping(
@@ -1770,36 +1820,67 @@ fn handle_mapping(
     }
 
     // Check if this slot is a known mapping entry
-    let (key, parent) = mapping_slots.keys.get(slot).zip(mapping_slots.parent_slots.get(slot))?;
-
-    // Cross check the parent / base slot of a mapping. This slot is empty but it is used to
-    // calculate the storage slot hash: h(key . parent)
-    let storage_slot_b256 = B256::from(U256::from_str(&storage.slot).ok()?);
-    if storage_slot_b256 != *parent {
-        trace!("Mapping slot {} does not match parent slot {:?}", storage.slot, parent);
+    if !mapping_slots.keys.contains_key(slot) {
         return None;
     }
 
-    // Decode the key based on the mapping's key type
-    // Resolve the key type through the storage layout
-    // TODO: For structs and nested mappings we must recurse through storage_layout.types to get the
-    // final types and decode them.
-    let key_type = storage_layout.types.get(storage_type.key.as_ref()?)?;
-    let value_type = storage_layout.types.get(storage_type.value.as_ref()?)?;
-    // Decode key and create the label
-    let label = if let Ok(sol_type) = DynSolType::parse(&key_type.label)
-        && let Ok(decoded) = sol_type.abi_decode(&key.0)
+    // Convert storage.slot to B256 for comparison
+    let storage_slot_b256 = B256::from(U256::from_str(&storage.slot).ok()?);
+
+    // Walk up the parent chain to collect keys and validate the base slot
+    // This single traversal both validates and collects keys
+    let mut current_slot = *slot;
+    let mut keys_to_decode = Vec::new();
+    let mut found_base = false;
+
+    while let Some((key, parent)) =
+        mapping_slots.keys.get(&current_slot).zip(mapping_slots.parent_slots.get(&current_slot))
     {
-        format!("{}[{}]", storage.label, format_dyn_sol_value_raw(&decoded))
-    } else {
-        trace!(key = ?key_type.label, "failed to decode mapping key");
-        format!("{}[{}]", storage.label, hex::encode_prefixed(key))
-    };
-    let dyn_sol_type = DynSolType::parse(&value_type.label).unwrap_or(DynSolType::Bytes);
+        keys_to_decode.push(*key);
+
+        // Check if the parent is our base storage slot
+        if *parent == storage_slot_b256 {
+            found_base = true;
+            break;
+        }
+
+        // Move up to the parent for the next iteration
+        current_slot = *parent;
+    }
+
+    if !found_base {
+        trace!("Mapping slot {} does not match any parent in chain", storage.slot);
+        return None;
+    }
+
+    // Resolve the mapping type to get all key types and the final value type
+    let (key_types, value_type_label, full_type_label) =
+        resolve_mapping_type(&storage.storage_type, storage_layout)?;
+
+    // Reverse keys to process from outermost to innermost
+    keys_to_decode.reverse();
+
+    // Build the label with decoded keys
+    let mut label = storage.label.clone();
+
+    // Decode each key using the corresponding type
+    for (i, key) in keys_to_decode.iter().enumerate() {
+        label = if let Some(key_type_label) = key_types.get(i)
+            && let Ok(sol_type) = DynSolType::parse(key_type_label)
+            && let Ok(decoded) = sol_type.abi_decode(&key.0)
+        {
+            format!("{}[{}]", label, format_dyn_sol_value_raw(&decoded))
+        } else {
+            format!("{}[{}]", label, hex::encode_prefixed(key.0))
+        };
+    }
+
+    // Parse the final value type for decoding
+    let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
 
     Some(SlotInfo {
         label,
-        slot_type: StorageTypeInfo { label: storage_type.label.clone(), dyn_sol_type },
+        slot_type: StorageTypeInfo { label: full_type_label, dyn_sol_type },
         offset: storage.offset,
         slot: slot_str.to_string(),
         members: None,

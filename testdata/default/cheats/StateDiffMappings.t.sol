@@ -9,6 +9,8 @@ contract MappingStorage {
     mapping(address => uint256) public balances; // Slot 0
     mapping(uint256 => address) public owners; // Slot 1
     mapping(bytes32 => bool) public flags; // Slot 2
+    // Nested mapping
+    mapping(address => mapping(address => uint256)) public allowances; // Slot 3
 
     function setBalance(address account, uint256 amount) public {
         balances[account] = amount;
@@ -20,6 +22,10 @@ contract MappingStorage {
 
     function setFlag(bytes32 key, bool value) public {
         flags[key] = value;
+    }
+
+    function setAllowance(address owner, address spender, uint256 amount) public {
+        allowances[owner][spender] = amount;
     }
 }
 
@@ -109,6 +115,72 @@ contract StateDiffMappingsTest is DSTest {
         assertContains(json, '"type":"mapping(bytes32 => bool)"', "Should contain bytes32=>bool mapping type");
         assertContains(
             json, '"decoded":{"previousValue":"false","newValue":"true"}', "Should decode flag bool value correctly"
+        );
+
+        // Stop recording
+        vm.stopAndReturnStateDiff();
+    }
+
+    function testNestedMappingStateDiff() public {
+        // Start recording state diffs
+        vm.startStateDiffRecording();
+
+        // Test case 1: owner1 -> spender1
+        address owner1 = address(0x1111);
+        address spender1 = address(0x2222);
+        mappingStorage.setAllowance(owner1, spender1, 500 ether);
+
+        // Test case 2: same owner (owner1) -> different spender (spender2)
+        address spender2 = address(0x3333);
+        mappingStorage.setAllowance(owner1, spender2, 750 ether);
+
+        // Test case 3: different owner (owner2) -> different spender (spender3)
+        address owner2 = address(0x4444);
+        address spender3 = address(0x5555);
+        mappingStorage.setAllowance(owner2, spender3, 1000 ether);
+
+        // Get state diff as JSON for detailed inspection
+        string memory json = vm.getStateDiffJson();
+
+        // Debug: log the JSON for inspection
+        emit log_string("State diff JSON (nested mapping - multiple entries):");
+        emit log_string(json);
+
+        // Check that all three nested mapping entries are correctly decoded
+
+        // Entry 1: owner1 -> spender1
+        assertContains(
+            json,
+            '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]"',
+            "Should contain first nested mapping label (owner1 -> spender1)"
+        );
+        assertContains(
+            json, '"newValue":"500000000000000000000"', "Should have correct value for owner1 -> spender1 (500 ether)"
+        );
+
+        // Entry 2: owner1 -> spender2 (same owner, different spender)
+        assertContains(
+            json,
+            '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]"',
+            "Should contain second nested mapping label (owner1 -> spender2)"
+        );
+        assertContains(
+            json, '"newValue":"750000000000000000000"', "Should have correct value for owner1 -> spender2 (750 ether)"
+        );
+
+        // Entry 3: owner2 -> spender3 (different owner)
+        assertContains(
+            json,
+            '"label":"allowances[0x0000000000000000000000000000000000004444][0x0000000000000000000000000000000000005555]"',
+            "Should contain third nested mapping label (owner2 -> spender3)"
+        );
+        assertContains(
+            json, '"newValue":"1000000000000000000000"', "Should have correct value for owner2 -> spender3 (1000 ether)"
+        );
+
+        // Check the type is correctly identified for all entries
+        assertContains(
+            json, '"type":"mapping(address => mapping(address => uint256))"', "Should contain nested mapping type"
         );
 
         // Stop recording
