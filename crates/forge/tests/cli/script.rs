@@ -4043,16 +4043,16 @@ forgetest_init!(write_fork_respects_permissions, |prj, cmd| {
     });
 
     prj.add_source(
-        "WriteForkPermissionTest.t.sol",
+        "WriteForkPermissionScript.s.sol",
         &r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
 import {console} from "./console.sol";
 
-contract WriteForkPermissionTest is DSTest {
+contract WriteForkPermissionScript is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
-    function test_writeFailsWithReadOnlyAccess() public {
+    function run() public {
         vm.createSelectFork("<url>");
 
         // Attempt to write should return false for success
@@ -4068,5 +4068,5 @@ contract WriteForkPermissionTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["script", "-vvv", "WriteForkPermissionTest"]).assert_success();
+    cmd.args(["script", "-vvv", "WriteForkPermissionScript"]).assert_success();
 });

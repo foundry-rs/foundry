@@ -64,7 +64,7 @@ pub struct CheatsConfig {
     pub chains: HashMap<String, ChainData>,
     /// Mapping of chain IDs to their aliases
     pub chain_id_to_alias: HashMap<u64, String>,
-    /// Fork configuration wrapped in Arc<RwLock> for thread-safe read/write access
+    /// Fork configuration wrapped in `Arc<RwLock>`. Necessary to achieve interior mutability.
     pub forks: Arc<RwLock<ForkConfigs>>,
 }
 

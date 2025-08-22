@@ -10,6 +10,111 @@ use alloy_sol_types::SolValue;
 use foundry_evm_core::ContextExt;
 use std::{borrow::Cow, fs, path::Path};
 
+// -- HELPER MACROS ------------------------------------------------------------
+
+// Helper macros to generate read cheatcode implementations
+macro_rules! impl_get_value_cheatcode {
+    ($struct:ident, $sol_type:expr,stateful) => {
+        impl Cheatcode for $struct {
+            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
+                let chain = get_active_fork_chain(ccx)?;
+                get_and_encode_toml_value(chain, key, $sol_type, false, ccx.state)
+            }
+        }
+    };
+    ($struct:ident, $sol_type:expr) => {
+        impl Cheatcode for $struct {
+            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+                let Self { chain, key } = self;
+                get_and_encode_toml_value(
+                    Chain::from_id(chain.to::<u64>()),
+                    key,
+                    $sol_type,
+                    false,
+                    state,
+                )
+            }
+        }
+    };
+}
+
+macro_rules! impl_get_array_cheatcode {
+    ($struct:ident, $sol_type:expr,stateful) => {
+        impl Cheatcode for $struct {
+            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key } = self;
+                let chain = get_active_fork_chain(ccx)?;
+                get_and_encode_toml_value(chain, key, $sol_type, true, ccx.state)
+            }
+        }
+    };
+    ($struct:ident, $sol_type:expr) => {
+        impl Cheatcode for $struct {
+            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+                let Self { chain, key } = self;
+                get_and_encode_toml_value(
+                    Chain::from_id(chain.to::<u64>()),
+                    key,
+                    $sol_type,
+                    true,
+                    state,
+                )
+            }
+        }
+    };
+}
+
+// Helper macros to generate write cheatcode implementations
+macro_rules! impl_write_value_cheatcode {
+    ($struct:ident, $sol_type:expr, $toml_converter:expr,stateful) => {
+        impl Cheatcode for $struct {
+            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key, value } = self;
+                let chain = get_active_fork_chain(ccx)?;
+                let toml_value = $toml_converter((*value).clone());
+                write_toml_value(chain, key, toml_value, ccx.state)
+            }
+        }
+    };
+    ($struct:ident, $sol_type:expr, $toml_converter:expr) => {
+        impl Cheatcode for $struct {
+            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+                let Self { chain, key, value } = self;
+                let toml_value = $toml_converter((*value).clone());
+                write_toml_value(Chain::from_id((*chain).to::<u64>()), key, toml_value, state)
+            }
+        }
+    };
+}
+
+macro_rules! impl_write_array_cheatcode {
+    ($struct:ident, $sol_type:expr, $toml_converter:expr,stateful) => {
+        impl Cheatcode for $struct {
+            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+                let Self { key, value } = self;
+                let chain = get_active_fork_chain(ccx)?;
+                let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
+                write_toml_value(chain, key, toml::Value::Array(toml_array), ccx.state)
+            }
+        }
+    };
+    ($struct:ident, $sol_type:expr, $toml_converter:expr) => {
+        impl Cheatcode for $struct {
+            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
+                let Self { chain, key, value } = self;
+                let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
+                write_toml_value(
+                    Chain::from_id((*chain).to::<u64>()),
+                    key,
+                    toml::Value::Array(toml_array),
+                    state,
+                )
+            }
+        }
+    };
+}
+
 // -- CHECK FORK VARIABLES -----------------------------------------------------
 
 // Check if fork variables exist
@@ -105,59 +210,6 @@ fn get_chain_name(chain: &Chain) -> Cow<'static, str> {
     chain.named().map_or(Cow::Owned(chain.id().to_string()), |name| Cow::Borrowed(name.as_str()))
 }
 
-// Helper macros to generate cheatcode implementations
-macro_rules! impl_get_value_cheatcode {
-    ($struct:ident, $sol_type:expr,stateful) => {
-        impl Cheatcode for $struct {
-            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-                let Self { key } = self;
-                let chain = get_active_fork_chain(ccx)?;
-                get_and_encode_toml_value(chain, key, $sol_type, false, ccx.state)
-            }
-        }
-    };
-    ($struct:ident, $sol_type:expr) => {
-        impl Cheatcode for $struct {
-            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                let Self { chain, key } = self;
-                get_and_encode_toml_value(
-                    Chain::from_id(chain.to::<u64>()),
-                    key,
-                    $sol_type,
-                    false,
-                    state,
-                )
-            }
-        }
-    };
-}
-
-macro_rules! impl_get_array_cheatcode {
-    ($struct:ident, $sol_type:expr,stateful) => {
-        impl Cheatcode for $struct {
-            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-                let Self { key } = self;
-                let chain = get_active_fork_chain(ccx)?;
-                get_and_encode_toml_value(chain, key, $sol_type, true, ccx.state)
-            }
-        }
-    };
-    ($struct:ident, $sol_type:expr) => {
-        impl Cheatcode for $struct {
-            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                let Self { chain, key } = self;
-                get_and_encode_toml_value(
-                    Chain::from_id(chain.to::<u64>()),
-                    key,
-                    $sol_type,
-                    true,
-                    state,
-                )
-            }
-        }
-    };
-}
-
 // Bool
 impl_get_value_cheatcode!(readForkChainBoolCall, &DynSolType::Bool);
 impl_get_value_cheatcode!(readForkBoolCall, &DynSolType::Bool, stateful);
@@ -201,56 +253,6 @@ impl_get_array_cheatcode!(readForkChainStringArrayCall, &DynSolType::String);
 impl_get_array_cheatcode!(readForkStringArrayCall, &DynSolType::String, stateful);
 
 // -- WRITE FORK VARIABLES -----------------------------------------------------
-
-// Helper macros to generate write cheatcode implementations
-macro_rules! impl_write_value_cheatcode {
-    ($struct:ident, $sol_type:expr, $toml_converter:expr,stateful) => {
-        impl Cheatcode for $struct {
-            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-                let Self { key, value } = self;
-                let chain = get_active_fork_chain(ccx)?;
-                let toml_value = $toml_converter((*value).clone());
-                write_toml_value(chain, key, toml_value, ccx.state)
-            }
-        }
-    };
-    ($struct:ident, $sol_type:expr, $toml_converter:expr) => {
-        impl Cheatcode for $struct {
-            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                let Self { chain, key, value } = self;
-                let toml_value = $toml_converter((*value).clone());
-                write_toml_value(Chain::from_id((*chain).to::<u64>()), key, toml_value, state)
-            }
-        }
-    };
-}
-
-macro_rules! impl_write_array_cheatcode {
-    ($struct:ident, $sol_type:expr, $toml_converter:expr,stateful) => {
-        impl Cheatcode for $struct {
-            fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-                let Self { key, value } = self;
-                let chain = get_active_fork_chain(ccx)?;
-                let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
-                write_toml_value(chain, key, toml::Value::Array(toml_array), ccx.state)
-            }
-        }
-    };
-    ($struct:ident, $sol_type:expr, $toml_converter:expr) => {
-        impl Cheatcode for $struct {
-            fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-                let Self { chain, key, value } = self;
-                let toml_array = value.iter().map(|v| $toml_converter((*v).to_owned())).collect();
-                write_toml_value(
-                    Chain::from_id((*chain).to::<u64>()),
-                    key,
-                    toml::Value::Array(toml_array),
-                    state,
-                )
-            }
-        }
-    };
-}
 
 // Bool
 impl_write_value_cheatcode!(
@@ -438,6 +440,33 @@ impl_write_array_cheatcode!(
 
 // -- HELPER METHODS -----------------------------------------------------
 
+/// Gets the chain id of the active fork. Bails if no fork is selected.
+fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
+    let (db, _, env) = ccx.as_db_env_and_journal();
+    if !db.is_forked_mode() {
+        bail!("a fork must be selected");
+    }
+    Ok(env.cfg.chain_id)
+}
+
+/// Gets the alloy chain for the active fork. Bails if no fork is selected.
+fn get_active_fork_chain(ccx: &mut CheatsCtxt) -> Result<Chain> {
+    get_active_fork_chain_id(ccx).map(Chain::from_id)
+}
+
+/// Parses a single TOML value into a specific Solidity type.
+/// Use the already existing JSON parsing logic to avoid reimplementations.
+fn parse_toml_element(
+    elem: &toml::Value,
+    element_ty: &DynSolType,
+    key: &str,
+    chain: Chain,
+) -> Result<DynSolValue> {
+    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty).map_err(|e| {
+        fmt_err!("failed to parse '{key}' in '[<chain_id: {chain}>]': {e}", chain = chain.id())
+    })
+}
+
 /// Generic helper to get a value from TOML config and encode it as a Solidity type.
 ///
 /// # Arguments
@@ -486,19 +515,6 @@ fn get_and_encode_toml_value(
         let sol_value = parse_toml_element(value, ty, key, chain)?;
         Ok(sol_value.abi_encode())
     }
-}
-
-/// Parses a single TOML value into a specific Solidity type.
-fn parse_toml_element(
-    elem: &toml::Value,
-    element_ty: &DynSolType,
-    key: &str,
-    chain: Chain,
-) -> Result<DynSolValue> {
-    // Convert TOML value to JSON value and use existing JSON parsing logic
-    parse_json_as(&toml_to_json_value(elem.to_owned()), element_ty).map_err(|e| {
-        fmt_err!("failed to parse '{key}' in '[<chain_id: {chain}>]': {e}", chain = chain.id())
-    })
 }
 
 /// Generic helper to write value(s) to the in-memory config and disk.
@@ -607,18 +623,4 @@ fn to_toml_edit_value(value: toml::Value) -> toml_edit::Value {
             toml_edit::Value::InlineTable(table)
         }
     }
-}
-
-/// Gets the chain id of the active fork. Bails if no fork is selected.
-fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
-    let (db, _, env) = ccx.as_db_env_and_journal();
-    if !db.is_forked_mode() {
-        bail!("a fork must be selected");
-    }
-    Ok(env.cfg.chain_id)
-}
-
-/// Gets the alloy chain for the active fork. Bails if no fork is selected.
-fn get_active_fork_chain(ccx: &mut CheatsCtxt) -> Result<Chain> {
-    get_active_fork_chain_id(ccx).map(Chain::from_id)
 }
