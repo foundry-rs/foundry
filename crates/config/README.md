@@ -157,7 +157,7 @@ no_storage_caching = false
 # Whether to store the referenced sources in the metadata as literal data.
 use_literal_content = false
 # use ipfs method to generate the metadata hash, solc's default.
-# To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
+# To not include the metadata hash, to allow for deterministic code (https://docs.soliditylang.org/en/latest/metadata.html), use "none"
 bytecode_hash = "ipfs"
 # Whether to append the CBOR-encoded metadata file.
 cbor_metadata = true
