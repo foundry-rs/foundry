@@ -64,7 +64,6 @@ impl fmt::Display for Visibility {
 
 impl Visibility {
     /// Returns the string representation of the visibility.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::External => "external",
@@ -99,7 +98,6 @@ impl fmt::Display for Mutability {
 
 impl Mutability {
     /// Returns the string representation of the mutability.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Pure => "pure",
