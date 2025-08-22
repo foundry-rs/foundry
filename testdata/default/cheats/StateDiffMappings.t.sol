@@ -45,42 +45,56 @@ contract StateDiffMappingsTest is DSTest {
         address testAccount = address(0x1234);
         mappingStorage.setBalance(testAccount, 1000 ether);
 
-        // Get state diff as JSON for detailed inspection
-        string memory json = vm.getStateDiffJson();
+        // Test the text format output
+        string memory stateDiffText = vm.getStateDiff();
+        emit log_string("State diff text format:");
+        emit log_string(stateDiffText);
 
-        // Debug: log the JSON for inspection
+        // Verify text format contains the mapping label
+        assertContains(
+            stateDiffText,
+            "balances[0x0000000000000000000000000000000000001234]",
+            "Text format should contain mapping label"
+        );
+
+        // Verify text format contains the value type
+        assertContains(stateDiffText, "uint256", "Text format should contain value type");
+
+        // Verify text format contains decoded values (shown with arrow)
+        assertContains(stateDiffText, ": 0", "Text format should contain initial value");
+        assertContains(
+            stateDiffText, "1000000000000000000000", "Text format should contain new value (1000 ether in wei)"
+        );
+
+        // Test JSON format output
+        string memory json = vm.getStateDiffJson();
         emit log_string("State diff JSON (simple mapping):");
         emit log_string(json);
 
         // The JSON should contain the decoded mapping slot with proper label
-        // Expected: "balances[0x0000...1234]" in the label field
         assertContains(
             json,
             '"label":"balances[0x0000000000000000000000000000000000001234]"',
-            "Should contain 'balances[0x0000...1234]' label"
+            "JSON should contain 'balances[0x0000...1234]' label"
         );
 
         // Check the type is correctly identified
-        assertContains(json, '"type":"mapping(address => uint256)"', "Should contain mapping type");
+        assertContains(json, '"type":"mapping(address => uint256)"', "JSON should contain mapping type");
 
         // Check decoded values
         assertContains(
             json,
             '"decoded":{"previousValue":"0","newValue":"1000000000000000000000"}',
-            "Should decode balance value correctly (1000 ether = 1000000000000000000000 wei)"
-        );
-
-        // Also test text format
-        string memory stateDiff = vm.getStateDiff();
-        assertContains(
-            stateDiff,
-            "balances[0x0000000000000000000000000000000000001234]",
-            "Text format should contain mapping label"
+            "JSON should decode balance value correctly (1000 ether = 1000000000000000000000 wei)"
         );
 
         // Stop recording and verify we have account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
         assertTrue(accesses.length > 0, "Should have account accesses");
+
+        // The AccountAccess structure contains information about storage changes
+        // but the label and decoded values are only available in the string/JSON outputs
+        // We've already verified those above
     }
 
     function testMappingWithDifferentKeyTypes() public {
@@ -94,7 +108,27 @@ contract StateDiffMappingsTest is DSTest {
         bytes32 flagKey = keccak256("test_flag");
         mappingStorage.setFlag(flagKey, true);
 
-        // Get state diff
+        // Test text format output first
+        string memory stateDiffText = vm.getStateDiff();
+        emit log_string("State diff text format (different key types):");
+        emit log_string(stateDiffText);
+
+        // Verify text format contains decoded values for uint256 key
+        assertContains(stateDiffText, "owners[12345]", "Text format should contain owners mapping with decimal key");
+        assertContains(
+            stateDiffText,
+            "address): 0x0000000000000000000000000000000000000000",
+            "Text format should contain initial address value"
+        );
+        assertContains(
+            stateDiffText, "0x0000000000000000000000000000000000007777", "Text format should contain new address value"
+        );
+
+        // Verify text format contains decoded values for bytes32 key
+        assertContains(stateDiffText, "bool): false", "Text format should contain initial bool value");
+        assertContains(stateDiffText, "true", "Text format should contain new bool value");
+
+        // Get state diff JSON
         string memory json = vm.getStateDiffJson();
 
         // Debug: log the JSON for inspection
@@ -139,10 +173,44 @@ contract StateDiffMappingsTest is DSTest {
         address spender3 = address(0x5555);
         mappingStorage.setAllowance(owner2, spender3, 1000 ether);
 
-        // Get state diff as JSON for detailed inspection
-        string memory json = vm.getStateDiffJson();
+        // Test text format output
+        string memory stateDiffText = vm.getStateDiff();
+        emit log_string("State diff text format (nested mappings):");
+        emit log_string(stateDiffText);
 
-        // Debug: log the JSON for inspection
+        // Verify text format contains nested mapping labels
+        assertContains(
+            stateDiffText,
+            "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]",
+            "Text format should contain first nested mapping label"
+        );
+        assertContains(
+            stateDiffText,
+            "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]",
+            "Text format should contain second nested mapping label"
+        );
+        // The text format shows the value type (uint256) not the full mapping type
+        assertContains(stateDiffText, "uint256): 0", "Text format should contain value type");
+
+        // Verify text format contains decoded values for nested mappings
+        assertContains(
+            stateDiffText,
+            "500000000000000000000",
+            "Text format should contain decoded value for owner1->spender1 (500 ether)"
+        );
+        assertContains(
+            stateDiffText,
+            "750000000000000000000",
+            "Text format should contain decoded value for owner1->spender2 (750 ether)"
+        );
+        assertContains(
+            stateDiffText,
+            "1000000000000000000000",
+            "Text format should contain decoded value for owner2->spender3 (1000 ether)"
+        );
+
+        // Test JSON format output
+        string memory json = vm.getStateDiffJson();
         emit log_string("State diff JSON (nested mapping - multiple entries):");
         emit log_string(json);
 
