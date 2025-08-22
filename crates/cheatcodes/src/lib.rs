@@ -42,8 +42,6 @@ mod version;
 mod env;
 pub use env::set_execution_context;
 
-mod fork;
-
 mod evm;
 
 mod fs;

@@ -22,6 +22,18 @@ impl Cheatcode for activeForkCall {
     }
 }
 
+impl Cheatcode for activeChainCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self {} = self;
+        ccx.ecx
+            .as_env_mut()
+            .tx
+            .chain_id
+            .map(|id| U256::from(id).abi_encode())
+            .ok_or_else(|| fmt_err!("no active fork"))
+    }
+}
+
 impl Cheatcode for createFork_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { urlOrAlias } = self;

@@ -9,19 +9,17 @@ use foundry_compilers::{
     project_util::{TempProject, copy_dir},
     solc::SolcSettings,
 };
-use foundry_config::{Config, ForkChainConfig, fork_config::ForkConfigPermission};
+use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
 use snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert};
 use std::{
-    collections::BTreeMap,
     env,
     ffi::OsStr,
     fs::{self, File},
     io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
-    str::FromStr,
     sync::{
         Arc, LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -758,48 +756,6 @@ impl TestProject {
         rm_create(&self.paths().sources);
         rm_create(&self.paths().tests);
         rm_create(&self.paths().scripts);
-    }
-
-    /// Configures `deployment.toml` by generating its content dynamically.
-    ///
-    /// This helper function constructs the TOML content from the provided arguments,
-    /// writes it to a `deployments.toml` file, and updates the project's
-    /// in-memory configuration to use it for fork testing.
-    pub fn config_deployment_toml(
-        &self,
-        access: ForkConfigPermission,
-        mut configs: Vec<(alloy_chains::Chain, ForkChainConfig)>,
-    ) {
-        let mut toml_content = String::new();
-
-        // Generate TOML content for all chains.
-        configs.sort_by_key(|(chain, _)| chain.id());
-        for (chain, fork_config) in &configs {
-            let chain_name = format!("{chain}");
-            if let Some(rpc_url) = fork_config.rpc_endpoint.as_ref() {
-                toml_content.push_str(&format!("[{chain_name}]\nrpc_endpoint = \"{rpc_url}\"\n"));
-            }
-
-            if !fork_config.vars.is_empty() {
-                toml_content.push_str(&format!("\n[{chain_name}.vars]\n"));
-                let sorted_vars: BTreeMap<_, _> = fork_config.vars.iter().collect();
-                for (key, value) in sorted_vars {
-                    toml_content.push_str(&format!("{key} = {value}\n"));
-                }
-            }
-            toml_content.push('\n');
-        }
-
-        // Write the combined content to the `deployments.toml` file.
-        std::fs::write(self.root().join("deployments.toml"), toml_content)
-            .expect("Failed to write deployments.toml");
-
-        // Update the project's configuration.
-        self.update_config(|config| {
-            config.forks.path = Some(PathBuf::from_str("deployments.toml").unwrap());
-            config.forks.chain_configs = configs.into_iter().collect();
-            config.forks.access = access;
-        });
     }
 }
 
