@@ -118,28 +118,28 @@ struct SlotStateDiff {
     slot_info: Option<SlotInfo>,
 }
 
-/// Wrapper for mapping keys that serializes as "key" for single, "keys" for multiple
-#[derive(Debug)]
-struct MappingKeys(Vec<String>);
+/// Custom serializer for mapping keys that creates "key" or "keys" field based on count
+fn serialize_mapping_keys<S>(keys: &Option<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeMap;
 
-impl Serialize for MappingKeys {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeMap;
+    match keys {
+        None => serializer.serialize_none(),
+        Some(keys) => {
+            let mut map = serializer.serialize_map(Some(1))?;
 
-        let mut map = serializer.serialize_map(Some(1))?;
+            if keys.len() == 1 {
+                // Single key: serialize as "key": "value"
+                map.serialize_entry("key", &keys[0])?;
+            } else {
+                // Multiple keys: serialize as "keys": ["value1", "value2", ...]
+                map.serialize_entry("keys", keys)?;
+            }
 
-        if self.0.len() == 1 {
-            // Single key: serialize as "key": "value"
-            map.serialize_entry("key", &self.0[0])?;
-        } else {
-            // Multiple keys: serialize as "keys": ["value1", "value2", ...]
-            map.serialize_entry("keys", &self.0)?;
+            map.end()
         }
-
-        map.end()
     }
 }
 
@@ -164,8 +164,12 @@ struct SlotInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     decoded: Option<DecodedSlotValues>,
     /// Decoded mapping keys (serialized as "key" for single, "keys" for multiple)
-    #[serde(skip_serializing_if = "Option::is_none", flatten)]
-    keys: Option<MappingKeys>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        flatten,
+        serialize_with = "serialize_mapping_keys"
+    )]
+    keys: Option<Vec<String>>,
 }
 
 /// Wrapper type that holds both the original type label and the parsed DynSolType.
@@ -1902,11 +1906,11 @@ fn handle_mapping(
         {
             let decoded_key_str = format_dyn_sol_value_raw(&decoded);
             decoded_keys.push(decoded_key_str.clone());
-            label = format!("{}[{}]", label, decoded_key_str);
+            label = format!("{label}[{decoded_key_str}]");
         } else {
             let hex_key = hex::encode_prefixed(key.0);
             decoded_keys.push(hex_key.clone());
-            label = format!("{}[{}]", label, hex_key);
+            label = format!("{label}[{hex_key}]");
         }
     }
 
@@ -1920,7 +1924,7 @@ fn handle_mapping(
         slot: slot_str.to_string(),
         members: None,
         decoded: None,
-        keys: Some(MappingKeys(decoded_keys)),
+        keys: Some(decoded_keys),
     })
 }
 
