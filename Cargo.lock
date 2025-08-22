@@ -9109,7 +9109,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9127,7 +9127,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "strum 0.27.2",
 ]
@@ -9135,7 +9135,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9149,7 +9149,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -9177,7 +9177,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9187,7 +9187,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.2",
@@ -9207,7 +9207,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#0c887b0ba117d7d32721f6f4b5b761ea9b853c71"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
