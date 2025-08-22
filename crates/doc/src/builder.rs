@@ -22,24 +22,23 @@ use toml::value;
 #[derive(Debug)]
 pub struct DocBuilder {
     /// The project root
-    pub root: PathBuf,
+    root: PathBuf,
     /// Path to Solidity source files.
-    pub sources: PathBuf,
+    sources: PathBuf,
     /// Paths to external libraries.
-    pub libraries: Vec<PathBuf>,
+    libraries: Vec<PathBuf>,
     /// Flag whether to build mdbook.
-    pub should_build: bool,
+    should_build: bool,
     /// Documentation configuration.
-    pub config: DocConfig,
+    config: DocConfig,
     /// The array of preprocessors to apply.
-    pub preprocessors: Vec<Box<dyn Preprocessor>>,
+    preprocessors: Vec<Box<dyn Preprocessor>>,
     /// The formatter config.
-    pub fmt: FormatterConfig,
+    fmt: FormatterConfig,
     /// Whether to include libraries to the output.
-    pub include_libraries: bool,
+    include_libraries: bool,
 }
 
-// TODO: consider using `tfio`
 impl DocBuilder {
     pub(crate) const SRC: &'static str = "src";
     const SOL_EXT: &'static str = "sol";
