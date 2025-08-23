@@ -5,6 +5,8 @@ interface ImportMetaEnv {
 
   readonly NODE_ENV: 'development' | 'production'
 
+  readonly PROVENANCE: 'true' | 'false'
+
   // release.yml#jobs:release:strategy:matrix:include:-|target
   readonly TARGET:
     | 'x86_64-unknown-linux-gnu'

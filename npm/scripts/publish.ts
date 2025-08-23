@@ -88,7 +88,9 @@ async function packPackage(packagePath: string) {
 }
 
 async function publishPackage(packagePath: string, packedFile: string) {
-  const result = await Bun.$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL}`
+  const result = await Bun.$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL} --provenance=${
+    Bun.env.PROVENANCE || 'false'
+  }`
     .cwd(packagePath)
     .nothrow()
 

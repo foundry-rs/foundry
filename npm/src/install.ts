@@ -1,17 +1,22 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
+import * as NodeHttp from 'node:http'
 import * as NodeHttps from 'node:https'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
+import { fileURLToPath } from 'node:url'
 import * as NodeZlib from 'node:zlib'
 import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from './const.js'
 
-const fallbackBinaryPath = NodePath.join(import.meta.dirname, BINARY_NAME)
+const __dirname = NodePath.dirname(fileURLToPath(import.meta.url))
+const fallbackBinaryPath = NodePath.join(__dirname, BINARY_NAME)
 
 const require = NodeModule.createRequire(import.meta.url)
 
-function makeRequest(url: string): Promise<NodeZlib.InputType> {
+function makeRequest(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    NodeHttps
+    const client = url.startsWith('https:') ? NodeHttps : NodeHttp
+    client
       .get(url, response => {
         if (response?.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
           const chunks: Buffer[] = []
@@ -41,6 +46,12 @@ function makeRequest(url: string): Promise<NodeZlib.InputType> {
   })
 }
 
+function encodePackageNameForRegistry(name: string) {
+  // Scoped package names should be percent-encoded
+  // e.g. @scope/pkg -> %40scope%2Fpkg
+  return name.startsWith('@') ? encodeURIComponent(name) : name
+}
+
 function extractFileFromTarball(
   tarballBuffer: Buffer<ArrayBufferLike>,
   filepath: string
@@ -68,21 +79,55 @@ function extractFileFromTarball(
 }
 
 async function downloadBinaryFromNpm() {
-  const registryUrl = getRegistryUrl()
-  const url = `${registryUrl}/${PLATFORM_SPECIFIC_PACKAGE_NAME}/-/${PLATFORM_SPECIFIC_PACKAGE_NAME}.tgz`
+  const registryUrl = getRegistryUrl().replace(/\/$/, '')
+  const encodedName = encodePackageNameForRegistry(PLATFORM_SPECIFIC_PACKAGE_NAME)
+
+  // Determine which version to fetch: prefer the version pinned in optionalDependencies
+  let desiredVersion: string | undefined
+  try {
+    const pkgJsonPath = NodePath.join(__dirname, '..', 'package.json')
+    const pkgJson = JSON.parse(NodeFS.readFileSync(pkgJsonPath, 'utf8'))
+    desiredVersion = pkgJson?.optionalDependencies?.[PLATFORM_SPECIFIC_PACKAGE_NAME] || pkgJson?.version
+  } catch {}
+
+  // Fetch metadata for the platform-specific package
+  const metaUrl = `${registryUrl}/${encodedName}`
+  const metaBuffer = await makeRequest(metaUrl)
+  const metadata = JSON.parse(metaBuffer.toString('utf8'))
+
+  const version = desiredVersion || metadata?.['dist-tags']?.latest
+  const versionMeta = metadata?.versions?.[version]
+  const dist = versionMeta?.dist
+  if (!dist?.tarball) {
+    throw new Error(
+      `Could not find tarball for ${PLATFORM_SPECIFIC_PACKAGE_NAME}@${version} from ${metaUrl}`
+    )
+  }
+
   console.info(
     colors.green,
     'Downloading binary from:\n',
-    url,
+    dist.tarball,
     '\n',
     colors.reset
   )
+
   // Download the tarball of the right binary distribution package
-  const tarballDownloadBuffer = await makeRequest(url)
+  const tarballDownloadBuffer = await makeRequest(dist.tarball)
 
-  const tarballBuffer = NodeZlib.unzipSync(tarballDownloadBuffer)
+  // Verify integrity if available
+  if (dist.integrity && dist.integrity.startsWith('sha512-')) {
+    const expected = dist.integrity.split('sha512-')[1]
+    const actual = NodeCrypto.createHash('sha512')
+      .update(tarballDownloadBuffer)
+      .digest('base64')
+    if (expected !== actual)
+      throw new Error('Downloaded tarball failed integrity check (sha512 mismatch)')
+  }
 
-  // Extract binary from package and write to disk
+  // Unpack and write binary
+  const tarballBuffer = NodeZlib.gunzipSync(tarballDownloadBuffer)
+
   NodeFS.writeFileSync(
     fallbackBinaryPath,
     extractFileFromTarball(tarballBuffer, `package/bin/${BINARY_NAME}`),
@@ -108,7 +153,5 @@ if (!isPlatformSpecificPackageInstalled()) {
   console.log('Platform specific package not found. Will manually download binary.')
   downloadBinaryFromNpm()
 } else {
-  console.log(
-    'Platform specific package already installed. Will fall back to manually downloading binary.'
-  )
+  console.log('Platform specific package already installed. Skipping manual download.')
 }
