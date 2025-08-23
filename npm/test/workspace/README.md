@@ -12,6 +12,15 @@ docker run -it --rm --name verdaccio -p 4873:4873 verdaccio/verdaccio
 /bin/bash ./scripts/setup.sh
 ```
 
+## publish to local registry
+
+```bash
+# pwd should be foundry/npm
+/bin/bash ./scripts/local-setup.sh
+```
+
+Then, `cd` back to `foundry/npm/test/workspace`, then:
+
 ## Install forge
 
 ```bash
