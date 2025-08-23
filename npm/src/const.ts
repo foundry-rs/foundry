@@ -20,14 +20,6 @@ export type ArchitecturePlatform = Exclude<
   'win32-arm64'
 >
 
-const referenceMap = {
-  'darwin-x64': 'x86_64-apple-darwin',
-  'darwin-arm64': 'aarch64-apple-darwin',
-  'linux-x64': 'x86_64-unknown-linux-gnu',
-  'linux-arm64': 'aarch64-unknown-linux-gnu',
-  'win32-x64': 'x86_64-pc-windows-msvc'
-} as const satisfies Record<ArchitecturePlatform, string>
-
 export const BINARY_DISTRIBUTION_PACKAGES = {
   darwin: {
     x64: '@foundry-rs/forge-darwin-amd64',
