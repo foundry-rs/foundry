@@ -2,7 +2,7 @@
   "name": "@foundry-rs/forge-win32-amd64",
   "version": "1.2.3",
   "type": "module",
-  "homepage": "https://getfoundry.sh",
+  "homepage": "https://getfoundry.sh/forge",
   "description": "Fast and flexible Ethereum testing framework (Windows amd64)",
   "bin": {
     "forge": "./bin/forge.exe"
