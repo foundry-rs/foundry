@@ -2,7 +2,7 @@
   "name": "@foundry-rs/forge",
   "version": "1.3.2",
   "type": "module",
-  "homepage": "https://getfoundry.sh",
+  "homepage": "https://getfoundry.sh/forge",
   "description": "Fast and flexible Ethereum testing framework",
   "main": "./dist/index.mjs",
   "engines": {
