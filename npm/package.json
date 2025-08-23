@@ -5,10 +5,10 @@
     "prepublishOnly": "bun build && bun run ./scripts/prepublish.ts"
   },
   "dependencies": {
-    "tsdown": "^0.13.0",
-    "typescript": "^5.8.3",
-    "@types/bun": "^1.2.19",
-    "@types/node": "^24.1.0"
+    "tsdown": "^0.14.1",
+    "typescript": "^5.9.2",
+    "@types/bun": "^1.2.20",
+    "@types/node": "^24.3.0"
   },
   "license": "MIT OR Apache-2.0",
   "$schema": "https://json.schemastore.org/package.json"
