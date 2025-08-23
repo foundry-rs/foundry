@@ -274,11 +274,15 @@ jobs:
 
       - name: Setup Bun (npm)
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
           bun-version: "latest"
           scope: "@foundry-rs"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Node (auth for npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -286,30 +290,46 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Publish @foundry-rs/forge-${{ matrix.platform }}-${{ matrix.arch }} (npm)
+        if: matrix.platform != 'alpine'
         shell: bash
         working-directory: ./npm
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_REGISTRY_URL: "https://registry.npmjs.org"
+          PROVENANCE: true
           ARCH: ${{ matrix.arch }}
           TARGET: ${{ matrix.target }}
-          PLATFORM: ${{ matrix.platform }}
-          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          PLATFORM_NAME: ${{ matrix.platform }}
+          OUT_DIR: ${{ github.workspace }}/target/${{ matrix.target }}/${{ env.PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
         run: |-
+          set -eo pipefail
+          # Provide explicit path to the compiled forge binary for this platform
+          if [[ "$TARGET" == *windows* ]]; then
+            export FORGE_BIN_PATH="$OUT_DIR/forge.exe"
+          else
+            export FORGE_BIN_PATH="$OUT_DIR/forge"
+          fi
+          echo "Using FORGE_BIN_PATH=$FORGE_BIN_PATH"
           bun ./scripts/prepublish.ts
-          bun run ./scripts/publish.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
+          bun run ./scripts/publish.ts ./@foundry-rs/forge-${PLATFORM_NAME}-${ARCH}
 
   publish-npm:
     name: Publish @foundry-rs/forge
     runs-on: ubuntu-latest
     needs: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         with:
           bun-version: "latest"
           scope: "@foundry-rs"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Node (auth for npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -320,10 +340,12 @@ jobs:
         shell: bash
         working-directory: ./npm
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_REGISTRY_URL: "https://registry.npmjs.org"
         run: |-
-          bun ./scripts/prepublish.ts
+          # Build wrappers for the meta package
+          npm run build
           bun run ./scripts/publish.ts ./@foundry-rs/forge
 
   cleanup:

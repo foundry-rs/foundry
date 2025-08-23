@@ -2,9 +2,11 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { BINARY_NAME } from './const.js'
 
 const require = NodeModule.createRequire(import.meta.url)
+const __dirname = NodePath.dirname(fileURLToPath(import.meta.url))
 
 function getBinaryPath() {
   const { platform, arch } = process
@@ -39,14 +41,8 @@ function getBinaryPath() {
     const binaryPath = require.resolve(`${packageName}/bin/${binaryName}`)
     if (NodeFS.existsSync(binaryPath)) return binaryPath
   } catch (error) {
-    return NodePath.join(
-      import.meta.dirname,
-      '..',
-      '..',
-      BINARY_NAME + '-' + process.platform + '-' + process.arch,
-      'bin',
-      BINARY_NAME
-    )
+    // Fall back to the binary written by postinstall into dist/
+    return NodePath.join(__dirname, '..', 'dist', BINARY_NAME)
   }
 
   console.error(`Platform-specific package ${packageName} not found.`)

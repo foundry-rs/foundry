@@ -5,7 +5,7 @@
   "homepage": "https://getfoundry.sh",
   "description": "Fast and flexible Ethereum testing framework (Windows amd64)",
   "bin": {
-    "forge": "./bin/forge"
+    "forge": "./bin/forge.exe"
   },
   "os": [
     "win32"

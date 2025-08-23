@@ -1,9 +1,13 @@
 import type * as Process from 'node:process'
 
 export function getRegistryUrl() {
-  if (process.env.NODE_ENV !== 'production') return process.env.REGISTRY_URL ?? 'https://registry.npmjs.org'
-
-  return 'https://registry.npmjs.org'
+  // Prefer npm's configured registry (works with Verdaccio and custom registries)
+  // Fallback to REGISTRY_URL for tests/dev, then npmjs
+  return (
+    process.env.npm_config_registry
+    || process.env.REGISTRY_URL
+    || 'https://registry.npmjs.org'
+  )
 }
 
 export type Architecture = Extract<(typeof Process)['arch'], 'arm64' | 'x64'>
@@ -30,8 +34,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     arm64: '@foundry-rs/forge-linux-arm64'
   },
   win32: {
-    x64: '@foundry-rs/forge-win32-amd64',
-    arm64: '@foundry-rs/forge-win32-arm64'
+    x64: '@foundry-rs/forge-win32-amd64'
   }
 } as const
 
