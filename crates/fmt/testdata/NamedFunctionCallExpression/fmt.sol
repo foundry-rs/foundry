@@ -26,22 +26,20 @@ contract NamedFunctionCallExpression {
         });
 
         StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting
-            memory long =
-            StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting({
+            memory
+            long = StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting({
                 whyNameSoLong: "dunno"
             });
 
         SimpleStruct memory simple2 = SimpleStruct({ // comment1
-            /* comment2 */
-            val: /* comment3 */ 0
+            /* comment2 */ val: /* comment3 */ 0
         });
 
-        SimpleStruct memory simple3 = SimpleStruct({
-            /* comment4 */
+        SimpleStruct memory simple3 = SimpleStruct({ /* comment4 */
             // comment5
             val: // comment6
                 0 // comment7
-                // comment8
+            // comment8
         });
     }
 }

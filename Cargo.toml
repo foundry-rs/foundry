@@ -20,6 +20,7 @@ members = [
     "crates/evm/fuzz/",
     "crates/evm/traces/",
     "crates/fmt/",
+    "crates/fmt-2/",
     "crates/forge/",
     "crates/script-sequence/",
     "crates/macros/",
@@ -297,10 +298,7 @@ bytes = "1.10"
 walkdir = "2"
 prettyplease = "0.2"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
@@ -355,6 +353,9 @@ uuid = "1.17.0"
 flate2 = "1.1"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
+
+# testing
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
