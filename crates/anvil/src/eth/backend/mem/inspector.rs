@@ -175,7 +175,6 @@ where
         }
     }
 
-    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
             Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
