@@ -128,20 +128,6 @@ impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
         self.walk_using_directive(using)
     }
 
-    fn visit_function_header(
-        &mut self,
-        header: &'ast solar_ast::FunctionHeader<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        // temporary workaround until solar also visits `override` and its paths <https://github.com/paradigmxyz/solar/pull/383>.
-        if let Some(ref override_) = header.override_ {
-            for path in override_.paths.iter() {
-                _ = self.visit_path(path);
-            }
-        }
-
-        self.walk_function_header(header)
-    }
-
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::ExprKind::Ident(id) = expr.kind {
             self.mark_symbol_used(id.name);
