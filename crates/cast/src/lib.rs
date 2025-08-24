@@ -25,19 +25,24 @@ use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
+#[cfg(feature = "explorer")]
 use foundry_block_explorers::Client;
+#[cfg(feature = "explorer")]
+use foundry_common::compile::etherscan_project;
 use foundry_common::{
     TransactionReceiptWithRevertReason,
     abi::{encode_function_args, get_func},
-    compile::etherscan_project,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
+#[cfg(feature = "explorer")]
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+#[cfg(feature = "evm")]
 use foundry_evm_core::ic::decode_instructions;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
+#[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -48,13 +53,22 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::signal::ctrl_c;
+#[cfg(target_arch = "wasm32")]
+async fn ctrl_c() {
+    futures::future::pending::<()>().await
+}
 
 use foundry_common::abi::encode_function_args_packed;
+#[cfg(feature = "evm")]
 pub use foundry_evm::*;
 
+#[cfg(feature = "cli")]
 pub mod args;
+#[cfg(feature = "cli")]
 pub mod cmd;
+#[cfg(feature = "cli")]
 pub mod opts;
 
 pub mod base;
@@ -2042,6 +2056,7 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "explorer")]
     pub async fn etherscan_source(
         chain: Chain,
         contract_address: String,
@@ -2076,6 +2091,7 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "explorer")]
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
         contract_address: String,
@@ -2093,6 +2109,7 @@ impl SimpleCast {
 
     /// Fetches the source code of verified contracts from etherscan, flattens it and writes it to
     /// the given path or stdout.
+    #[cfg(feature = "explorer")]
     pub async fn etherscan_source_flatten(
         chain: Chain,
         contract_address: String,
@@ -2139,6 +2156,7 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "evm")]
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
 
@@ -2159,6 +2177,11 @@ impl SimpleCast {
         }
 
         Ok(output)
+    }
+
+    #[cfg(not(feature = "evm"))]
+    pub fn disassemble(_code: &[u8]) -> Result<String> {
+        eyre::bail!("disassemble requires feature 'evm'")
     }
 
     /// Gets the selector for a given function signature
@@ -2184,33 +2207,50 @@ impl SimpleCast {
             eyre::bail!("invalid function signature");
         };
 
-        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let found = AtomicBool::new(false);
+        #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+        {
+            let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+            let found = AtomicBool::new(false);
 
-        let result: Option<(u32, String, String)> =
-            (0..num_threads).into_par_iter().find_map_any(|i| {
-                let nonce_start = i as u32;
-                let nonce_step = num_threads as u32;
+            let result: Option<(u32, String, String)> =
+                (0..num_threads).into_par_iter().find_map_any(|i| {
+                    let nonce_start = i as u32;
+                    let nonce_step = num_threads as u32;
 
-                let mut nonce = nonce_start;
-                while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
-                    let input = format!("{name}{nonce}({params}");
-                    let hash = keccak256(input.as_bytes());
-                    let selector = &hash[..4];
+                    let mut nonce = nonce_start;
+                    while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
+                        let input = format!("{name}{nonce}({params}");
+                        let hash = keccak256(input.as_bytes());
+                        let selector = &hash[..4];
 
-                    if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
-                        found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode_prefixed(selector), input));
+                        if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
+                            found.store(true, Ordering::Relaxed);
+                            return Some((nonce, hex::encode_prefixed(selector), input));
+                        }
+
+                        nonce += nonce_step;
                     }
+                    None
+                });
 
-                    nonce += nonce_step;
+            match result {
+                Some((_nonce, selector, signature)) => Ok((selector, signature)),
+                None => eyre::bail!("No selector found"),
+            }
+        }
+        #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
+        {
+            let mut nonce: u32 = 0;
+            while nonce < u32::MAX {
+                let input = format!("{name}{nonce}({params}");
+                let hash = keccak256(input.as_bytes());
+                let selector = &hash[..4];
+                if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
+                    return Ok((hex::encode_prefixed(selector), input));
                 }
-                None
-            });
-
-        match result {
-            Some((_nonce, selector, signature)) => Ok((selector, signature)),
-            None => eyre::bail!("No selector found"),
+                nonce = nonce.saturating_add(1);
+            }
+            eyre::bail!("No selector found")
         }
     }
 
@@ -2278,6 +2318,7 @@ fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
+#[cfg(feature = "explorer")]
 fn explorer_client(
     chain: Chain,
     api_key: Option<String>,

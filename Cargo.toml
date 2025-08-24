@@ -25,6 +25,7 @@ members = [
     "crates/macros/",
     "crates/test-utils/",
     "crates/lint/",
+    "wasm-playground/"
 ]
 resolver = "2"
 

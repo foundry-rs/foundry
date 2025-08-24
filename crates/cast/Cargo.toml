@@ -15,20 +15,22 @@ workspace = true
 
 [lib]
 name = "cast"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "cast"
 path = "bin/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 # lib
-foundry-block-explorers.workspace = true
+foundry-block-explorers = { workspace = true, optional = true }
 foundry-common.workspace = true
-foundry-compilers.workspace = true
+foundry-compilers = { workspace = true, optional = true }
 foundry-config.workspace = true
-foundry-evm-core.workspace = true
-foundry-evm.workspace = true
-foundry-wallets.workspace = true
+foundry-evm-core = { workspace = true, optional = true }
+foundry-evm = { workspace = true, optional = true }
+foundry-wallets = { workspace = true, optional = true }
 
 alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
@@ -38,13 +40,6 @@ alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true, features = [
-    "reqwest",
-    "ws",
-    "ipc",
-    "trace-api",
-    "txpool-api",
-] }
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-serde.workspace = true
@@ -64,12 +59,12 @@ futures.workspace = true
 revm = { workspace = true, features = ["optional_balance_check"] }
 rand.workspace = true
 rand_08.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 serde_json.workspace = true
 serde.workspace = true
 
 # bin
-foundry-cli.workspace = true
+foundry-cli = { workspace = true, optional = true }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
@@ -78,10 +73,9 @@ comfy-table.workspace = true
 dunce.workspace = true
 itertools.workspace = true
 regex = { workspace = true, default-features = false }
-rpassword = "7"
+rpassword = { version = "7", optional = true }
 semver.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "signal"] }
+tempfile = { workspace = true, optional = true }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
@@ -92,7 +86,7 @@ foundry-test-utils.workspace = true
 alloy-hardforks.workspace = true
 
 [features]
-default = ["jemalloc"]
+default = ["jemalloc", "cli", "parallel", "password-prompt", "explorer", "wallets", "evm"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
@@ -100,3 +94,26 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
+cli = ["dep:foundry-cli"]
+parallel = ["dep:rayon"]
+password-prompt = ["dep:rpassword"]
+wallets = ["dep:foundry-wallets"]
+evm = ["dep:foundry-evm", "dep:foundry-evm-core"]
+explorer = ["dep:foundry-block-explorers", "dep:foundry-compilers", "dep:tempfile"]
+
+# Target-specific dependency feature overrides
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "trace-api",
+    "txpool-api",
+] }
+tokio = { workspace = true, features = ["macros", "signal"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+alloy-provider = { workspace = true, features = [] }
+tokio = { workspace = true, features = ["macros"] }
+
+getrandom = { version = "0.3.3", features = ["wasm_js"]}

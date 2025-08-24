@@ -19,6 +19,19 @@ use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
 
+#[cfg(feature = "password-prompt")]
+fn prompt_password(msg: &str) -> eyre::Result<String> {
+    Ok(rpassword::prompt_password(msg)?)
+}
+
+#[cfg(not(feature = "password-prompt"))]
+fn prompt_password(msg: &str) -> eyre::Result<String> {
+    let _ = msg; // silence unused parameter warning
+    eyre::bail!(
+        "Password prompt not available. Rebuild with feature 'password-prompt' or provide --unsafe-password"
+    )
+}
+
 pub mod vanity;
 use vanity::VanityArgs;
 
@@ -287,8 +300,8 @@ impl WalletSubcommands {
                     let password = if let Some(password) = unsafe_password {
                         password
                     } else {
-                        // if no --unsafe-password was provided read via stdin
-                        rpassword::prompt_password("Enter secret: ")?
+                        // if no --unsafe-password was provided read via stdin (if enabled)
+                        prompt_password("Enter secret: ")?
                     };
 
                     for i in 0..number {
@@ -589,7 +602,7 @@ flag to set your key via:
                     password
                 } else {
                     // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter password: ")?
+                    prompt_password("Enter password: ")?
                 };
 
                 let mut rng = thread_rng();
@@ -627,7 +640,7 @@ flag to set your key via:
                 let password = if let Some(pwd) = unsafe_password {
                     pwd
                 } else {
-                    rpassword::prompt_password("Enter password: ")?
+                    prompt_password("Enter password: ")?
                 };
 
                 if PrivateKeySigner::decrypt_keystore(&keystore_path, password).is_err() {
@@ -702,7 +715,7 @@ flag to set your key via:
                     password
                 } else {
                     // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter password: ")?
+                    prompt_password("Enter password: ")?
                 };
 
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
@@ -739,7 +752,7 @@ flag to set your key via:
                     password
                 } else {
                     // if no --unsafe-password was provided read via stdin
-                    rpassword::prompt_password("Enter current password: ")?
+                    prompt_password("Enter current password: ")?
                 };
 
                 // decrypt the keystore to verify the current password and get the private key
@@ -750,7 +763,7 @@ flag to set your key via:
                     password
                 } else {
                     // if no --unsafe-new-password was provided read via stdin
-                    rpassword::prompt_password("Enter new password: ")?
+                    prompt_password("Enter new password: ")?
                 };
 
                 if current_password == new_password {

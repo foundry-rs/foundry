@@ -9,3 +9,7 @@ rustflags = ["-Clink-arg=/STACK:10000000"]
 
 [target.i686-pc-windows-msvc]
 rustflags = ["-Clink-arg=/STACK:10000000"]
+
+# see https://docs.rs/getrandom/0.3.3/getrandom/#opt-in-backends
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=getrandom_backend=\"wasm_js\""]
