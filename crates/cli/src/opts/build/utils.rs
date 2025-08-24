@@ -6,6 +6,7 @@ use foundry_compilers::{
     solc::{SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
+use rayon::prelude::*;
 use solar_sema::ParsingContext;
 use std::path::PathBuf;
 
@@ -83,13 +84,15 @@ pub fn configure_pcx_from_solc(
 ) {
     configure_pcx_from_solc_cli(pcx, project, &vinput.cli_settings);
     if add_source_files {
-        for (path, source) in &vinput.input.sources {
-            if let Ok(src_file) =
-                pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str())
-            {
-                pcx.add_file(src_file);
-            }
-        }
+        let sources = vinput
+            .input
+            .sources
+            .par_iter()
+            .filter_map(|(path, source)| {
+                pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str()).ok()
+            })
+            .collect::<Vec<_>>();
+        pcx.add_files(sources);
     }
 }
 
