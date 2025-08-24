@@ -76,9 +76,11 @@ impl PubSubEthRpcHandler {
 
                         trace!(target: "rpc::ws", "received logs subscription {:?}", params);
                         let blocks = self.api.new_block_notifications();
+                        let reorged_blocks = self.api.new_reorged_block_notifications();
                         let storage = self.api.storage_info();
                         EthSubscription::Logs(Box::new(LogsSubscription {
                             blocks,
+                            reorged_blocks,
                             storage,
                             filter: params,
                             queued: Default::default(),
