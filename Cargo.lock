@@ -6329,12 +6329,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "match_cfg"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffbee8634e0d45d258acb448e7eaab3fce7a0a467395d4d9f228e3c1f01fb2e4"
-
-[[package]]
 name = "match_token"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9109,25 +9103,23 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
  "either",
- "num-bigint",
  "num-rational",
  "semver 1.0.26",
  "solar-data-structures",
  "solar-interface",
  "solar-macros",
  "strum 0.27.2",
- "typed-arena",
 ]
 
 [[package]]
 name = "solar-config"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "strum 0.27.2",
 ]
@@ -9135,7 +9127,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9149,7 +9141,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -9158,10 +9150,10 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "itoa",
- "match_cfg",
  "normalize-path",
+ "once_map",
  "rayon",
  "scoped-tls",
  "serde",
@@ -9169,7 +9161,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.15",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9177,7 +9169,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9187,16 +9179,17 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.2",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
  "num-traits",
+ "ruint",
  "smallvec",
  "solar-ast",
  "solar-data-structures",
@@ -9207,7 +9200,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fcompiler-interface#c9252e4da2606699c25a9b8113f8086e5ab42f13"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9228,7 +9221,6 @@ dependencies = [
  "strum 0.27.2",
  "thread_local",
  "tracing",
- "typed-arena",
 ]
 
 [[package]]
@@ -10273,12 +10265,6 @@ dependencies = [
  "thiserror 2.0.15",
  "utf-8",
 ]
-
-[[package]]
-name = "typed-arena"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typeid"
