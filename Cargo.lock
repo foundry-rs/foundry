@@ -2950,7 +2950,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3803,7 +3803,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3918,7 +3918,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4486,7 +4486,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#ab306d67b787842d2a054eda781ed789a0fcbad6"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#2c7d79bbba4b4b7ef49a10f20706d3b835f3ff11"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4522,7 +4522,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#ab306d67b787842d2a054eda781ed789a0fcbad6"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#2c7d79bbba4b4b7ef49a10f20706d3b835f3ff11"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4531,7 +4531,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#ab306d67b787842d2a054eda781ed789a0fcbad6"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#2c7d79bbba4b4b7ef49a10f20706d3b835f3ff11"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4553,7 +4553,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#ab306d67b787842d2a054eda781ed789a0fcbad6"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#2c7d79bbba4b4b7ef49a10f20706d3b835f3ff11"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4567,7 +4567,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#ab306d67b787842d2a054eda781ed789a0fcbad6"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#2c7d79bbba4b4b7ef49a10f20706d3b835f3ff11"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5885,7 +5885,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5948,7 +5948,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7547,7 +7547,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -7560,7 +7560,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9120690fafc389a67ba3803df527d0ec9cbbc9cc45e4cc20b332996dfb672425"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -7713,7 +7713,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8419,7 +8419,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8432,7 +8432,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9124,7 +9124,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9140,7 +9140,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "strum 0.27.2",
 ]
@@ -9148,7 +9148,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9162,7 +9162,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -9171,7 +9171,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9190,7 +9190,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9200,12 +9200,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.3",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9221,7 +9221,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.5"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#976761c8f9dec6f3f2d7a6598195180069b49117"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2180595c48adbce64aec5e288e2fd89e212a60c1"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
