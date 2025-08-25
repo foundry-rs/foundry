@@ -198,7 +198,8 @@ impl SlotIdentifier {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
             let dyn_type = DynSolType::parse(&storage_type.label).ok();
 
-            // Check if we're able to match on a slot from the layout
+            // Check if we're able to match on a slot from the layout i.e any of the base slots.
+            // This will always be the case for primitive types that fit in a single slot.
             if storage.slot == slot_str
                 && let Some(parsed_type) = dyn_type
             {
@@ -223,31 +224,34 @@ impl SlotIdentifier {
                 });
             }
 
-            // Handle the case where the accessed `slot` is maybe different from the base slot.
-            let array_start_slot = U256::from_str(&storage.slot).ok()?;
+            // Encoding types: <https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#json-output>
+            if storage_type.encoding == "inplace" {
+                // Can be of type FixedArrays or Structs
+                // Handles the case where the accessed `slot` is maybe different from the base slot.
+                let array_start_slot = U256::from_str(&storage.slot).ok()?;
 
-            if let Some(parsed_type) = dyn_type
-                && let DynSolType::FixedArray(_, _) = parsed_type
-                && let Some(slot_info) = self.handle_array_slot(
-                    storage,
-                    storage_type,
-                    slot_u256,
-                    array_start_slot,
-                    &slot_str,
-                )
-            {
-                return Some(slot_info);
-            }
+                if let Some(parsed_type) = dyn_type
+                    && let DynSolType::FixedArray(_, _) = parsed_type
+                    && let Some(slot_info) = self.handle_array_slot(
+                        storage,
+                        storage_type,
+                        slot_u256,
+                        array_start_slot,
+                        &slot_str,
+                    )
+                {
+                    return Some(slot_info);
+                }
 
-            // If type parsing fails and the label is a struct
-            if storage_type.label.starts_with("struct ")
-                && let Some(slot_info) =
-                    self.handle_struct(storage, storage_type, slot_u256, &slot_str)
-            {
-                return Some(slot_info);
-            }
-
-            if let Some(mapping_slots) = mapping_slots
+                // If type parsing fails and the label is a struct
+                if storage_type.label.starts_with("struct ")
+                    && let Some(slot_info) =
+                        self.handle_struct(storage, storage_type, slot_u256, &slot_str)
+                {
+                    return Some(slot_info);
+                }
+            } else if storage_type.encoding == "mapping"
+                && let Some(mapping_slots) = mapping_slots
                 && let Some(slot_info) =
                     self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
             {
