@@ -1,14 +1,14 @@
 //! Contains RPC handlers
 use crate::{
+    EthApi,
     eth::error::to_rpc_result,
     pubsub::{EthSubscription, LogsSubscription},
-    EthApi,
 };
 use alloy_rpc_types::{
-    pubsub::{Params, SubscriptionKind},
     FilteredParams,
+    pubsub::{Params, SubscriptionKind},
 };
-use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
+use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 
@@ -71,7 +71,7 @@ impl PubSubEthRpcHandler {
                         if raw_params.is_bool() {
                             return ResponseResult::Error(RpcError::invalid_params(
                                 "Expected params for logs subscription",
-                            ))
+                            ));
                         }
 
                         trace!(target: "rpc::ws", "received logs subscription {:?}", params);
@@ -107,12 +107,12 @@ impl PubSubEthRpcHandler {
                             _ => {
                                 return ResponseResult::Error(RpcError::invalid_params(
                                     "Expected boolean parameter for newPendingTransactions",
-                                ))
+                                ));
                             }
                         }
                     }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into()
+                        return RpcError::internal_error_with("Not implemented").into();
                     }
                 };
 

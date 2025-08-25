@@ -7,16 +7,16 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
+    SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
+    foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
+    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -26,6 +26,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
 };
 
 // tests all config values that are in use
@@ -36,6 +37,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         // `profiles` is not serialized.
         profiles: vec![],
         root: ".".into(),
+        extends: None,
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -84,14 +86,16 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            failure_persist_file: Some("failures".to_string()),
             show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            corpus_dir: Some("cache/invariant/corpus".into()),
+            corpus: FuzzCorpusConfig {
+                corpus_dir: Some("cache/invariant/corpus".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ffi: true,
@@ -101,7 +105,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-        block_number: 10,
+        block_number: U256::from(10),
         fork_block_number: Some(200),
         chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
@@ -109,7 +113,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
-        block_timestamp: 10,
+        block_timestamp: U256::from(10),
         block_difficulty: 10,
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
@@ -126,7 +130,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
         libraries: vec![
-            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
+            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
@@ -345,11 +349,15 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
     assert!(config.ffi);
 
-    std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    unsafe {
+        std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    }
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
-    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    unsafe {
+        std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    }
 });
 
 // checks that we can set various config values
@@ -659,6 +667,8 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 // remapping.
 // See <https://github.com/foundry-rs/foundry/issues/9146>
 // Test that
+// - single file remapping is properly added, see
+// <https://github.com/foundry-rs/foundry/issues/6706> and <https://github.com/foundry-rs/foundry/issues/8499>
 // - project defined `@openzeppelin/contracts` remapping is added
 // - library defined `@openzeppelin/contracts-upgradeable` remapping is added
 // - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
@@ -668,6 +678,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let mut config = cmd.config();
     // Add `@utils/` remapping in project config.
     config.remappings = vec![
+        Remapping::from_str("@utils/libraries/Contract.sol=src/Contract.sol").unwrap().into(),
         Remapping::from_str("@utils/=src/").unwrap().into(),
         Remapping::from_str("@openzeppelin/contracts=lib/openzeppelin-contracts/").unwrap().into(),
     ];
@@ -695,6 +706,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 
     cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
 Global:
+- @utils/libraries/Contract.sol=src/Contract.sol
 - @utils/=src/
 - @openzeppelin/contracts/=lib/openzeppelin-contracts/
 - @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
@@ -1057,6 +1069,7 @@ path = "out"
 [fmt]
 line_length = 120
 tab_width = 4
+style = "space"
 bracket_spacing = false
 int_types = "long"
 multiline_func_header = "attributes_first"
@@ -1075,6 +1088,7 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
+mixed_case_exceptions = ["ERC"]
 
 [doc]
 out = "docs"
@@ -1085,6 +1099,7 @@ ignore = []
 
 [fuzz]
 runs = 256
+fail_on_revert = true
 max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
@@ -1092,8 +1107,11 @@ include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/fuzz"
-failure_persist_file = "failures"
 show_logs = false
 
 [invariant]
@@ -1112,6 +1130,7 @@ gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -1194,6 +1213,7 @@ exclude = []
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
     "dictionary_weight": 40,
@@ -1202,8 +1222,12 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/fuzz",
-    "failure_persist_file": "failures",
     "show_logs": false,
     "timeout": null
   },
@@ -1224,6 +1248,7 @@ exclude = []
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1271,6 +1296,7 @@ exclude = []
   "fmt": {
     "line_length": 120,
     "tab_width": 4,
+    "style": "space",
     "bracket_spacing": false,
     "int_types": "long",
     "multiline_func_header": "attributes_first",
@@ -1288,7 +1314,10 @@ exclude = []
     "severity": [],
     "exclude_lints": [],
     "ignore": [],
-    "lint_on_build": true
+    "lint_on_build": true,
+    "mixed_case_exceptions": [
+      "ERC"
+    ]
   },
   "doc": {
     "out": "docs",
@@ -1832,4 +1861,53 @@ contract Counter {
     assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("800", runs.unwrap().to_string());
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11227>
+forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+    prj.update_config(|config| {
+        config.lint.exclude_lints = vec![
+            "asm-keccak256".to_string(),
+            "incorrect-shift".to_string(),
+            "divide-before-multiply".to_string(),
+            "mixed-case-variable".to_string(),
+            "mixed-case-function".to_string(),
+            "screaming-snake-case-const".to_string(),
+            "screaming-snake-case-immutable".to_string(),
+            "unwrapped-modifier-logic".to_string(),
+        ]
+    });
+    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6529>
+forgetest_init!(test_fail_fast_config, |prj, cmd| {
+    // Skip if we don't have at least 2 CPUs to run both tests in parallel.
+    if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
+        config.fuzz.timeout = Some(3600);
+    });
+    prj.add_test(
+        "AnotherCounterTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AnotherCounterTest is Test {
+    // This failure should stop all other tests.
+    function test_Failure() public pure {
+        require(false);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--fail-fast"]).assert_failure();
 });

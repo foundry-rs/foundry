@@ -5,15 +5,15 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    map::{AddressHashMap, HashMap},
     Address, Log,
+    map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{invariant::InvariantMetrics, RawCallResult},
+    executors::{RawCallResult, invariant::InvariantMetrics},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
@@ -407,7 +407,8 @@ pub struct TestResult {
     pub line_coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: AddressHashMap<String>,
+    #[serde(rename = "labeled_addresses")] // Backwards compatibility.
+    pub labels: AddressHashMap<String>,
 
     #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
@@ -472,11 +473,20 @@ impl fmt::Display for TestResult {
     }
 }
 
+macro_rules! extend {
+    ($a:expr, $b:expr, $trace_kind:expr) => {
+        $a.logs.extend($b.logs);
+        $a.labels.extend($b.labels);
+        $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.merge_coverages($b.line_coverage);
+    };
+}
+
 impl TestResult {
     /// Creates a new test result starting from test setup results.
     pub fn new(setup: &TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labels.clone(),
+            labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
             line_coverage: setup.coverage.clone(),
@@ -491,13 +501,25 @@ impl TestResult {
 
     /// Creates a test setup result.
     pub fn setup_result(setup: TestSetup) -> Self {
+        let TestSetup {
+            address: _,
+            fuzz_fixtures: _,
+            logs,
+            labels,
+            traces,
+            coverage,
+            deployed_libs: _,
+            reason,
+            skipped,
+            deployment_failure: _,
+        } = setup;
         Self {
-            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
-            reason: setup.reason,
-            logs: setup.logs,
-            traces: setup.traces,
-            line_coverage: setup.coverage,
-            labeled_addresses: setup.labels,
+            status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
+            reason,
+            logs,
+            traces,
+            line_coverage: coverage,
+            labels,
             ..Default::default()
         }
     }
@@ -525,11 +547,7 @@ impl TestResult {
         self.kind =
             TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
 
-        // Record logs, labels, traces and merge coverages.
-        self.logs.extend(raw_call_result.logs);
-        self.labeled_addresses.extend(raw_call_result.labels);
-        self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(raw_call_result.line_coverage);
+        extend!(self, raw_call_result, TraceKind::Execution);
 
         self.status = match success {
             true => TestStatus::Success,
@@ -554,13 +572,11 @@ impl TestResult {
             mean_gas: result.mean_gas(false),
             first_case: result.first_case,
             runs: result.gas_by_case.len(),
+            failed_corpus_replays: result.failed_corpus_replays,
         };
 
         // Record logs, labels, traces and merge coverages.
-        self.logs.extend(result.logs);
-        self.labeled_addresses.extend(result.labeled_addresses);
-        self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(result.line_coverage);
+        extend!(self, result, TraceKind::Execution);
 
         self.status = if result.skipped {
             TestStatus::Skipped
@@ -575,6 +591,19 @@ impl TestResult {
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+    }
+
+    /// Returns the fail result for fuzz test setup.
+    pub fn fuzz_setup_fail(&mut self, e: Report) {
+        self.kind = TestKind::Fuzz {
+            first_case: Default::default(),
+            runs: 0,
+            mean_gas: 0,
+            median_gas: 0,
+            failed_corpus_replays: 0,
+        };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
     }
 
     /// Returns the skipped result for invariant test.
@@ -667,10 +696,7 @@ impl TestResult {
 
     /// Merges the given raw call result into `self`.
     pub fn extend(&mut self, call_result: RawCallResult) {
-        self.logs.extend(call_result.logs);
-        self.labeled_addresses.extend(call_result.labels);
-        self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.line_coverage);
+        extend!(self, call_result, TraceKind::Execution);
     }
 
     /// Merges the given coverage result into `self`.
@@ -689,6 +715,7 @@ pub enum TestKindReport {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     Invariant {
         runs: usize,
@@ -705,12 +732,22 @@ impl fmt::Display for TestKindReport {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            Self::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(
+                        f,
+                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
+                    )
+                } else {
+                    write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 if *failed_corpus_replays != 0 {
-                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})")
+                    write!(
+                        f,
+                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})"
+                    )
                 } else {
                     write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
                 }
@@ -744,6 +781,7 @@ pub enum TestKind {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     /// An invariant test.
     Invariant {
@@ -766,8 +804,13 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
-            Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            Self::Fuzz { first_case: _, runs, mean_gas, median_gas, failed_corpus_replays } => {
+                TestKindReport::Fuzz {
+                    runs: *runs,
+                    mean_gas: *mean_gas,
+                    median_gas: *median_gas,
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 TestKindReport::Invariant {
@@ -822,9 +865,10 @@ impl TestSetup {
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
-        self.logs.extend(raw.logs);
-        self.labels.extend(raw.labels);
-        self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
-        HitMaps::merge_opt(&mut self.coverage, raw.line_coverage);
+        extend!(self, raw, trace_kind);
+    }
+
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+        HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
 }

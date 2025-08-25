@@ -1,13 +1,12 @@
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{
-    keccak256,
+    Address, B256, U256, keccak256,
     map::{AddressHashMap, B256HashMap},
-    Address, B256, U256,
 };
 use alloy_sol_types::SolValue;
 use revm::{
     bytecode::opcode,
-    interpreter::{interpreter_types::Jumps, Interpreter},
+    interpreter::{Interpreter, interpreter_types::Jumps},
 };
 
 /// Recorded mapping slots.
@@ -35,7 +34,7 @@ impl MappingSlots {
         match self.seen_sha3.get(&slot).copied() {
             Some((key, parent)) => {
                 if self.keys.contains_key(&slot) {
-                    return false
+                    return false;
                 }
                 self.keys.insert(slot, key);
                 self.parent_slots.insert(slot, parent);
@@ -134,10 +133,10 @@ pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address) {
-                if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(slot.into());
-                }
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
+                && let Ok(slot) = interpreter.stack.peek(0)
+            {
+                mapping_slots.insert(slot.into());
             }
         }
         _ => {}

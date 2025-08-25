@@ -278,6 +278,10 @@ interface Vm {
         StorageAccess[] storageAccesses;
         /// Call depth traversed during the recording of state differences
         uint64 depth;
+        /// The previous nonce of the accessed account.
+        uint64 oldNonce;
+        /// The new nonce of the accessed account.
+        uint64 newNonce;
     }
 
     /// The result of the `stopDebugTraceRecording` call
@@ -428,6 +432,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStateDiffJson() external view returns (string memory diff);
 
+    /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
+
     // -------- Recording Map Writes --------
 
     /// Starts recording all map SSTOREs for later retrieval.
@@ -521,6 +529,11 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
+
+    /// Gets the RLP encoded block header for a given block number.
+    /// Returns the block header in the same format as `cast block <block_number> --raw`.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
 
     /// Sets `block.blobbasefee`
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -2171,7 +2184,6 @@ interface Vm {
     function isContext(ForgeContext context) external view returns (bool result);
 
     // ======== Scripts ========
-
     // -------- Broadcasting Transactions --------
 
     /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
@@ -2723,25 +2735,25 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language)
@@ -2811,11 +2823,11 @@ interface Vm {
 
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
-    function randomUint() external returns (uint256);
+    function randomUint() external view returns (uint256);
 
     /// Returns random uint256 value between the provided range (=min..=max).
     #[cheatcode(group = Utilities)]
-    function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 min, uint256 max) external view returns (uint256);
 
     /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
@@ -2823,7 +2835,7 @@ interface Vm {
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
-    function randomAddress() external returns (address);
+    function randomAddress() external view returns (address);
 
     /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
@@ -2955,13 +2967,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test) |
-            (Self::Snapshot, Self::Snapshot) |
-            (Self::Coverage, Self::Coverage) |
-            (Self::ScriptDryRun, Self::ScriptDryRun) |
-            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
-            (Self::ScriptResume, Self::ScriptResume) |
-            (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test)
+            | (Self::Snapshot, Self::Snapshot)
+            | (Self::Coverage, Self::Coverage)
+            | (Self::ScriptDryRun, Self::ScriptDryRun)
+            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
+            | (Self::ScriptResume, Self::ScriptResume)
+            | (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }

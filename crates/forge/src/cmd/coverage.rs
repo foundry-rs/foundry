@@ -1,24 +1,24 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::{
+    MultiContractRunnerBuilder,
     coverage::{
-        analysis::{SourceAnalysis, SourceFile, SourceFiles},
-        anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
+        analysis::{SourceAnalysis, SourceFile, SourceFiles},
+        anchors::find_anchors,
     },
-    MultiContractRunnerBuilder,
 };
-use alloy_primitives::{map::HashMap, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
-        sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
+        CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source, sourcemap::SourceMap,
     },
     compilers::multi::MultiCompiler,
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use foundry_evm::opts::EvmOpts;
@@ -185,7 +185,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[instrument(name = "prepare", skip_all)]
+    #[instrument(name = "Coverage::prepare", skip_all)]
     fn prepare(
         &self,
         project_paths: &ProjectPathsConfig,
@@ -199,8 +199,8 @@ impl CoverageArgs {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out libs dependencies and tests.
-            if (!self.include_libs && project_paths.has_library_ancestor(path)) ||
-                (self.exclude_tests && project_paths.is_test(path))
+            if (!self.include_libs && project_paths.has_library_ancestor(path))
+                || (self.exclude_tests && project_paths.is_test(path))
             {
                 continue;
             }
@@ -258,6 +258,7 @@ impl CoverageArgs {
     }
 
     /// Runs tests, collects coverage data and generates the final report.
+    #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
         root: &Path,
@@ -329,10 +330,17 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        for reporter in &mut self.reporters {
-            reporter.report(&report)?;
-        }
+        self.report(&report)?;
 
+        Ok(())
+    }
+
+    #[instrument(name = "Coverage::report", skip_all)]
+    fn report(&mut self, report: &CoverageReport) -> Result<()> {
+        for reporter in &mut self.reporters {
+            let _guard = debug_span!("reporter.report", kind=%reporter.name()).entered();
+            reporter.report(report)?;
+        }
         Ok(())
     }
 

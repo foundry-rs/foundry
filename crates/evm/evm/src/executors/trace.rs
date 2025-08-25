@@ -1,12 +1,12 @@
 use crate::{
-    executors::{Executor, ExecutorBuilder},
     Env,
+    executors::{Executor, ExecutorBuilder},
 };
-use alloy_primitives::{map::HashMap, Address, U256};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{utils::evm_spec_id, Chain, Config};
+use foundry_config::{Chain, Config, utils::evm_spec_id};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use foundry_evm_traces::TraceMode;
 use revm::{primitives::hardfork::SpecId, state::Bytecode};

@@ -61,7 +61,7 @@ op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
-revm.workspace = true
+revm = { workspace = true, features = ["optional_balance_check"] }
 rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true
@@ -72,7 +72,7 @@ serde.workspace = true
 foundry-cli.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
+clap_complete.workspace = true
 clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true

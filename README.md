@@ -17,6 +17,7 @@
 | [Docs][foundry-docs]
 | [Developer Guidelines](./docs/dev/README.md)
 | [Contributing](./CONTRIBUTING.md)
+| [Crate Docs](https://foundry-rs.github.io/foundry)
 
 </div>
 
@@ -314,7 +315,7 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in the [Foundy Docs][foundry-docs], or in the relevant crate.
+First, see if the answer to your question can be found in the [Foundry Docs][foundry-docs], or in the relevant crate.
 
 If the answer is not there:
 

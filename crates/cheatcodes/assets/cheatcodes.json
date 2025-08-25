@@ -463,6 +463,16 @@
           "name": "depth",
           "ty": "uint64",
           "description": "Call depth traversed during the recording of state differences"
+        },
+        {
+          "name": "oldNonce",
+          "ty": "uint64",
+          "description": "The previous nonce of the accessed account."
+        },
+        {
+          "name": "newNonce",
+          "ty": "uint64",
+          "description": "The new nonce of the accessed account."
         }
       ]
     },
@@ -4177,7 +4187,7 @@
     {
       "func": {
         "id": "deriveKey_0",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4197,7 +4207,7 @@
     {
       "func": {
         "id": "deriveKey_1",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4217,7 +4227,7 @@
     {
       "func": {
         "id": "deriveKey_2",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4237,7 +4247,7 @@
     {
       "func": {
         "id": "deriveKey_3",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -6376,6 +6386,26 @@
     },
     {
       "func": {
+        "id": "getRawBlockHeader",
+        "description": "Gets the RLP encoded block header for a given block number.\nReturns the block header in the same format as `cast block <block_number> --raw`.",
+        "declaration": "function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getRawBlockHeader(uint256)",
+        "selector": "0x2c667606",
+        "selectorBytes": [
+          44,
+          102,
+          118,
+          6
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
         "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
@@ -6428,6 +6458,26 @@
           79,
           224,
           9
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getStorageAccesses",
+        "description": "Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session",
+        "declaration": "function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageAccesses()",
+        "selector": "0x2899b1d0",
+        "selectorBytes": [
+          40,
+          153,
+          177,
+          208
         ]
       },
       "group": "evm",
@@ -8260,9 +8310,9 @@
       "func": {
         "id": "randomAddress",
         "description": "Returns a random `address`.",
-        "declaration": "function randomAddress() external returns (address);",
+        "declaration": "function randomAddress() external view returns (address);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomAddress()",
         "selector": "0xd5bee9f5",
         "selectorBytes": [
@@ -8400,9 +8450,9 @@
       "func": {
         "id": "randomUint_0",
         "description": "Returns a random uint256 value.",
-        "declaration": "function randomUint() external returns (uint256);",
+        "declaration": "function randomUint() external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint()",
         "selector": "0x25124730",
         "selectorBytes": [
@@ -8420,9 +8470,9 @@
       "func": {
         "id": "randomUint_1",
         "description": "Returns random uint256 value between the provided range (=min..=max).",
-        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "declaration": "function randomUint(uint256 min, uint256 max) external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint(uint256,uint256)",
         "selector": "0xd61b051b",
         "selectorBytes": [

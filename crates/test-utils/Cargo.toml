@@ -32,11 +32,11 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
 snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
-ui_test = "0.29.2"
+ui_test = "0.30.2"
 
-## Pinned dependencies. See /Cargo.toml.
+# Pinned dependencies. See /Cargo.toml.
+[target.'cfg(any())'.dependencies]
 idna_adapter.workspace = true
-zip-extract.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

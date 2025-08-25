@@ -2,30 +2,30 @@
 use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
-        check_and_encode_args, check_explorer_args, configure_env_block, maybe_predeploy_contract,
-        BytecodeType, JsonResult,
+        BytecodeType, JsonResult, check_and_encode_args, check_explorer_args, configure_env_block,
+        maybe_predeploy_contract,
     },
     verify::VerifierArgs,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
+    Provider,
     ext::TraceApi,
     network::{AnyTxEnvelope, TransactionBuilder},
-    Provider,
 };
 use alloy_rpc_types::{
-    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
     BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
-    utils::{self, read_constructor_args_file, LoadConfig},
+    utils::{self, LoadConfig, read_constructor_args_file},
 };
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
-use foundry_config::{figment, impl_figment_convert, Config};
+use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
 use foundry_evm_core::AsEnvMut;
 use revm::state::AccountInfo;
@@ -247,7 +247,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
 
-            env.evm_env.block_env.number = 0;
+            env.evm_env.block_env.number = U256::ZERO;
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
@@ -345,8 +345,8 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code from creation tx input.
-        let maybe_creation_code = if receipt.to.is_none() &&
-            receipt.contract_address == Some(self.address)
+        let maybe_creation_code = if receipt.to.is_none()
+            && receipt.contract_address == Some(self.address)
         {
             match &transaction.input.input {
                 Some(input) => &input[..],
@@ -465,7 +465,7 @@ impl VerifyBytecodeArgs {
                 evm_opts,
             )
             .await?;
-            env.evm_env.block_env.number = simulation_block;
+            env.evm_env.block_env.number = U256::from(simulation_block);
             let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same

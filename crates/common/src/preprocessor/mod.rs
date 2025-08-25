@@ -1,24 +1,23 @@
 use foundry_compilers::{
-    apply_updates,
+    Compiler, Language, ProjectPathsConfig, apply_updates,
     artifacts::SolcLanguage,
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
     project::Preprocessor,
     solc::{SolcCompiler, SolcVersionedInput},
-    Compiler, Language, ProjectPathsConfig,
 };
 use solar_parse::{
     ast::Span,
     interface::{Session, SourceMap},
 };
-use solar_sema::{thread_local::ThreadLocal, ParsingContext};
+use solar_sema::{ParsingContext, thread_local::ThreadLocal};
 use std::{collections::HashSet, ops::Range, path::PathBuf};
 
 mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
 
 mod deps;
-use deps::{remove_bytecode_dependencies, PreprocessorDependencies};
+use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
 
 /// Returns the range of the given span in the source map.
 #[track_caller]
@@ -26,10 +25,17 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
     source_map.span_to_source(span).unwrap().1
 }
 
+/// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
+/// dynamic linkage through (`Vm.create*`).
+///
+/// This allows for more efficient caching when iterating on tests.
+///
+/// See <https://github.com/foundry-rs/foundry/pull/10010>.
 #[derive(Debug)]
-pub struct TestOptimizerPreprocessor;
+pub struct DynamicTestLinkingPreprocessor;
 
-impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
+impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
+    #[instrument(name = "DynamicTestLinkingPreprocessor::preprocess", skip_all)]
     fn preprocess(
         &self,
         _solc: &SolcCompiler,
@@ -56,11 +62,10 @@ impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
             for (path, source) in sources.iter() {
                 if let Ok(src_file) =
                     sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                    && paths.is_test_or_script(path)
                 {
-                    if paths.is_test_or_script(path) {
-                        parsing_context.add_file(src_file);
-                        preprocessed_paths.push(path.clone());
-                    }
+                    parsing_context.add_file(src_file);
+                    preprocessed_paths.push(path.clone());
                 }
             }
 
@@ -99,7 +104,7 @@ impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
     }
 }
 
-impl Preprocessor<MultiCompiler> for TestOptimizerPreprocessor {
+impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn preprocess(
         &self,
         compiler: &MultiCompiler,

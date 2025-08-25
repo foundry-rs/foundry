@@ -94,3 +94,43 @@ note[mixed-case-function]: function names should use mixedCase
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+66 |     function ERC20_DoSomething() public {} // invalid because of the underscore
+   |              -----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+71 |     function HAS_PARAMS(address addr) external view returns (uint256) {}
+   |              ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+72 |     function HAS_NO_RETURN() external view {}
+   |              -------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+73 |     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {}
+   |              ------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+74 |     function NOT_ELEMENTARY_RETURN() external view returns (uint256[]) {}
+   |              ---------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+

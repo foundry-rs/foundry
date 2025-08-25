@@ -29,8 +29,40 @@ const OTHER_CONTRACT: &str = r#"
     // SPDX-License-Identifier: MIT
     pragma solidity ^0.8.0;
 
-    contract ContractWithLints {
-        uint256 VARIABLE_MIXED_CASE_INFO;
+    // forge-lint: disable-next-line
+    import { ContractWithLints } from "./ContractWithLints.sol";
+
+    contract OtherContractWithLints {
+        function functionMIXEDCaseInfo() public {}
+    }
+        "#;
+
+const ONLY_IMPORTS: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    // forge-lint: disable-next-line
+    import { ContractWithLints } from "./ContractWithLints.sol";
+
+    import { _PascalCaseInfo } from "./ContractWithLints.sol";
+    import "./ContractWithLints.sol";
+        "#;
+
+const COUNTER_A: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    contract CounterA {
+        uint256 public CounterA_Fail_Lint;
+    }
+        "#;
+
+const COUNTER_B: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    contract CounterB {
+        uint256 public CounterB_Fail_Lint;
     }
         "#;
 
@@ -46,6 +78,7 @@ forgetest!(can_use_config, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
@@ -73,16 +106,17 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -94,6 +128,25 @@ note[mixed-case-variable]: mutable variables should use mixedCase
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into(), "src/OtherContract.sol".into()],
             lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+});
+
+forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+
+    // Check config for `ignore`
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/ContractWithLints.sol".into()],
+            lint_on_build: true,
+            mixed_case_exceptions: vec!["MIXED".to_string()],
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -111,16 +164,17 @@ forgetest!(can_override_config_severity, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -138,6 +192,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
@@ -165,6 +220,7 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
@@ -193,6 +249,7 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -256,6 +313,7 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -274,6 +332,7 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -302,6 +361,7 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: false,
+            ..Default::default()
         };
     });
 
@@ -343,6 +403,80 @@ Warning (2018): Function state mutability can be restricted to pure
 
 "#]]);
 });
+
+forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    cmd.arg("lint").assert_success();
+
+    prj.wipe_contracts();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    cmd.arg("lint").assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11080>
+forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OnlyImports", ONLY_IMPORTS).unwrap();
+    cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
+note[unused-import]: unused imports should be removed
+ [FILE]:8:14
+  |
+8 |     import { _PascalCaseInfo } from "./ContractWithLints.sol";
+  |              ---------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11234>
+forgetest!(can_lint_only_built_files, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
+    prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
+
+    // Both contracts should be linted on build. Redact contract as order is not guaranteed.
+    cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public Counter[..]_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public Counter[..]_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+
+"#]]);
+    // Only contract CounterBWithLints that we build should be linted.
+    cmd.forge_fuse().args(["build", "src/CounterBWithLints.sol"]).assert_success().stderr_eq(str![
+        [r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public CounterB_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+
+"#]
+    ]);
+});
+
+// ------------------------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn ensure_lint_rule_docs() {
@@ -392,7 +526,7 @@ async fn ensure_lint_rule_docs() {
 }
 
 #[test]
-fn ensure_no_priviledged_lint_id() {
+fn ensure_no_privileged_lint_id() {
     for lint in REGISTERED_LINTS {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }

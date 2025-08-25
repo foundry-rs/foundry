@@ -1,10 +1,10 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     rpc, str,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -793,14 +793,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 [1.157e77]]] testAddOne(uint256) (runs: 84, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 [1.157e77]]] testAddOne(uint256) (runs: 84, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2456,7 +2456,7 @@ contract Dummy {
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(100));
+        config.fuzz.seed = Some(U256::from(111));
     });
 
     prj.add_source(
@@ -2475,6 +2475,7 @@ interface Vm {
     function assumeNoRevert(PotentialRevert calldata revertData) external pure;
     function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
     function expectRevert(bytes4 revertData, uint64 count) external;
+    function assume(bool condition) external pure;
 }
 
 contract ReverterB {
@@ -2581,6 +2582,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
     function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+        _vm.assume(x != 3);
         Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
         revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
         revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
@@ -2630,11 +2632,11 @@ contract ReverterTest is Test {
 Compiler run successful!
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
 [FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
@@ -2725,7 +2727,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         contract GetBroadcastTest is DSTest {
             Vm constant vm = Vm(HEVM_ADDRESS);
 
-            function test_getLatestBroacast() external {
+            function test_getLatestBroadcast() external {
                 // Gets the latest create
                 Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
                     "Counter",
@@ -2843,10 +2845,13 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 });
 
 // See <https://github.com/foundry-rs/foundry/issues/9297>
-forgetest_init!(test_roll_scroll_fork_with_cancun, |prj, cmd| {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
+forgetest_init!(
+    #[ignore = "RPC Service Unavailable"]
+    test_roll_scroll_fork_with_cancun,
+    |prj, cmd| {
+        prj.add_test(
+            "ScrollForkTest.t.sol",
+            r#"
 
 import {Test} from "forge-std/Test.sol";
 
@@ -2858,12 +2863,13 @@ contract ScrollForkTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
 
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
-});
+        cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+            .assert_success();
+    }
+);
 
 // Test that only provider is included in failed fork error.
 forgetest_init!(test_display_provider_on_error, |prj, cmd| {
@@ -2906,15 +2912,13 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [31851] CounterTest::test_Increment()
+  [28783] CounterTest::test_Increment()
     ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -3050,7 +3054,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [35200] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3095,7 +3099,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [35200] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3111,15 +3115,13 @@ Logs:
   test increment success
 
 Traces:
-  [35229] SuppressTracesTest::test_increment_success()
+  [32164] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -3862,6 +3864,163 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11021>
+forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {
+    prj.add_test(
+        "PrankBug.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PrankTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+    }
+
+    function test_Increment() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/PrankBug.t.sol:PrankTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [..] PrankTest::setUp()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+  [..] PrankTest::test_Increment()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@0xc4B957Cd61beB9b9afD76204b30683EDAaaB51Ec
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [..] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [..] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─  storage changes:
+    │   @ 31: 0x00000000000000000000006cdbd1b486b8fbd4140e8cd6daaed05be13ed91401 → 0x0000000000000000000000c4b957cd61beb9b9afd76204b30683edaaab51ec01
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// tests proper reverts in fork mode for contracts with non-existent linked libraries.
+// <https://github.com/foundry-rs/foundry/issues/11185>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
+    prj.update_config(|config| {
+        config.libraries =
+            vec!["src/Counter.sol:LibCounter:0x530008d2b058137d9c475b1b7d83984f1fcf1dd0".into()];
+    });
+    prj.add_source(
+        "Counter.sol",
+        r"
+library LibCounter {
+    function dummy() external pure returns (uint) {
+        return 1;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor() {
+        LibCounter.dummy();
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+
+    function dummy() external pure returns (uint) {
+        return LibCounter.dummy();
+    }
+}
+   ",
+    )
+    .unwrap();
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_test(
+        "Counter.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_select_fork() public {
+        vm.createSelectFork("<url>");
+        new Counter();
+    }
+
+    function test_roll_fork() public {
+        vm.rollFork(block.number - 100);
+        new Counter();
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
 
 "#]]);
 });

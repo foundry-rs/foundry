@@ -30,7 +30,7 @@ foundry-evm.workspace = true
 foundry-evm-core.workspace = true
 
 # alloy
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["call-util"] }
 alloy-op-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
@@ -100,7 +100,7 @@ clap = { version = "4", features = [
     "env",
     "wrap_help",
 ], optional = true }
-clap_complete = { version = "4", optional = true }
+clap_complete = { workspace = true, optional = true}
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
@@ -130,3 +130,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
+js-tracer = ["revm-inspectors/js-tracer"]

@@ -255,6 +255,7 @@ impl From<u64> for SolidityErrorCode {
             5740 => Self::Unreachable,
             3420 => Self::PragmaSolidity,
             2394 => Self::TransientStorageUsed,
+            4591 => Self::TooManyWarnings,
             other => Self::Other(other),
         }
     }
