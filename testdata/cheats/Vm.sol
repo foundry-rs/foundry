@@ -32,7 +32,6 @@ interface Vm {
     function _expectCheatcodeRevert(bytes calldata revertData) external;
     function accessList(AccessListItem[] calldata access) external;
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
-    function activeChain() external view returns (uint256 chainId);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
@@ -299,6 +298,7 @@ interface Vm {
     function getBroadcast(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);
     function getBroadcasts(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);
     function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
+    function getChainId() external view returns (uint256 blockChainId);
     function getChain(string calldata chainAlias) external view returns (Chain memory chain);
     function getChain(uint256 chainId) external view returns (Chain memory chain);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);

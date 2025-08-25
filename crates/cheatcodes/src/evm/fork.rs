@@ -10,18 +10,6 @@ use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{AsEnvMut, ContextExt, fork::CreateFork};
 
-impl Cheatcode for activeChainCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self {} = self;
-        ccx.ecx
-            .as_env_mut()
-            .tx
-            .chain_id
-            .map(|id| U256::from(id).abi_encode())
-            .ok_or_else(|| fmt_err!("no active fork"))
-    }
-}
-
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;

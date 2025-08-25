@@ -361,10 +361,6 @@ interface Vm {
 
     // ======== EVM ========
 
-    /// Returns the chain id of the currently selected environment. Defaults to 1 (Ethereum mainnet).
-    #[cheatcode(group = Evm, safety = Safe)]
-    function activeChain() external view returns (uint256 chainId);
-
     /// Gets the address for a given private key.
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
@@ -466,6 +462,13 @@ interface Vm {
         returns (bool found, bytes32 key, bytes32 parent);
 
     // -------- Block and Transaction Properties --------
+
+    /// Gets the current `block.chainid` of the currently selected environment.
+    /// You should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed
+    /// to be constant across a transaction, and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getChainId() external view returns (uint256 blockChainId);
 
     /// Sets `block.chainid`.
     #[cheatcode(group = Evm, safety = Unsafe)]

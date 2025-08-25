@@ -782,26 +782,6 @@
     },
     {
       "func": {
-        "id": "activeChain",
-        "description": "Returns the chain id of the currently selected environment. Defaults to 1 (Ethereum mainnet).",
-        "declaration": "function activeChain() external view returns (uint256 chainId);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "activeChain()",
-        "selector": "0x98bb6e67",
-        "selectorBytes": [
-          152,
-          187,
-          110,
-          103
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "activeFork",
         "description": "Returns the identifier of the currently active fork. Reverts if no fork is currently active.",
         "declaration": "function activeFork() external view returns (uint256 forkId);",
@@ -6121,6 +6101,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChainId",
+        "description": "Gets the current `block.chainid` of the currently selected environment.\nYou should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed\nto be constant across a transaction, and as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getChainId() external view returns (uint256 blockChainId);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChainId()",
+        "selector": "0x3408e470",
+        "selectorBytes": [
+          52,
+          8,
+          228,
+          112
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
