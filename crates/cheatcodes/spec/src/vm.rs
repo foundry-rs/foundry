@@ -361,6 +361,10 @@ interface Vm {
 
     // ======== EVM ========
 
+    /// Returns the chain id of the currently selected environment. Defaults to 1 (Ethereum mainnet).
+    #[cheatcode(group = Evm, safety = Safe)]
+    function activeChain() external view returns (uint256 chainId);
+
     /// Gets the address for a given private key.
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
@@ -820,10 +824,6 @@ interface Vm {
     /// Returns the identifier of the currently active fork. Reverts if no fork is currently active.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function activeFork() external view returns (uint256 forkId);
-
-    /// Returns the chain id of the currently active fork. Reverts if no fork is currently active.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function activeChain() external view returns (uint256 chainId);
 
     /// Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork.
     #[cheatcode(group = Evm, safety = Unsafe)]

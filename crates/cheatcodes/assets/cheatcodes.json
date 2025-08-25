@@ -783,7 +783,7 @@
     {
       "func": {
         "id": "activeChain",
-        "description": "Returns the chain id of the currently active fork. Reverts if no fork is currently active.",
+        "description": "Returns the chain id of the currently selected environment. Defaults to 1 (Ethereum mainnet).",
         "declaration": "function activeChain() external view returns (uint256 chainId);",
         "visibility": "external",
         "mutability": "view",
@@ -798,7 +798,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {
