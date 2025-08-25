@@ -6,8 +6,8 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use serde::Serialize;
-use solar_parse::interface::Session;
-use solar_sema::{
+use solar::parse::interface::Session;
+use solar::sema::{
     Gcx, Hir,
     hir::StructId,
     ty::{Ty, TyKind},
@@ -59,7 +59,7 @@ impl Eip712Args {
 
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-        let mut compiler = solar_sema::Compiler::new(sess);
+        let mut compiler = solar::sema::Compiler::new(sess);
 
         compiler.enter_mut(|compiler| -> Result<()> {
             // Set up the parsing context with the project paths and sources.

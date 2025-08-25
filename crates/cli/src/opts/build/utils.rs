@@ -7,7 +7,7 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use rayon::prelude::*;
-use solar_sema::ParsingContext;
+use solar::sema::ParsingContext;
 use std::path::PathBuf;
 
 /// Configures a [`ParsingContext`] from [`Config`].
@@ -104,7 +104,7 @@ fn configure_pcx_from_solc_cli(
     pcx.file_resolver
         .set_current_dir(cli_settings.base_path.as_ref().unwrap_or(&project.paths.root));
     for remapping in &project.paths.remappings {
-        pcx.file_resolver.add_import_remapping(solar_sema::interface::config::ImportRemapping {
+        pcx.file_resolver.add_import_remapping(solar::sema::interface::config::ImportRemapping {
             context: remapping.context.clone().unwrap_or_default(),
             prefix: remapping.name.clone(),
             path: remapping.path.clone(),

@@ -1,6 +1,6 @@
-use solar_ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit};
-use solar_data_structures::map::FxIndexSet;
-use solar_interface::SourceMap;
+use solar::ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit};
+use solar::data_structures::map::FxIndexSet;
+use solar::interface::SourceMap;
 use std::ops::ControlFlow;
 
 use super::Imports;
@@ -100,7 +100,7 @@ impl<'ast> UnusedChecker<'ast> {
 }
 
 impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
-    type BreakValue = solar_data_structures::Never;
+    type BreakValue = solar::data_structures::Never;
 
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::ItemKind::Import(_) = &item.kind {
@@ -154,7 +154,7 @@ impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
 
     fn visit_doc_comment(
         &mut self,
-        cmnt: &'ast solar_ast::DocComment,
+        cmnt: &'ast solar::ast::DocComment,
     ) -> ControlFlow<Self::BreakValue> {
         if let Ok(snip) = self.source_map.span_to_snippet(cmnt.span) {
             for line in snip.lines() {

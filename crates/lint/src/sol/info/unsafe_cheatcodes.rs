@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{Expr, ExprKind};
+use solar::ast::{Expr, ExprKind};
 
 declare_forge_lint!(
     UNSAFE_CHEATCODE_USAGE,

@@ -4,7 +4,7 @@ use super::{
 };
 use foundry_compilers::Updates;
 use itertools::Itertools;
-use solar_sema::{
+use solar::sema::{
     Gcx, Hir,
     hir::{CallArgs, ContractId, Expr, ExprKind, NamedArg, Stmt, StmtKind, TypeKind, Visit},
     interface::{SourceMap, data_structures::Never, source_map::FileName},

@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
+use solar::ast::{BinOp, BinOpKind, Expr, ExprKind};
 
 declare_forge_lint!(
     DIVIDE_BEFORE_MULTIPLY,

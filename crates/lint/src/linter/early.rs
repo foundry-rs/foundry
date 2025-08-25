@@ -1,6 +1,6 @@
 use super::LintContext;
-use solar_ast::{self as ast, visit::Visit};
-use solar_interface::data_structures::Never;
+use solar::ast::{self as ast, visit::Visit};
+use solar::interface::data_structures::Never;
 use std::ops::ControlFlow;
 
 /// Trait for lints that operate directly on the AST.
@@ -169,6 +169,6 @@ where
         self.walk_item_contract(contract)
     }
 
-    // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method
+    // TODO: Add methods for each required AST node type, mirroring `solar::ast::visit::Visit` method
     // sigs + adding `LintContext`
 }

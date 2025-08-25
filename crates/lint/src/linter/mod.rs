@@ -6,11 +6,11 @@ pub use late::{LateLintPass, LateLintVisitor};
 
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_interface::{
+use solar::interface::{
     Session, Span,
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
 };
-use solar_sema::Compiler;
+use solar::sema::Compiler;
 use std::path::PathBuf;
 
 use crate::inline_config::InlineConfig;

@@ -3,9 +3,9 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{self as ast, Span};
-use solar_interface::kw;
-use solar_sema::hir::{self};
+use solar::ast::{self as ast, Span};
+use solar::interface::kw;
+use solar::sema::hir::{self};
 
 declare_forge_lint!(
     ASM_KECCAK256,

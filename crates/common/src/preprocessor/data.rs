@@ -1,7 +1,7 @@
 use super::span_to_range;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
-use solar_sema::{
+use solar::sema::{
     Gcx,
     hir::{Contract, ContractId},
     interface::source_map::FileName,
@@ -79,7 +79,7 @@ impl ContractData {
         contract_id: ContractId,
         contract: &Contract<'_>,
         path: &Path,
-        source: &solar_sema::hir::Source<'_>,
+        source: &solar::sema::hir::Source<'_>,
     ) -> Self {
         let artifact = format!("{}:{}", path.to_slash_lossy(), contract.name);
 

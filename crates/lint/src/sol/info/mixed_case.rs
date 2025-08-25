@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint, info::screaming_snake_case::is_screaming_snake_case},
 };
-use solar_ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
+use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
 
 declare_forge_lint!(
     MIXED_CASE_FUNCTION,

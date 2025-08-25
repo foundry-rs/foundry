@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::ItemStruct;
+use solar::ast::ItemStruct;
 
 declare_forge_lint!(
     PASCAL_CASE_STRUCT,

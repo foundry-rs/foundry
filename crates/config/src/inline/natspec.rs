@@ -6,7 +6,7 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use serde_json::Value;
-use solar_parse::ast;
+use solar::parse::ast;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
@@ -42,8 +42,7 @@ impl NatSpec {
             let mut used_solar = false;
             let compiler = output.parser().solc().compiler();
             compiler.enter(|compiler| {
-                if let Some(file) = compiler.sess().source_map().get_file(abs_path)
-                    && let Some((_, source)) = compiler.gcx().sources.get_file(&file)
+                if let Some((_, source)) = compiler.gcx().get_ast_source(abs_path)
                     && let Some(ast) = &source.ast
                 {
                     solar.parse_ast(&mut natspecs, ast, &contract, contract_name);
@@ -288,7 +287,7 @@ impl SolarParser {
 mod tests {
     use super::*;
     use serde_json::json;
-    use solar_parse::{
+    use solar::parse::{
         Parser,
         ast::{
             Arena,

@@ -17,7 +17,7 @@ use itertools::Itertools;
 use path_slash::PathExt;
 use rayon::prelude::*;
 use semver::Version;
-use solar_parse::{
+use solar::parse::{
     Parser as SolarParser,
     ast::{self, Arena, FunctionKind, Span, VarMut, interface::source_map::FileName, visit::Visit},
     interface::Session,
@@ -103,7 +103,7 @@ impl BindJsonArgs {
     /// in most of the cases.
     fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
         let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar_parse::interface::Result<()> {
+        let result = sess.enter(|| -> solar::parse::interface::Result<()> {
             sources.0.par_iter_mut().try_for_each(|(path, source)| {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
@@ -146,7 +146,7 @@ impl BindJsonArgs {
 
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-        let mut compiler = solar_sema::Compiler::new(sess);
+        let mut compiler = solar::sema::Compiler::new(sess);
 
         let mut structs_to_write = Vec::new();
 
@@ -426,7 +426,7 @@ impl PreprocessorVisitor {
 }
 
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    type BreakValue = solar_parse::interface::data_structures::Never;
+    type BreakValue = solar::parse::interface::data_structures::Never;
 
     fn visit_item_function(
         &mut self,

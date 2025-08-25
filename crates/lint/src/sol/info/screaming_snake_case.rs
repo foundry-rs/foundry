@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{VarMut, VariableDefinition};
+use solar::ast::{VarMut, VariableDefinition};
 
 declare_forge_lint!(
     SCREAMING_SNAKE_CASE_CONSTANT,

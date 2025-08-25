@@ -14,7 +14,7 @@ use rustyline::{
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
 };
-use solar_parse::{
+use solar::parse::{
     Lexer,
     interface::Session,
     token::{Token, TokenKind},
@@ -238,7 +238,7 @@ impl Helper for SolidityHelper {}
 #[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
-    use solar_parse::{
+    use solar::parse::{
         interface::kw::*,
         token::{TokenKind::*, TokenLitKind::*},
     };
