@@ -6,7 +6,6 @@ use crate::{
     inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
-use alloy_dyn_abi::DynSolType;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{Address, B256, U256, map::HashMap};
@@ -14,7 +13,7 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    storage_decoder::{DecodedSlotValues, SlotInfo, StorageDecoder, format_value},
+    storage_decoder::{SlotInfo, StorageDecoder, format_value},
 };
 use foundry_evm_core::{
     ContextExt,
@@ -108,13 +107,9 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
-    /// Decoded values according to the Solidity type (e.g., uint256, address).
-    /// Only present when storage layout is available and decoding succeeds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    decoded: Option<DecodedSlotValues>,
-
     /// Storage layout metadata (variable name, type, offset).
     /// Only present when contract has storage layout output.
+    /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
 }
@@ -184,9 +179,10 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                match (&slot_changes.slot_info, &slot_changes.decoded) {
-                    (Some(slot_info), Some(decoded)) => {
-                        // Have both slot info and decoded values - only show decoded values
+                match &slot_changes.slot_info {
+                    Some(slot_info) if slot_info.decoded.is_some() => {
+                        // Have slot info with decoded values - show decoded values
+                        let decoded = slot_info.decoded.as_ref().unwrap();
                         writeln!(
                             f,
                             "@ {slot} ({}, {}): {} → {}",
@@ -196,7 +192,7 @@ impl Display for AccountStateDiffs {
                             format_value(&decoded.new_value)
                         )?;
                     }
-                    (Some(slot_info), None) => {
+                    Some(slot_info) => {
                         // Have slot info but no decoded values - show raw hex values
                         writeln!(
                             f,
@@ -207,7 +203,7 @@ impl Display for AccountStateDiffs {
                             slot_changes.new_value
                         )?;
                     }
-                    _ => {
+                    None => {
                         // No slot info - show raw hex values
                         writeln!(
                             f,
@@ -1395,119 +1391,35 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                     .as_ref()
                                     .and_then(|slots| slots.get(&storage_access.account));
 
-                                let slot_info = layout.and_then(|layout| {
+                                let mut slot_info = layout.and_then(|layout| {
                                     let decoder = StorageDecoder::new(layout.clone());
                                     decoder.identify(&storage_access.slot, mapping_slots)
                                 });
 
-                                // Try to decode values if we have slot info
-                                let (decoded, slot_info_with_decoded) = if let Some(mut info) =
-                                    slot_info
-                                {
-                                    // Check if this is a struct with members
-                                    if let Some(ref mut members) = info.members {
-                                        // Decode each member individually
-                                        for member in members.iter_mut() {
-                                            let offset = member.offset as usize;
-                                            let size = match &member.slot_type.dyn_sol_type {
-                                                DynSolType::Uint(bits) | DynSolType::Int(bits) => {
-                                                    bits / 8
-                                                }
-                                                DynSolType::Address => 20,
-                                                DynSolType::Bool => 1,
-                                                DynSolType::FixedBytes(size) => *size,
-                                                _ => 32, // Default to full word
-                                            };
-
-                                            // Extract and decode member values
-                                            let mut prev_bytes = [0u8; 32];
-                                            let mut new_bytes = [0u8; 32];
-
-                                            if offset + size <= 32 {
-                                                // In Solidity storage, values are right-aligned
-                                                // For offset 0, we want the rightmost bytes
-                                                // For offset 16 (for a uint128), we want bytes
-                                                // 0-16
-                                                // For packed storage: offset 0 is at the rightmost
-                                                // position
-                                                // offset 0, size 16 -> read bytes 16-32 (rightmost)
-                                                // offset 16, size 16 -> read bytes 0-16 (leftmost)
-                                                let byte_start = 32 - offset - size;
-                                                prev_bytes[32 - size..].copy_from_slice(
-                                                    &storage_access.previousValue.0
-                                                        [byte_start..byte_start + size],
-                                                );
-                                                new_bytes[32 - size..].copy_from_slice(
-                                                    &storage_access.newValue.0
-                                                        [byte_start..byte_start + size],
-                                                );
-                                            }
-
-                                            // Decode the member values
-                                            if let (Ok(prev_val), Ok(new_val)) = (
-                                                member
-                                                    .slot_type
-                                                    .dyn_sol_type
-                                                    .abi_decode(&prev_bytes),
-                                                member
-                                                    .slot_type
-                                                    .dyn_sol_type
-                                                    .abi_decode(&new_bytes),
-                                            ) {
-                                                member.decoded = Some(DecodedSlotValues {
-                                                    previous_value: prev_val,
-                                                    new_value: new_val,
-                                                });
-                                            }
-                                        }
-                                        // For structs with members, we don't need a top-level
-                                        // decoded value
-                                        (None, Some(info))
-                                    } else {
-                                        let decoder = layout
-                                            .map(|layout| StorageDecoder::new(layout.clone()));
-                                        let decoded = if let Some(decoder) = &decoder {
-                                            if let (Some(prev), Some(new)) = (
-                                                decoder.decode(storage_access.previousValue, &info),
-                                                decoder.decode(storage_access.newValue, &info),
-                                            ) {
-                                                Some(DecodedSlotValues {
-                                                    previous_value: prev,
-                                                    new_value: new,
-                                                })
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        };
-                                        (decoded, Some(info))
-                                    }
-                                } else {
-                                    (None, None)
-                                };
+                                // Decode values if we have slot info
+                                if let Some(ref mut info) = slot_info {
+                                    info.decode_values(
+                                        storage_access.previousValue,
+                                        storage_access.newValue,
+                                    );
+                                }
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
-                                    decoded,
-                                    slot_info: slot_info_with_decoded,
+                                    slot_info,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
                                 let entry = slot_state_diff.get_mut();
                                 entry.new_value = storage_access.newValue;
 
-                                if let Some(slot_info) = &entry.slot_info
-                                    && let Some(ref mut decoded) = entry.decoded
-                                {
-                                    if let Some(decoder) =
-                                        layout.map(|l| StorageDecoder::new(l.clone()))
-                                        && let Some(new_value) =
-                                            decoder.decode(storage_access.newValue, slot_info)
-                                    {
-                                        decoded.new_value = new_value;
-                                    }
+                                // Update decoded values if we have slot info
+                                if let Some(ref mut slot_info) = entry.slot_info {
+                                    slot_info.decode_values(
+                                        entry.previous_value,
+                                        storage_access.newValue,
+                                    );
                                 }
                             }
                         }

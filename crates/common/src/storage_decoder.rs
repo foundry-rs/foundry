@@ -30,6 +30,8 @@ pub struct SlotInfo {
     /// The storage slot number as a string
     pub slot: String,
     /// For struct members, contains nested SlotInfo for each member
+    ///
+    /// This is populated when a struct's members / fields are packed in a single slot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<SlotInfo>>,
     /// Decoded values (if available) - used for struct members
@@ -56,6 +58,72 @@ pub struct StorageTypeInfo {
     pub label: String,
     /// The parsed dynamic Solidity type used for decoding
     pub dyn_sol_type: DynSolType,
+}
+
+impl SlotInfo {
+    /// Decodes a single storage value based on the slot's type information.
+    pub fn decode(&self, value: B256) -> Option<DynSolValue> {
+        // Storage values are always 32 bytes, stored as a single word
+        let mut actual_type = &self.slot_type.dyn_sol_type;
+        // Unwrap nested arrays to get to the base element type.
+        while let DynSolType::FixedArray(elem_type, _) = actual_type {
+            actual_type = elem_type.as_ref();
+        }
+
+        // Decode based on the actual type
+        actual_type.abi_decode(&value.0).ok()
+    }
+
+    /// Decodes storage values (previous and new) and populates the decoded field.
+    /// For structs with members, it decodes each member individually.
+    pub fn decode_values(&mut self, previous_value: B256, new_value: B256) {
+        // If this is a struct with members, decode each member individually
+        if let Some(members) = &mut self.members {
+            for member in members.iter_mut() {
+                let offset = member.offset as usize;
+                let size = match &member.slot_type.dyn_sol_type {
+                    DynSolType::Uint(bits) | DynSolType::Int(bits) => bits / 8,
+                    DynSolType::Address => 20,
+                    DynSolType::Bool => 1,
+                    DynSolType::FixedBytes(size) => *size,
+                    _ => 32, // Default to full word
+                };
+
+                // Extract and decode member values
+                let mut prev_bytes = [0u8; 32];
+                let mut new_bytes = [0u8; 32];
+
+                if offset + size <= 32 {
+                    // In Solidity storage, values are right-aligned
+                    // For offset 0, we want the rightmost bytes
+                    // For offset 16 (for a uint128), we want bytes 0-16
+                    // For packed storage: offset 0 is at the rightmost position
+                    // offset 0, size 16 -> read bytes 16-32 (rightmost)
+                    // offset 16, size 16 -> read bytes 0-16 (leftmost)
+                    let byte_start = 32 - offset - size;
+                    prev_bytes[32 - size..]
+                        .copy_from_slice(&previous_value.0[byte_start..byte_start + size]);
+                    new_bytes[32 - size..]
+                        .copy_from_slice(&new_value.0[byte_start..byte_start + size]);
+                }
+
+                // Decode the member values
+                if let (Ok(prev_val), Ok(new_val)) = (
+                    member.slot_type.dyn_sol_type.abi_decode(&prev_bytes),
+                    member.slot_type.dyn_sol_type.abi_decode(&new_bytes),
+                ) {
+                    member.decoded =
+                        Some(DecodedSlotValues { previous_value: prev_val, new_value: new_val });
+                }
+            }
+            // For structs with members, we don't need a top-level decoded value
+        } else {
+            // For non-struct types, decode directly
+            if let (Some(prev), Some(new)) = (self.decode(previous_value), self.decode(new_value)) {
+                self.decoded = Some(DecodedSlotValues { previous_value: prev, new_value: new });
+            }
+        }
+    }
 }
 
 /// Custom serializer for StorageTypeInfo that only outputs the label
@@ -186,19 +254,6 @@ impl StorageDecoder {
         }
 
         None
-    }
-
-    /// Decodes a storage value using the provided type information.
-    pub fn decode(&self, value: B256, slot_info: &SlotInfo) -> Option<DynSolValue> {
-        // Find the storage type if we have full layout information
-        let storage_type = self
-            .storage_layout
-            .storage
-            .iter()
-            .find(|s| s.slot == slot_info.slot)
-            .and_then(|s| self.storage_layout.types.get(&s.storage_type));
-
-        self.decode_storage_value(value, &slot_info.slot_type.dyn_sol_type, storage_type)
     }
 
     fn handle_array_slot(
@@ -587,66 +642,6 @@ impl StorageDecoder {
             }
             _ => String::new(),
         }
-    }
-
-    fn decode_storage_value(
-        &self,
-        value: B256,
-        dyn_type: &DynSolType,
-        storage_type: Option<&StorageType>,
-    ) -> Option<DynSolValue> {
-        // Storage values are always 32 bytes, stored as a single word
-        let mut actual_type = dyn_type;
-        // Unwrap nested arrays to get to the base element type.
-        // For arrays, we need to unwrap to the base element type
-        while let DynSolType::FixedArray(elem_type, _) = actual_type {
-            actual_type = elem_type.as_ref();
-        }
-
-        // For tuples (structs), we need to decode each member based on its offset
-        if let DynSolType::Tuple(member_types) = actual_type {
-            // If we have storage type info with members, decode each member from the value
-            if let Some(st) = storage_type
-                && let Some(members_value) = st.other.get("members")
-                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
-                && members.len() == member_types.len()
-            {
-                let mut decoded_members = Vec::new();
-
-                for (i, member) in members.iter().enumerate() {
-                    // Get the member type
-                    let member_type = &member_types[i];
-
-                    // Calculate byte range for this member
-                    let offset = member.offset as usize;
-                    let member_storage_type = self.storage_layout.types.get(&member.storage_type);
-                    let size = member_storage_type
-                        .and_then(|t| t.number_of_bytes.parse::<usize>().ok())
-                        .unwrap_or(32);
-
-                    // Extract bytes for this member from the full value
-                    let mut member_bytes = [0u8; 32];
-                    if offset + size <= 32 {
-                        // For packed storage: offset 0 is at the rightmost position
-                        let byte_start = 32 - offset - size;
-                        member_bytes[32 - size..]
-                            .copy_from_slice(&value.0[byte_start..byte_start + size]);
-                    }
-
-                    // Decode the member value
-                    if let Ok(decoded) = member_type.abi_decode(&member_bytes) {
-                        decoded_members.push(decoded);
-                    } else {
-                        return None;
-                    }
-                }
-
-                return Some(DynSolValue::Tuple(decoded_members));
-            }
-        }
-
-        // Use abi_decode to decode the value for non-struct types
-        actual_type.abi_decode(&value.0).ok()
     }
 }
 

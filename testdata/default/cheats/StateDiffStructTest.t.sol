@@ -238,19 +238,19 @@ contract StateDiffStructTest is DSTest {
 
         assertContains(
             stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"111111111"},"label":"nestedStruct.inner.value1"',
+            '"label":"nestedStruct.inner.value1","type":"uint256","offset":0,"slot":"4","decoded":{"previousValue":"0","newValue":"111111111"}',
             "Should decode inner.value1 correctly"
         );
 
         assertContains(
             stateDiffJson,
-            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000cafE"},"label":"nestedStruct.inner.addr"',
+            '"label":"nestedStruct.inner.addr","type":"address","offset":0,"slot":"5","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000cafE"}',
             "Should decode inner.addr correctly"
         );
 
         assertContains(
             stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"222222222"},"label":"nestedStruct.inner.value2"',
+            '"label":"nestedStruct.inner.value2","type":"uint256","offset":0,"slot":"6","decoded":{"previousValue":"0","newValue":"222222222"}',
             "Should decode inner.value2 correctly"
         );
 
@@ -262,13 +262,13 @@ contract StateDiffStructTest is DSTest {
 
         assertContains(
             stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"333333333"},"label":"nestedStruct.value"',
+            '"label":"nestedStruct.value","type":"uint256","offset":0,"slot":"7","decoded":{"previousValue":"0","newValue":"333333333"}',
             "Should decode nestedStruct.value correctly"
         );
 
         assertContains(
             stateDiffJson,
-            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000bEEF"},"label":"nestedStruct.owner"',
+            '"label":"nestedStruct.owner","type":"address","offset":0,"slot":"8","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000bEEF"}',
             "Should decode nestedStruct.owner correctly"
         );
 
