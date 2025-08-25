@@ -588,7 +588,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             // Note that number-like strings that *could* fit in an `i64`/`u64` will fall through
             // and be treated as literal strings.
             if let Ok(n) = string.parse::<I256>()
-                && TryInto::<i64>::try_into(n).is_err()
+                && i64::try_from(n).is_err()
             {
                 return Ok(DynSolValue::Int(n, 256));
             } else if let Ok(n) = string.parse::<U256>()
