@@ -592,7 +592,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             {
                 return Ok(DynSolValue::Int(n, 256));
             } else if let Ok(n) = string.parse::<U256>()
-                && TryInto::<u64>::try_into(n).is_err()
+                && u64::try_from(n).is_err()
             {
                 return Ok(DynSolValue::Uint(n, 256));
             }
