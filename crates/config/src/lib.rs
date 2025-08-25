@@ -2141,8 +2141,18 @@ impl Config {
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        // TODO: add a warning if evm_version is provided but incompatible
         if figment.contains("evm_version") {
+            // Check compatibility if both evm_version and solc are provided
+            if let Ok(evm_version) = figment.extract_inner::<EvmVersion>("evm_version")
+                && let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
+                && let Ok(solc_version) = solc.try_version()
+                && let Some(normalized) = self.evm_version.normalize_version_solc(&solc_version)
+                && normalized != evm_version
+            {
+                warn!(
+                    "evm_version '{evm_version}' may be incompatible with solc version '{solc_version}'. Consider using '{normalized}'"
+                );
+            }
             return figment;
         }
 
