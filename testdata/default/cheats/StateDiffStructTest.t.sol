@@ -3,6 +3,7 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
+import "./StateDiffTestUtils.sol";
 
 contract DiffTest {
     // slot 0
@@ -49,7 +50,7 @@ contract DiffTest {
     }
 }
 
-contract StateDiffStructTest is DSTest {
+contract StateDiffStructTest is StateDiffTestUtils {
     Vm constant vm = Vm(HEVM_ADDRESS);
     DiffTest internal test;
 
@@ -274,34 +275,5 @@ contract StateDiffStructTest is DSTest {
 
         // Stop recording
         vm.stopAndReturnStateDiff();
-    }
-
-    // Helper function to check if a string contains a substring
-    function assertContains(string memory haystack, string memory needle, string memory message) internal pure {
-        bytes memory haystackBytes = bytes(haystack);
-        bytes memory needleBytes = bytes(needle);
-
-        if (needleBytes.length > haystackBytes.length) {
-            revert(message);
-        }
-
-        bool found = false;
-        for (uint256 i = 0; i <= haystackBytes.length - needleBytes.length; i++) {
-            bool isMatch = true;
-            for (uint256 j = 0; j < needleBytes.length; j++) {
-                if (haystackBytes[i + j] != needleBytes[j]) {
-                    isMatch = false;
-                    break;
-                }
-            }
-            if (isMatch) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            revert(message);
-        }
     }
 }
