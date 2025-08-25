@@ -2844,6 +2844,10 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function ensNamehash(string calldata name) external pure returns (bytes32);
 
+    /// Returns an uint256 value bounded in given range and different from the current one.
+    #[cheatcode(group = Utilities)]
+    function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);
+
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
     function randomUint() external view returns (uint256);
@@ -2859,6 +2863,10 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external view returns (address);
+
+    /// Returns an int256 value bounded in given range and different from the current one.
+    #[cheatcode(group = Utilities)]
+    function bound(int256 current, int256 min, int256 max) external view returns (int256);
 
     /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]

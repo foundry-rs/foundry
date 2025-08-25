@@ -3342,6 +3342,46 @@
     },
     {
       "func": {
+        "id": "bound_0",
+        "description": "Returns an uint256 value bounded in given range and different from the current one.",
+        "declaration": "function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "bound(uint256,uint256,uint256)",
+        "selector": "0x5a6c1eed",
+        "selectorBytes": [
+          90,
+          108,
+          30,
+          237
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "bound_1",
+        "description": "Returns an int256 value bounded in given range and different from the current one.",
+        "declaration": "function bound(int256 current, int256 min, int256 max) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "bound(int256,int256,int256)",
+        "selector": "0x8f48fc07",
+        "selectorBytes": [
+          143,
+          72,
+          252,
+          7
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
         "declaration": "function breakpoint(string calldata char) external pure;",

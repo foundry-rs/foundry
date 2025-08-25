@@ -1,5 +1,7 @@
 use super::state::EvmFuzzState;
-use crate::strategies::mutators::{AbiMutator, IncrementDecrementMutator};
+use crate::strategies::mutators::{
+    BitMutator, GaussianNoiseMutator, IncrementDecrementMutator, InterestingWordMutator,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Word};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
@@ -246,23 +248,25 @@ pub fn mutate_param_value(
             trace!(target: "mutator", "Bool flip {val}");
             Some(DynSolValue::Bool(!val))
         }
-        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=5) {
+        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=6) {
             0 => U256::increment_decrement(val, size, test_runner),
             1 => U256::flip_random_bit(val, size, test_runner),
             2 => U256::mutate_interesting_byte(val, size, test_runner),
             3 => U256::mutate_interesting_word(val, size, test_runner),
             4 => U256::mutate_interesting_dword(val, size, test_runner),
-            5 => None,
+            5 => U256::mutate_with_gaussian_noise(val, size, test_runner),
+            6 => None,
             _ => unreachable!(),
         }
         .map(|v| DynSolValue::Uint(v, size)),
-        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=5) {
+        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=6) {
             0 => I256::increment_decrement(val, size, test_runner),
             1 => I256::flip_random_bit(val, size, test_runner),
             2 => I256::mutate_interesting_byte(val, size, test_runner),
             3 => I256::mutate_interesting_word(val, size, test_runner),
             4 => I256::mutate_interesting_dword(val, size, test_runner),
-            5 => None,
+            5 => I256::mutate_with_gaussian_noise(val, size, test_runner),
+            6 => None,
             _ => unreachable!(),
         }
         .map(|v| DynSolValue::Int(v, size)),
