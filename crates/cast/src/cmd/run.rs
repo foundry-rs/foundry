@@ -366,10 +366,6 @@ impl figment::Provider for RunArgs {
             map.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        if let Some(api_version) = &self.etherscan.api_version {
-            map.insert("etherscan_api_version".into(), api_version.to_string().into());
-        }
-
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
         }

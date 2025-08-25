@@ -110,10 +110,6 @@ impl figment::Provider for VerifyBytecodeArgs {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        if let Some(api_version) = &self.verifier.verifier_api_version {
-            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
-        }
-
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
