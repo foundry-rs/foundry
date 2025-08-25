@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
-use alloy_primitives::{Address, B256, I256, hex};
+use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::{fmt::serialize_value_as_json, fs};
 use foundry_config::fs_permissions::FsAccessKind;
@@ -396,6 +396,7 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
         (Value::Array(array), ty) => parse_json_array(array, ty),
         (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
+        (Value::String(s), DynSolType::Uint(_) | DynSolType::Int(_)) => string::parse_value(s, ty),
         _ => string::parse_value(&to_string(value), ty),
     }
 }
@@ -563,6 +564,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             Err(fmt_err!("unsupported JSON number: {number}"))
         }
         Value::String(string) => {
+            // Handle hex strings
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
                 if val.len() == 39 {
@@ -580,6 +582,22 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
                     });
                 }
             }
+
+            // Handle large numbers that were potentially encoded as strings because they exceed the
+            // capacity of a 64-bit integer.
+            // Note that number-like strings that *could* fit in an `i64`/`u64` will fall through
+            // and be treated as literal strings.
+            if let Ok(n) = string.parse::<I256>()
+                && i64::try_from(n).is_err()
+            {
+                return Ok(DynSolValue::Int(n, 256));
+            } else if let Ok(n) = string.parse::<U256>()
+                && u64::try_from(n).is_err()
+            {
+                return Ok(DynSolValue::Uint(n, 256));
+            }
+
+            // Otherwise, treat as a regular string
             Ok(DynSolValue::String(string.to_owned()))
         }
     }
