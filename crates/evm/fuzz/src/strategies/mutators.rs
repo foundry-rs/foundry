@@ -151,7 +151,7 @@ impl BoundMutator for U256 {
             let candidate = Self::from(rng.random::<u128>()) & mask;
 
             // Map to range.
-            let candidate = min + (candidate % (max - min + Self::ONE));
+            let candidate = min + (candidate % ((max - min).saturating_add(Self::ONE)));
 
             if candidate != self {
                 return Some(candidate);
@@ -185,7 +185,7 @@ impl BoundMutator for I256 {
             };
 
             // Map to range.
-            let range = (max - min + Self::ONE).unsigned_abs();
+            let range = max.saturating_sub(min).saturating_add(Self::ONE).unsigned_abs();
             let wrapped = Self::from_raw(U256::from(signed_candidate.unsigned_abs()) % range);
             let candidate =
                 if signed_candidate.is_negative() { max - wrapped } else { min + wrapped };
@@ -679,6 +679,10 @@ mod tests {
             assert!(mutated <= max, "Mutated value <= max");
             assert_ne!(mutated, original, "mutated value should differ from original");
         }
+
+        // Test bound in [min, max] range.
+        let result = original.bound(U256::MIN, U256::MAX, &mut runner);
+        assert!(result.is_some(), "Mutation should occur");
     }
 
     #[test]
@@ -697,5 +701,9 @@ mod tests {
             assert!(mutated <= max, "Mutated value <= max");
             assert_ne!(mutated, original, "Mutated value should not equal current");
         }
+
+        // Test bound in [min, max] range.
+        let result = original.bound(I256::MIN, I256::MAX, &mut runner);
+        assert!(result.is_some(), "Mutation should occur");
     }
 }
