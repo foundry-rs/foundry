@@ -409,6 +409,11 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
+    /// Returns the current HEAD commit hash of the current branch.
+    pub fn head(self) -> Result<String> {
+        self.cmd().args(["rev-parse", "HEAD"]).get_stdout_lossy()
+    }
+
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
         self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
     }
