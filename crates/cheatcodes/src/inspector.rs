@@ -4,8 +4,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess,
-        mapping::{self, MappingSlots},
+        DealRecord, GasRecord, RecordAccess, mapping,
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -33,7 +32,9 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints, mapping_slots::MappingSlots,
+};
 use foundry_evm_core::{
     InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
