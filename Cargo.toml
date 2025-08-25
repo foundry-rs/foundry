@@ -267,8 +267,8 @@ revm-inspectors = { version = "0.29.0", features = ["serde"] }
 op-revm = { version = "10.0.0", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.18.4"
-alloy-op-evm = "0.18.4"
+alloy-evm = "0.19.0"
+alloy-op-evm = "0.19.0"
 
 ## cli
 anstream = "0.6"
@@ -399,8 +399,8 @@ idna_adapter = "=1.1.0"
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
-alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
+# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
+# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }

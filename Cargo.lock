@@ -222,8 +222,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.18.4"
-source = "git+https://github.com/alloy-rs/evm.git?rev=3c6cebb#3c6cebb92c34c8d836a11857474c3c057d2a4ea1"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce2c723dd19c7b7e6dac0f52dae208beae40ce093c176cf82e2e4d3ead756d3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -233,7 +234,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more 2.0.1",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.19.0",
  "op-revm",
  "revm",
  "thiserror 2.0.16",
@@ -333,8 +334,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-evm"
-version = "0.18.4"
-source = "git+https://github.com/alloy-rs/evm.git?rev=3c6cebb#3c6cebb92c34c8d836a11857474c3c057d2a4ea1"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e9a39a883b63c7fe816627377baf25de35564d1b3c480a4fbcabeec2d22279"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -342,7 +344,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "auto_impl",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.19.0",
  "op-revm",
  "revm",
 ]
@@ -1077,7 +1079,7 @@ dependencies = [
  "futures",
  "hyper",
  "itertools 0.14.0",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.18.14",
  "op-alloy-rpc-types",
  "op-revm",
  "parking_lot",
@@ -1110,7 +1112,7 @@ dependencies = [
  "bytes",
  "foundry-common",
  "foundry-evm",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.18.14",
  "op-revm",
  "rand 0.9.2",
  "revm",
@@ -2553,7 +2555,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.18.14",
  "op-alloy-flz",
  "rand 0.8.5",
  "rand 0.9.2",
@@ -6914,6 +6916,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-alloy-consensus"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72910bfa281935a41094d6d1d84b38ce8d4d8c98472a47f5c9db4328d5db6e45"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "derive_more 2.0.1",
+ "thiserror 2.0.16",
+]
+
+[[package]]
 name = "op-alloy-flz"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6932,7 +6948,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "derive_more 2.0.1",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.18.14",
  "serde",
  "serde_json",
  "thiserror 2.0.16",
