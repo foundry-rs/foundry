@@ -11234,6 +11234,26 @@
     },
     {
       "func": {
+        "id": "writeJsonUpsert",
+        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.\nUnlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.",
+        "declaration": "function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "writeJsonUpsert(string,string,string)",
+        "selector": "0xd0fd45d8",
+        "selectorBytes": [
+          208,
+          253,
+          69,
+          216
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "writeJson_0",
         "description": "Write a serialized JSON object to a file. If the file exists, it will be overwritten.",
         "declaration": "function writeJson(string calldata json, string calldata path) external;",

@@ -361,6 +361,23 @@ impl Cheatcode for writeJson_1Call {
     }
 }
 
+impl Cheatcode for writeJsonUpsertCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { json: value, path, valueKey } = self;
+
+        // Read, parse, and update the JSON object
+        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let data_string = fs::read_to_string(&data_path)?;
+        let mut data =
+            serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string));
+        upsert_json_value(&mut data, value, valueKey)?;
+
+        // Write the updated content back to the file
+        let json_string = serde_json::to_string_pretty(&data)?;
+        super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
+    }
+}
+
 pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
     let json = parse_json_str(json)?;
     let values = select(&json, key)?;
@@ -623,6 +640,50 @@ pub(super) fn resolve_type(type_description: &str) -> Result<DynSolType> {
     };
 
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
+}
+
+pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
+    // Parse the path key into segments.
+    let canonical_key = canonicalize_json_path(key);
+    let parts: Vec<&str> = canonical_key
+        .strip_prefix("$.")
+        .unwrap_or(key)
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if parts.is_empty() {
+        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
+    }
+
+    // Separate the final key from the path.
+    // Traverse the objects, creating intermediary ones if necessary.
+    if let Some((key_to_insert, path_to_parent)) = parts.split_last() {
+        let mut current_level = data;
+
+        for segment in path_to_parent {
+            if !current_level.is_object() {
+                return Err(fmt_err!("path segment '{segment}' does not resolve to an object."));
+            }
+            current_level = current_level
+                .as_object_mut()
+                .unwrap()
+                .entry(segment.to_string())
+                .or_insert(Value::Object(Map::new()));
+        }
+
+        // Upsert the new value
+        if let Some(parent_obj) = current_level.as_object_mut() {
+            parent_obj.insert(
+                key_to_insert.to_string(),
+                serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned())),
+            );
+        } else {
+            return Err(fmt_err!("final destination is not an object, cannot insert key."));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

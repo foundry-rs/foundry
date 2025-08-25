@@ -5,14 +5,14 @@ use crate::{
     Vm::*,
     json::{
         canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
-        parse_json_keys, resolve_type,
+        parse_json_keys, resolve_type, upsert_json_value,
     },
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use serde_json::{Map, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
 impl Cheatcode for keyExistsTomlCall {
@@ -196,58 +196,18 @@ impl Cheatcode for writeToml_1Call {
 
 impl Cheatcode for writeTomlUpsertCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { json, path, valueKey } = self;
+        let Self { json: value, path, valueKey } = self;
 
         // Read and parse the TOML file
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let toml_data = fs::read_to_string(&data_path)?;
+
+        // Convert to JSON and update the object
         let mut json_data: JsonValue =
             toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+        upsert_json_value(&mut json_data, value, valueKey)?;
 
-        // Parse the JSON path key into segments.
-        let canonical_key = canonicalize_json_path(valueKey);
-        let parts: Vec<&str> = canonical_key
-            .strip_prefix("$.")
-            .unwrap_or(valueKey)
-            .split('.')
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if parts.is_empty() {
-            return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
-        }
-
-        // Separate the final key from the path.
-        // Traverse the objects, creating intermediary ones if necessary.
-        if let Some((key_to_insert, path_to_parent)) = parts.split_last() {
-            let mut current_level = &mut json_data;
-
-            for segment in path_to_parent {
-                if !current_level.is_object() {
-                    return Err(fmt_err!(
-                        "path segment '{segment}' does not resolve to an object."
-                    ));
-                }
-                current_level = current_level
-                    .as_object_mut()
-                    .unwrap()
-                    .entry(segment.to_string())
-                    .or_insert(JsonValue::Object(Map::new()));
-            }
-
-            // Upsert the new value
-            if let Some(parent_obj) = current_level.as_object_mut() {
-                parent_obj.insert(
-                    key_to_insert.to_string(),
-                    serde_json::from_str(json)
-                        .unwrap_or_else(|_| JsonValue::String(json.to_owned())),
-                );
-            } else {
-                return Err(fmt_err!("final destination is not an object, cannot insert key."));
-            }
-        }
-
-        // Serialize back to TOML and write the updated content to the file
+        // Serialize back to TOML and write the updated content back to the file
         let toml_string = format_json_to_toml(json_data)?;
         super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
     }

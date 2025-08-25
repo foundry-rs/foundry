@@ -2550,6 +2550,12 @@ interface Vm {
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
+    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
+    /// Unlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;
+
     // ======== TOML Parsing and Manipulation ========
 
     // -------- Reading --------
