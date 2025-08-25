@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::{db::StateDb, executor::new_evm_with_inspector_ref};
+use super::executor::new_evm_with_inspector_ref;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -104,7 +104,7 @@ use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
     OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
 };
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, TxEnv},
@@ -2449,22 +2449,6 @@ impl Backend {
                 .map(|block| (block.header.hash, block))
                 && let Some(state) = self.states.write().get(&block_hash)
             {
-                let read_guard = self.states.upgradable_read();
-
-                if read_guard.has_state(&block_hash) {
-                    let state_db = read_guard.get_state(&block_hash);
-
-                    if let Some(state) = state_db {
-                        return Ok(get_block_env(state, block_number, block, f));
-                    }
-                } else {
-                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                    let state_db = write_guard.get_on_disk_state(&block_hash);
-
-                    if let Some(state) = state_db {
-                        return Ok(get_block_env(state, block_number, block, f));
-                    }
-                }
                 let block = BlockEnv {
                     number: U256::from(block_number),
                     beneficiary: block.header.beneficiary,
@@ -3288,18 +3272,12 @@ impl Backend {
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
-            let hash = &common_block.header.hash_slow();
-            let read_guard = self.states.upgradable_read();
-            if read_guard.has_state(hash) {
-                let db = read_guard.get_state(hash);
-
-                return_state_or_throw_err(db).unwrap()
-            } else {
-                let write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                let db = write_guard.get_state(hash);
-
-                return_state_or_throw_err(db).unwrap()
-            }
+            let mut state = self.states.write();
+            let state_db = state
+                .get(&common_block.header.hash_slow())
+                .ok_or(BlockchainError::DataUnavailable)?;
+            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            db_full.clone()
         };
 
         {
