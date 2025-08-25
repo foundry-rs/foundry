@@ -180,28 +180,29 @@ impl Display for AccountStateDiffs {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
                 match &slot_changes.slot_info {
-                    Some(slot_info) if slot_info.decoded.is_some() => {
-                        // Have slot info with decoded values - show decoded values
-                        let decoded = slot_info.decoded.as_ref().unwrap();
-                        writeln!(
-                            f,
-                            "@ {slot} ({}, {}): {} → {}",
-                            slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
-                            format_value(&decoded.previous_value),
-                            format_value(&decoded.new_value)
-                        )?;
-                    }
                     Some(slot_info) => {
-                        // Have slot info but no decoded values - show raw hex values
-                        writeln!(
-                            f,
-                            "@ {slot} ({}, {}): {} → {}",
-                            slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
-                            slot_changes.previous_value,
-                            slot_changes.new_value
-                        )?;
+                        if slot_info.decoded.is_some() {
+                            // Have slot info with decoded values - show decoded values
+                            let decoded = slot_info.decoded.as_ref().unwrap();
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                format_value(&decoded.previous_value),
+                                format_value(&decoded.new_value)
+                            )?;
+                        } else {
+                            // Have slot info but no decoded values - show raw hex values
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                slot_changes.previous_value,
+                                slot_changes.new_value
+                            )?;
+                        }
                     }
                     None => {
                         // No slot info - show raw hex values
