@@ -71,7 +71,9 @@ contract GetCodeTest is DSTest {
     }
     */
 
-    function testFailGetUnlinked() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfGetUnlinked() public {
+        vm.expectRevert("vm.getCode: no matching artifact found");
         vm.getCode("UnlinkedContract.sol");
     }
 

@@ -1,18 +1,17 @@
 use crate::{
-    build::LinkedBuildData,
-    sequence::{get_commit_hash, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
+    build::LinkedBuildData,
+    sequence::{ScriptSequenceKind, get_commit_hash},
 };
-use alloy_primitives::{hex, Address};
-use eyre::{eyre, Result};
+use alloy_primitives::{Address, hex};
+use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
-use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
+use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
-use foundry_compilers::{info::ContractInfo, Project};
+use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use semver::Version;
-use yansi::Paint;
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
@@ -49,7 +48,7 @@ impl BroadcastedState {
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
-    pub project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathOpts,
     pub etherscan: EtherscanOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
@@ -65,11 +64,11 @@ impl VerifyBundle {
         verifier: VerifierArgs,
     ) -> Self {
         let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+            if config.optimizer == Some(true) { config.optimizer_runs } else { None };
 
         let config_path = config.get_config_path();
 
-        let project_paths = ProjectPathsArgs {
+        let project_paths = ProjectPathOpts {
             root: Some(project.paths.root.clone()),
             contracts: Some(project.paths.sources.clone()),
             remappings: project.paths.remappings.clone(),
@@ -109,6 +108,7 @@ impl VerifyBundle {
         create2_offset: usize,
         data: &[u8],
         libraries: &[String],
+        evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
@@ -117,16 +117,21 @@ impl VerifyBundle {
             if data.split_at(create2_offset).1.starts_with(bytecode) {
                 let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
-                if artifact.source.extension().map_or(false, |e| e.to_str() == Some("vy")) {
+                if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
+                // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
                     path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact.name.clone(),
+                    name: artifact
+                        .name
+                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .unwrap_or_else(|| &artifact.name)
+                        .to_string(),
                 };
 
-                // We strip the build metadadata information, since it can lead to
+                // We strip the build metadata information, since it can lead to
                 // etherscan not identifying it correctly. eg:
                 // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
                 let version = Version::new(
@@ -153,12 +158,14 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
-                    evm_version: None,
+                    evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
+                    compilation_profile: Some(artifact.profile.to_string()),
+                    language: None,
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None
@@ -197,7 +204,13 @@ async fn verify_contracts(
 
             // Verify contract created directly from the transaction
             if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
-                match verify.get_verify_args(address, offset, data, &sequence.libraries) {
+                match verify.get_verify_args(
+                    address,
+                    offset,
+                    data,
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(address),
                 };
@@ -205,7 +218,13 @@ async fn verify_contracts(
 
             // Verify potential contracts created during the transaction execution
             for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                match verify.get_verify_args(*address, 0, init_code.as_ref(), &sequence.libraries) {
+                match verify.get_verify_args(
+                    *address,
+                    0,
+                    init_code.as_ref(),
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(*address),
                 };
@@ -218,21 +237,25 @@ async fn verify_contracts(
 
         let num_verifications = future_verifications.len();
         let mut num_of_successful_verifications = 0;
-        println!("##\nStart verification for ({num_verifications}) contracts");
+        sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
         for verification in future_verifications {
             match verification.await {
                 Ok(_) => {
                     num_of_successful_verifications += 1;
                 }
-                Err(err) => eprintln!("Error during verification: {err:#}"),
+                Err(err) => {
+                    sh_err!("Failed to verify contract: {err:#}")?;
+                }
             }
         }
 
         if num_of_successful_verifications < num_verifications {
-            return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
+            return Err(eyre!(
+                "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
+            ));
         }
 
-        println!("All ({num_verifications}) contracts were verified!");
+        sh_println!("All ({num_verifications}) contracts were verified!")?;
     }
 
     Ok(())
@@ -244,15 +267,9 @@ fn check_unverified(
     verify: VerifyBundle,
 ) {
     if !unverifiable_contracts.is_empty() {
-        println!(
-            "\n{}",
-            format!(
-                "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
-                unverifiable_contracts,
-                "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-            )
-            .yellow()
-            .bold(),
+        let _ = sh_warn!(
+            "We haven't found any matching bytecode for the following contracts: {:?}.\n\nThis may occur when resuming a verification, but the underlying source code or compiler version has changed.",
+            unverifiable_contracts
         );
 
         if let Some(commit) = &sequence.commit {
@@ -263,7 +280,9 @@ fn check_unverified(
                 .unwrap_or_default();
 
             if &current_commit != commit {
-                println!("\tScript was broadcasted on commit `{commit}`, but we are at `{current_commit}`.");
+                let _ = sh_warn!(
+                    "Script was broadcasted on commit `{commit}`, but we are at `{current_commit}`."
+                );
             }
         }
     }

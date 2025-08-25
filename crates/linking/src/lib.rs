@@ -5,11 +5,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
+    Artifact, ArtifactId,
     artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
-    Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
@@ -29,6 +29,8 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
+    #[error("failed linking {artifact}")]
+    LinkingFailed { artifact: String },
 }
 
 pub struct Linker<'a> {
@@ -79,10 +81,10 @@ impl<'a> Linker<'a> {
         version: Option<&Version>,
     ) -> Option<&'a ArtifactId> {
         for id in self.contracts.keys() {
-            if let Some(version) = version {
-                if id.version != *version {
-                    continue;
-                }
+            if let Some(version) = version
+                && id.version != *version
+            {
+                continue;
             }
             let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
 
@@ -106,10 +108,10 @@ impl<'a> Linker<'a> {
         if let Some(bytecode) = &contract.bytecode {
             references.extend(bytecode.link_references.clone());
         }
-        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
-            if let Some(bytecode) = &deployed_bytecode.bytecode {
-                references.extend(bytecode.link_references.clone());
-            }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(bytecode) = &deployed_bytecode.bytecode
+        {
+            references.extend(bytecode.link_references.clone());
         }
 
         for (file, libs) in &references {
@@ -265,6 +267,30 @@ impl<'a> Linker<'a> {
         Ok(contract)
     }
 
+    /// Ensures that both initial and deployed bytecode are linked.
+    pub fn ensure_linked(
+        &self,
+        contract: &CompactContractBytecodeCow<'a>,
+        target: &ArtifactId,
+    ) -> Result<(), LinkerError> {
+        if let Some(bytecode) = &contract.bytecode
+            && bytecode.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
+        }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(deployed_bytecode_obj) = &deployed_bytecode.bytecode
+            && deployed_bytecode_obj.object.is_unlinked()
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn get_linked_artifacts(
         &self,
         libraries: &Libraries,
@@ -283,11 +309,11 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{fixed_bytes, map::HashMap};
+    use alloy_primitives::{address, fixed_bytes, map::HashMap};
     use foundry_compilers::{
+        Project, ProjectCompileOutput, ProjectPathsConfig,
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
-        Project, ProjectCompileOutput, ProjectPathsConfig,
     };
 
     struct LinkerTest {
@@ -427,14 +453,14 @@ mod tests {
                     "default/linking/simple/Simple.t.sol:LibraryConsumer".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
@@ -450,7 +476,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -505,14 +531,14 @@ mod tests {
                     "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -642,7 +668,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74").unwrap(),
+                        address!("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74"),
                     )],
                 )
                 .assert_dependencies(
@@ -684,5 +710,34 @@ mod tests {
                     ),
                 );
         });
+    }
+
+    #[test]
+    fn linking_failure() {
+        let linker = LinkerTest::new("../../testdata/default/linking/simple", true);
+        let linker_instance =
+            Linker::new(linker.project.root(), linker.output.artifact_ids().collect());
+
+        // Create a libraries object with an incorrect library name that won't match any references
+        let mut libraries = Libraries::default();
+        libraries.libs.entry("default/linking/simple/Simple.t.sol".into()).or_default().insert(
+            "NonExistentLib".to_string(),
+            "0x5a443704dd4b594b382c22a083e2bd3090a6fef3".to_string(),
+        );
+
+        // Try to link the LibraryConsumer contract with incorrect library
+        let artifact_id = linker_instance
+            .contracts
+            .keys()
+            .find(|id| id.name == "LibraryConsumer")
+            .expect("LibraryConsumer contract not found");
+
+        let contract = linker_instance.contracts.get(artifact_id).unwrap();
+
+        // Verify that the artifact has unlinked bytecode
+        assert!(
+            linker_instance.ensure_linked(contract, artifact_id).is_err(),
+            "Expected artifact to have unlinked bytecode"
+        );
     }
 }

@@ -1,36 +1,84 @@
 use crate::{HitMap, HitMaps};
 use alloy_primitives::B256;
-use revm::{interpreter::Interpreter, Database, EvmContext, Inspector};
+use revm::{
+    Inspector,
+    context::ContextTr,
+    inspector::JournalExt,
+    interpreter::{Interpreter, interpreter_types::Jumps},
+};
+use std::ptr::NonNull;
 
-#[derive(Clone, Debug, Default)]
-pub struct CoverageCollector {
-    /// Maps that track instruction hit data.
-    pub maps: HitMaps,
+/// Inspector implementation for collecting coverage information.
+#[derive(Clone, Debug)]
+pub struct LineCoverageCollector {
+    // NOTE: `current_map` is always a valid reference into `maps`.
+    // It is accessed only through `get_or_insert_map` which guarantees that it's valid.
+    // Both of these fields are unsafe to access directly outside of `*insert_map`.
+    current_map: NonNull<HitMap>,
+    current_hash: B256,
+
+    maps: HitMaps,
 }
 
-impl<DB: Database> Inspector<DB> for CoverageCollector {
-    #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-        self.maps
-            .entry(get_contract_hash(interp))
-            .or_insert_with(|| HitMap::new(interp.contract.bytecode.original_bytes()));
-    }
+// SAFETY: See comments on `current_map`.
+unsafe impl Send for LineCoverageCollector {}
+unsafe impl Sync for LineCoverageCollector {}
 
-    #[inline]
-    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-        self.maps
-            .entry(get_contract_hash(interp))
-            .and_modify(|map| map.hit(interp.program_counter()));
+impl Default for LineCoverageCollector {
+    fn default() -> Self {
+        Self {
+            current_map: NonNull::dangling(),
+            current_hash: B256::ZERO,
+            maps: Default::default(),
+        }
     }
 }
 
-/// Helper function for extracting contract hash used to record coverage hit map.
-/// If contract hash available in interpreter contract is zero (contract not yet created but going
-/// to be created in current tx) then it hash is calculated from contract bytecode.
-fn get_contract_hash(interp: &mut Interpreter) -> B256 {
-    let mut hash = interp.contract.hash.expect("Contract hash is None");
-    if hash == B256::ZERO {
-        hash = interp.contract.bytecode.hash_slow();
+impl<CTX> Inspector<CTX> for LineCoverageCollector
+where
+    CTX: ContextTr<Journal: JournalExt>,
+{
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+        interpreter.bytecode.get_or_calculate_hash();
+        self.insert_map(interpreter);
     }
-    hash
+
+    fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+        let map = self.get_or_insert_map(interpreter);
+        map.hit(interpreter.bytecode.pc() as u32);
+    }
+}
+
+impl LineCoverageCollector {
+    /// Finish collecting coverage information and return the [`HitMaps`].
+    pub fn finish(self) -> HitMaps {
+        self.maps
+    }
+
+    /// Gets the hit map for the current contract, or inserts a new one if it doesn't exist.
+    ///
+    /// The map is stored in `current_map` and returned as a mutable reference.
+    /// See comments on `current_map` for more details.
+    #[inline]
+    fn get_or_insert_map(&mut self, interpreter: &mut Interpreter) -> &mut HitMap {
+        let hash = interpreter.bytecode.get_or_calculate_hash();
+        if self.current_hash != *hash {
+            self.insert_map(interpreter);
+        }
+        // SAFETY: See comments on `current_map`.
+        unsafe { self.current_map.as_mut() }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn insert_map(&mut self, interpreter: &mut Interpreter) {
+        let hash = interpreter.bytecode.hash().unwrap();
+        self.current_hash = hash;
+        // Converts the mutable reference to a `NonNull` pointer.
+        self.current_map = self
+            .maps
+            .entry(hash)
+            .or_insert_with(|| HitMap::new(interpreter.bytecode.original_bytes()))
+            .into();
+    }
 }

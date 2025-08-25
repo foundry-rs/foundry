@@ -1,21 +1,23 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
+    LocalSigner, MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
-use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
+use p256::ecdsa::{
+    Signature as P256Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
+};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -217,7 +219,7 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
 
 fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
-    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let v = U256::from(sig.v() as u64 + 27);
     let r = B256::from(sig.r());
     let s = B256::from(sig.s());
     (v, r, s).abi_encode()
@@ -227,7 +229,7 @@ fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     let r = B256::from(sig.r());
     let mut vs = sig.s();
-    vs.set_bit(255, sig.v().y_parity());
+    vs.set_bit(255, sig.v());
     (r, vs).abi_encode()
 }
 
@@ -259,7 +261,9 @@ fn sign_with_wallet(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        bail!("could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one");
+        bail!(
+            "could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one"
+        );
     };
 
     let wallet = signers
@@ -273,7 +277,8 @@ fn sign_with_wallet(
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     let signing_key = parse_private_key_p256(private_key)?;
-    let signature: Signature = signing_key.sign_prehash(digest.as_slice())?;
+    let signature: P256Signature = signing_key.sign_prehash(digest.as_slice())?;
+    let signature = signature.normalize_s().unwrap_or(signature);
     let r_bytes: [u8; 32] = signature.r().to_bytes().into();
     let s_bytes: [u8; 32] = signature.s().to_bytes().into();
 
@@ -284,7 +289,7 @@ fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> 
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
-        *private_key < U256::from_be_slice(&C::ORDER.to_be_byte_array()),
+        *private_key < order,
         "private key must be less than the {curve:?} curve order ({order})",
         curve = C::default(),
     );
@@ -387,7 +392,7 @@ fn derive_wallets<W: Wordlist>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex::FromHex, FixedBytes};
+    use alloy_primitives::{FixedBytes, hex::FromHex};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
 
     #[test]
@@ -403,7 +408,7 @@ mod tests {
 
         let result = sign_p256(&pk_u256, &digest).unwrap();
         let result_bytes: [u8; 64] = result.try_into().unwrap();
-        let signature = Signature::from_bytes(&result_bytes.into()).unwrap();
+        let signature = P256Signature::from_bytes(&result_bytes.into()).unwrap();
         let verifying_key = VerifyingKey::from(&signing_key);
         assert!(verifying_key.verify_prehash(digest.as_slice(), &signature).is_ok());
     }
@@ -418,7 +423,10 @@ mod tests {
         )
         .unwrap();
         let result = sign_p256(&pk, &digest);
-        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)"
+        );
     }
 
     #[test]

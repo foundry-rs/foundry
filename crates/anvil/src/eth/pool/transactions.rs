@@ -1,10 +1,9 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
-    map::{HashMap, HashSet},
     Address, TxHash,
+    map::{HashMap, HashSet},
 };
-use alloy_rpc_types::Transaction as RpcTransaction;
-use alloy_serde::WithOtherFields;
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
@@ -99,6 +98,11 @@ impl PoolTransaction {
     pub fn gas_price(&self) -> u128 {
         self.pending_transaction.transaction.gas_price()
     }
+
+    /// Returns the type of the transaction
+    pub fn tx_type(&self) -> u8 {
+        self.pending_transaction.transaction.r#type().unwrap_or_default()
+    }
 }
 
 impl fmt::Debug for PoolTransaction {
@@ -113,10 +117,10 @@ impl fmt::Debug for PoolTransaction {
     }
 }
 
-impl TryFrom<WithOtherFields<RpcTransaction>> for PoolTransaction {
+impl TryFrom<AnyRpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
-    fn try_from(transaction: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
-        let typed_transaction = TypedTransaction::try_from(transaction)?;
+    fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
+        let typed_transaction = TypedTransaction::try_from(value)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -181,7 +185,7 @@ impl PendingTransactions {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(Box::new(
                     tx.transaction.as_ref().clone(),
-                )))
+                )));
             }
         }
 
@@ -367,7 +371,7 @@ impl Iterator for TransactionsIterator {
                 }
             }
 
-            return Some(best.transaction)
+            return Some(best.transaction);
         }
     }
 }
@@ -494,7 +498,7 @@ impl ReadyTransactions {
 
         // early exit if we are not replacing anything.
         if remove_hashes.is_empty() {
-            return Ok((Vec::new(), Vec::new()))
+            return Ok((Vec::new(), Vec::new()));
         }
 
         // check if we're replacing the same transaction and if it can be replaced
@@ -511,13 +515,13 @@ impl ReadyTransactions {
                     // check if underpriced
                     if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
-                        return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
+                        return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())));
                     } else {
                         trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                     }
                 }
 
-                unlocked_tx.extend(to_remove.unlocks.iter().cloned())
+                unlocked_tx.extend(to_remove.unlocks.iter().copied())
             }
         }
 
@@ -635,12 +639,11 @@ impl ReadyTransactions {
 
                 // remove from unlocks
                 for mark in &tx.transaction.transaction.requires {
-                    if let Some(hash) = self.provided_markers.get(mark) {
-                        if let Some(tx) = ready.get_mut(hash) {
-                            if let Some(idx) = tx.unlocks.iter().position(|i| i == hash) {
-                                tx.unlocks.swap_remove(idx);
-                            }
-                        }
+                    if let Some(hash) = self.provided_markers.get(mark)
+                        && let Some(tx) = ready.get_mut(hash)
+                        && let Some(idx) = tx.unlocks.iter().position(|i| i == hash)
+                    {
+                        tx.unlocks.swap_remove(idx);
                     }
                 }
 

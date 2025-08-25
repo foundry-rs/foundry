@@ -7,7 +7,9 @@ import "cheats/Vm.sol";
 contract AddrTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testFailPrivKeyZero() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfPkZero() public {
+        vm.expectRevert("vm.addr: private key cannot be 0");
         vm.addr(0);
     }
 

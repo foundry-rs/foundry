@@ -2,6 +2,7 @@ use foundry_common::TestFilter;
 use regex::Regex;
 use std::path::Path;
 
+#[derive(Clone, Debug)]
 pub struct Filter {
     test_regex: Regex,
     contract_regex: Regex,
@@ -73,19 +74,19 @@ impl Filter {
 
 impl TestFilter for Filter {
     fn matches_test(&self, test_name: &str) -> bool {
-        if let Some(exclude) = &self.exclude_tests {
-            if exclude.is_match(test_name) {
-                return false;
-            }
+        if let Some(exclude) = &self.exclude_tests
+            && exclude.is_match(test_name)
+        {
+            return false;
         }
         self.test_regex.is_match(test_name)
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {
-        if let Some(exclude) = &self.exclude_contracts {
-            if exclude.is_match(contract_name) {
-                return false;
-            }
+        if let Some(exclude) = &self.exclude_contracts
+            && exclude.is_match(contract_name)
+        {
+            return false;
         }
 
         self.contract_regex.is_match(contract_name)
@@ -96,10 +97,10 @@ impl TestFilter for Filter {
             return false;
         };
 
-        if let Some(exclude) = &self.exclude_paths {
-            if exclude.is_match(path) {
-                return false;
-            }
+        if let Some(exclude) = &self.exclude_paths
+            && exclude.is_match(path)
+        {
+            return false;
         }
         self.path_regex.is_match(path)
     }

@@ -4,7 +4,7 @@ set -eo pipefail
 echo "Installing foundryup..."
 
 BASE_DIR="${XDG_CONFIG_HOME:-$HOME}"
-FOUNDRY_DIR="${FOUNDRY_DIR-"$BASE_DIR/.foundry"}"
+FOUNDRY_DIR="${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
@@ -54,7 +54,7 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
-if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
+if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]] && [[ ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
     echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
 fi
 

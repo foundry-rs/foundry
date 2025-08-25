@@ -1,9 +1,5 @@
 //! Configuration for fuzz testing.
 
-use crate::inline::{
-    parse_config_bool, parse_config_u32, InlineConfigParser, InlineConfigParserError,
-    INLINE_CONFIG_FUZZ_KEY,
-};
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -13,6 +9,8 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
+    /// Fails the fuzzed test if a revert occurs.
+    pub fail_on_revert: bool,
     /// The maximum number of test case rejections allowed by proptest, to be
     /// encountered during usage of `vm.assume` cheatcode. This will be used
     /// to set the `max_global_rejects` value in proptest test runner config.
@@ -26,25 +24,30 @@ pub struct FuzzConfig {
     pub dictionary: FuzzDictionaryConfig,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// The fuzz corpus configuration.
+    #[serde(flatten)]
+    pub corpus: FuzzCorpusConfig,
     /// Path where fuzz failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
-    /// Name of the file to record fuzz failures, defaults to `failures`.
-    pub failure_persist_file: Option<String>,
     /// show `console.log` in fuzz test, defaults to `false`
     pub show_logs: bool,
+    /// Optional timeout (in seconds) for each property test
+    pub timeout: Option<u32>,
 }
 
 impl Default for FuzzConfig {
     fn default() -> Self {
         Self {
             runs: 256,
+            fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: None,
-            failure_persist_file: None,
             show_logs: false,
+            timeout: None,
         }
     }
 }
@@ -52,48 +55,7 @@ impl Default for FuzzConfig {
 impl FuzzConfig {
     /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self {
-            runs: 256,
-            max_test_rejects: 65536,
-            seed: None,
-            dictionary: FuzzDictionaryConfig::default(),
-            gas_report_samples: 256,
-            failure_persist_dir: Some(cache_dir),
-            failure_persist_file: Some("failures".to_string()),
-            show_logs: false,
-        }
-    }
-}
-
-impl InlineConfigParser for FuzzConfig {
-    fn config_key() -> String {
-        INLINE_CONFIG_FUZZ_KEY.into()
-    }
-
-    fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
-        let overrides: Vec<(String, String)> = Self::get_config_overrides(configs);
-
-        if overrides.is_empty() {
-            return Ok(None)
-        }
-
-        let mut conf_clone = self.clone();
-
-        for pair in overrides {
-            let key = pair.0;
-            let value = pair.1;
-            match key.as_str() {
-                "runs" => conf_clone.runs = parse_config_u32(key, value)?,
-                "max-test-rejects" => conf_clone.max_test_rejects = parse_config_u32(key, value)?,
-                "dictionary-weight" => {
-                    conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
-                }
-                "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
-                "show-logs" => conf_clone.show_logs = parse_config_bool(key, value)?,
-                _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
-            }
-        }
-        Ok(Some(conf_clone))
+        Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
     }
 }
 
@@ -133,67 +95,48 @@ impl Default for FuzzDictionaryConfig {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::{inline::InlineConfigParser, FuzzConfig};
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FuzzCorpusConfig {
+    // Path to corpus directory, enabled coverage guided fuzzing mode.
+    // If not set then sequences producing new coverage are not persisted and mutated.
+    pub corpus_dir: Option<PathBuf>,
+    // Whether corpus to use gzip file compression and decompression.
+    pub corpus_gzip: bool,
+    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
+    // Mutations will be performed at least `corpus_min_mutations` times.
+    pub corpus_min_mutations: usize,
+    // Number of corpus that won't be evicted from memory.
+    pub corpus_min_size: usize,
+    /// Whether to collect and display edge coverage metrics.
+    pub show_edge_coverage: bool,
+}
 
-    #[test]
-    fn unrecognized_property() {
-        let configs = &["forge-config: default.fuzz.unknownprop = 200".to_string()];
-        let base_config = FuzzConfig::default();
-        if let Err(e) = base_config.try_merge(configs) {
-            assert_eq!(e.to_string(), "'unknownprop' is an invalid config property");
-        } else {
-            unreachable!()
+impl FuzzCorpusConfig {
+    pub fn with_test_name(&mut self, test_name: &String) {
+        if let Some(corpus_dir) = &self.corpus_dir {
+            self.corpus_dir = Some(corpus_dir.join(test_name));
         }
     }
 
-    #[test]
-    fn successful_merge() {
-        let configs = &[
-            "forge-config: default.fuzz.runs = 42424242".to_string(),
-            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
-            "forge-config: default.fuzz.failure-persist-file = fuzz-failure".to_string(),
-        ];
-        let base_config = FuzzConfig::default();
-        let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
-        assert_eq!(merged.runs, 42424242);
-        assert_eq!(merged.dictionary.dictionary_weight, 42);
-        assert_eq!(merged.failure_persist_file, Some("fuzz-failure".to_string()));
+    /// Whether edge coverage should be collected and displayed.
+    pub fn collect_edge_coverage(&self) -> bool {
+        self.corpus_dir.is_some() || self.show_edge_coverage
     }
 
-    #[test]
-    fn merge_is_none() {
-        let empty_config = &[];
-        let base_config = FuzzConfig::default();
-        let merged = base_config.try_merge(empty_config).expect("No errors");
-        assert!(merged.is_none());
+    /// Whether coverage guided fuzzing is enabled.
+    pub fn is_coverage_guided(&self) -> bool {
+        self.corpus_dir.is_some()
     }
+}
 
-    #[test]
-    fn merge_is_none_unrelated_property() {
-        let unrelated_configs = &["forge-config: default.invariant.runs = 2".to_string()];
-        let base_config = FuzzConfig::default();
-        let merged = base_config.try_merge(unrelated_configs).expect("No errors");
-        assert!(merged.is_none());
-    }
-
-    #[test]
-    fn override_detection() {
-        let configs = &[
-            "forge-config: default.fuzz.runs = 42424242".to_string(),
-            "forge-config: ci.fuzz.runs = 666666".to_string(),
-            "forge-config: default.invariant.runs = 2".to_string(),
-            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
-        ];
-        let variables = FuzzConfig::get_config_overrides(configs);
-        assert_eq!(
-            variables,
-            vec![
-                ("runs".into(), "42424242".into()),
-                ("runs".into(), "666666".into()),
-                ("dictionary-weight".into(), "42".into())
-            ]
-        );
+impl Default for FuzzCorpusConfig {
+    fn default() -> Self {
+        Self {
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_min_mutations: 5,
+            corpus_min_size: 0,
+            show_edge_coverage: false,
+        }
     }
 }

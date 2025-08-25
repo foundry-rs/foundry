@@ -1,7 +1,7 @@
 //! Misc Serde helpers for foundry crates.
 
 use alloy_primitives::U256;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 use std::str::FromStr;
 
 /// Helper type to parse both `u64` and `U256`
@@ -124,4 +124,26 @@ where
     };
 
     Ok(num)
+}
+
+pub mod duration {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let d = jiff::SignedDuration::try_from(*duration).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&format!("{d:#}"))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let d = s.parse::<jiff::SignedDuration>().map_err(serde::de::Error::custom)?;
+        d.try_into().map_err(serde::de::Error::custom)
+    }
 }

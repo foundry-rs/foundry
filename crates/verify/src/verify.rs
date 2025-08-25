@@ -1,48 +1,71 @@
 //! The `forge verify-bytecode` command.
 
 use crate::{
-    etherscan::EtherscanVerificationProvider,
-    provider::{VerificationProvider, VerificationProviderType},
-    utils::is_host_only,
     RetryArgs,
+    etherscan::EtherscanVerificationProvider,
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    utils::is_host_only,
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::HashSet};
 use alloy_provider::Provider;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
+use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
-use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
+use foundry_config::{Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast};
 use itertools::Itertools;
 use reqwest::Url;
-use revm_primitives::HashSet;
+use semver::BuildMetadata;
 use std::path::PathBuf;
 
-use crate::provider::VerificationContext;
+/// The programming language used for smart contract development.
+///
+/// This enum represents the supported contract languages for verification.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ContractLanguage {
+    /// Solidity programming language
+    Solidity,
+    /// Vyper programming language  
+    Vyper,
+}
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
+    #[arg(long, help_heading = "Verifier options", default_value = "sourcify", value_enum)]
     pub verifier: VerificationProviderType,
 
-    /// The verifier URL, if using a custom provider
+    /// The verifier API KEY, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
+    pub verifier_api_key: Option<String>,
+
+    /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
+
+    /// The verifier API version, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_VERSION")]
+    pub verifier_api_version: Option<EtherscanApiVersion>,
 }
 
 impl Default for VerifierArgs {
     fn default() -> Self {
-        Self { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+        Self {
+            verifier: VerificationProviderType::Sourcify,
+            verifier_api_key: None,
+            verifier_url: None,
+            verifier_api_version: None,
+        }
     }
 }
 
-/// CLI arguments for `forge verify`.
+/// CLI arguments for `forge verify-contract`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyArgs {
     /// The address of the contract to verify.
@@ -71,6 +94,10 @@ pub struct VerifyArgs {
     /// The `solc` version to use to build the smart contract.
     #[arg(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
+
+    /// The compilation profile to use to build the smart contract.
+    #[arg(long, value_name = "PROFILE_NAME")]
+    pub compilation_profile: Option<String>,
 
     /// The number of optimization runs used to build the smart contract.
     #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
@@ -131,6 +158,12 @@ pub struct VerifyArgs {
 
     #[command(flatten)]
     pub verifier: VerifierArgs,
+
+    /// The contract language (`solidity` or `vyper`).
+    ///
+    /// Defaults to `solidity` if none provided.
+    #[arg(long, value_enum)]
+    pub language: Option<ContractLanguage>,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -162,6 +195,15 @@ impl figment::Provider for VerifyArgs {
         if self.via_ir {
             dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
         }
+
+        if let Some(api_key) = &self.verifier.verifier_api_key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.verifier.verifier_api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -169,7 +211,7 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
-        let config = self.load_config_emit_warnings();
+        let config = self.load_config()?;
 
         if self.guess_constructor_args && config.get_rpc_url().is_none() {
             eyre::bail!(
@@ -197,13 +239,27 @@ impl VerifyArgs {
             let args = EtherscanVerificationProvider::default()
                 .create_verify_request(&self, &context)
                 .await?;
-            println!("{}", args.source);
-            return Ok(())
+            sh_println!("{}", args.source)?;
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{}` deployed on {chain}", self.address);
-        self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
+        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        if let Some(version) = &self.evm_version {
+            sh_println!("EVM version: {version}")?;
+        }
+        if let Some(version) = &self.compiler_version {
+            sh_println!("Compiler version: {version}")?;
+        }
+        if let Some(optimizations) = &self.num_of_optimizations {
+            sh_println!("Optimizations:    {optimizations}")?
+        }
+        if let Some(args) = &self.constructor_args
+            && !args.is_empty()
+        {
+            sh_println!("Constructor args: {args}")?
+        }
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -227,13 +283,13 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(&self.etherscan.key())
+        self.verifier.verifier.client(self.etherscan.key().as_deref())
     }
 
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config_emit_warnings();
+        let mut config = self.load_config()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;
@@ -245,17 +301,17 @@ impl VerifyArgs {
                 project.find_contract_path(&contract.name)?
             };
 
-            let version = if let Some(ref version) = self.compiler_version {
+            let cache = project.read_cache_file().ok();
+
+            let mut version = if let Some(ref version) = self.compiler_version {
                 version.trim_start_matches('v').parse()?
             } else if let Some(ref solc) = config.solc {
                 match solc {
                     SolcReq::Version(version) => version.to_owned(),
                     SolcReq::Local(solc) => Solc::new(solc)?.version,
                 }
-            } else if let Some(entry) = project
-                .read_cache_file()
-                .ok()
-                .and_then(|mut cache| cache.files.remove(&contract_path))
+            } else if let Some(entry) =
+                cache.as_ref().and_then(|cache| cache.files.get(&contract_path).cloned())
             {
                 let unique_versions = entry
                     .artifacts
@@ -264,21 +320,92 @@ impl VerifyArgs {
                     .unwrap_or_default();
 
                 if unique_versions.is_empty() {
-                    eyre::bail!("No matching artifact found for {}", contract.name);
+                    eyre::bail!(
+                        "No matching artifact found for {}. This could be due to:\n\
+                        - Compiler version mismatch - the contract was compiled with a different Solidity version than what's being used for verification",
+                        contract.name
+                    );
                 } else if unique_versions.len() > 1 {
                     warn!(
                         "Ambiguous compiler versions found in cache: {}",
                         unique_versions.iter().join(", ")
                     );
-                    eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
+                    eyre::bail!(
+                        "Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag."
+                    )
                 }
 
                 unique_versions.into_iter().next().unwrap().to_owned()
             } else {
-                eyre::bail!("If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml")
+                eyre::bail!(
+                    "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
+                )
             };
 
-            VerificationContext::new(contract_path, contract.name.clone(), version, config)
+            let settings = if let Some(profile) = &self.compilation_profile {
+                if profile == "default" {
+                    &project.settings
+                } else if let Some(settings) = project.additional_settings.get(profile.as_str()) {
+                    settings
+                } else {
+                    eyre::bail!("Unknown compilation profile: {}", profile)
+                }
+            } else if let Some((cache, entry)) = cache
+                .as_ref()
+                .and_then(|cache| Some((cache, cache.files.get(&contract_path)?.clone())))
+            {
+                let profiles = entry
+                    .artifacts
+                    .get(&contract.name)
+                    .and_then(|artifacts| {
+                        let mut cached_artifacts = artifacts.get(&version);
+                        // If we try to verify with specific build version and no cached artifacts
+                        // found, then check if we have artifacts cached for same version but
+                        // without any build metadata.
+                        // This could happen when artifacts are built / cached
+                        // with a version like `0.8.20` but verify is using a compiler-version arg
+                        // as `0.8.20+commit.a1b79de6`.
+                        // See <https://github.com/foundry-rs/foundry/issues/9510>.
+                        if cached_artifacts.is_none() && version.build != BuildMetadata::EMPTY {
+                            version.build = BuildMetadata::EMPTY;
+                            cached_artifacts = artifacts.get(&version);
+                        }
+                        cached_artifacts
+                    })
+                    .map(|artifacts| artifacts.keys().collect::<HashSet<_>>())
+                    .unwrap_or_default();
+
+                if profiles.is_empty() {
+                    eyre::bail!(
+                        "No matching artifact found for {} with compiler version {}. This could be due to:\n\
+                        - Compiler version mismatch - the contract was compiled with a different Solidity version",
+                        contract.name,
+                        version
+                    );
+                } else if profiles.len() > 1 {
+                    eyre::bail!(
+                        "Ambiguous compilation profiles found in cache: {}, please specify the profile through `--compilation-profile` flag",
+                        profiles.iter().join(", ")
+                    )
+                }
+
+                let profile = profiles.into_iter().next().unwrap().to_owned();
+                cache.profiles.get(&profile).expect("must be present")
+            } else if project.additional_settings.is_empty() {
+                &project.settings
+            } else {
+                eyre::bail!(
+                    "If cache is disabled, compilation profile must be provided with `--compiler-version` option or set in foundry.toml"
+                )
+            };
+
+            VerificationContext::new(
+                contract_path,
+                contract.name.clone(),
+                version,
+                config,
+                settings.clone(),
+            )
         } else {
             if config.get_rpc_url().is_none() {
                 eyre::bail!("You have to provide a contract name or a valid RPC URL")
@@ -298,13 +425,31 @@ impl VerifyArgs {
                 ))
             };
 
+            let settings = project
+                .settings_profiles()
+                .find_map(|(name, settings)| {
+                    (name == artifact_id.profile.as_str()).then_some(settings)
+                })
+                .expect("must be present");
+
             VerificationContext::new(
                 artifact_id.source.clone(),
                 artifact_id.name.split('.').next().unwrap().to_owned(),
                 artifact_id.version.clone(),
                 config,
+                settings.clone(),
             )
         }
+    }
+
+    /// Detects the language for verification from source file extension, if none provided.
+    pub fn detect_language(&self, ctx: &VerificationContext) -> ContractLanguage {
+        self.language.unwrap_or_else(|| {
+            match ctx.target_path.extension().and_then(|e| e.to_str()) {
+                Some("vy") => ContractLanguage::Vyper,
+                _ => ContractLanguage::Solidity,
+            }
+        })
     }
 }
 
@@ -333,8 +478,11 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
-        self.verifier.verifier.client(&self.etherscan.key())?.check(self).await
+        sh_println!(
+            "Checking verification status on {}",
+            self.etherscan.chain.unwrap_or_default()
+        )?;
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.check(self).await
     }
 }
 
@@ -346,7 +494,16 @@ impl figment::Provider for VerifyCheckArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        self.etherscan.data()
+        let mut dict = self.etherscan.dict();
+        if let Some(api_key) = &self.etherscan.key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.etherscan.api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
+        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
 

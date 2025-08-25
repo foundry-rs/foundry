@@ -1,15 +1,19 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use crate::provider::VerificationContext;
+use crate::{provider::VerificationContext, verify::ContractLanguage};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
-use foundry_compilers::{artifacts::StandardJsonCompilerInput, solc::SolcLanguage};
+use foundry_compilers::{
+    artifacts::{Source, StandardJsonCompilerInput, vyper::VyperInput},
+    solc::SolcLanguage,
+};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;
 impl EtherscanSourceProvider for EtherscanStandardJsonSource {
     fn source(
         &self,
-        _args: &VerifyArgs,
+        args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(String, String, CodeFormat)> {
         let mut input: StandardJsonCompilerInput = context
@@ -18,7 +22,15 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             .wrap_err("Failed to get standard json input")?
             .normalize_evm_version(&context.compiler_version);
 
-        input.settings.libraries.libs = input
+        let lang = args.detect_language(context);
+
+        let code_format = match lang {
+            ContractLanguage::Solidity => CodeFormat::StandardJsonInput,
+            ContractLanguage::Vyper => CodeFormat::VyperJson,
+        };
+
+        let mut settings = context.compiler_settings.solc.settings.clone();
+        settings.libraries.libs = input
             .settings
             .libraries
             .libs
@@ -28,11 +40,29 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             })
             .collect();
 
-        // remove all incompatible settings
-        input.settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
+        settings.remappings = input.settings.remappings;
 
-        let source =
-            serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+        // remove all incompatible settings
+        settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
+
+        input.settings = settings;
+
+        let source = match lang {
+            ContractLanguage::Solidity => {
+                serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?
+            }
+            ContractLanguage::Vyper => {
+                let path = Path::new(&context.target_path);
+                let sources = Source::read_all_from(path, &["vy", "vyi"])?;
+                let input = VyperInput::new(
+                    sources,
+                    context.clone().compiler_settings.vyper,
+                    &context.compiler_version,
+                );
+
+                serde_json::to_string(&input).wrap_err("Failed to parse vyper json input")?
+            }
+        };
 
         trace!(target: "forge::verify", standard_json=source, "determined standard json input");
 
@@ -45,6 +75,6 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
                 .display(),
             context.target_name.clone()
         );
-        Ok((source, name, CodeFormat::StandardJsonInput))
+        Ok((source, name, code_format))
     }
 }

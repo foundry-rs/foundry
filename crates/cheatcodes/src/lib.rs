@@ -7,22 +7,26 @@
 #![allow(elided_lifetimes_in_paths)] // Cheats context uses 3 lifetimes
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 pub extern crate foundry_cheatcodes_spec as spec;
+
 #[macro_use]
 extern crate tracing;
 
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
-use revm::{ContextPrecompiles, InnerEvmContext};
 use spec::Status;
 
+pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
-    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor, Context,
+    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
 pub use spec::{CheatcodeDef, Vm};
-pub use Vm::ForgeContext;
 
 #[macro_use]
 mod error;
@@ -32,6 +36,8 @@ mod base64;
 mod config;
 
 mod crypto;
+
+mod version;
 
 mod env;
 pub use env::set_execution_context;
@@ -84,26 +90,17 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     }
 }
 
-pub(crate) trait DynCheatcode: 'static {
+pub(crate) trait DynCheatcode: 'static + std::fmt::Debug {
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static>;
-
-    fn as_debug(&self) -> &dyn std::fmt::Debug;
 
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
-    #[inline]
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static> {
         Self::CHEATCODE
     }
 
-    #[inline]
-    fn as_debug(&self) -> &dyn std::fmt::Debug {
-        self
-    }
-
-    #[inline]
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         self.apply_full(ccx, executor)
     }
@@ -132,9 +129,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>,
-    /// The precompiles context.
-    pub(crate) precompiles: &'evm mut ContextPrecompiles<&'db mut (dyn DatabaseExt + 'db2)>,
+    pub(crate) ecx: &'evm mut EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
@@ -142,7 +137,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
 }
 
 impl<'db, 'db2> std::ops::Deref for CheatsCtxt<'_, '_, 'db, 'db2> {
-    type Target = InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>;
+    type Target = EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -158,8 +153,16 @@ impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_, '_> {
 }
 
 impl CheatsCtxt<'_, '_, '_, '_> {
-    #[inline]
-    pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.precompiles.contains(address)
+    pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
+        if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
     }
+
+    pub(crate) fn is_precompile(&self, address: &Address) -> bool {
+        self.ecx.journaled_state.warm_addresses.precompiles().contains(address)
+    }
+}
+
+#[cold]
+fn precompile_error(address: &Address) -> Error {
+    fmt_err!("cannot use precompile {address} as an argument")
 }

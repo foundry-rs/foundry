@@ -1,12 +1,15 @@
 use clap::Parser;
-use foundry_compilers::artifacts::{output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::artifacts::{EvmVersion, output_selection::ContractOutputSelection};
 use serde::Serialize;
 
 mod core;
-pub use self::core::CoreBuildArgs;
+pub use self::core::BuildOpts;
 
 mod paths;
-pub use self::paths::ProjectPathsArgs;
+pub use self::paths::ProjectPathOpts;
+
+mod utils;
+pub use self::utils::{solar_pcx_from_build_opts, solar_pcx_from_solc_project};
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
 // to be merged into an existing `foundry_config::Config`.
@@ -14,7 +17,7 @@ pub use self::paths::ProjectPathsArgs;
 // See also `BuildArgs`.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Compiler options")]
-pub struct CompilerArgs {
+pub struct CompilerOpts {
     /// Includes the AST as JSON in the compiler output.
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
@@ -62,15 +65,15 @@ mod tests {
 
     #[test]
     fn can_parse_evm_version() {
-        let args: CompilerArgs =
-            CompilerArgs::parse_from(["foundry-cli", "--evm-version", "london"]);
+        let args: CompilerOpts =
+            CompilerOpts::parse_from(["foundry-cli", "--evm-version", "london"]);
         assert_eq!(args.evm_version, Some(EvmVersion::London));
     }
 
     #[test]
     fn can_parse_extra_output() {
-        let args: CompilerArgs =
-            CompilerArgs::parse_from(["foundry-cli", "--extra-output", "metadata", "ir-optimized"]);
+        let args: CompilerOpts =
+            CompilerOpts::parse_from(["foundry-cli", "--extra-output", "metadata", "ir-optimized"]);
         assert_eq!(
             args.extra_output,
             vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
@@ -79,7 +82,7 @@ mod tests {
 
     #[test]
     fn can_parse_extra_output_files() {
-        let args: CompilerArgs = CompilerArgs::parse_from([
+        let args: CompilerOpts = CompilerOpts::parse_from([
             "foundry-cli",
             "--extra-output-files",
             "metadata",

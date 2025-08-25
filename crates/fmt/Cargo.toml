@@ -17,7 +17,7 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 
-ariadne = "0.4"
+ariadne = "0.5"
 itertools.workspace = true
 solang-parser.workspace = true
 thiserror.workspace = true

@@ -1,6 +1,8 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
+use eyre::Result;
+use serde_json::Value;
 use std::fmt;
 
 /// [`DynSolValue`] formatter.
@@ -102,14 +104,12 @@ struct DynValueDisplay<'a> {
 
 impl<'a> DynValueDisplay<'a> {
     /// Creates a new [`Display`](fmt::Display) wrapper for the given value.
-    #[inline]
     fn new(value: &'a DynSolValue, raw: bool) -> Self {
         Self { value, formatter: DynValueFormatter { raw } }
     }
 }
 
 impl fmt::Display for DynValueDisplay<'_> {
-    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.formatter.value(self.value, f)
     }
@@ -132,18 +132,6 @@ pub fn format_tokens_raw(tokens: &[DynSolValue]) -> impl Iterator<Item = String>
     tokens.iter().map(format_token_raw)
 }
 
-/// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending on `json`
-/// parameter.
-pub fn print_tokens(tokens: &[DynSolValue], json: bool) {
-    if json {
-        let tokens: Vec<String> = format_tokens_raw(tokens).collect();
-        println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
-    } else {
-        let tokens = format_tokens(tokens);
-        tokens.for_each(|t| println!("{t}"));
-    }
-}
-
 /// Pretty-prints the given value into a string suitable for user output.
 pub fn format_token(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, false).to_string()
@@ -158,10 +146,63 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
 }
 
+/// Serializes given [DynSolValue] into a [serde_json::Value].
+pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
+    match value {
+        DynSolValue::Bool(b) => Ok(Value::Bool(b)),
+        DynSolValue::String(s) => {
+            // Strings are allowed to contain stringified JSON objects, so we try to parse it like
+            // one first.
+            if let Ok(map) = serde_json::from_str(&s) {
+                Ok(Value::Object(map))
+            } else {
+                Ok(Value::String(s))
+            }
+        }
+        DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
+        DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
+        DynSolValue::Int(i, _) => {
+            if let Ok(n) = i64::try_from(i) {
+                // Use `serde_json::Number` if the number can be accurately represented.
+                Ok(Value::Number(n.into()))
+            } else {
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
+                Ok(Value::String(i.to_string()))
+            }
+        }
+        DynSolValue::Uint(i, _) => {
+            if let Ok(n) = u64::try_from(i) {
+                // Use `serde_json::Number` if the number can be accurately represented.
+                Ok(Value::Number(n.into()))
+            } else {
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
+                Ok(Value::String(i.to_string()))
+            }
+        }
+        DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
+        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
+            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
+            let values =
+                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
+            let map = prop_names.into_iter().zip(values).collect();
+
+            Ok(Value::Object(map))
+        }
+        DynSolValue::Tuple(values) => Ok(Value::Array(
+            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
+        )),
+        DynSolValue::Function(_) => eyre::bail!("cannot serialize function pointer"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, U256};
+    use alloy_primitives::{U256, address};
 
     #[test]
     fn parse_hex_uint() {
@@ -181,7 +222,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
         assert_eq!(
             format_token(&DynSolValue::Address(address!(
-                "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+                "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
             ))),
             "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
         );
@@ -189,7 +230,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         assert_ne!(
             format_token(&DynSolValue::Address(address!(
-                "Fb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
+                "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );

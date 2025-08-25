@@ -1,10 +1,11 @@
 use super::ScriptResult;
+use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{hex, Address, TxKind, B256};
+use alloy_primitives::{Address, B256, TxKind, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
-use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
+use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
+use foundry_evm::traces::CallTraceDecoder;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
@@ -29,16 +30,16 @@ impl ScriptTransactionBuilder {
         &mut self,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
+        create2_deployer: Address,
     ) -> Result<()> {
         if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
                         true,
-                        DEFAULT_CREATE2_DEPLOYER
-                            .create2_from_code(B256::from_slice(salt), init_code),
+                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
                         local_contracts,
                     )?;
                 }
@@ -67,7 +68,7 @@ impl ScriptTransactionBuilder {
                 if let Some(function) = function {
                     self.transaction.function = Some(function.signature());
 
-                    let values = function.abi_decode_input(data, false).inspect_err(|_| {
+                    let values = function.abi_decode_input(data).inspect_err(|_| {
                         error!(
                             contract=?self.transaction.contract_name,
                             signature=?function,
@@ -111,7 +112,7 @@ impl ScriptTransactionBuilder {
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
             if data.len() < 32 {
-                return Ok(())
+                return Ok(());
             }
             &data[32..]
         } else {
@@ -126,7 +127,7 @@ impl ScriptTransactionBuilder {
         let constructor_args = &creation_code[bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
-        let values = constructor.abi_decode_input(constructor_args, false).inspect_err(|_| {
+        let values = constructor.abi_decode_input(constructor_args).inspect_err(|_| {
                 error!(
                     contract=?self.transaction.contract_name,
                     signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
@@ -146,22 +147,24 @@ impl ScriptTransactionBuilder {
         mut self,
         result: &ScriptResult,
         gas_estimate_multiplier: u64,
+        linked_build_data: &LinkedBuildData,
     ) -> Self {
-        let mut created_contracts = result.get_created_contracts();
+        let mut created_contracts =
+            result.get_created_contracts(&linked_build_data.known_contracts);
 
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {
             // Filter out the contract that was created by the transaction itself.
-            self.transaction.contract_address.map_or(true, |addr| addr != contract.address)
+            self.transaction.contract_address != Some(contract.address)
         });
 
         self.transaction.additional_contracts = created_contracts;
 
-        if !self.transaction.is_fixed_gas_limit {
-            if let Some(unsigned) = self.transaction.transaction.as_unsigned_mut() {
-                // We inflate the gas used by the user specified percentage
-                unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
-            }
+        if !self.transaction.is_fixed_gas_limit
+            && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
+        {
+            // We inflate the gas used by the user specified percentage
+            unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
         }
 
         self

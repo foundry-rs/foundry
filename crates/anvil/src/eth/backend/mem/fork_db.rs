@@ -1,20 +1,20 @@
-use crate::{
-    eth::backend::db::{
-        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-    },
-    revm::primitives::AccountInfo,
+use crate::eth::backend::db::{
+    Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
+    SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
 };
-use alloy_primitives::{Address, B256, U256, U64};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{
         BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction, StateSnapshot,
     },
     fork::database::ForkDbStateSnapshot,
-    revm::{primitives::BlockEnv, Database},
 };
-use revm::DatabaseRef;
+use revm::{
+    context::BlockEnv,
+    database::{Database, DatabaseRef, DbAccount},
+    state::AccountInfo,
+};
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
@@ -36,7 +36,7 @@ impl Db for ForkedDatabase {
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
@@ -44,6 +44,7 @@ impl Db for ForkedDatabase {
         let mut db = self.database().clone();
         let accounts = self
             .database()
+            .cache
             .accounts
             .clone()
             .into_iter()
@@ -92,6 +93,10 @@ impl MaybeFullDatabase for ForkedDatabase {
         self
     }
 
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.database().cache.accounts)
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -125,6 +130,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 impl MaybeFullDatabase for ForkDbStateSnapshot {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
+    }
+
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.local.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {

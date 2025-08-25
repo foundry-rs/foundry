@@ -12,11 +12,11 @@
             "topics": [
               "0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50"
             ],
-            "data": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000f56616c7565207365743a20203130300000000000000000000000000000000000"
+            "data": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000033130300000000000000000000000000000000000000000000000000000000000"
           }
         ],
         "decoded_logs": [
-          "Value set:  100"
+          "100"
         ],
         "kind": {
           "Unit": {
@@ -49,11 +49,7 @@
                     "gas_limit": "{...}",
                     "status": "Return",
                     "steps": [],
-                    "decoded": {
-                      "label": null,
-                      "return_data": null,
-                      "call_data": null
-                    }
+                    "decoded": null
                   },
                   "logs": [],
                   "ordering": []
@@ -90,11 +86,7 @@
                     "gas_limit": "{...}",
                     "status": "Stop",
                     "steps": [],
-                    "decoded": {
-                      "label": null,
-                      "return_data": null,
-                      "call_data": null
-                    }
+                    "decoded": null
                   },
                   "logs": [],
                   "ordering": [
@@ -130,11 +122,7 @@
                     "gas_limit": "{...}",
                     "status": "Return",
                     "steps": [],
-                    "decoded": {
-                      "label": null,
-                      "return_data": null,
-                      "call_data": null
-                    }
+                    "decoded": null
                   },
                   "logs": [],
                   "ordering": []
@@ -160,11 +148,7 @@
                     "gas_limit": "{...}",
                     "status": "Stop",
                     "steps": [],
-                    "decoded": {
-                      "label": null,
-                      "return_data": null,
-                      "call_data": null
-                    }
+                    "decoded": null
                   },
                   "logs": [],
                   "ordering": []
@@ -190,11 +174,7 @@
                     "gas_limit": "{...}",
                     "status": "Stop",
                     "steps": [],
-                    "decoded": {
-                      "label": null,
-                      "return_data": null,
-                      "call_data": null
-                    }
+                    "decoded": null
                   },
                   "logs": [],
                   "ordering": []
@@ -204,10 +184,7 @@
           ]
         ],
         "labeled_addresses": {},
-        "duration": {
-          "secs": "{...}",
-          "nanos": "{...}"
-        },
+        "duration": "{...}",
         "breakpoints": {},
         "gas_snapshots": {}
       }

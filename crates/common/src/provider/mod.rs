@@ -3,22 +3,18 @@
 pub mod runtime_transport;
 
 use crate::{
-    provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT, provider::runtime_transport::RuntimeTransportBuilder,
 };
 use alloy_provider::{
+    Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
-    Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{
-    layers::{RetryBackoffLayer, RetryBackoffService},
-    utils::guess_local_url,
-};
+use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;
-use runtime_transport::RuntimeTransport;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -35,7 +31,7 @@ const DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME: Duration = Duration::from_secs(3);
 const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
+pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
@@ -52,8 +48,7 @@ pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
         >,
         WalletFiller<EthereumWallet>,
     >,
-    RootProvider<RetryBackoffService<RuntimeTransport>, N>,
-    RetryBackoffService<RuntimeTransport>,
+    RootProvider<N>,
     N,
 >;
 
@@ -101,6 +96,8 @@ pub struct ProviderBuilder {
     jwt: Option<String>,
     headers: Vec<String>,
     is_local: bool,
+    /// Whether to accept invalid certificates.
+    accept_invalid_certs: bool,
 }
 
 impl ProviderBuilder {
@@ -137,7 +134,7 @@ impl ProviderBuilder {
             .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
 
         // Use the final URL string to guess if it's a local URL.
-        let is_local = url.as_ref().map_or(false, |url| guess_local_url(url.as_str()));
+        let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
 
         Self {
             url,
@@ -150,6 +147,7 @@ impl ProviderBuilder {
             jwt: None,
             headers: vec![],
             is_local,
+            accept_invalid_certs: false,
         }
     }
 
@@ -241,6 +239,18 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers. If `None`, defaults to the already-set value.
+    pub fn maybe_headers(mut self, headers: Option<Vec<String>>) -> Self {
+        self.headers = headers.unwrap_or(self.headers);
+        self
+    }
+
+    /// Sets whether to accept invalid certificates.
+    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+        self.accept_invalid_certs = accept_invalid_certs;
+        self
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let Self {
@@ -253,6 +263,7 @@ impl ProviderBuilder {
             jwt,
             headers,
             is_local,
+            accept_invalid_certs,
         } = self;
         let url = url?;
 
@@ -263,6 +274,7 @@ impl ProviderBuilder {
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
+            .accept_invalid_certs(accept_invalid_certs)
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
@@ -279,7 +291,7 @@ impl ProviderBuilder {
         }
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
-            .on_provider(RootProvider::new(client));
+            .connect_provider(RootProvider::new(client));
 
         Ok(provider)
     }
@@ -296,6 +308,7 @@ impl ProviderBuilder {
             jwt,
             headers,
             is_local,
+            accept_invalid_certs,
         } = self;
         let url = url?;
 
@@ -306,6 +319,7 @@ impl ProviderBuilder {
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
+            .accept_invalid_certs(accept_invalid_certs)
             .build();
 
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
@@ -314,6 +328,9 @@ impl ProviderBuilder {
             client.set_poll_interval(
                 chain
                     .average_blocktime_hint()
+                    // we cap the poll interval because if not provided, chain would default to
+                    // mainnet
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
                     .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
                     .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
             );
@@ -322,7 +339,7 @@ impl ProviderBuilder {
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_provider(RootProvider::new(client));
+            .connect_provider(RootProvider::new(client));
 
         Ok(provider)
     }

@@ -1,0 +1,36 @@
+{
+    "storage": [
+        {
+            "astId": 7,
+            "contract": "contracts/Create2Deployer.sol:Create2Deployer",
+            "label": "_owner",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address"
+        },
+        {
+            "astId": 122,
+            "contract": "contracts/Create2Deployer.sol:Create2Deployer",
+            "label": "_paused",
+            "offset": 20,
+            "slot": "0",
+            "type": "t_bool"
+        }
+    ],
+    "types": {
+        "t_address": {
+            "encoding": "inplace",
+            "label": "address",
+            "numberOfBytes": "20"
+        },
+        "t_bool": {
+            "encoding": "inplace",
+            "label": "bool",
+            "numberOfBytes": "1"
+        }
+    },
+    "values": [
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}

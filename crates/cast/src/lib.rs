@@ -1,60 +1,71 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+//! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-use alloy_consensus::TxEnvelope;
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
-    hex,
-    utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, TxHash, TxKind, B256, I256, U256,
+    Address, B256, I256, Keccak256, Selector, TxHash, TxKind, U64, U256, hex,
+    utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{
-    network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
+    network::eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
+};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
+    TransactionReceiptWithRevertReason,
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, shell,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use futures::{future::Either, FutureExt, StreamExt};
+use foundry_evm_core::ic::decode_instructions;
+use futures::{FutureExt, StreamExt, future::Either};
+use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
-use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     fmt::Write,
     io,
-    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
+pub mod args;
+pub mod cmd;
+pub mod opts;
+
 pub mod base;
 pub mod errors;
 mod rlp_converter;
+pub mod tx;
 
 use rlp_converter::Item;
+
+#[macro_use]
+extern crate tracing;
 
 #[macro_use]
 extern crate foundry_common;
@@ -69,33 +80,28 @@ sol! {
     }
 }
 
-pub struct Cast<P, T> {
+pub struct Cast<P> {
     provider: P,
-    transport: PhantomData<T>,
 }
 
-impl<T, P> Cast<P, T>
-where
-    T: Transport + Clone,
-    P: Provider<T, AnyNetwork>,
-{
+impl<P: Provider<AnyNetwork>> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// # Ok(())
     /// # }
     /// ```
     pub fn new(provider: P) -> Self {
-        Self { provider, transport: PhantomData }
+        Self { provider }
     }
 
     /// Makes a read-only call to the specified address
@@ -104,11 +110,12 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_rpc_types::{TransactionRequest, BlockOverrides, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
+    /// use std::{str::FromStr, collections::HashMap};
+    /// use alloy_rpc_types::state::StateOverridesBuilder;
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
@@ -116,14 +123,23 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
+    ///
+    /// // Create state overrides
+    /// let mut state_override = StateOverride::default();
+    /// let mut account_override = AccountOverride::default();
+    /// account_override.balance = Some(U256::from(1000));
+    /// state_override.insert(to, account_override);
+    /// let state_override_object = StateOverridesBuilder::default().build();
+    /// let block_override_object = BlockOverrides::default();
+    ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -133,14 +149,24 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        state_override: Option<StateOverride>,
+        block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
+        let mut call = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_override);
+        if let Some(state_override) = state_override {
+            call = call.overrides(state_override)
+        }
 
+        let res = call.await?;
         let mut decoded = vec![];
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -152,10 +178,9 @@ where
                                 .get_code_at(addr)
                                 .block_id(block.unwrap_or_default())
                                 .await
+                                && code.is_empty()
                             {
-                                if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not have any code")
-                                }
+                                eyre::bail!("contract {addr:?} does not have any code")
                             }
                         } else if Some(TxKind::Create) == req.to {
                             eyre::bail!("tx req is a contract deployment");
@@ -200,7 +225,7 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
@@ -261,7 +286,7 @@ where
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
@@ -280,7 +305,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -291,12 +316,12 @@ where
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let res = cast.publish("0x1234".to_string()).await?;
     /// println!("{:?}", res);
@@ -306,7 +331,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -320,14 +345,14 @@ where
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None).await?;
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -337,49 +362,48 @@ where
         block: B,
         full: bool,
         field: Option<String>,
+        raw: bool,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field {
-            if field == "transactions" && !full {
-                eyre::bail!("use --full to view transactions")
-            }
+        if let Some(ref field) = field
+            && field == "transactions"
+            && !full
+        {
+            eyre::bail!("use --full to view transactions")
         }
 
         let block = self
             .provider
-            .get_block(block, full.into())
+            .get_block(block)
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
-        let block = if let Some(ref field) = field {
+        Ok(if raw {
+            let header: Header = block.into_inner().header.inner.try_into_header()?;
+            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
+        } else if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
-        };
-
-        Ok(block)
+        })
     }
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
-        let block = block.into();
-        let block_field = Self::block(
+        Self::block(
             self,
-            block,
+            block.into(),
             false,
             // Select only select field
             Some(field),
+            false,
         )
-        .await?;
-
-        let ret = if block_field.starts_with("0x") {
-            U256::from_str_radix(strip_0x(&block_field), 16).expect("Unable to convert hex to U256")
-        } else {
-            U256::from_str_radix(&block_field, 10).expect("Unable to convert decimal to U256")
-        };
-        Ok(ret)
+        .await?
+        .parse()
+        .map_err(Into::into)
     }
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
@@ -404,12 +428,14 @@ where
             false,
             // Select only block hash
             Some(String::from("hash")),
+            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -438,22 +464,28 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
-            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
-                "polygon-mumbai"
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
+            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
+                "polygon-pos-amoy-testnet"
+            }
+            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
+            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
+                "polygon-zkevm-cardona-testnet"
             }
             "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
             "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
                     _ => "avalanche",
                 }
             }
+            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
+            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
             _ => "unknown",
         })
     }
@@ -474,13 +506,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
@@ -502,7 +534,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
@@ -535,7 +567,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
@@ -562,23 +594,42 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let implementation = cast.implementation(addr, None).await?;
+    /// let implementation = cast.implementation(addr, false, None).await?;
     /// println!("{}", implementation);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn implementation(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let slot =
-            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+    pub async fn implementation(
+        &self,
+        who: Address,
+        is_beacon: bool,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot = match is_beacon {
+            true => {
+                // Use the beacon slot : bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
+                B256::from_str(
+                    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
+                )?
+            }
+            false => {
+                // Use the implementation slot :
+                // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
+                B256::from_str(
+                    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                )?
+            }
+        };
+
         let value = self
             .provider
             .get_storage_at(who, slot.into())
@@ -592,13 +643,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let admin = cast.admin(addr, None).await?;
@@ -622,13 +673,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let computed_address = cast.compute_address(addr, None).await?;
@@ -645,13 +696,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let code = cast.code(addr, None, false).await?;
@@ -681,13 +732,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let codesize = cast.codesize(addr, None).await?;
@@ -704,40 +755,67 @@ where
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn transaction(
         &self,
-        tx_hash: String,
+        tx_hash: Option<String>,
+        from: Option<NameOrAddress>,
+        nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
+        to_request: bool,
     ) -> Result<String> {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let tx = self
-            .provider
-            .get_transaction_by_hash(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+        let tx = if let Some(tx_hash) = tx_hash {
+            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+            self.provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+        } else if let Some(from) = from {
+            // If nonce is not provided, uses 0.
+            let nonce = U64::from(nonce.unwrap_or_default());
+            let from = from.resolve(self.provider.root()).await?;
+
+            self.provider
+                .raw_request::<_, Option<AnyRpcTransaction>>(
+                    "eth_getTransactionBySenderAndNonce".into(),
+                    (from, nonce),
+                )
+                .await?
+                .ok_or_else(|| {
+                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+                })?
+        } else {
+            eyre::bail!("tx hash or from address is required")
+        };
 
         Ok(if raw {
-            format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
+            // also consider opstack deposit transactions
+            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
+            let encoded = either_tx.encoded_2718();
+            format!("0x{}", hex::encode(encoded))
         } else if let Some(field) = field {
-            get_pretty_tx_attr(&tx, field.as_str())
+            get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
+        } else if to_request {
+            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
+                tx.into(),
+            ))?
         } else {
             tx.pretty()
         })
@@ -746,12 +824,12 @@ where
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
     /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
@@ -807,12 +885,12 @@ where
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let result = cast
     ///     .rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
@@ -823,7 +901,7 @@ where
     /// ```
     pub async fn rpc<V>(&self, method: &str, params: V) -> Result<String>
     where
-        V: alloy_json_rpc::RpcParam,
+        V: alloy_json_rpc::RpcSend,
     {
         let res = self
             .provider
@@ -838,13 +916,13 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, B256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
     /// let slot = B256::ZERO;
@@ -899,14 +977,14 @@ where
     ///
     /// ```
     /// use alloy_primitives::fixed_bytes;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::{BlockId, BlockNumberOrTag};
     /// use cast::Cast;
     /// use std::{convert::TryFrom, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let block_number = cast.convert_block_number(Some(BlockId::number(5))).await?;
@@ -932,8 +1010,7 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block =
-                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
+                    let block = self.provider.get_block_by_hash(hash.block_hash).await?;
                     Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },
@@ -947,7 +1024,7 @@ where
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::Filter;
     /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
@@ -955,7 +1032,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("wss://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("wss://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let filter =
@@ -994,11 +1071,10 @@ where
                 } else {
                     Either::Right(futures::future::pending())
                 } => {
-                    if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number  > to_block {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number)
+                        && block.number  > to_block {
                             break;
                         }
-                    }
                 },
                 // Process incoming log
                 log = subscription.next() => {
@@ -1042,8 +1118,7 @@ where
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 
@@ -1178,12 +1253,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // TODO: https://github.com/alloy-rs/core/pull/461
-        let units: Unit = if let Ok(x) = decimals.parse() {
-            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
-        } else {
-            decimals.parse()?
-        };
+        let units: Unit = Unit::from_str(decimals)?;
         let n = ParseUnits::parse_units(value, units)?;
         Ok(n.to_string())
     }
@@ -1357,6 +1427,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
     /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
     /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1378,6 +1449,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1562,6 +1634,48 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(bytes32))
     }
 
+    /// Pads hex data to a specified length
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let padded = Cast::pad("abcd", true, 20)?;
+    /// assert_eq!(padded, "0xabcd000000000000000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("abcd", false, 20)?;
+    /// assert_eq!(padded, "0x000000000000000000000000000000000000abcd");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", true, 32)?;
+    /// assert_eq!(padded, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", false, 32)?;
+    /// assert_eq!(padded, "0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    ///
+    /// let err = Cast::pad("1234", false, 1).unwrap_err();
+    /// assert_eq!(err.to_string(), "input length exceeds target length");
+    ///
+    /// let err = Cast::pad("foobar", false, 32).unwrap_err();
+    /// assert_eq!(err.to_string(), "input is not a valid hex");
+    ///
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
+        let s = strip_0x(s);
+        let hex_len = len * 2;
+
+        // Validate input
+        if s.len() > hex_len {
+            eyre::bail!("input length exceeds target length");
+        }
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            eyre::bail!("input is not a valid hex");
+        }
+
+        Ok(if right { format!("0x{s:0<hex_len$}") } else { format!("0x{s:0>hex_len$}") })
+    }
+
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let bytes = hex::decode(s)?;
@@ -1695,7 +1809,7 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         }
     }
 
@@ -1725,7 +1839,7 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         };
         Ok(format!("0x{encoded}"))
     }
@@ -1749,10 +1863,11 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(calldata))
     }
 
-    /// Prints the slot number for the specified mapping type and input data.
+    /// Returns the slot number for a given mapping key and slot.
     ///
-    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
-    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
+    /// `keccak256(concat(h(k), p))`, where `h` is the padding function for `k`'s type, and `p`
+    /// is slot number of the mapping `m`.
     ///
     /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
     /// for more details.
@@ -1779,29 +1894,29 @@ impl SimpleCast {
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+    pub fn index(key_type: &str, key: &str, slot_number: &str) -> Result<String> {
         let mut hasher = Keccak256::new();
 
-        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
-        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
-        match v_ty {
+        let k_ty = DynSolType::parse(key_type).wrap_err("Could not parse type")?;
+        let k = k_ty.coerce_str(key).wrap_err("Could not parse value")?;
+        match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool |
-            DynSolType::Int(_) |
-            DynSolType::Uint(_) |
-            DynSolType::FixedBytes(_) |
-            DynSolType::Address |
-            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Bool
+            | DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Address
+            | DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
-            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+            DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..) |
-            DynSolType::FixedArray(..) |
-            DynSolType::Tuple(..) |
-            DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+            DynSolType::Array(..)
+            | DynSolType::FixedArray(..)
+            | DynSolType::Tuple(..)
+            | DynSolType::CustomStruct { .. } => {
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }
 
@@ -1916,7 +2031,9 @@ impl SimpleCast {
     ///     Cast::etherscan_source(
     ///         NamedChain::Mainnet.into(),
     ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///         "<etherscan_api_key>".to_string()
+    ///         Some("<etherscan_api_key>".to_string()),
+    ///         None,
+    ///         None
     ///     )
     ///     .await
     ///     .unwrap()
@@ -1928,9 +2045,11 @@ impl SimpleCast {
     pub async fn etherscan_source(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         Ok(metadata.source_code())
     }
@@ -1948,8 +2067,10 @@ impl SimpleCast {
     /// Cast::expand_etherscan_source_to_directory(
     ///     NamedChain::Mainnet.into(),
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///     "<etherscan_api_key>".to_string(),
+    ///     Some("<etherscan_api_key>".to_string()),
     ///     PathBuf::from("output_dir"),
+    ///     None,
+    ///     None,
     /// )
     /// .await?;
     /// # Ok(())
@@ -1958,10 +2079,12 @@ impl SimpleCast {
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_directory: PathBuf,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> eyre::Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
@@ -1973,10 +2096,12 @@ impl SimpleCast {
     pub async fn etherscan_source_flatten(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_path: Option<PathBuf>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
             eyre::bail!("Empty contract source code")
@@ -2017,7 +2142,7 @@ impl SimpleCast {
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
 
-        for step in decode_instructions(code) {
+        for step in decode_instructions(code)? {
             write!(output, "{:08x}: ", step.pc)?;
 
             if let Some(op) = step.op {
@@ -2094,22 +2219,38 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::fixed_bytes;
     /// use cast::SimpleCast as Cast;
     ///
     /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
     /// let functions = Cast::extract_functions(bytecode)?;
-    /// assert_eq!(functions, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string(), "pure")]);
+    /// assert_eq!(functions, vec![(fixed_bytes!("0x2125b65b"), "uint32,address,uint224".to_string(), "pure")]);
     /// # Ok::<(), eyre::Report>(())
     /// ```
-    pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
-        let code = hex::decode(strip_0x(bytecode))?;
-        Ok(evmole::function_selectors(&code, 0)
+    pub fn extract_functions(bytecode: &str) -> Result<Vec<(Selector, String, &str)>> {
+        let code = hex::decode(bytecode)?;
+        let info = evmole::contract_info(
+            evmole::ContractInfoArgs::new(&code)
+                .with_selectors()
+                .with_arguments()
+                .with_state_mutability(),
+        );
+        Ok(info
+            .functions
+            .expect("functions extraction was requested")
             .into_iter()
-            .map(|s| {
+            .map(|f| {
                 (
-                    hex::encode_prefixed(s),
-                    evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
+                    f.selector.into(),
+                    f.arguments
+                        .expect("arguments extraction was requested")
+                        .into_iter()
+                        .map(|t| t.sol_type_name().to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                    f.state_mutability
+                        .expect("state_mutability extraction was requested")
+                        .as_json_str(),
                 )
             })
             .collect())
@@ -2127,27 +2268,9 @@ impl SimpleCast {
     /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
     pub fn decode_raw_transaction(tx: &str) -> Result<TxEnvelope> {
-        let tx_hex = hex::decode(strip_0x(tx))?;
+        let tx_hex = hex::decode(tx)?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
-    }
-
-    /// Decodes EOF container bytes
-    /// Pretty prints the decoded EOF container contents
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
-    /// let decoded = Cast::decode_eof(&eof)?;
-    /// println!("{}", decoded);
-    /// # Ok::<(), eyre::Report>(())
-    pub fn decode_eof(eof: &str) -> Result<String> {
-        let eof_hex = hex::decode(eof)?;
-        let eof = Eof::decode(eof_hex.into())?;
-        Ok(pretty_eof(&eof)?)
     }
 }
 
@@ -2155,9 +2278,36 @@ fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
+fn explorer_client(
+    chain: Chain,
+    api_key: Option<String>,
+    api_url: Option<String>,
+    explorer_url: Option<String>,
+) -> Result<Client> {
+    let mut builder = Client::builder().with_chain_id(chain);
+
+    let deduced = chain.etherscan_urls();
+
+    let explorer_url = explorer_url
+        .or(deduced.map(|d| d.1.to_string()))
+        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
+    builder = builder.with_url(explorer_url)?;
+
+    let api_url = api_url
+        .or(deduced.map(|d| d.0.to_string()))
+        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
+    builder = builder.with_api_url(api_url)?;
+
+    if let Some(api_key) = api_key {
+        builder = builder.with_api_key(api_key);
+    }
+
+    builder.build().map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SimpleCast as Cast;
+    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
     use alloy_primitives::hex;
 
     #[test]
@@ -2276,6 +2426,47 @@ mod tests {
     }
 
     #[test]
+    fn calldata_decode_nested_json() {
+        let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
+        let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
+        let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded)).unwrap();
+        let expected = serde_json::json!([
+            [
+                [
+                    "0x04366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed74",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x60f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf7",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x93dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb731886",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            ],
+            1735573273,
+            132886,
+            "0xAF9d27ffe4d51eD54AC8eEc78f2785D7E11E5ab1",
+            "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
+        ]);
+        assert_eq!(json_value, expected);
+    }
+
+    #[test]
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
         assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
@@ -2289,5 +2480,29 @@ mod tests {
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
         )
+    }
+
+    #[test]
+    fn disassemble_incomplete_sequence() {
+        let incomplete = &hex!("60"); // PUSH1
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
+
+        let complete = &hex!("6000"); // PUSH1 0x00
+        let disassembled = Cast::disassemble(complete);
+        assert!(disassembled.is_ok());
+
+        let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
+
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
+        );
+
+        let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
+        let disassembled = Cast::disassemble(complete);
+        assert!(disassembled.is_ok());
     }
 }

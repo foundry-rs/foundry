@@ -5,7 +5,7 @@ use std::str::FromStr;
 /// Helper to convert a string number into a comparable one
 fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return I256::ZERO
+        return I256::ZERO;
     }
     string.replace('_', "").trim().parse().unwrap()
 }
@@ -14,7 +14,7 @@ fn to_num(string: &str) -> I256 {
 /// This will reverse the number so that 0's can be ignored
 fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
-        return U256::from(0)
+        return U256::from(0);
     }
     string.replace('_', "").trim().chars().rev().collect::<String>().parse().unwrap()
 }
@@ -56,10 +56,10 @@ impl AstEq for VariableDefinition {
             attrs.sort();
             attrs
         };
-        self.ty.ast_eq(&other.ty) &&
-            self.name.ast_eq(&other.name) &&
-            self.initializer.ast_eq(&other.initializer) &&
-            sorted_attrs(self).ast_eq(&sorted_attrs(other))
+        self.ty.ast_eq(&other.ty)
+            && self.name.ast_eq(&other.name)
+            && self.initializer.ast_eq(&other.initializer)
+            && sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
@@ -78,20 +78,20 @@ impl AstEq for FunctionDefinition {
         let left_returns = filter_params(&self.returns);
         let right_returns = filter_params(&other.returns);
 
-        self.ty.ast_eq(&other.ty) &&
-            self.name.ast_eq(&other.name) &&
-            left_params.ast_eq(&right_params) &&
-            self.return_not_returns.ast_eq(&other.return_not_returns) &&
-            left_returns.ast_eq(&right_returns) &&
-            self.body.ast_eq(&other.body) &&
-            sorted_attrs(self).ast_eq(&sorted_attrs(other))
+        self.ty.ast_eq(&other.ty)
+            && self.name.ast_eq(&other.name)
+            && left_params.ast_eq(&right_params)
+            && self.return_not_returns.ast_eq(&other.return_not_returns)
+            && left_returns.ast_eq(&right_returns)
+            && self.body.ast_eq(&other.body)
+            && sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
 impl AstEq for Base {
     fn ast_eq(&self, other: &Self) -> bool {
-        self.name.ast_eq(&other.name) &&
-            self.args.clone().unwrap_or_default().ast_eq(&other.args.clone().unwrap_or_default())
+        self.name.ast_eq(&other.name)
+            && self.args.clone().unwrap_or_default().ast_eq(&other.args.clone().unwrap_or_default())
     }
 }
 
@@ -226,7 +226,7 @@ impl AstEq for Statement {
     fn ast_eq(&self, other: &Self) -> bool {
         match self {
             Self::If(loc, expr, stmt1, stmt2) => {
-                #[allow(clippy::borrowed_box)]
+                #[expect(clippy::borrowed_box)]
                 let wrap_if = |stmt1: &Box<Self>, stmt2: &Option<Box<Self>>| {
                     (
                         wrap_in_box!(stmt1, *loc),
@@ -387,6 +387,8 @@ derive_ast_eq! { (0 A, 1 B) }
 derive_ast_eq! { (0 A, 1 B, 2 C) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
+derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E, 5 F) }
+derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G) }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
@@ -413,7 +415,7 @@ derive_ast_eq! { struct VariableDeclaration { loc, ty, storage, name } }
 derive_ast_eq! { struct Using { loc, list, ty, global } }
 derive_ast_eq! { struct UsingFunction { loc, path, oper } }
 derive_ast_eq! { struct TypeDefinition { loc, name, ty } }
-derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, parts } }
+derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, layout, parts } }
 derive_ast_eq! { struct EventParameter { loc, ty, indexed, name } }
 derive_ast_eq! { struct ErrorParameter { loc, ty, name } }
 derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
@@ -421,6 +423,13 @@ derive_ast_eq! { struct ErrorDefinition { loc, keyword, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
 derive_ast_eq! { struct Annotation { loc, id, value } }
+derive_ast_eq! { enum PragmaDirective {
+    _
+    Identifier(loc, id1, id2),
+    StringLiteral(loc, id, lit),
+    Version(loc, id, version),
+    _
+}}
 derive_ast_eq! { enum UsingList {
     Error,
     _
@@ -480,6 +489,7 @@ derive_ast_eq! { enum StorageLocation {
     Memory(loc),
     Storage(loc),
     Calldata(loc),
+    Transient(loc),
     _
 }}
 derive_ast_eq! { enum Type {
@@ -615,7 +625,7 @@ derive_ast_eq! { enum YulSwitchOptions {
 derive_ast_eq! { enum SourceUnitPart {
     _
     ContractDefinition(def),
-    PragmaDirective(loc, ident, string),
+    PragmaDirective(pragma),
     ImportDirective(import),
     EnumDefinition(def),
     StructDefinition(def),
@@ -679,5 +689,20 @@ derive_ast_eq! { enum VariableAttribute {
     Constant(loc),
     Immutable(loc),
     Override(loc, idents),
+    StorageType(st),
+    StorageLocation(st),
     _
 }}
+
+// Who cares
+impl AstEq for StorageType {
+    fn ast_eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl AstEq for VersionComparator {
+    fn ast_eq(&self, _other: &Self) -> bool {
+        true
+    }
+}

@@ -1,24 +1,20 @@
 //! Regression tests for previous issues.
 
-use std::sync::Arc;
-
-use crate::{
-    config::*,
-    test_helpers::{ForgeTestData, TEST_DATA_DEFAULT},
-};
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
-use alloy_primitives::{address, b256, Address, U256};
+use alloy_primitives::{Address, U256, address, b256};
 use forge::{
     decode::decode_console_logs,
     result::{TestKind, TestStatus},
 };
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
 };
 use foundry_test_utils::Filter;
+use std::sync::Arc;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
 macro_rules! test_repro {
@@ -33,7 +29,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.run().await;
+                repro_config($issue_number, $should_fail, $sender.into()).await.run().await;
             }
         }
     };
@@ -42,7 +38,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                let mut $res = repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.test();
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().unwrap();
                 $e
             }
         }
@@ -52,7 +48,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                let mut $config = repro_config($issue_number, false, None, &*TEST_DATA_DEFAULT).await;
+                let mut $config = repro_config($issue_number, false, None).await;
                 $e
                 $config.run().await;
             }
@@ -60,23 +56,19 @@ macro_rules! test_repro {
     };
 }
 
-async fn repro_config(
-    issue: usize,
-    should_fail: bool,
-    sender: Option<Address>,
-    test_data: &ForgeTestData,
-) -> TestConfig {
+async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
     foundry_test_utils::init_tracing();
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
-    let mut config = test_data.config.clone();
-    config.fs_permissions =
-        FsPermissions::new(vec![PathPermission::read("./fixtures"), PathPermission::read("out")]);
-    if let Some(sender) = sender {
-        config.sender = sender;
-    }
-
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![
+            PathPermission::read("./fixtures"),
+            PathPermission::read("out"),
+        ]);
+        if let Some(sender) = sender {
+            config.sender = sender;
+        }
+    });
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 
@@ -126,7 +118,7 @@ test_repro!(3220);
 test_repro!(3221);
 
 // https://github.com/foundry-rs/foundry/issues/3223
-test_repro!(3223, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
+test_repro!(3223, false, address!("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
 // https://github.com/foundry-rs/foundry/issues/3347
 test_repro!(3347, false, None, |res| {
@@ -134,12 +126,12 @@ test_repro!(3347, false, None, |res| {
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
     let event = Event::parse("event log2(uint256, uint256)").unwrap();
-    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
+    let decoded = event.decode_log(&test.logs[0].data).unwrap();
     assert_eq!(
         decoded,
         DecodedEvent {
             selector: Some(b256!(
-                "78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
+                "0x78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
             )),
             indexed: vec![],
             body: vec![
@@ -164,7 +156,7 @@ test_repro!(3653);
 test_repro!(3661);
 
 // https://github.com/foundry-rs/foundry/issues/3674
-test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
+test_repro!(3674, false, address!("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
 // https://github.com/foundry-rs/foundry/issues/3685
 test_repro!(3685);
@@ -187,6 +179,9 @@ test_repro!(3753);
 
 // https://github.com/foundry-rs/foundry/issues/3792
 test_repro!(3792);
+
+// https://github.com/foundry-rs/foundry/issues/4232
+test_repro!(4232);
 
 // https://github.com/foundry-rs/foundry/issues/4402
 test_repro!(4402);
@@ -277,7 +272,7 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test_call.idx, 0);
     assert_eq!(test_call.children, [1, 2, 3]);
     assert_eq!(test_call.trace.depth, 0);
-    assert!(test_call.trace.success);
+    assert!(!test_call.trace.is_error());
 
     let expected = [
         ("log(string)", vec!["\"a\""]),
@@ -291,7 +286,7 @@ test_repro!(6501, false, None, |res| {
         assert_eq!(trace.address, HARDHAT_CONSOLE_ADDRESS);
         assert_eq!(decoded.label, Some("console".into()));
         assert_eq!(trace.depth, 1);
-        assert!(trace.success);
+        assert!(!trace.is_error());
         assert_eq!(
             decoded.call_data,
             Some(DecodedCallData {
@@ -307,7 +302,7 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let path = config.runner.config.root.0.join("out/default/Issue6554.t.sol");
+    let path = config.runner.config.root.join("out/default/Issue6554.t.sol");
 
     let mut prj_config = Config::clone(&config.runner.config);
     prj_config.fs_permissions.add(PathPermission::read_write(path));
@@ -377,13 +372,10 @@ test_repro!(8383, false, None, |res| {
     let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
     assert_eq!(test.status, TestStatus::Success);
     match test.kind {
-        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        TestKind::Unit { gas } => assert_eq!(gas, 3101),
         _ => panic!("not a unit test kind"),
     }
 });
-
-// https://github.com/foundry-rs/foundry/issues/1543
-test_repro!(1543);
 
 // https://github.com/foundry-rs/foundry/issues/6643
 test_repro!(6643);
@@ -394,3 +386,36 @@ test_repro!(8971; |config| {
   prj_config.isolate = true;
   config.runner.config = Arc::new(prj_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/8639
+test_repro!(8639);
+
+// https://github.com/foundry-rs/foundry/issues/8566
+test_repro!(8566);
+
+// https://github.com/foundry-rs/foundry/issues/9643
+test_repro!(9643);
+
+// https://github.com/foundry-rs/foundry/issues/7238
+test_repro!(7238);
+
+// https://github.com/foundry-rs/foundry/issues/10302
+test_repro!(10302);
+
+// https://github.com/foundry-rs/foundry/issues/10477
+test_repro!(10477);
+
+// https://github.com/foundry-rs/foundry/issues/10527
+test_repro!(10527);
+
+// https://github.com/foundry-rs/foundry/issues/10552
+test_repro!(10552);
+
+// https://github.com/foundry-rs/foundry/issues/10586
+test_repro!(10586);
+
+// https://github.com/foundry-rs/foundry/issues/10957
+test_repro!(10957);
+
+// https://github.com/foundry-rs/foundry/issues/11353
+test_repro!(11353);

@@ -21,9 +21,9 @@ revm-inspectors.workspace = true
 
 alloy-primitives.workspace = true
 
-crossterm = "0.28"
+crossterm = "0.29"
 eyre.workspace = true
-ratatui = { version = "0.28", default-features = false, features = [
+ratatui = { version = "0.29", default-features = false, features = [
     "crossterm",
 ] }
 revm.workspace = true

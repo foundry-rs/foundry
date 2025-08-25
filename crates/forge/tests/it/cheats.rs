@@ -1,22 +1,23 @@
 //! Forge tests for cheatcodes.
-
 use crate::{
     config::*,
     test_helpers::{
-        ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_CANCUN, TEST_DATA_DEFAULT,
-        TEST_DATA_MULTI_VERSION,
+        ForgeTestData, ForgeTestProfile, RE_PATH_SEPARATOR, TEST_DATA_DEFAULT,
+        TEST_DATA_MULTI_VERSION, TEST_DATA_PARIS, get_compiled,
     },
 };
 use alloy_primitives::U256;
-use foundry_config::{fs_permissions::PathPermission, FsPermissions};
-use foundry_test_utils::Filter;
+use foundry_cli::utils::install_crypto_provider;
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_config::{FsPermissions, fs_permissions::PathPermission};
+use foundry_test_utils::{Filter, init_tracing};
 
 /// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode or
 /// specific seed.
 async fn test_cheats_local(test_data: &ForgeTestData) {
     let mut filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
         .exclude_paths("Fork")
-        .exclude_contracts("(Isolated|WithSeed)");
+        .exclude_contracts("(Isolated|WithSeed|StateDiffStorageLayoutTest)");
 
     // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file paths
     if cfg!(windows) {
@@ -27,20 +28,21 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
         filter = filter.exclude_contracts("(LastCallGasDefaultTest|MockFunctionTest|WithSeed)");
     }
 
-    let mut config = test_data.config.clone();
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }
 
 /// Executes subset of all cheat code tests in isolation mode.
 async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
-    let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+    let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
+        .exclude_contracts("StateDiffStorageLayoutTest");
 
-    let mut config = test_data.config.clone();
-    config.isolate = true;
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.isolate = true;
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -49,9 +51,9 @@ async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
 async fn test_cheats_local_with_seed(test_data: &ForgeTestData) {
     let filter = Filter::new(".*", ".*(WithSeed)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
 
-    let mut config = test_data.config.clone();
-    config.fuzz.seed = Some(U256::from(100));
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -59,6 +61,29 @@ async fn test_cheats_local_with_seed(test_data: &ForgeTestData) {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local_default() {
     test_cheats_local(&TEST_DATA_DEFAULT).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_state_diff_storage_layout() {
+    let test_data = {
+        let profile = ForgeTestProfile::Default;
+        install_crypto_provider();
+        init_tracing();
+        let mut config = profile.config();
+        config.extra_output = vec![ContractOutputSelection::StorageLayout];
+        let mut project = config.project().unwrap();
+        // Compile with StorageLayout
+        let output = get_compiled(&mut project);
+        ForgeTestData { project, output, config: config.into(), profile }
+    };
+    let filter =
+        Filter::new(".*", "StateDiffStorageLayoutTest", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+
+    let runner = test_data.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
+    });
+
+    TestConfig::with_filter(runner, filter).run().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -77,6 +102,6 @@ async fn test_cheats_local_multi_version() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_cheats_local_cancun() {
-    test_cheats_local(&TEST_DATA_CANCUN).await
+async fn test_cheats_local_paris() {
+    test_cheats_local(&TEST_DATA_PARIS).await
 }

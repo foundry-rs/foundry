@@ -6,6 +6,7 @@ src = "src"
 no-section-label = true
 additional-js = ["solidity.min.js"]
 additional-css = ["book.css"]
+mathjax-support = true
 
 [output.html.fold]
 enable = true

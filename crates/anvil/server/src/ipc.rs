@@ -1,12 +1,11 @@
 //! IPC handling
 
-use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
+use crate::{PubSubRpcHandler, error::RequestError, pubsub::PubSubConnection};
 use anvil_rpc::request::Request;
-use bytes::BytesMut;
-use futures::{ready, Sink, Stream, StreamExt};
+use bytes::{BufMut, BytesMut};
+use futures::{Sink, Stream, StreamExt, ready};
 use interprocess::local_socket::{self as ls, tokio::prelude::*};
 use std::{
-    future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
@@ -159,7 +158,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
                 return match String::from_utf8(bts.as_ref().to_vec()) {
                     Ok(val) => Ok(Some(val)),
                     Err(_) => Ok(None),
-                }
+                };
             }
         }
         Ok(None)
@@ -171,6 +170,8 @@ impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
 
     fn encode(&mut self, msg: String, buf: &mut BytesMut) -> io::Result<()> {
         buf.extend_from_slice(msg.as_bytes());
+        // Add newline character
+        buf.put_u8(b'\n');
         Ok(())
     }
 }

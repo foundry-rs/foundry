@@ -3,13 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use std::fs::{self, File};
 
 /// Various error variants for `fs` operations that serve as an addition to the io::Error which
 /// does not provide any information about the path.
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum FsPathError {
     /// Provides additional path context for [`fs::write`].
     #[error("failed to write to {path:?}: {source}")]
@@ -96,17 +96,17 @@ impl FsPathError {
 impl AsRef<Path> for FsPathError {
     fn as_ref(&self) -> &Path {
         match self {
-            Self::Write { path, .. } |
-            Self::Read { path, .. } |
-            Self::ReadLink { path, .. } |
-            Self::Copy { from: path, .. } |
-            Self::CreateDir { path, .. } |
-            Self::RemoveDir { path, .. } |
-            Self::CreateFile { path, .. } |
-            Self::RemoveFile { path, .. } |
-            Self::Open { path, .. } |
-            Self::ReadJson { path, .. } |
-            Self::WriteJson { path, .. } => path,
+            Self::Write { path, .. }
+            | Self::Read { path, .. }
+            | Self::ReadLink { path, .. }
+            | Self::Copy { from: path, .. }
+            | Self::CreateDir { path, .. }
+            | Self::RemoveDir { path, .. }
+            | Self::CreateFile { path, .. }
+            | Self::RemoveFile { path, .. }
+            | Self::Open { path, .. }
+            | Self::ReadJson { path, .. }
+            | Self::WriteJson { path, .. } => path,
         }
     }
 }
@@ -114,15 +114,15 @@ impl AsRef<Path> for FsPathError {
 impl From<FsPathError> for io::Error {
     fn from(value: FsPathError) -> Self {
         match value {
-            FsPathError::Write { source, .. } |
-            FsPathError::Read { source, .. } |
-            FsPathError::ReadLink { source, .. } |
-            FsPathError::Copy { source, .. } |
-            FsPathError::CreateDir { source, .. } |
-            FsPathError::RemoveDir { source, .. } |
-            FsPathError::CreateFile { source, .. } |
-            FsPathError::RemoveFile { source, .. } |
-            FsPathError::Open { source, .. } => source,
+            FsPathError::Write { source, .. }
+            | FsPathError::Read { source, .. }
+            | FsPathError::ReadLink { source, .. }
+            | FsPathError::Copy { source, .. }
+            | FsPathError::CreateDir { source, .. }
+            | FsPathError::RemoveDir { source, .. }
+            | FsPathError::CreateFile { source, .. }
+            | FsPathError::RemoveFile { source, .. }
+            | FsPathError::Open { source, .. } => source,
 
             FsPathError::ReadJson { source, .. } | FsPathError::WriteJson { source, .. } => {
                 source.into()

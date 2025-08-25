@@ -7,29 +7,40 @@ use anstream::AutoStream;
 use anstyle::Style;
 use clap::ValueEnum;
 use eyre::Result;
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     ops::DerefMut,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex, OnceLock, PoisonError,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-/// Returns the currently set verbosity.
+/// Returns the current color choice.
+pub fn color_choice() -> ColorChoice {
+    Shell::get().color_choice()
+}
+
+/// Returns the currently set verbosity level.
 pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
-/// Returns whether the verbosity level is [`Verbosity::Quiet`].
+/// Set the verbosity level.
+pub fn set_verbosity(verbosity: Verbosity) {
+    Shell::get().set_verbosity(verbosity);
+}
+
+/// Returns whether the output mode is [`OutputMode::Quiet`].
 pub fn is_quiet() -> bool {
-    verbosity().is_quiet()
+    Shell::get().output_mode().is_quiet()
 }
 
 /// Returns whether the output format is [`OutputFormat::Json`].
 pub fn is_json() -> bool {
-    Shell::get().output_format().is_json()
+    Shell::get().is_json()
 }
 
 /// The global shell instance.
@@ -68,11 +79,9 @@ impl TtyWidth {
     }
 }
 
-/// The requested verbosity of output.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub enum Verbosity {
-    /// All output
-    Verbose,
+/// The requested output mode.
+pub enum OutputMode {
     /// Default output
     #[default]
     Normal,
@@ -80,21 +89,13 @@ pub enum Verbosity {
     Quiet,
 }
 
-impl Verbosity {
-    /// Returns true if the verbosity level is `Verbose`.
-    #[inline]
-    pub fn is_verbose(self) -> bool {
-        self == Self::Verbose
-    }
-
-    /// Returns true if the verbosity level is `Normal`.
-    #[inline]
+impl OutputMode {
+    /// Returns true if the output mode is `Normal`.
     pub fn is_normal(self) -> bool {
         self == Self::Normal
     }
 
-    /// Returns true if the verbosity level is `Quiet`.
-    #[inline]
+    /// Returns true if the output mode is `Quiet`.
     pub fn is_quiet(self) -> bool {
         self == Self::Quiet
     }
@@ -112,17 +113,18 @@ pub enum OutputFormat {
 
 impl OutputFormat {
     /// Returns true if the output format is `Text`.
-    #[inline]
     pub fn is_text(self) -> bool {
         self == Self::Text
     }
 
     /// Returns true if the output format is `Json`.
-    #[inline]
     pub fn is_json(self) -> bool {
         self == Self::Json
     }
 }
+
+/// The verbosity level.
+pub type Verbosity = u8;
 
 /// An abstraction around console output that remembers preferences for output
 /// verbosity and color.
@@ -134,7 +136,10 @@ pub struct Shell {
     /// The format to use for message output.
     output_format: OutputFormat,
 
-    /// How verbose messages should be.
+    /// The verbosity mode to use for message output.
+    output_mode: OutputMode,
+
+    /// The verbosity level to use for message output.
     verbosity: Verbosity,
 
     /// Flag that indicates the current line needs to be cleared before
@@ -145,6 +150,8 @@ pub struct Shell {
 impl fmt::Debug for Shell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = f.debug_struct("Shell");
+        s.field("output_format", &self.output_format);
+        s.field("output_mode", &self.output_mode);
         s.field("verbosity", &self.verbosity);
         if let ShellOut::Stream { color_choice, .. } = self.output {
             s.field("color_choice", &color_choice);
@@ -167,7 +174,7 @@ enum ShellOut {
 }
 
 /// Whether messages should use color output.
-#[derive(Debug, Default, PartialEq, Clone, Copy, ValueEnum)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 pub enum ColorChoice {
     /// Intelligently guess whether to use color output (default).
     #[default]
@@ -179,7 +186,6 @@ pub enum ColorChoice {
 }
 
 impl Default for Shell {
-    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -188,14 +194,22 @@ impl Default for Shell {
 impl Shell {
     /// Creates a new shell (color choice and verbosity), defaulting to 'auto' color and verbose
     /// output.
-    #[inline]
     pub fn new() -> Self {
-        Self::new_with(OutputFormat::Text, ColorChoice::Auto, Verbosity::Verbose)
+        Self::new_with(
+            OutputFormat::Text,
+            OutputMode::Normal,
+            ColorChoice::Auto,
+            Verbosity::default(),
+        )
     }
 
     /// Creates a new shell with the given color choice and verbosity.
-    #[inline]
-    pub fn new_with(format: OutputFormat, color: ColorChoice, verbosity: Verbosity) -> Self {
+    pub fn new_with(
+        format: OutputFormat,
+        mode: OutputMode,
+        color: ColorChoice,
+        verbosity: Verbosity,
+    ) -> Self {
         Self {
             output: ShellOut::Stream {
                 stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
@@ -204,18 +218,19 @@ impl Shell {
                 stderr_tty: std::io::stderr().is_terminal(),
             },
             output_format: format,
+            output_mode: mode,
             verbosity,
             needs_clear: AtomicBool::new(false),
         }
     }
 
     /// Creates a shell that ignores all output.
-    #[inline]
     pub fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
             output_format: OutputFormat::Text,
-            verbosity: Verbosity::Quiet,
+            output_mode: OutputMode::Quiet,
+            verbosity: 0,
             needs_clear: AtomicBool::new(false),
         }
     }
@@ -240,25 +255,31 @@ impl Shell {
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
-    #[inline]
     pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
         self.needs_clear.swap(needs_clear, Ordering::Relaxed)
     }
 
+    /// Returns `true` if the output format is JSON.
+    pub fn is_json(&self) -> bool {
+        self.output_format.is_json()
+    }
+
+    /// Returns `true` if the verbosity level is `Quiet`.
+    pub fn is_quiet(&self) -> bool {
+        self.output_mode.is_quiet()
+    }
+
     /// Returns `true` if the `needs_clear` flag is set.
-    #[inline]
     pub fn needs_clear(&self) -> bool {
         self.needs_clear.load(Ordering::Relaxed)
     }
 
     /// Returns `true` if the `needs_clear` flag is unset.
-    #[inline]
     pub fn is_cleared(&self) -> bool {
         !self.needs_clear()
     }
 
     /// Returns the width of the terminal in spaces, if any.
-    #[inline]
     pub fn err_width(&self) -> TtyWidth {
         match self.output {
             ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
@@ -266,22 +287,30 @@ impl Shell {
         }
     }
 
-    /// Gets the verbosity of the shell.
-    #[inline]
+    /// Gets the output format of the shell.
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
+    }
+
+    /// Gets the output mode of the shell.
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+
+    /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
 
-    /// Gets the output format of the shell.
-    pub fn output_format(&self) -> OutputFormat {
-        self.output_format
+    /// Sets the verbosity level.
+    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+        self.verbosity = verbosity;
     }
 
     /// Gets the current color choice.
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
     /// choice has been set to something else.
-    #[inline]
     pub fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
@@ -290,7 +319,6 @@ impl Shell {
     }
 
     /// Returns `true` if stderr is a tty.
-    #[inline]
     pub fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
@@ -299,7 +327,6 @@ impl Shell {
     }
 
     /// Whether `stderr` supports color.
-    #[inline]
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
@@ -308,7 +335,6 @@ impl Shell {
     }
 
     /// Whether `stdout` supports color.
-    #[inline]
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
@@ -338,24 +364,6 @@ impl Shell {
         }
     }
 
-    /// Runs the callback only if we are in verbose mode.
-    #[inline]
-    pub fn verbose(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Verbose => callback(self),
-            _ => Ok(()),
-        }
-    }
-
-    /// Runs the callback if we are not in verbose mode.
-    #[inline]
-    pub fn concise(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Verbose => Ok(()),
-            _ => callback(self),
-        }
-    }
-
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
     ///
@@ -370,8 +378,8 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Quiet => Ok(()),
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
             _ => self.print(&"Warning", &WARN, Some(&message), false),
         }
     }
@@ -387,10 +395,9 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        if self.verbosity == Verbosity::Quiet {
-            Ok(())
-        } else {
-            self.write_stdout(fragment, &Style::new())
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
+            _ => self.write_stdout(fragment, &Style::new()),
         }
     }
 
@@ -405,10 +412,9 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        if self.verbosity == Verbosity::Quiet {
-            Ok(())
-        } else {
-            self.write_stderr(fragment, &Style::new())
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
+            _ => self.write_stderr(fragment, &Style::new()),
         }
     }
 
@@ -421,8 +427,8 @@ impl Shell {
         message: Option<&dyn fmt::Display>,
         justified: bool,
     ) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Quiet => Ok(()),
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
             _ => {
                 self.maybe_err_erase_line();
                 self.output.message_stderr(status, style, message, justified)
@@ -464,7 +470,6 @@ impl ShellOut {
     }
 
     /// Gets stdout as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stdout(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stdout, .. } => stdout,
@@ -473,7 +478,6 @@ impl ShellOut {
     }
 
     /// Gets stderr as a [`io::Write`](Write) trait object.
-    #[inline]
     fn stderr(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stderr, .. } => stderr,
@@ -509,7 +513,6 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
-    #[inline]
     fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
@@ -519,12 +522,11 @@ impl ColorChoice {
     }
 }
 
-#[inline]
 fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
-        anstream::ColorChoice::Always |
-        anstream::ColorChoice::AlwaysAnsi |
-        anstream::ColorChoice::Auto => true,
+        anstream::ColorChoice::Always
+        | anstream::ColorChoice::AlwaysAnsi
+        | anstream::ColorChoice::Auto => true,
         anstream::ColorChoice::Never => false,
     }
 }
