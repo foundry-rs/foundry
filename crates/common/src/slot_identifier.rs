@@ -1,4 +1,4 @@
-//! Storage decoding utilities for Solidity storage layouts.
+//! Storage slot identification and decoding utilities for Solidity storage layouts.
 //!
 //! This module provides functionality to identify and decode storage slots based on
 //! Solidity storage layout information from the compiler.
@@ -176,13 +176,13 @@ impl Serialize for DecodedSlotValues {
     }
 }
 
-/// Storage decoder that uses Solidity storage layout to identify and decode storage slots.
-pub struct StorageDecoder {
+/// Storage slot identifier that uses Solidity storage layout to identify storage slots.
+pub struct SlotIdentifier {
     storage_layout: Arc<StorageLayout>,
 }
 
-impl StorageDecoder {
-    /// Creates a new StorageDecoder with the given storage layout.
+impl SlotIdentifier {
+    /// Creates a new SlotIdentifier with the given storage layout.
     pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
         Self { storage_layout }
     }

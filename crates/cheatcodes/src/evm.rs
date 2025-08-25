@@ -13,7 +13,7 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    storage_decoder::{SlotInfo, StorageDecoder, format_value},
+    slot_identifier::{SlotIdentifier, SlotInfo, format_value},
 };
 use foundry_evm_core::{
     ContextExt,
@@ -1392,7 +1392,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                     .and_then(|slots| slots.get(&storage_access.account));
 
                                 let mut slot_info = layout.and_then(|layout| {
-                                    let decoder = StorageDecoder::new(layout.clone());
+                                    let decoder = SlotIdentifier::new(layout.clone());
                                     decoder.identify(&storage_access.slot, mapping_slots)
                                 });
 
