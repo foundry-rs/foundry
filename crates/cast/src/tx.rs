@@ -26,6 +26,16 @@ use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::fmt::Write;
 
+use clap::ValueEnum;
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum TxDataField {
+    Input,
+    Data,
+    #[default]
+    Both,
+}
+
 /// Different sender kinds used by [`CastTxBuilder`].
 #[expect(clippy::large_enum_variant)]
 pub enum SenderKind<'a> {
@@ -147,12 +157,13 @@ pub struct CastTxBuilder<P, S> {
     etherscan_api_version: EtherscanApiVersion,
     access_list: Option<Option<AccessList>>,
     state: S,
+    use_explicit_data_field: Option<TxDataField>, 
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
-    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
+    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config, use_explicit_data_field: Option<TxDataField>) -> Result<Self> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
@@ -200,6 +211,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
+            use_explicit_data_field: use_explicit_data_field, 
         })
     }
 
@@ -217,6 +229,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
+            use_explicit_data_field: self.use_explicit_data_field, 
         })
     }
 }
@@ -275,6 +288,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
+            use_explicit_data_field: self.use_explicit_data_field, 
         })
     }
 }
@@ -323,7 +337,13 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
         let input = Bytes::copy_from_slice(&self.state.input);
-        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+        
+        match self.use_explicit_data_field {
+            Some(TxDataField::Input) => self.tx.input = TransactionInput { input: Some(input), data: Option::None },
+            Some(TxDataField::Data) => self.tx.input = TransactionInput { input: Option::None, data: Some(input) },
+            Some(TxDataField::Both) => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
+            None => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
+        }
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
