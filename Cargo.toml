@@ -205,7 +205,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.20.0", default-features = false }
 foundry-compilers = { version = "0.18.2", default-features = false }
-foundry-fork-db = "0.17"
+foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.5", default-features = false }
 solar-parse = { version = "=0.1.5", default-features = false }
@@ -410,7 +410,7 @@ alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "e09cb89" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
 ## solar
 # solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
