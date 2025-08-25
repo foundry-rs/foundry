@@ -164,7 +164,7 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
         DynSolValue::Int(i, _) => {
-            if let Ok(n) = TryInto::<i64>::try_into(i) {
+            if let Ok(n) = i64::try_from(i) {
                 // Use `serde_json::Number` if the number can be accurately represented.
                 Ok(Value::Number(n.into()))
             } else {
