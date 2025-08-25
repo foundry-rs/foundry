@@ -1,28 +1,39 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::{InnerEcx, RecordDebugStepInfo},
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*,
+    inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
+use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
+use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_evm_core::{
+    ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::StackSnapshotType;
 use itertools::Itertools;
 use rand::Rng;
-use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
+use revm::{
+    bytecode::Bytecode,
+    context::{Block, JournalTr},
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    state::Account,
+};
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fmt::Display,
     path::Path,
+    str::FromStr,
 };
 
 mod record_debug_step;
@@ -74,7 +85,7 @@ pub struct GasRecord {
     /// The total gas used in the gas snapshot.
     pub gas_used: u64,
     /// Depth at which the gas snapshot was taken.
-    pub depth: u64,
+    pub depth: usize,
 }
 
 /// Records `deal` cheatcodes
@@ -96,6 +107,58 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
+    /// Decoded values according to the Solidity type (e.g., uint256, address).
+    /// Only present when storage layout is available and decoding succeeds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decoded: Option<DecodedSlotValues>,
+
+    /// Storage layout metadata (variable name, type, offset).
+    /// Only present when contract has storage layout output.
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    slot_info: Option<SlotInfo>,
+}
+
+/// Storage slot metadata from the contract's storage layout.
+#[derive(Serialize, Debug)]
+struct SlotInfo {
+    /// Variable name (e.g., "owner", "values\[0\]", "config.maxSize").
+    label: String,
+    /// Solidity type, serialized as string (e.g., "uint256", "address").
+    #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
+    dyn_sol_type: DynSolType,
+    /// Byte offset within the 32-byte slot (0 for full slot, 0-31 for packed).
+    offset: i64,
+    /// Storage slot number as decimal string.
+    slot: String,
+}
+
+fn serialize_dyn_sol_type<S>(dyn_type: &DynSolType, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&dyn_type.to_string())
+}
+
+/// Decoded storage values showing before and after states.
+#[derive(Debug)]
+struct DecodedSlotValues {
+    /// Decoded value before the state change.
+    previous_value: DynSolValue,
+    /// Decoded value after the state change.
+    new_value: DynSolValue,
+}
+
+impl Serialize for DecodedSlotValues {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
+        state.serialize_field("previousValue", &format_dyn_sol_value_raw(&self.previous_value))?;
+        state.serialize_field("newValue", &format_dyn_sol_value_raw(&self.new_value))?;
+        state.end()
+    }
 }
 
 /// Balance diff info.
@@ -108,14 +171,28 @@ struct BalanceDiff {
     new_value: U256,
 }
 
+/// Nonce diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct NonceDiff {
+    /// Initial nonce value.
+    previous_value: u64,
+    /// Current nonce value.
+    new_value: u64,
+}
+
 /// Account state diff info.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct AccountStateDiffs {
     /// Address label, if any set.
     label: Option<String>,
+    /// Contract identifier from artifact. e.g "src/Counter.sol:Counter"
+    contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
+    /// Account nonce changes.
+    nonce_diff: Option<NonceDiff>,
     /// State changes, per slot.
     state_diff: BTreeMap<B256, SlotStateDiff>,
 }
@@ -126,25 +203,61 @@ impl Display for AccountStateDiffs {
         if let Some(label) = &self.label {
             writeln!(f, "label: {label}")?;
         }
+        if let Some(contract) = &self.contract {
+            writeln!(f, "contract: {contract}")?;
+        }
         // Print balance diff if changed.
-        if let Some(balance_diff) = &self.balance_diff {
-            if balance_diff.previous_value != balance_diff.new_value {
-                writeln!(
-                    f,
-                    "- balance diff: {} → {}",
-                    balance_diff.previous_value, balance_diff.new_value
-                )?;
-            }
+        if let Some(balance_diff) = &self.balance_diff
+            && balance_diff.previous_value != balance_diff.new_value
+        {
+            writeln!(
+                f,
+                "- balance diff: {} → {}",
+                balance_diff.previous_value, balance_diff.new_value
+            )?;
+        }
+        // Print nonce diff if changed.
+        if let Some(nonce_diff) = &self.nonce_diff
+            && nonce_diff.previous_value != nonce_diff.new_value
+        {
+            writeln!(f, "- nonce diff: {} → {}", nonce_diff.previous_value, nonce_diff.new_value)?;
         }
         // Print state diff if any.
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                writeln!(
-                    f,
-                    "@ {slot}: {} → {}",
-                    slot_changes.previous_value, slot_changes.new_value
-                )?;
+                match (&slot_changes.slot_info, &slot_changes.decoded) {
+                    (Some(slot_info), Some(decoded)) => {
+                        // Have both slot info and decoded values - only show decoded values
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}): {} → {}",
+                            slot_info.label,
+                            slot_info.dyn_sol_type,
+                            format_dyn_sol_value_raw(&decoded.previous_value),
+                            format_dyn_sol_value_raw(&decoded.new_value)
+                        )?;
+                    }
+                    (Some(slot_info), None) => {
+                        // Have slot info but no decoded values - show raw hex values
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}): {} → {}",
+                            slot_info.label,
+                            slot_info.dyn_sol_type,
+                            slot_changes.previous_value,
+                            slot_changes.new_value
+                        )?;
+                    }
+                    _ => {
+                        // No slot info - show raw hex values
+                        writeln!(
+                            f,
+                            "@ {slot}: {} → {}",
+                            slot_changes.previous_value, slot_changes.new_value
+                        )?;
+                    }
+                }
             }
         }
 
@@ -177,15 +290,15 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for loadCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot } = *self;
-        ensure_not_precompile!(&target, ccx);
-        ccx.ecx.load_account(target)?;
-        let mut val = ccx.ecx.sload(target, slot.into())?;
+        ccx.ensure_not_precompile(&target)?;
+        ccx.ecx.journaled_state.load_account(target)?;
+        let mut val = ccx.ecx.journaled_state.sload(target, slot.into())?;
 
         if val.is_cold && val.data.is_zero() {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
-                let rand_value = ccx.state.rng().gen();
+                let rand_value = ccx.state.rng().random();
                 ccx.state.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
@@ -197,7 +310,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.rng().gen();
+                let rand_value = ccx.state.rng().random();
                 val.data = ccx.state.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.ecx,
                     target,
@@ -229,9 +342,8 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        ccx.ecx
-            .db
-            .load_allocs(&allocs, &mut ccx.ecx.journaled_state)
+        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
+        db.load_allocs(&allocs, journal)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
@@ -241,14 +353,12 @@ impl Cheatcode for cloneAccountCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { source, target } = self;
 
-        let account = ccx.ecx.journaled_state.load_account(*source, &mut ccx.ecx.db)?;
-        ccx.ecx.db.clone_account(
-            &genesis_account(account.data),
-            target,
-            &mut ccx.ecx.journaled_state,
-        )?;
+        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
+        let account = journal.load_account(db, *source)?;
+        let genesis = &genesis_account(account.data);
+        db.clone_account(genesis, target, journal)?;
         // Cloned account should persist in forked envs.
-        ccx.ecx.db.add_persistent_account(*target);
+        ccx.ecx.journaled_state.database.add_persistent_account(*target);
         Ok(Default::default())
     }
 }
@@ -260,13 +370,13 @@ impl Cheatcode for dumpStateCall {
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
-            key == &CHEATCODE_ADDRESS ||
-                key == &CALLER ||
-                key == &HARDHAT_CONSOLE_ADDRESS ||
-                key == &TEST_CONTRACT_ADDRESS ||
-                key == &ccx.caller ||
-                key == &ccx.state.config.evm_opts.sender ||
-                val.is_empty()
+            key == &CHEATCODE_ADDRESS
+                || key == &CALLER
+                || key == &HARDHAT_CONSOLE_ADDRESS
+                || key == &TEST_CONTRACT_ADDRESS
+                || key == &ccx.caller
+                || key == &ccx.state.config.evm_opts.sender
+                || val.is_empty()
         };
 
         let alloc = ccx
@@ -359,11 +469,18 @@ impl Cheatcode for lastCallGasCall {
     }
 }
 
+impl Cheatcode for getChainIdCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self {} = self;
+        Ok(U256::from(ccx.ecx.cfg.chain_id).abi_encode())
+    }
+}
+
 impl Cheatcode for chainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64 - 1");
-        ccx.ecx.env.cfg.chain_id = newChainId.to();
+        ccx.ecx.cfg.chain_id = newChainId.to();
         Ok(Default::default())
     }
 }
@@ -371,7 +488,7 @@ impl Cheatcode for chainIdCall {
 impl Cheatcode for coinbaseCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newCoinbase } = self;
-        ccx.ecx.env.block.coinbase = *newCoinbase;
+        ccx.ecx.block.beneficiary = *newCoinbase;
         Ok(Default::default())
     }
 }
@@ -380,11 +497,11 @@ impl Cheatcode for difficultyCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            ccx.ecx.spec_id() < SpecId::MERGE,
+            ccx.ecx.cfg.spec < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.env.block.difficulty = *newDifficulty;
+        ccx.ecx.block.difficulty = *newDifficulty;
         Ok(Default::default())
     }
 }
@@ -392,7 +509,8 @@ impl Cheatcode for difficultyCall {
 impl Cheatcode for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBasefee } = self;
-        ccx.ecx.env.block.basefee = *newBasefee;
+        ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64 - 1");
+        ccx.ecx.block.basefee = newBasefee.saturating_to();
         Ok(Default::default())
     }
 }
@@ -401,11 +519,11 @@ impl Cheatcode for prevrandao_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::MERGE,
+            ccx.ecx.cfg.spec >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.env.block.prevrandao = Some(*newPrevrandao);
+        ccx.ecx.block.prevrandao = Some(*newPrevrandao);
         Ok(Default::default())
     }
 }
@@ -414,11 +532,11 @@ impl Cheatcode for prevrandao_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::MERGE,
+            ccx.ecx.cfg.spec >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
-        ccx.ecx.env.block.prevrandao = Some((*newPrevrandao).into());
+        ccx.ecx.block.prevrandao = Some((*newPrevrandao).into());
         Ok(Default::default())
     }
 }
@@ -427,11 +545,13 @@ impl Cheatcode for blobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { hashes } = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.tx.blob_hashes.clone_from(hashes);
+        ccx.ecx.tx.blob_hashes.clone_from(hashes);
+        // force this as 4844 txtype
+        ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
         Ok(Default::default())
     }
 }
@@ -440,18 +560,18 @@ impl Cheatcode for getBlobhashesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        Ok(ccx.ecx.env.tx.blob_hashes.clone().abi_encode())
+        Ok(ccx.ecx.tx.blob_hashes.clone().abi_encode())
     }
 }
 
 impl Cheatcode for rollCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newHeight } = self;
-        ccx.ecx.env.block.number = *newHeight;
+        ccx.ecx.block.number = *newHeight;
         Ok(Default::default())
     }
 }
@@ -459,14 +579,15 @@ impl Cheatcode for rollCall {
 impl Cheatcode for getBlockNumberCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.env.block.number.abi_encode())
+        Ok(ccx.ecx.block.number.abi_encode())
     }
 }
 
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newGasPrice } = self;
-        ccx.ecx.env.tx.gas_price = *newGasPrice;
+        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64 - 1");
+        ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
         Ok(Default::default())
     }
 }
@@ -474,7 +595,7 @@ impl Cheatcode for txGasPriceCall {
 impl Cheatcode for warpCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newTimestamp } = self;
-        ccx.ecx.env.block.timestamp = *newTimestamp;
+        ccx.ecx.block.timestamp = *newTimestamp;
         Ok(Default::default())
     }
 }
@@ -482,7 +603,7 @@ impl Cheatcode for warpCall {
 impl Cheatcode for getBlockTimestampCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.env.block.timestamp.abi_encode())
+        Ok(ccx.ecx.block.timestamp.abi_encode())
     }
 }
 
@@ -490,13 +611,14 @@ impl Cheatcode for blobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.block.set_blob_excess_gas_and_price(
+
+        ccx.ecx.block.set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
-            ccx.ecx.spec_id() >= SpecId::PRAGUE,
+            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec),
         );
         Ok(Default::default())
     }
@@ -505,7 +627,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.env.block.get_blob_excess_gas().unwrap_or(0).abi_encode())
+        Ok(ccx.ecx.block.blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
@@ -523,9 +645,9 @@ impl Cheatcode for dealCall {
 impl Cheatcode for etchCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, newRuntimeBytecode } = self;
-        ensure_not_precompile!(target, ccx);
-        ccx.ecx.load_account(*target)?;
-        let bytecode = Bytecode::new_raw_checked(Bytes::copy_from_slice(newRuntimeBytecode))
+        ccx.ensure_not_precompile(target)?;
+        ccx.ecx.journaled_state.load_account(*target)?;
+        let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
@@ -575,10 +697,9 @@ impl Cheatcode for setNonceUnsafeCall {
 impl Cheatcode for storeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot, value } = *self;
-        ensure_not_precompile!(&target, ccx);
-        // ensure the account is touched
-        let _ = journaled_account(ccx.ecx, target)?;
-        ccx.ecx.sstore(target, slot.into(), value.into())?;
+        ccx.ensure_not_precompile(&target)?;
+        ensure_loaded_account(ccx.ecx, target)?;
+        ccx.ecx.journaled_state.sstore(target, slot.into(), value.into())?;
         Ok(Default::default())
     }
 }
@@ -588,7 +709,7 @@ impl Cheatcode for coolCall {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journaled_state.state.get_mut(target) {
             account.unmark_touch();
-            account.storage.clear();
+            account.storage.values_mut().for_each(|slot| slot.mark_cold());
         }
         Ok(Default::default())
     }
@@ -639,7 +760,7 @@ impl Cheatcode for coolSlotCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.env.tx.caller, ccx.ecx.journaled_state.depth())
+        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -808,9 +929,9 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let mut diffs = String::new();
-        let state_diffs = get_recorded_state_diffs(state);
+        let state_diffs = get_recorded_state_diffs(ccx);
         for (address, state_diffs) in state_diffs {
             diffs.push_str(&format!("{address}\n"));
             diffs.push_str(&format!("{state_diffs}\n"));
@@ -820,9 +941,23 @@ impl Cheatcode for getStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffJsonCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let state_diffs = get_recorded_state_diffs(state);
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let mut storage_accesses = Vec::new();
+
+        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
+            for account_accesses in recorded_diffs.iter().flatten() {
+                storage_accesses.extend(account_accesses.storageAccesses.clone());
+            }
+        }
+
+        Ok(storage_accesses.abi_encode())
     }
 }
 
@@ -831,16 +966,17 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        ccx.ecx.db.transact_from_tx(
+        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+        db.transact_from_tx(
             &tx.clone().into(),
-            (*ccx.ecx.env).clone(),
-            &mut ccx.ecx.journaled_state,
+            env.to_owned(),
+            journal,
             &mut *executor.get_inspector(ccx.state),
         )?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.db.active_fork_url(),
+                rpc: ccx.ecx.journaled_state.database.active_fork_url(),
                 transaction: tx.try_into()?,
             });
         }
@@ -852,12 +988,13 @@ impl Cheatcode for broadcastRawTransactionCall {
 impl Cheatcode for setBlockhashCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber, blockHash } = *self;
+        ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64 - 1");
         ensure!(
-            blockNumber <= ccx.ecx.env.block.number,
+            blockNumber <= U256::from(ccx.ecx.block.number),
             "block number must be less than or equal to the current block number"
         );
 
-        ccx.ecx.db.set_blockhash(blockNumber, blockHash);
+        ccx.ecx.journaled_state.database.set_blockhash(blockNumber, blockHash);
 
         Ok(Default::default())
     }
@@ -865,8 +1002,8 @@ impl Cheatcode for setBlockhashCall {
 
 impl Cheatcode for startDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        let Some(tracer) = executor.tracing_inspector() else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let mut info = RecordDebugStepInfo {
@@ -896,12 +1033,12 @@ impl Cheatcode for startDebugTraceRecordingCall {
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        let Some(tracer) = executor.tracing_inspector() else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let Some(record_info) = ccx.state.record_debug_steps_info else {
-            return Err(Error::from("nothing recorded"))
+            return Err(Error::from("nothing recorded"));
         };
 
         // Use the trace nodes to flatten the call trace
@@ -930,23 +1067,22 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 }
 
 pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
-    let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
+    let account = ccx.ecx.journaled_state.load_account(*address)?;
     Ok(account.info.nonce.abi_encode())
 }
 
 fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
-    Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    Ok(db.snapshot_state(journal, &mut env).abi_encode())
 }
 
 fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
-        snapshot_id,
-        &ccx.ecx.journaled_state,
-        &mut ccx.ecx.env,
-        RevertStateSnapshotAction::RevertKeep,
-    ) {
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    let result = if let Some(journaled_state) =
+        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertKeep)
+    {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state = journaled_state;
+        ccx.ecx.journaled_state.inner = journaled_state;
         true
     } else {
         false
@@ -955,14 +1091,13 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
 }
 
 fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
-        snapshot_id,
-        &ccx.ecx.journaled_state,
-        &mut ccx.ecx.env,
-        RevertStateSnapshotAction::RevertRemove,
-    ) {
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+
+    let result = if let Some(journaled_state) =
+        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertRemove)
+    {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state = journaled_state;
+        ccx.ecx.journaled_state.inner = journaled_state;
         true
     } else {
         false
@@ -971,12 +1106,12 @@ fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> 
 }
 
 fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
+    let result = ccx.ecx.journaled_state.database.delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
 fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
-    ccx.ecx.db.delete_state_snapshots();
+    ccx.ecx.journaled_state.database.delete_state_snapshots();
     Ok(Default::default())
 }
 
@@ -1071,10 +1206,11 @@ fn inner_stop_gas_snapshot(
             .retain(|record| record.group != group && record.name != name);
 
         // Clear last snapshot cache if we have an exact match.
-        if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot {
-            if snapshot_group == &group && snapshot_name == &name {
-                ccx.state.gas_metering.active_gas_snapshot = None;
-            }
+        if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot
+            && snapshot_group == &group
+            && snapshot_name == &name
+        {
+            ccx.state.gas_metering.active_gas_snapshot = None;
         }
 
         Ok(value.abi_encode())
@@ -1119,7 +1255,7 @@ fn derive_snapshot_name(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -> Result {
+fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: usize) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;
@@ -1144,12 +1280,17 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -
 
 /// Ensures the `Account` is loaded and touched.
 pub(super) fn journaled_account<'a>(
-    ecx: InnerEcx<'a, '_, '_>,
+    ecx: Ecx<'a, '_, '_>,
     addr: Address,
 ) -> Result<&'a mut Account> {
-    ecx.load_account(addr)?;
-    ecx.journaled_state.touch(&addr);
+    ensure_loaded_account(ecx, addr)?;
     Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+}
+
+pub(super) fn ensure_loaded_account(ecx: Ecx, addr: Address) -> Result<()> {
+    ecx.journaled_state.load_account(addr)?;
+    ecx.journaled_state.touch(addr);
+    Ok(())
 }
 
 /// Consumes recorded account accesses and returns them as an abi encoded
@@ -1188,15 +1329,51 @@ fn genesis_account(account: &Account) -> GenesisAccount {
 }
 
 /// Helper function to returns state diffs recorded for each changed account.
-fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, AccountStateDiffs> {
+fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
-    if let Some(records) = &state.recorded_account_diffs_stack {
+
+    // First, collect all unique addresses we need to look up
+    let mut addresses_to_lookup = HashSet::new();
+    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
+        for account_access in records.iter().flatten() {
+            if !account_access.storageAccesses.is_empty()
+                || account_access.oldBalance != account_access.newBalance
+            {
+                addresses_to_lookup.insert(account_access.account);
+                for storage_access in &account_access.storageAccesses {
+                    if storage_access.isWrite && !storage_access.reverted {
+                        addresses_to_lookup.insert(storage_access.account);
+                    }
+                }
+            }
+        }
+    }
+
+    // Look up contract names and storage layouts for all addresses
+    let mut contract_names = HashMap::new();
+    let mut storage_layouts = HashMap::new();
+    for address in addresses_to_lookup {
+        if let Some((artifact_id, _)) = get_contract_data(ccx, address) {
+            contract_names.insert(address, artifact_id.identifier());
+        }
+
+        // Also get storage layout if available
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
+            && let Some(storage_layout) = &contract_data.storage_layout
+        {
+            storage_layouts.insert(address, storage_layout.clone());
+        }
+    }
+
+    // Now process the records
+    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
         records
             .iter()
             .flatten()
             .filter(|account_access| {
-                !account_access.storageAccesses.is_empty() ||
-                    account_access.oldBalance != account_access.newBalance
+                !account_access.storageAccesses.is_empty()
+                    || account_access.oldBalance != account_access.newBalance
+                    || account_access.oldNonce != account_access.newNonce
             })
             .for_each(|account_access| {
                 // Record account balance diffs.
@@ -1204,7 +1381,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {
-                                label: state.labels.get(&account_access.account).cloned(),
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
+                                contract: contract_names.get(&account_access.account).cloned(),
                                 ..Default::default()
                             }
                         });
@@ -1219,25 +1397,78 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                     }
                 }
 
+                // Record account nonce diffs.
+                if account_access.oldNonce != account_access.newNonce {
+                    let account_diff =
+                        state_diffs.entry(account_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
+                                contract: contract_names.get(&account_access.account).cloned(),
+                                ..Default::default()
+                            }
+                        });
+                    // Update nonce diff. Do not overwrite the initial nonce if already set.
+                    if let Some(diff) = &mut account_diff.nonce_diff {
+                        diff.new_value = account_access.newNonce;
+                    } else {
+                        account_diff.nonce_diff = Some(NonceDiff {
+                            previous_value: account_access.oldNonce,
+                            new_value: account_access.newNonce,
+                        });
+                    }
+                }
+
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
                         let account_diff = state_diffs
                             .entry(storage_access.account)
                             .or_insert_with(|| AccountStateDiffs {
-                                label: state.labels.get(&storage_access.account).cloned(),
+                                label: ccx.state.labels.get(&storage_access.account).cloned(),
+                                contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
                             });
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
+                                // Get storage layout info for this slot
+                                let slot_info = storage_layouts
+                                    .get(&storage_access.account)
+                                    .and_then(|layout| get_slot_info(layout, &storage_access.slot));
+
+                                // Try to decode values if we have slot info
+                                let decoded = slot_info.as_ref().and_then(|info| {
+                                    let prev = decode_storage_value(
+                                        storage_access.previousValue,
+                                        &info.dyn_sol_type,
+                                    )?;
+                                    let new = decode_storage_value(
+                                        storage_access.newValue,
+                                        &info.dyn_sol_type,
+                                    )?;
+                                    Some(DecodedSlotValues { previous_value: prev, new_value: new })
+                                });
+
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
+                                    decoded,
+                                    slot_info,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
-                                slot_state_diff.get_mut().new_value = storage_access.newValue;
+                                let entry = slot_state_diff.get_mut();
+                                entry.new_value = storage_access.newValue;
+
+                                if let Some(slot_info) = &entry.slot_info
+                                    && let Some(ref mut decoded) = entry.decoded
+                                    && let Some(new_value) = decode_storage_value(
+                                        storage_access.newValue,
+                                        &slot_info.dyn_sol_type,
+                                    )
+                                {
+                                    decoded.new_value = new_value;
+                                }
                             }
                         }
                     }
@@ -1247,11 +1478,186 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
     state_diffs
 }
 
+/// EIP-1967 implementation storage slot
+const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+/// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
+const EIP1822_PROXIABLE_SLOT: &str =
+    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+
+/// Helper function to get the contract data from the deployed code at an address.
+fn get_contract_data<'a>(
+    ccx: &'a mut CheatsCtxt,
+    address: Address,
+) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
+    // Check if we have available artifacts to match against
+    let artifacts = ccx.state.config.available_artifacts.as_ref()?;
+
+    // Try to load the account and get its code
+    let account = ccx.ecx.journaled_state.load_account(address).ok()?;
+    let code = account.info.code.as_ref()?;
+
+    // Skip if code is empty
+    if code.is_empty() {
+        return None;
+    }
+
+    // Try to find the artifact by deployed code
+    let code_bytes = code.original_bytes();
+    // First check for proxy patterns
+    let hex_str = hex::encode(&code_bytes);
+    let find_by_suffix =
+        |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
+    // Simple proxy detection based on storage slot patterns
+    if hex_str.contains(EIP1967_IMPL_SLOT)
+        && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
+    {
+        return Some(result);
+    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && let Some(result) = find_by_suffix(":UUPSUpgradeable")
+    {
+        return Some(result);
+    }
+
+    // Try exact match
+    if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+        return Some(result);
+    }
+
+    // Fallback to fuzzy matching if exact match fails
+    artifacts.find_by_deployed_code(&code_bytes)
+}
+
+/// Gets storage layout info for a specific slot.
+fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
+    let slot = U256::from_be_bytes(slot.0);
+    let slot_str = slot.to_string();
+
+    for storage in &storage_layout.storage {
+        let base_slot = U256::from_str(&storage.slot).ok()?;
+        let storage_type = storage_layout.types.get(&storage.storage_type)?;
+        let dyn_type = DynSolType::parse(&storage_type.label).ok()?;
+
+        // Check for exact slot match
+        if storage.slot == slot_str {
+            let label = match &dyn_type {
+                DynSolType::FixedArray(_, _) => {
+                    // For arrays, label the base slot with indices
+                    format!("{}{}", storage.label, get_array_base_indices(&dyn_type))
+                }
+                _ => storage.label.clone(),
+            };
+
+            return Some(SlotInfo {
+                label,
+                dyn_sol_type: dyn_type,
+                offset: storage.offset,
+                slot: storage.slot.clone(),
+            });
+        }
+
+        // Check if slot is part of a static array
+        if let DynSolType::FixedArray(_, _) = &dyn_type
+            && let Ok(total_bytes) = storage_type.number_of_bytes.parse::<u64>()
+        {
+            let total_slots = total_bytes.div_ceil(32);
+
+            // Check if slot is within array range
+            if slot > base_slot && slot < base_slot + U256::from(total_slots) {
+                let index = (slot - base_slot).to::<u64>();
+                let label = format_array_element_label(&storage.label, &dyn_type, index);
+
+                return Some(SlotInfo {
+                    label,
+                    dyn_sol_type: dyn_type,
+                    offset: 0,
+                    slot: slot.to_string(),
+                });
+            }
+        }
+    }
+
+    None
+}
+
+/// Returns the base index [\0\] or [\0\][\0\] for a fixed array type depending on the dimensions.
+fn get_array_base_indices(dyn_type: &DynSolType) -> String {
+    match dyn_type {
+        DynSolType::FixedArray(inner, _) => {
+            if let DynSolType::FixedArray(_, _) = inner.as_ref() {
+                // Nested array (2D or higher)
+                format!("[0]{}", get_array_base_indices(inner))
+            } else {
+                // Simple 1D array
+                "[0]".to_string()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Helper function to format an array element label given its index
+fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u64) -> String {
+    match dyn_type {
+        DynSolType::FixedArray(inner, _) => {
+            if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
+                // 2D array: calculate row and column
+                let row = index / (*inner_size as u64);
+                let col = index % (*inner_size as u64);
+                format!("{base_label}[{row}][{col}]")
+            } else {
+                // 1D array
+                format!("{base_label}[{index}]")
+            }
+        }
+        _ => base_label.to_string(),
+    }
+}
+
+/// Helper function to decode a single storage value using its DynSolType
+fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
+    // Storage values are always 32 bytes, stored as a single word
+    // For arrays, we need to unwrap to the base element type
+    let mut actual_type = dyn_type;
+    // Unwrap nested arrays to get to the base element type.
+    while let DynSolType::FixedArray(elem_type, _) = actual_type {
+        actual_type = elem_type.as_ref();
+    }
+
+    // Use abi_decode to decode the value
+    actual_type.abi_decode(&value.0).ok()
+}
+
+/// Helper function to format DynSolValue as raw string without type information
+fn format_dyn_sol_value_raw(value: &DynSolValue) -> String {
+    match value {
+        DynSolValue::Bool(b) => b.to_string(),
+        DynSolValue::Int(i, _) => i.to_string(),
+        DynSolValue::Uint(u, _) => u.to_string(),
+        DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
+        DynSolValue::Address(addr) => addr.to_string(),
+        DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
+        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
+        DynSolValue::String(s) => s.clone(),
+        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
+            format!("[{}]", formatted.join(", "))
+        }
+        DynSolValue::Tuple(values) => {
+            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
+            format!("({})", formatted.join(", "))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
+            format_dyn_sol_value_raw(&DynSolValue::Tuple(tuple.clone()))
+        }
+    }
+}
+
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
-    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
-        if let Some(storage_slot) = account.storage.get_mut(&slot) {
-            storage_slot.is_cold = cold;
-        }
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target)
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = cold;
     }
 }

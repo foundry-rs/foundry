@@ -1,22 +1,22 @@
-use crate::revm::primitives::Eof;
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256, Address};
+use alloy_primitives::{hex, keccak256};
 use clap::Parser;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
-use eyre::{Context, Result};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
+use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path,
-    fmt::pretty_eof,
-    shell,
+    find_matching_contract_artifact, find_target_path, shell,
 };
-use foundry_compilers::artifacts::{
-    output_selection::{
-        BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-        EvmOutputSelection, EwasmOutputSelection,
+use foundry_compilers::{
+    artifacts::{
+        StorageLayout,
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection,
+        },
     },
-    CompactBytecode, StorageLayout,
+    solc::SolcLanguage,
 };
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -50,8 +50,8 @@ impl InspectArgs {
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
-        if !field.is_default() && !cos.iter().any(|selected| field == *selected) {
-            cos.push(field.into());
+        if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
+            cos.push(field.try_into()?);
         }
 
         // Run Optimized?
@@ -60,6 +60,9 @@ impl InspectArgs {
         } else {
             build.compiler.optimize
         };
+
+        // Get the solc version if specified
+        let solc_version = build.use_solc.clone();
 
         // Build modified Args
         let modified_build_args = BuildOpts {
@@ -79,10 +82,7 @@ impl InspectArgs {
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
-                let abi = artifact
-                    .abi
-                    .as_ref()
-                    .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+                let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi)?;
             }
             ContractArtifactField::Bytecode => {
@@ -132,11 +132,17 @@ impl InspectArgs {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
                 print_errors_events(&out, false)?;
             }
-            ContractArtifactField::Eof => {
-                print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
-            }
-            ContractArtifactField::EofInit => {
-                print_eof(artifact.bytecode)?;
+            ContractArtifactField::StandardJson => {
+                let standard_json = if let Some(version) = solc_version {
+                    let version = version.parse()?;
+                    let mut standard_json =
+                        project.standard_json_input(&target_path)?.normalize_evm_version(&version);
+                    standard_json.settings.sanitize(&version, SolcLanguage::Solidity);
+                    standard_json
+                } else {
+                    project.standard_json_input(&target_path)?
+                };
+                print_json(&standard_json)?;
             }
         };
 
@@ -170,7 +176,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .iter()
         .map(|p| {
             if let Some(ty) = p.internal_type() {
-                return internal_ty(ty)
+                return internal_ty(ty);
             }
             p.ty.clone()
         })
@@ -180,7 +186,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
 
 fn print_abi(abi: &JsonAbi) -> Result<()> {
     if shell::is_json() {
-        return print_json(abi)
+        return print_json(abi);
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
@@ -267,11 +273,11 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
-        eyre::bail!("Could not get storage layout");
+        return Err(missing_error("storage layout"));
     };
 
     if shell::is_json() {
-        return print_json(&storage_layout)
+        return print_json(&storage_layout);
     }
 
     let headers = vec![
@@ -300,11 +306,11 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
 
 fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
     let Some(method_identifiers) = method_identifiers else {
-        eyre::bail!("Could not get method identifiers");
+        return Err(missing_error("method identifiers"));
     };
 
     if shell::is_json() {
-        return print_json(method_identifiers)
+        return print_json(method_identifiers);
     }
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
@@ -362,8 +368,7 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
-    Eof,
-    EofInit,
+    StandardJson,
 }
 
 macro_rules! impl_value_enum {
@@ -373,7 +378,6 @@ macro_rules! impl_value_enum {
             pub const ALL: &'static [Self] = &[$(Self::$field),+];
 
             /// Returns the string representation of `self`.
-            #[inline]
             pub const fn as_str(&self) -> &'static str {
                 match self {
                     $(
@@ -383,7 +387,6 @@ macro_rules! impl_value_enum {
             }
 
             /// Returns all the aliases of `self`.
-            #[inline]
             pub const fn aliases(&self) -> &'static [&'static str] {
                 match self {
                     $(
@@ -394,17 +397,14 @@ macro_rules! impl_value_enum {
         }
 
         impl ::clap::ValueEnum for $name {
-            #[inline]
             fn value_variants<'a>() -> &'a [Self] {
                 Self::ALL
             }
 
-            #[inline]
             fn to_possible_value(&self) -> Option<::clap::builder::PossibleValue> {
                 Some(::clap::builder::PossibleValue::new(Self::as_str(self)).aliases(Self::aliases(self)))
             }
 
-            #[inline]
             fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
                 let _ = ignore_case;
                 <Self as ::std::str::FromStr>::from_str(input)
@@ -451,37 +451,39 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
-        Eof               => "eof" | "eof-container" | "eof-deployed",
-        EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
+        StandardJson      => "standardJson" | "standard-json" | "standard_json",
     }
 }
 
-impl From<ContractArtifactField> for ContractOutputSelection {
-    fn from(field: ContractArtifactField) -> Self {
+impl TryFrom<ContractArtifactField> for ContractOutputSelection {
+    type Error = eyre::Error;
+
+    fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
-            Caf::Abi => Self::Abi,
-            Caf::Bytecode => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
-            Caf::DeployedBytecode => Self::Evm(EvmOutputSelection::DeployedByteCode(
+            Caf::Abi => Ok(Self::Abi),
+            Caf::Bytecode => {
+                Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
+            }
+            Caf::DeployedBytecode => Ok(Self::Evm(EvmOutputSelection::DeployedByteCode(
                 DeployedBytecodeOutputSelection::All,
-            )),
-            Caf::Assembly | Caf::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
-            Caf::LegacyAssembly => Self::Evm(EvmOutputSelection::LegacyAssembly),
-            Caf::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
-            Caf::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
-            Caf::StorageLayout => Self::StorageLayout,
-            Caf::DevDoc => Self::DevDoc,
-            Caf::Ir => Self::Ir,
-            Caf::IrOptimized => Self::IrOptimized,
-            Caf::Metadata => Self::Metadata,
-            Caf::UserDoc => Self::UserDoc,
-            Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
-            Caf::Errors => Self::Abi,
-            Caf::Events => Self::Abi,
-            Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
-                DeployedBytecodeOutputSelection::All,
-            )),
-            Caf::EofInit => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
+            ))),
+            Caf::Assembly | Caf::AssemblyOptimized => Ok(Self::Evm(EvmOutputSelection::Assembly)),
+            Caf::LegacyAssembly => Ok(Self::Evm(EvmOutputSelection::LegacyAssembly)),
+            Caf::MethodIdentifiers => Ok(Self::Evm(EvmOutputSelection::MethodIdentifiers)),
+            Caf::GasEstimates => Ok(Self::Evm(EvmOutputSelection::GasEstimates)),
+            Caf::StorageLayout => Ok(Self::StorageLayout),
+            Caf::DevDoc => Ok(Self::DevDoc),
+            Caf::Ir => Ok(Self::Ir),
+            Caf::IrOptimized => Ok(Self::IrOptimized),
+            Caf::Metadata => Ok(Self::Metadata),
+            Caf::UserDoc => Ok(Self::UserDoc),
+            Caf::Ewasm => Ok(Self::Ewasm(EwasmOutputSelection::All)),
+            Caf::Errors => Ok(Self::Abi),
+            Caf::Events => Ok(Self::Abi),
+            Caf::StandardJson => {
+                Err(eyre!("StandardJson is not supported for ContractOutputSelection"))
+            }
         }
     }
 }
@@ -492,23 +494,21 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi) |
-                (Self::Errors, Cos::Abi) |
-                (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
-                (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
-                (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
-                (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly)) |
-                (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
-                (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
-                (Self::StorageLayout, Cos::StorageLayout) |
-                (Self::DevDoc, Cos::DevDoc) |
-                (Self::Ir, Cos::Ir) |
-                (Self::IrOptimized, Cos::IrOptimized) |
-                (Self::Metadata, Cos::Metadata) |
-                (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_)) |
-                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
-                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
+            (Self::Abi | Self::Events, Cos::Abi)
+                | (Self::Errors, Cos::Abi)
+                | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
+                | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
+                | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))
+                | (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly))
+                | (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers))
+                | (Self::GasEstimates, Cos::Evm(Eos::GasEstimates))
+                | (Self::StorageLayout, Cos::StorageLayout)
+                | (Self::DevDoc, Cos::DevDoc)
+                | (Self::Ir, Cos::Ir)
+                | (Self::IrOptimized, Cos::IrOptimized)
+                | (Self::Metadata, Cos::Metadata)
+                | (Self::UserDoc, Cos::UserDoc)
+                | (Self::Ewasm, Cos::Ewasm(_))
         )
     }
 }
@@ -520,9 +520,9 @@ impl fmt::Display for ContractArtifactField {
 }
 
 impl ContractArtifactField {
-    /// Returns true if this field is generated by default.
-    pub const fn is_default(&self) -> bool {
-        matches!(self, Self::Bytecode | Self::DeployedBytecode)
+    /// Returns true if this field does not need to be passed to the compiler.
+    pub const fn can_skip_field(&self) -> bool {
+        matches!(self, Self::Bytecode | Self::DeployedBytecode | Self::StandardJson)
     }
 }
 
@@ -538,7 +538,7 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
 
 fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     let Some(yul) = yul else {
-        eyre::bail!("Could not get IR output");
+        return Err(missing_error("IR output"));
     };
 
     static YUL_COMMENTS: LazyLock<Regex> =
@@ -555,41 +555,24 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
 
 fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
     let value = serde_json::to_value(obj)?;
-    let mut value_ref = &value;
-    if let Some(key) = key {
-        if let Some(value2) = value.get(key) {
-            value_ref = value2;
-        }
-    }
-    let s = match value_ref.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value_ref:#}"),
+    let value = if let Some(key) = key
+        && let Some(value) = value.get(key)
+    {
+        value
+    } else {
+        &value
     };
-    Ok(s)
+    Ok(match value.as_str() {
+        Some(s) => s.to_string(),
+        None => format!("{value:#}"),
+    })
 }
 
-/// Pretty-prints bytecode decoded EOF.
-fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
-    let Some(mut bytecode) = bytecode else { eyre::bail!("No bytecode") };
-
-    // Replace link references with zero address.
-    if bytecode.object.is_unlinked() {
-        for (file, references) in bytecode.link_references.clone() {
-            for (name, _) in references {
-                bytecode.link(&file, &name, Address::ZERO);
-            }
-        }
-    }
-
-    let Some(bytecode) = bytecode.object.into_bytes() else {
-        eyre::bail!("Failed to link bytecode");
-    };
-
-    let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
-
-    sh_println!("{}", pretty_eof(&eof)?)?;
-
-    Ok(())
+fn missing_error(field: &str) -> eyre::Error {
+    eyre!(
+        "{field} missing from artifact; \
+         this could be a spurious caching issue, consider running `forge clean`"
+    )
 }
 
 #[cfg(test)]
@@ -599,14 +582,24 @@ mod tests {
     #[test]
     fn contract_output_selection() {
         for &field in ContractArtifactField::ALL {
-            let selection: ContractOutputSelection = field.into();
-            assert_eq!(field, selection);
+            if field == ContractArtifactField::StandardJson {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("StandardJson is not supported for ContractOutputSelection")
+                );
+            } else {
+                let selection: ContractOutputSelection = field.try_into().unwrap();
+                assert_eq!(field, selection);
 
-            let s = field.as_str();
-            assert_eq!(s, field.to_string());
-            assert_eq!(s.parse::<ContractArtifactField>().unwrap(), field);
-            for alias in field.aliases() {
-                assert_eq!(alias.parse::<ContractArtifactField>().unwrap(), field);
+                let s = field.as_str();
+                assert_eq!(s, field.to_string());
+                assert_eq!(s.parse::<ContractArtifactField>().unwrap(), field);
+                for alias in field.aliases() {
+                    assert_eq!(alias.parse::<ContractArtifactField>().unwrap(), field);
+                }
             }
         }
     }

@@ -4,9 +4,9 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::{hex, Address};
-use anvil::{spawn, NodeConfig};
-use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
+use alloy_primitives::{Address, hex};
+use anvil::{NodeConfig, spawn};
+use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_test_utils::{
     forgetest, forgetest_async,
     snapbox::IntoData,

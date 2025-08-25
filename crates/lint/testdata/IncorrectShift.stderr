@@ -1,0 +1,40 @@
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+  --> ROOT/testdata/IncorrectShift.sol:LL:CC
+   |
+21 |         result = 2 << stateValue;
+   |                  ---------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+  --> ROOT/testdata/IncorrectShift.sol:LL:CC
+   |
+22 |         result = 8 >> localValue;
+   |                  ---------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+  --> ROOT/testdata/IncorrectShift.sol:LL:CC
+   |
+23 |         result = 16 << (stateValue + 1);
+   |                  ----------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+  --> ROOT/testdata/IncorrectShift.sol:LL:CC
+   |
+24 |         result = 32 >> getAmount();
+   |                  -----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+  --> ROOT/testdata/IncorrectShift.sol:LL:CC
+   |
+25 | ...   result = 1 << (localValue > 10 ? localShiftAmount : stateShiftAmount);
+   |                ------------------------------------------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+

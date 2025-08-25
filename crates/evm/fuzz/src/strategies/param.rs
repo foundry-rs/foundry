@@ -1,8 +1,12 @@
 use super::state::EvmFuzzState;
-use alloy_dyn_abi::{DynSolType, DynSolValue};
+use crate::strategies::mutators::{
+    BitMutator, GaussianNoiseMutator, IncrementDecrementMutator, InterestingWordMutator,
+};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Word};
 use alloy_primitives::{Address, B256, I256, U256};
-use proptest::prelude::*;
-use rand::{rngs::StdRng, SeedableRng};
+use proptest::{prelude::*, test_runner::TestRunner};
+use rand::{SeedableRng, prelude::IndexedMutRandom, rngs::StdRng};
+use std::mem::replace;
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
@@ -41,11 +45,11 @@ fn fuzz_param_inner(
     param: &DynSolType,
     mut fuzz_fixtures: Option<(&[DynSolValue], &str)>,
 ) -> BoxedStrategy<DynSolValue> {
-    if let Some((fixtures, name)) = fuzz_fixtures {
-        if !fixtures.iter().all(|f| f.matches(param)) {
-            error!("fixtures for {name:?} do not match type {param}");
-            fuzz_fixtures = None;
-        }
+    if let Some((fixtures, name)) = fuzz_fixtures
+        && !fixtures.iter().all(|f| f.matches(param))
+    {
+        error!("fixtures for {name:?} do not match type {param}");
+        fuzz_fixtures = None;
     }
     let fuzz_fixtures = fuzz_fixtures.map(|(f, _)| f);
 
@@ -135,9 +139,7 @@ pub fn fuzz_param_from_state(
             value()
                 .prop_map(move |value| {
                     let mut fuzzed_addr = Address::from_word(value);
-                    if !deployed_libs.contains(&fuzzed_addr) {
-                        DynSolValue::Address(fuzzed_addr)
-                    } else {
+                    if deployed_libs.contains(&fuzzed_addr) {
                         let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
 
                         // Do not use addresses of deployed libraries as fuzz input, instead return
@@ -151,9 +153,8 @@ pub fn fuzz_param_from_state(
                                 break;
                             }
                         }
-
-                        DynSolValue::Address(fuzzed_addr)
                     }
+                    DynSolValue::Address(fuzzed_addr)
                 })
                 .boxed()
         }
@@ -227,15 +228,160 @@ pub fn fuzz_param_from_state(
     }
 }
 
+/// Mutates the current value of the given parameter type and value.
+pub fn mutate_param_value(
+    param: &DynSolType,
+    value: DynSolValue,
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) -> DynSolValue {
+    let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
+        fuzz_param_from_state(param, state)
+            .new_tree(test_runner)
+            .expect("Could not generate case")
+            .current()
+    };
+
+    match value {
+        DynSolValue::Bool(val) => {
+            // flip boolean value
+            trace!(target: "mutator", "Bool flip {val}");
+            Some(DynSolValue::Bool(!val))
+        }
+        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=6) {
+            0 => U256::increment_decrement(val, size, test_runner),
+            1 => U256::flip_random_bit(val, size, test_runner),
+            2 => U256::mutate_interesting_byte(val, size, test_runner),
+            3 => U256::mutate_interesting_word(val, size, test_runner),
+            4 => U256::mutate_interesting_dword(val, size, test_runner),
+            5 => U256::mutate_with_gaussian_noise(val, size, test_runner),
+            6 => None,
+            _ => unreachable!(),
+        }
+        .map(|v| DynSolValue::Uint(v, size)),
+        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=6) {
+            0 => I256::increment_decrement(val, size, test_runner),
+            1 => I256::flip_random_bit(val, size, test_runner),
+            2 => I256::mutate_interesting_byte(val, size, test_runner),
+            3 => I256::mutate_interesting_word(val, size, test_runner),
+            4 => I256::mutate_interesting_dword(val, size, test_runner),
+            5 => I256::mutate_with_gaussian_noise(val, size, test_runner),
+            6 => None,
+            _ => unreachable!(),
+        }
+        .map(|v| DynSolValue::Int(v, size)),
+        DynSolValue::Address(val) => match test_runner.rng().random_range(0..=4) {
+            0 => Address::flip_random_bit(val, 20, test_runner),
+            1 => Address::mutate_interesting_byte(val, 20, test_runner),
+            2 => Address::mutate_interesting_word(val, 20, test_runner),
+            3 => Address::mutate_interesting_dword(val, 20, test_runner),
+            4 => None,
+            _ => unreachable!(),
+        }
+        .map(DynSolValue::Address),
+        DynSolValue::Array(mut values) => {
+            if let DynSolType::Array(param_type) = param
+                && !values.is_empty()
+            {
+                match test_runner.rng().random_range(0..=2) {
+                    // Decrease array size by removing a random element.
+                    0 => {
+                        values.remove(test_runner.rng().random_range(0..values.len()));
+                    }
+                    // Increase array size.
+                    1 => values.push(new_value(param_type, test_runner)),
+                    // Mutate random array element.
+                    2 => mutate_random_array_value(&mut values, param_type, test_runner, state),
+                    _ => unreachable!(),
+                }
+                Some(DynSolValue::Array(values))
+            } else {
+                None
+            }
+        }
+        DynSolValue::FixedArray(mut values) => {
+            if let DynSolType::FixedArray(param_type, _size) = param
+                && !values.is_empty()
+            {
+                mutate_random_array_value(&mut values, param_type, test_runner, state);
+                Some(DynSolValue::FixedArray(values))
+            } else {
+                None
+            }
+        }
+        DynSolValue::FixedBytes(word, size) => match test_runner.rng().random_range(0..=4) {
+            0 => Word::flip_random_bit(word, size, test_runner),
+            1 => Word::mutate_interesting_byte(word, size, test_runner),
+            2 => Word::mutate_interesting_word(word, size, test_runner),
+            3 => Word::mutate_interesting_dword(word, size, test_runner),
+            4 => None,
+            _ => unreachable!(),
+        }
+        .map(|word| DynSolValue::FixedBytes(word, size)),
+        DynSolValue::CustomStruct { name, prop_names, tuple: mut values } => {
+            if let DynSolType::CustomStruct { name: _, prop_names: _, tuple: tuple_types }
+            | DynSolType::Tuple(tuple_types) = param
+                && !values.is_empty()
+            {
+                // Mutate random struct element.
+                mutate_random_tuple_value(&mut values, tuple_types, test_runner, state);
+                Some(DynSolValue::CustomStruct { name, prop_names, tuple: values })
+            } else {
+                None
+            }
+        }
+        DynSolValue::Tuple(mut values) => {
+            if let DynSolType::Tuple(tuple_types) = param
+                && !values.is_empty()
+            {
+                // Mutate random tuple element.
+                mutate_random_tuple_value(&mut values, tuple_types, test_runner, state);
+                Some(DynSolValue::Tuple(values))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+    .unwrap_or_else(|| new_value(param, test_runner))
+}
+
+/// Mutates random value from given tuples.
+fn mutate_random_tuple_value(
+    tuple_values: &mut [DynSolValue],
+    tuple_types: &[DynSolType],
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) {
+    let id = test_runner.rng().random_range(0..tuple_values.len());
+    let param_type = &tuple_types[id];
+    let old_val = replace(&mut tuple_values[id], DynSolValue::Bool(false));
+    let new_val = mutate_param_value(param_type, old_val, test_runner, state);
+    tuple_values[id] = new_val;
+}
+
+/// Mutates random value from given array.
+fn mutate_random_array_value(
+    array_values: &mut [DynSolValue],
+    element_type: &DynSolType,
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) {
+    let elem = array_values.choose_mut(&mut test_runner.rng()).unwrap();
+    let old_val = replace(elem, DynSolValue::Bool(false));
+    let new_val = mutate_param_value(element_type, old_val, test_runner, state);
+    *elem = new_val;
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
         FuzzFixtures,
+        strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::db::{CacheDB, EmptyDB};
+    use revm::database::{CacheDB, EmptyDB};
 
     #[test]
     fn can_fuzz_array() {

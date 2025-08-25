@@ -1,7 +1,8 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
+use alloy_primitives::{Address, Bytes, map::HashMap};
+use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
@@ -12,11 +13,12 @@ pub struct LocalTraceIdentifier<'a> {
     known_contracts: &'a ContractsByArtifact,
     /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
+    /// The contracts bytecode.
+    contracts_bytecode: Option<&'a HashMap<Address, Bytes>>,
 }
 
 impl<'a> LocalTraceIdentifier<'a> {
     /// Creates a new local trace identifier.
-    #[inline]
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         let mut ordered_ids = known_contracts
             .iter()
@@ -24,7 +26,12 @@ impl<'a> LocalTraceIdentifier<'a> {
             .map(|(id, bytecode)| (id, bytecode.len()))
             .collect::<Vec<_>>();
         ordered_ids.sort_by_key(|(_, len)| *len);
-        Self { known_contracts, ordered_ids }
+        Self { known_contracts, ordered_ids, contracts_bytecode: None }
+    }
+
+    pub fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
+        self.contracts_bytecode = Some(contracts_bytecode);
+        self
     }
 
     /// Returns the known contracts.
@@ -48,9 +55,9 @@ impl<'a> LocalTraceIdentifier<'a> {
             let contract = self.known_contracts.get(id)?;
             // Select bytecodes to compare based on `is_creation` flag.
             let (contract_bytecode, current_bytecode) = if is_creation {
-                (contract.bytecode(), creation_code)
+                (contract.bytecode_without_placeholders(), creation_code)
             } else {
-                (contract.deployed_bytecode(), runtime_code)
+                (contract.deployed_bytecode_without_placeholders(), runtime_code)
             };
 
             if let Some(bytecode) = contract_bytecode {
@@ -59,7 +66,7 @@ impl<'a> LocalTraceIdentifier<'a> {
                     // Try to decode ctor args with contract abi.
                     if let Some(constructor) = contract.abi.constructor() {
                         let constructor_args = &current_bytecode[bytecode.len()..];
-                        if constructor.abi_decode_input(constructor_args, false).is_ok() {
+                        if constructor.abi_decode_input(constructor_args).is_ok() {
                             // If we can decode args with current abi then remove args from
                             // code to compare.
                             current_bytecode = &current_bytecode[..bytecode.len()]
@@ -67,7 +74,7 @@ impl<'a> LocalTraceIdentifier<'a> {
                     }
                 }
 
-                let score = bytecode_diff_score(bytecode, current_bytecode);
+                let score = bytecode_diff_score(&bytecode, current_bytecode);
                 if score == 0.0 {
                     trace!(target: "evm::traces::local", "found exact match");
                     return Some((id, &contract.abi));
@@ -118,11 +125,7 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         // Note: the diff score can be inaccurate for small contracts so we're using a relatively
         // high threshold here to avoid filtering out too many contracts.
-        if min_score < 0.85 {
-            min_score_id
-        } else {
-            None
-        }
+        if min_score < 0.85 { min_score_id } else { None }
     }
 
     /// Returns the index of the artifact with the given code length, or the index of the first
@@ -161,7 +164,18 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                 let _span =
                     trace_span!(target: "evm::traces::local", "identify", %address).entered();
 
-                let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
+                // In order to identify the addresses, we need at least the runtime code. It can be
+                // obtained from the trace itself (if it's a CREATE* call), or from the fetched
+                // bytecodes.
+                let (runtime_code, creation_code) = match (runtime_code, creation_code) {
+                    (Some(runtime_code), Some(creation_code)) => (runtime_code, creation_code),
+                    (Some(runtime_code), _) => (runtime_code, &[] as &[u8]),
+                    _ => {
+                        let code = self.contracts_bytecode?.get(&address)?;
+                        (code.as_ref(), &[] as &[u8])
+                    }
+                };
+                let (id, abi) = self.identify_code(runtime_code, creation_code)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
                 Some(IdentifiedAddress {

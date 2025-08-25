@@ -1,14 +1,15 @@
 use crate::tx::{self, CastTxBuilder};
-use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder};
-use alloy_primitives::hex;
+use alloy_ens::NameOrAddress;
+use alloy_network::{EthereumWallet, TransactionBuilder, eip2718::Encodable2718};
+use alloy_primitives::{Address, hex};
+use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{get_provider, LoadConfig},
+    utils::{LoadConfig, get_provider},
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast mktx`.
@@ -24,6 +25,7 @@ pub struct MakeTxArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     #[command(subcommand)]
@@ -48,8 +50,12 @@ pub struct MakeTxArgs {
     /// Generate a raw RLP-encoded unsigned transaction.
     ///
     /// Relaxes the wallet requirement.
-    #[arg(long, requires = "from")]
+    #[arg(long)]
     raw_unsigned: bool,
+
+    /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
+    #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
+    ethsign: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -64,13 +70,14 @@ pub enum MakeTxSubcommands {
         sig: Option<String>,
 
         /// The constructor arguments.
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
     },
 }
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned } = self;
+        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -91,7 +98,7 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx_builder = CastTxBuilder::new(provider, tx, &config)
+        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
             .with_to(to)
             .await?
@@ -101,14 +108,35 @@ impl MakeTxArgs {
 
         if raw_unsigned {
             // Build unsigned raw tx
-            let from = eth.wallet.from.ok_or_eyre("missing `--from` address")?;
+            // Check if nonce is provided when --from is not specified
+            // See: <https://github.com/foundry-rs/foundry/issues/11110>
+            if eth.wallet.from.is_none() && tx.nonce.is_none() {
+                eyre::bail!(
+                    "Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce"
+                );
+            }
+
+            // Use zero address as placeholder for unsigned transactions
+            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+
             let raw_tx = tx_builder.build_unsigned_raw(from).await?;
 
             sh_println!("{raw_tx}")?;
             return Ok(());
         }
 
-        // Retrieve the signer, and bail if it can't be constructed.
+        if ethsign {
+            // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
+            // unlocked accounts.
+            let (tx, _) = tx_builder.build(config.sender).await?;
+            let signed_tx = provider.sign_transaction(tx).await?;
+
+            sh_println!("{signed_tx}")?;
+            return Ok(());
+        }
+
+        // Default to using the local signer.
+        // Get the signer from the wallet, and fail if it can't be constructed.
         let signer = eth.wallet.signer().await?;
         let from = signer.address();
 

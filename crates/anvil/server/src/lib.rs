@@ -12,10 +12,10 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
-    extract::DefaultBodyLimit,
-    http::{header, HeaderValue, Method},
-    routing::{post, MethodRouter},
     Router,
+    extract::DefaultBodyLimit,
+    http::{HeaderValue, Method, header},
+    routing::{MethodRouter, post},
 };
 use serde::de::DeserializeOwned;
 use std::fmt;
