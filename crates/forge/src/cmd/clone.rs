@@ -606,7 +606,6 @@ pub(crate) trait EtherscanClient {
 }
 
 impl EtherscanClient for Client {
-    #[inline]
     async fn contract_source_code(
         &self,
         address: Address,
@@ -614,7 +613,6 @@ impl EtherscanClient for Client {
         self.contract_source_code(address).await
     }
 
-    #[inline]
     async fn contract_creation_data(
         &self,
         address: Address,

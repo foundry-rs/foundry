@@ -236,7 +236,6 @@ impl InlineConfig {
     }
 
     /// Check if the lint location is in a disabled range.
-    #[inline]
     pub fn is_disabled(&self, span: Span, lint: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(lint) {
             return ranges.iter().any(|range| range.includes(span.to_range()));

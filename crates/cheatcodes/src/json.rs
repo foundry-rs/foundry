@@ -2,9 +2,9 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
-use alloy_primitives::{Address, B256, I256, hex};
+use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
-use foundry_common::fs;
+use foundry_common::{fmt::serialize_value_as_json, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::BTreeMap};
@@ -396,6 +396,7 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
         (Value::Array(array), ty) => parse_json_array(array, ty),
         (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
+        (Value::String(s), DynSolType::Uint(_) | DynSolType::Int(_)) => string::parse_value(s, ty),
         _ => string::parse_value(&to_string(value), ty),
     }
 }
@@ -563,6 +564,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             Err(fmt_err!("unsupported JSON number: {number}"))
         }
         Value::String(string) => {
+            // Handle hex strings
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
                 if val.len() == 39 {
@@ -580,51 +582,24 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
                     });
                 }
             }
+
+            // Handle large numbers that were potentially encoded as strings because they exceed the
+            // capacity of a 64-bit integer.
+            // Note that number-like strings that *could* fit in an `i64`/`u64` will fall through
+            // and be treated as literal strings.
+            if let Ok(n) = string.parse::<I256>()
+                && i64::try_from(n).is_err()
+            {
+                return Ok(DynSolValue::Int(n, 256));
+            } else if let Ok(n) = string.parse::<U256>()
+                && u64::try_from(n).is_err()
+            {
+                return Ok(DynSolValue::Uint(n, 256));
+            }
+
+            // Otherwise, treat as a regular string
             Ok(DynSolValue::String(string.to_owned()))
         }
-    }
-}
-
-/// Serializes given [DynSolValue] into a [serde_json::Value].
-fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
-    match value {
-        DynSolValue::Bool(b) => Ok(Value::Bool(b)),
-        DynSolValue::String(s) => {
-            // Strings are allowed to contain stringified JSON objects, so we try to parse it like
-            // one first.
-            if let Ok(map) = serde_json::from_str(&s) {
-                Ok(Value::Object(map))
-            } else {
-                Ok(Value::String(s))
-            }
-        }
-        DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
-        DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
-        DynSolValue::Int(i, _) => {
-            // let serde handle number parsing
-            let n = serde_json::from_str(&i.to_string())?;
-            Ok(Value::Number(n))
-        }
-        DynSolValue::Uint(i, _) => {
-            // let serde handle number parsing
-            let n = serde_json::from_str(&i.to_string())?;
-            Ok(Value::Number(n))
-        }
-        DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
-        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
-            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?))
-        }
-        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
-            let values =
-                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
-            let map = prop_names.into_iter().zip(values).collect();
-
-            Ok(Value::Object(map))
-        }
-        DynSolValue::Tuple(values) => Ok(Value::Array(
-            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
-        )),
-        DynSolValue::Function(_) => bail!("cannot serialize function pointer"),
     }
 }
 
@@ -716,7 +691,15 @@ mod tests {
     }
 
     // Tests to ensure that conversion [DynSolValue] -> [serde_json::Value] -> [DynSolValue]
+    use proptest::prelude::ProptestConfig;
     proptest::proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 99,
+            // These are flaky so persisting them is not useful in CI.
+            failure_persistence: None,
+            ..Default::default()
+        })]
+
         #[test]
         fn test_json_roundtrip_guessed(v in guessable_types()) {
             let json = serialize_value_as_json(v.clone()).unwrap();
@@ -729,9 +712,9 @@ mod tests {
 
         #[test]
         fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
-                let json = serialize_value_as_json(v.clone()).unwrap();
+            let json = serialize_value_as_json(v.clone()).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
-                assert_eq!(value, v);
+            assert_eq!(value, v);
         }
     }
 }
