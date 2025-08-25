@@ -137,7 +137,6 @@ pub enum TestFunctionKind {
 
 impl TestFunctionKind {
     /// Classify a function.
-    #[inline]
     pub fn classify(name: &str, has_inputs: bool) -> Self {
         match () {
             _ if name.starts_with("test") => {
