@@ -2140,7 +2140,6 @@ impl Config {
     /// This normalizes the default `evm_version` if a `solc` was provided in the config.
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
-    #[expect(clippy::disallowed_macros)]
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
         if figment.contains("evm_version") {
             // Check compatibility if both evm_version and solc are provided
