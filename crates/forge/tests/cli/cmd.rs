@@ -775,6 +775,63 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// checks that `forge init` works.
+forgetest!(can_init_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Counter.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Counter.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Counter.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+});
+
+// checks that `forge init --vyper` works.
+forgetest!(can_init_vyper_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Counter.vy").exists());
+    assert!(prj.root().join("src").join("ICounter.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Counter.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Counter.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+});
+
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
 forgetest!(can_clone_with_node_modules, |prj, cmd| {
