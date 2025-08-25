@@ -234,7 +234,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more 2.0.1",
- "op-alloy-consensus 0.19.0",
+ "op-alloy-consensus",
  "op-revm",
  "revm",
  "thiserror 2.0.16",
@@ -344,7 +344,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "auto_impl",
- "op-alloy-consensus 0.19.0",
+ "op-alloy-consensus",
  "op-revm",
  "revm",
 ]
@@ -1079,7 +1079,7 @@ dependencies = [
  "futures",
  "hyper",
  "itertools 0.14.0",
- "op-alloy-consensus 0.18.14",
+ "op-alloy-consensus",
  "op-alloy-rpc-types",
  "op-revm",
  "parking_lot",
@@ -1112,7 +1112,7 @@ dependencies = [
  "bytes",
  "foundry-common",
  "foundry-evm",
- "op-alloy-consensus 0.18.14",
+ "op-alloy-consensus",
  "op-revm",
  "rand 0.9.2",
  "revm",
@@ -2555,7 +2555,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",
- "op-alloy-consensus 0.18.14",
+ "op-alloy-consensus",
  "op-alloy-flz",
  "rand 0.8.5",
  "rand 0.9.2",
@@ -6899,9 +6899,9 @@ dependencies = [
 
 [[package]]
 name = "op-alloy-consensus"
-version = "0.18.14"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c88d2940558fd69f8f07b3cbd7bb3c02fc7d31159c1a7ba9deede50e7881024"
+checksum = "72910bfa281935a41094d6d1d84b38ce8d4d8c98472a47f5c9db4328d5db6e45"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6916,20 +6916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "op-alloy-consensus"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72910bfa281935a41094d6d1d84b38ce8d4d8c98472a47f5c9db4328d5db6e45"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "derive_more 2.0.1",
- "thiserror 2.0.16",
-]
-
-[[package]]
 name = "op-alloy-flz"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6937,9 +6923,9 @@ checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 
 [[package]]
 name = "op-alloy-rpc-types"
-version = "0.18.14"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f22201e53e8cbb67a053e88b534b4e7f02265c5406994bf35978482a9ad0ae26"
+checksum = "ad11296eb598cd835db304145e1bd6e300eb29caedee8f50b62a3140a98fa8ca"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6948,7 +6934,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "derive_more 2.0.1",
- "op-alloy-consensus 0.18.14",
+ "op-alloy-consensus",
  "serde",
  "serde_json",
  "thiserror 2.0.16",

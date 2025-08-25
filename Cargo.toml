@@ -257,8 +257,8 @@ alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
 ## op-alloy
-op-alloy-consensus = "0.18.13"
-op-alloy-rpc-types = "0.18.13"
+op-alloy-consensus = "0.19.0"
+op-alloy-rpc-types = "0.19.0"
 op-alloy-flz = "0.13.1"
 
 ## revm
