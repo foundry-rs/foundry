@@ -1,0 +1,67 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Linter (`lint`)"><title>forge_lint - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-7dc20aaa.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="forge_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (809200ec9 2025-08-24)" data-channel="nightly" data-search-js="search-5fc2c5c0.js" data-stringdex-js="stringdex-0e748618.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-17c00ba7.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate forge_lint</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../forge_lint/index.html">forge_<wbr>lint</a><span class="version">1.3.2</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#linter-lint" title="Linter (`lint`)">Linter (<code>lint</code>)</a><ul><li><a href="#supported-lints" title="Supported Lints">Supported Lints</a></li><li><a href="#configuration" title="Configuration">Configuration</a></li><li><a href="#contributing" title="Contributing">Contributing</a></li></ul></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#macros" title="Macros">Macros</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>forge_<wbr>lint</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/forge_lint/lib.rs.html#1-7">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="linter-lint"><a class="doc-anchor" href="#linter-lint">§</a>Linter (<code>lint</code>)</h2>
+<p>Solidity linter for identifying potential errors, vulnerabilities, gas optimizations, and style guide violations.
+It helps enforce best practices and improve code quality within Foundry projects.</p>
+<h3 id="supported-lints"><a class="doc-anchor" href="#supported-lints">§</a>Supported Lints</h3>
+<p><code>forge-lint</code> includes rules across several categories:</p>
+<ul>
+<li><strong>High Severity:</strong>
+<ul>
+<li><code>incorrect-shift</code>: Warns against shift operations where operands might be in the wrong order.</li>
+</ul>
+</li>
+<li><strong>Medium Severity:</strong>
+<ul>
+<li><code>divide-before-multiply</code>: Warns against performing division before multiplication in the same expression, which can cause precision loss.</li>
+</ul>
+</li>
+<li><strong>Informational / Style Guide:</strong>
+<ul>
+<li><code>pascal-case-struct</code>: Flags for struct names not adhering to <code>PascalCase</code>.</li>
+<li><code>mixed-case-function</code>: Flags for function names not adhering to <code>mixedCase</code>.</li>
+<li><code>mixed-case-variable</code>: Flags for mutable variable names not adhering to <code>mixedCase</code>.</li>
+<li><code>screaming-snake-case-const</code>: Flags for <code>constant</code> variable names not adhering to <code>SCREAMING_SNAKE_CASE</code>.</li>
+<li><code>screaming-snake-case-immutable</code>: Flags for <code>immutable</code> variable names not adhering to <code>SCREAMING_SNAKE_CASE</code>.</li>
+</ul>
+</li>
+<li><strong>Gas Optimizations:</strong>
+<ul>
+<li><code>asm-keccak256</code>: Recommends using inline assembly for <code>keccak256</code> for potential gas savings.</li>
+</ul>
+</li>
+</ul>
+<h3 id="configuration"><a class="doc-anchor" href="#configuration">§</a>Configuration</h3>
+<p>The behavior of the <code>SolidityLinter</code> can be customized with the following options:</p>
+<div><table><thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>with_severity</code></td><td><code>None</code></td><td>Filters active lints by their severity (<code>High</code>, <code>Med</code>, <code>Low</code>, <code>Info</code>, <code>Gas</code>). <code>None</code> means all severities.</td></tr>
+<tr><td><code>with_lints</code></td><td><code>None</code></td><td>Specifies a list of <code>SolLint</code> instances to include. Overrides severity filter if a lint matches.</td></tr>
+<tr><td><code>without_lints</code></td><td><code>None</code></td><td>Specifies a list of <code>SolLint</code> instances to exclude, even if they match other criteria.</td></tr>
+<tr><td><code>with_description</code></td><td><code>true</code></td><td>Whether to include the lint’s description in the diagnostic output.</td></tr>
+<tr><td><code>with_json_emitter</code></td><td><code>false</code></td><td>If <code>true</code>, diagnostics are output in rustc-compatible JSON format; otherwise, human-readable text.</td></tr>
+</tbody></table>
+</div><h3 id="contributing"><a class="doc-anchor" href="#contributing">§</a>Contributing</h3>
+<p>Check out the <a href="https://github.com/foundry-rs/foundry/blob/master/CONTRIBUTING.md">foundry contribution guide</a>.</p>
+<p>Guidelines for contributing to <code>forge lint</code>:</p>
+<h4 id="opening-an-issue"><a class="doc-anchor" href="#opening-an-issue">§</a>Opening an issue</h4>
+<ol>
+<li>Create a short concise title describing an issue.
+<ul>
+<li>Bad Title Examples<div class="example-wrap"><pre class="language-text"><code>Forge lint does not work
+Forge lint breaks
+Forge lint unexpected behavior</code></pre></div></li>
+<li>Good Title Examples<div class="example-wrap"><pre class="language-text"><code>Forge lint does not flag incorrect shift operations</code></pre></div></li>
+</ul>
+</li>
+<li>Fill in the issue template fields that include foundry version, platform &amp; component info.</li>
+<li>Provide the code snippets showing the current &amp; expected behaviors.</li>
+<li>If it’s a feature request, specify why this feature is needed.</li>
+<li>Besides the default label (<code>T-Bug</code> for bugs or <code>T-feature</code> for features), add <code>C-forge</code> and <code>Cmd-forge-fmt</code> labels.</li>
+</ol>
+<h4 id="fixing-a-bug"><a class="doc-anchor" href="#fixing-a-bug">§</a>Fixing A Bug</h4>
+<ol>
+<li>Specify an issue that is being addressed in the PR description.</li>
+<li>Add a note on the solution in the PR description.</li>
+<li>Add a test case to <code>lint/testdata</code> that specifically demonstrates the bug and is fixed by your changes. Ensure all tests pass.</li>
+</ol>
+<h4 id="developing-a-new-lint-rule"><a class="doc-anchor" href="#developing-a-new-lint-rule">§</a>Developing a New Lint Rule</h4>
+<p>Check the <a href="../../docs/dev/lintrules.md">dev docs</a> for a full implementation guide.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="inline_config/index.html" title="mod forge_lint::inline_config">inline_<wbr>config</a></dt><dt><a class="mod" href="linter/index.html" title="mod forge_lint::linter">linter</a></dt><dt><a class="mod" href="sol/index.html" title="mod forge_lint::sol">sol</a></dt></dl><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><dl class="item-table"><dt><a class="macro" href="macro.declare_forge_lint.html" title="macro forge_lint::declare_forge_lint">declare_<wbr>forge_<wbr>lint</a></dt><dd>Macro for defining lints and relevant metadata for the Solidity linter.</dd><dt><a class="macro" href="macro.link.html" title="macro forge_lint::link">link</a></dt><dt><a class="macro" href="macro.register_lints.html" title="macro forge_lint::register_lints">register_<wbr>lints</a></dt><dd>Registers Solidity linter passes that can have both early and late variants.</dd></dl></section></div></main></body></html>

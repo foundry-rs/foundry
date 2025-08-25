@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Trait for lints that operate on the HIR (High-level Intermediate Representation). Its methods mirror `hir::visit::Visit`, with the addition of `LintCotext`."><title>LateLintPass in forge_lint::linter::late - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-7dc20aaa.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="forge_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (809200ec9 2025-08-24)" data-channel="nightly" data-search-js="search-5fc2c5c0.js" data-stringdex-js="stringdex-0e748618.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-17c00ba7.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">LateLintPass</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../forge_lint/index.html">forge_<wbr>lint</a><span class="version">1.3.2</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Late<wbr>Lint<wbr>Pass</a></h2><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.check_call_args" title="check_call_args">check_call_args</a></li><li><a href="#method.check_contract" title="check_contract">check_contract</a></li><li><a href="#method.check_expr" title="check_expr">check_expr</a></li><li><a href="#method.check_function" title="check_function">check_function</a></li><li><a href="#method.check_item" title="check_item">check_item</a></li><li><a href="#method.check_modifier" title="check_modifier">check_modifier</a></li><li><a href="#method.check_nested_contract" title="check_nested_contract">check_nested_contract</a></li><li><a href="#method.check_nested_function" title="check_nested_function">check_nested_function</a></li><li><a href="#method.check_nested_item" title="check_nested_item">check_nested_item</a></li><li><a href="#method.check_nested_source" title="check_nested_source">check_nested_source</a></li><li><a href="#method.check_nested_var" title="check_nested_var">check_nested_var</a></li><li><a href="#method.check_stmt" title="check_stmt">check_stmt</a></li><li><a href="#method.check_ty" title="check_ty">check_ty</a></li><li><a href="#method.check_var" title="check_var">check_var</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In forge_<wbr>lint::<wbr>linter::<wbr>late</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">forge_lint</a>::<wbr><a href="../index.html">linter</a>::<wbr><a href="index.html">late</a></div><h1>Trait <span class="trait">Late<wbr>Lint<wbr>Pass</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/forge_lint/linter/late.rs.html#9-108">Source</a> </span></div><pre class="rust item-decl"><code>pub trait LateLintPass&lt;'hir&gt;: <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a> {
+<details class="toggle type-contents-toggle"><summary class="hideme"><span>Show 14 methods</span></summary>    // Provided methods
+    fn <a href="#method.check_nested_source" class="fn">check_nested_source</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _id: SourceId,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_nested_item" class="fn">check_nested_item</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _id: &amp;'hir ItemId,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_nested_contract" class="fn">check_nested_contract</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _id: &amp;'hir ContractId,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_nested_function" class="fn">check_nested_function</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _id: &amp;'hir FunctionId,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_nested_var" class="fn">check_nested_var</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _id: &amp;'hir VariableId,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_item" class="fn">check_item</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _item: Item&lt;'hir, 'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_contract" class="fn">check_contract</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _contract: &amp;'hir Contract&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_function" class="fn">check_function</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _func: &amp;'hir Function&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_modifier" class="fn">check_modifier</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _mod: &amp;'hir Modifier&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_var" class="fn">check_var</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _var: &amp;'hir Variable&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_expr" class="fn">check_expr</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _expr: &amp;'hir Expr&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_call_args" class="fn">check_call_args</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _args: &amp;'hir CallArgs&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_stmt" class="fn">check_stmt</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _stmt: &amp;'hir Stmt&lt;'hir&gt;,
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.check_ty" class="fn">check_ty</a>(
+        &amp;mut self,
+        _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+        _hir: &amp;'hir Hir&lt;'hir&gt;,
+        _ty: &amp;'hir Type&lt;'hir&gt;,
+    ) { ... }
+</details>}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Trait for lints that operate on the HIR (High-level Intermediate Representation).
+Its methods mirror <code>hir::visit::Visit</code>, with the addition of <code>LintCotext</code>.</p>
+</div></details><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><section id="method.check_nested_source" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#10-16">Source</a><h4 class="code-header">fn <a href="#method.check_nested_source" class="fn">check_nested_source</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _id: SourceId,
+)</h4></section><section id="method.check_nested_item" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#17-23">Source</a><h4 class="code-header">fn <a href="#method.check_nested_item" class="fn">check_nested_item</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _id: &amp;'hir ItemId,
+)</h4></section><section id="method.check_nested_contract" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#24-30">Source</a><h4 class="code-header">fn <a href="#method.check_nested_contract" class="fn">check_nested_contract</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _id: &amp;'hir ContractId,
+)</h4></section><section id="method.check_nested_function" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#31-37">Source</a><h4 class="code-header">fn <a href="#method.check_nested_function" class="fn">check_nested_function</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _id: &amp;'hir FunctionId,
+)</h4></section><section id="method.check_nested_var" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#38-44">Source</a><h4 class="code-header">fn <a href="#method.check_nested_var" class="fn">check_nested_var</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _id: &amp;'hir VariableId,
+)</h4></section><section id="method.check_item" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#45-51">Source</a><h4 class="code-header">fn <a href="#method.check_item" class="fn">check_item</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _item: Item&lt;'hir, 'hir&gt;,
+)</h4></section><section id="method.check_contract" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#52-58">Source</a><h4 class="code-header">fn <a href="#method.check_contract" class="fn">check_contract</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _contract: &amp;'hir Contract&lt;'hir&gt;,
+)</h4></section><section id="method.check_function" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#59-65">Source</a><h4 class="code-header">fn <a href="#method.check_function" class="fn">check_function</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _func: &amp;'hir Function&lt;'hir&gt;,
+)</h4></section><section id="method.check_modifier" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#66-72">Source</a><h4 class="code-header">fn <a href="#method.check_modifier" class="fn">check_modifier</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _mod: &amp;'hir Modifier&lt;'hir&gt;,
+)</h4></section><section id="method.check_var" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#73-79">Source</a><h4 class="code-header">fn <a href="#method.check_var" class="fn">check_var</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _var: &amp;'hir Variable&lt;'hir&gt;,
+)</h4></section><section id="method.check_expr" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#80-86">Source</a><h4 class="code-header">fn <a href="#method.check_expr" class="fn">check_expr</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _expr: &amp;'hir Expr&lt;'hir&gt;,
+)</h4></section><section id="method.check_call_args" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#87-93">Source</a><h4 class="code-header">fn <a href="#method.check_call_args" class="fn">check_call_args</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _args: &amp;'hir CallArgs&lt;'hir&gt;,
+)</h4></section><section id="method.check_stmt" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#94-100">Source</a><h4 class="code-header">fn <a href="#method.check_stmt" class="fn">check_stmt</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _stmt: &amp;'hir Stmt&lt;'hir&gt;,
+)</h4></section><section id="method.check_ty" class="method"><a class="src rightside" href="../../../src/forge_lint/linter/late.rs.html#101-107">Source</a><h4 class="code-header">fn <a href="#method.check_ty" class="fn">check_ty</a>(
+    &amp;mut self,
+    _ctx: &amp;<a class="struct" href="../struct.LintContext.html" title="struct forge_lint::linter::LintContext">LintContext</a>&lt;'_&gt;,
+    _hir: &amp;'hir Hir&lt;'hir&gt;,
+    _ty: &amp;'hir Type&lt;'hir&gt;,
+)</h4></section></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-LateLintPass%3C'hir%3E-for-UnwrappedModifierLogic" class="impl"><a class="src rightside" href="../../../src/forge_lint/sol/codesize/unwrapped_modifier_logic.rs.html#16-41">Source</a><a href="#impl-LateLintPass%3C'hir%3E-for-UnwrappedModifierLogic" class="anchor">§</a><h3 class="code-header">impl&lt;'hir&gt; <a class="trait" href="../trait.LateLintPass.html" title="trait forge_lint::linter::LateLintPass">LateLintPass</a>&lt;'hir&gt; for <a class="struct" href="../../sol/codesize/struct.UnwrappedModifierLogic.html" title="struct forge_lint::sol::codesize::UnwrappedModifierLogic">UnwrappedModifierLogic</a></h3></section><section id="impl-LateLintPass%3C'hir%3E-for-AsmKeccak256" class="impl"><a class="src rightside" href="../../../src/forge_lint/sol/gas/keccak.rs.html#17-58">Source</a><a href="#impl-LateLintPass%3C'hir%3E-for-AsmKeccak256" class="anchor">§</a><h3 class="code-header">impl&lt;'hir&gt; <a class="trait" href="../trait.LateLintPass.html" title="trait forge_lint::linter::LateLintPass">LateLintPass</a>&lt;'hir&gt; for <a class="struct" href="../../sol/gas/struct.AsmKeccak256.html" title="struct forge_lint::sol::gas::AsmKeccak256">AsmKeccak256</a></h3></section><section id="impl-LateLintPass%3C'hir%3E-for-UnsafeTypecast" class="impl"><a class="src rightside" href="../../../src/forge_lint/sol/med/unsafe_typecast.rs.html#16-43">Source</a><a href="#impl-LateLintPass%3C'hir%3E-for-UnsafeTypecast" class="anchor">§</a><h3 class="code-header">impl&lt;'hir&gt; <a class="trait" href="../trait.LateLintPass.html" title="trait forge_lint::linter::LateLintPass">LateLintPass</a>&lt;'hir&gt; for <a class="struct" href="../../sol/med/struct.UnsafeTypecast.html" title="struct forge_lint::sol::med::UnsafeTypecast">UnsafeTypecast</a></h3></section></div><script src="../../../trait.impl/forge_lint/linter/late/trait.LateLintPass.js" async></script></section></div></main></body></html>

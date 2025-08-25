@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PrecompileError"],"fn":["crypto","install_crypto"],"struct":["DefaultCrypto","PrecompileOutput"],"trait":["Crypto"],"type":["PrecompileFn","PrecompileResult"]};

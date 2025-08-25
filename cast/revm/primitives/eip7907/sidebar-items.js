@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_CODE_SIZE","MAX_INITCODE_SIZE"]};

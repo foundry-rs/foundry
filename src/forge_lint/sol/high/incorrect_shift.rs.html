@@ -1,0 +1,40 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/lint/src/sol/high/incorrect_shift.rs`."><title>incorrect_shift.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-7dc20aaa.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="forge_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0-nightly (809200ec9 2025-08-24)" data-channel="nightly" data-search-js="search-5fc2c5c0.js" data-stringdex-js="stringdex-0e748618.js" data-settings-js="settings-c38705f0.js" ><script src="../../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-17c00ba7.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">forge_lint/sol/high/</div>incorrect_shift.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><a href="mod.rs.html#9-13"><span class="kw">super</span>::IncorrectShift</a>;
+<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use crate</span>::{
+<a href=#3 id=3 data-nosnippet>3</a>    linter::{<a href="../../linter/early.rs.html#9-70">EarlyLintPass</a>, <a href="../../linter/mod.rs.html#52-57">LintContext</a>},
+<a href=#4 id=4 data-nosnippet>4</a>    sol::{Severity, <a href="../mod.rs.html#335-340">SolLint</a>},
+<a href=#5 id=5 data-nosnippet>5</a>};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
+<a href=#7 id=7 data-nosnippet>7</a>
+<a href=#8 id=8 data-nosnippet>8</a><a class="macro" href="../macros.rs.html#23-37">declare_forge_lint!</a>(
+<a href=#9 id=9 data-nosnippet>9</a>    <a href="../../../../forge_lint/sol/high/incorrect_shift/static.INCORRECT_SHIFT.html">INCORRECT_SHIFT</a>,
+<a href=#10 id=10 data-nosnippet>10</a>    Severity::High,
+<a href=#11 id=11 data-nosnippet>11</a>    <span class="string">"incorrect-shift"</span>,
+<a href=#12 id=12 data-nosnippet>12</a>    <span class="string">"the order of args in a shift operation is incorrect"
+<a href=#13 id=13 data-nosnippet>13</a></span>);
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">impl</span>&lt;<span class="lifetime">'ast</span>&gt; <a href="../../linter/early.rs.html#9-70">EarlyLintPass</a>&lt;<span class="lifetime">'ast</span>&gt; <span class="kw">for </span><a href="mod.rs.html#9-13">IncorrectShift</a> {
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">fn </span>check_expr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, ctx: <span class="kw-2">&amp;</span><a href="../../linter/mod.rs.html#52-57">LintContext</a>&lt;<span class="lifetime">'_</span>&gt;, expr: <span class="kw-2">&amp;</span><span class="lifetime">'ast </span>Expr&lt;<span class="lifetime">'ast</span>&gt;) {
+<a href=#17 id=17 data-nosnippet>17</a>        <span class="kw">if let </span>ExprKind::Binary(
+<a href=#18 id=18 data-nosnippet>18</a>            left_expr,
+<a href=#19 id=19 data-nosnippet>19</a>            BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },
+<a href=#20 id=20 data-nosnippet>20</a>            right_expr,
+<a href=#21 id=21 data-nosnippet>21</a>        ) = <span class="kw-2">&amp;</span><a href="#16">expr</a>.kind
+<a href=#22 id=22 data-nosnippet>22</a>            &amp;&amp; <a href="#32-40">contains_incorrect_shift</a>(<a href="#18">left_expr</a>, <a href="#20">right_expr</a>)
+<a href=#23 id=23 data-nosnippet>23</a>        {
+<a href=#24 id=24 data-nosnippet>24</a>            <a href="#16">ctx</a>.<a href="../../linter/mod.rs.html#87-102">emit</a>(<span class="kw-2">&amp;</span><a href="#8-13">INCORRECT_SHIFT</a>, <a href="#16">expr</a>.span);
+<a href=#25 id=25 data-nosnippet>25</a>        }
+<a href=#26 id=26 data-nosnippet>26</a>    }
+<a href=#27 id=27 data-nosnippet>27</a>}
+<a href=#28 id=28 data-nosnippet>28</a>
+<a href=#29 id=29 data-nosnippet>29</a><span class="comment">// TODO: come up with a better heuristic. Treat initial impl as a PoC.
+<a href=#30 id=30 data-nosnippet>30</a>// Checks if the left operand is a literal and the right operand is not, indicating a potential
+<a href=#31 id=31 data-nosnippet>31</a>// reversed shift operation.
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">fn </span><a href="../../../../forge_lint/sol/high/incorrect_shift/fn.contains_incorrect_shift.html">contains_incorrect_shift</a>&lt;<span class="lifetime">'ast</span>&gt;(
+<a href=#33 id=33 data-nosnippet>33</a>    left_expr: <span class="kw-2">&amp;</span><span class="lifetime">'ast </span>Expr&lt;<span class="lifetime">'ast</span>&gt;,
+<a href=#34 id=34 data-nosnippet>34</a>    right_expr: <span class="kw-2">&amp;</span><span class="lifetime">'ast </span>Expr&lt;<span class="lifetime">'ast</span>&gt;,
+<a href=#35 id=35 data-nosnippet>35</a>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a> {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">let </span>is_left_literal = <a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.matches.html">matches!</a>(left_expr.kind, ExprKind::Lit(..));
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">let </span>is_right_not_literal = !<a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.matches.html">matches!</a>(right_expr.kind, ExprKind::Lit(..));
+<a href=#38 id=38 data-nosnippet>38</a>
+<a href=#39 id=39 data-nosnippet>39</a>    <a href="#36">is_left_literal</a> &amp;&amp; <a href="#37">is_right_not_literal</a>
+<a href=#40 id=40 data-nosnippet>40</a>}</code></pre></div></section></main></body></html>

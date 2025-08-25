@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_lower_mixed_case","check_upper_mixed_case_post_pattern","is_constant_getter","is_mixed_case"],"static":["MIXED_CASE_FUNCTION","MIXED_CASE_VARIABLE"]};

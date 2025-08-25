@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ExtendStrategy","Extends"],"struct":["ExtendConfig","ExtendsHelper","ExtendsPartialConfig"]};

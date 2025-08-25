@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["infer_source_types","is_unsafe_elementary_typecast","is_unsafe_typecast_hir"],"static":["UNSAFE_TYPECAST"]};

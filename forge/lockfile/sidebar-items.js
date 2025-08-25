@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FOUNDRY_LOCK"],"enum":["DepIdentifier"],"struct":["Lockfile"],"type":["DepMap"]};
