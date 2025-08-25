@@ -160,6 +160,8 @@ interface Vm {
     function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
+    function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);
+    function bound(int256 current, int256 min, int256 max) external view returns (int256);
     function breakpoint(string calldata char) external pure;
     function breakpoint(string calldata char, bool value) external pure;
     function broadcastRawTransaction(bytes calldata data) external;

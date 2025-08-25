@@ -116,32 +116,66 @@ impl GaussianNoiseMutator for I256 {
 }
 
 /// Mutator that changes the current value of an uint or int by applying gaussian noise.
-pub(crate) trait BoundMutator: Sized + Copy + Debug {
-    fn mutate_in_logspace(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self>;
+pub trait BoundMutator: Sized + Copy + Debug {
+    fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
 impl BoundMutator for U256 {
-    fn mutate_in_logspace(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
+    fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
         if min > max || self < min || self > max || min == max {
             return None;
         }
 
         let rng = test_runner.rng();
 
-        for _ in 0..100 {
-            let bits = rng.random_range(0..=256);
-            let mask = (U256::ONE << bits) - U256::ONE;
-            let candidate = U256::from(rng.random::<u128>()) & mask;
+        loop {
+            let bits = rng.random_range(8..=256);
+            let mask = (Self::ONE << bits) - Self::ONE;
+            let candidate = Self::from(rng.random::<u128>()) & mask;
 
-            // Map to range
-            let candidate = min + (candidate % (max - min + U256::ONE));
+            // Map to range.
+            let candidate = min + (candidate % (max - min + Self::ONE));
 
             if candidate != self {
                 return Some(candidate);
             }
         }
+    }
+}
 
-        None
+impl BoundMutator for I256 {
+    fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
+        if min > max || self < min || self > max || min == max {
+            return None;
+        }
+
+        let rng = test_runner.rng();
+
+        loop {
+            let bits = rng.random_range(8..=255);
+            let mask = (U256::ONE << bits) - U256::ONE;
+            let rand_u = U256::from(rng.next_u64()) | (U256::from(rng.next_u64()) << 64);
+            let unsigned_candidate = rand_u & mask;
+
+            let signed_candidate = {
+                let midpoint = U256::ONE << (bits - 1);
+                if unsigned_candidate < midpoint {
+                    Self::from_raw(unsigned_candidate)
+                } else {
+                    Self::from_raw(unsigned_candidate) - Self::from_raw(U256::ONE << bits)
+                }
+            };
+
+            // Map to range.
+            let range = (max - min + Self::ONE).unsigned_abs();
+            let wrapped = Self::from_raw(U256::from(signed_candidate.unsigned_abs()) % range);
+            let candidate =
+                if signed_candidate.is_negative() { max - wrapped } else { min + wrapped };
+
+            if candidate != self {
+                return Some(candidate);
+            }
+        }
     }
 }
 
@@ -549,5 +583,41 @@ mod tests {
         let mut runner = TestRunner::new(Config::default());
         let value = I256::from_dec_str("123").unwrap();
         assert!(I256::mutate_interesting_dword(value, 16, &mut runner).is_none());
+    }
+
+    #[test]
+    fn test_u256_bound() {
+        let mut runner = TestRunner::new(Config::default());
+        let min = U256::from(0u64);
+        let max = U256::from(200u64);
+        let original = U256::from(100u64);
+
+        for _ in 0..50 {
+            let result = original.bound(min, max, &mut runner);
+            assert!(result.is_some(), "Mutation should occur");
+
+            let mutated = result.unwrap();
+            assert!(mutated >= min, "Mutated value >= min");
+            assert!(mutated <= max, "Mutated value <= max");
+            assert_ne!(mutated, original, "mutated value should differ from original");
+        }
+    }
+
+    #[test]
+    fn test_i256_bound() {
+        let mut runner = TestRunner::new(Config::default());
+        let min = I256::from_dec_str("-100").unwrap();
+        let max = I256::from_dec_str("100").unwrap();
+        let original = I256::from_dec_str("10").unwrap();
+
+        for _ in 0..50 {
+            let result = original.bound(min, max, &mut runner);
+            assert!(result.is_some(), "Mutation should occur");
+
+            let mutated = result.unwrap();
+            assert!(mutated >= min, "Mutated value >= min");
+            assert!(mutated <= max, "Mutated value <= max");
+            assert_ne!(mutated, original, "Mutated value should not equal current");
+        }
     }
 }
