@@ -6,7 +6,7 @@ use alloy_sol_types::SolValue;
 use std::{env, sync::OnceLock};
 
 /// Stores the forge execution context for the duration of the program.
-pub(crate) static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
+pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
 impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
