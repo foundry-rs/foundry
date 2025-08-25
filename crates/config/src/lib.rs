@@ -2150,8 +2150,8 @@ impl Config {
                 && let Some(normalized) = self.evm_version.normalize_version_solc(&solc_version)
                 && normalized != evm_version
             {
-                eprintln!(
-                    "Warning: evm_version '{evm_version}' may be incompatible with solc version '{solc_version}'. Consider using '{normalized}'"
+                warn!(
+                    "evm_version '{evm_version}' may be incompatible with solc version '{solc_version}'. Consider using '{normalized}'"
                 );
             }
             return figment;
