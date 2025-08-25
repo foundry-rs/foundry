@@ -50,7 +50,8 @@ pub struct SlotInfo {
 /// - `dyn_sol_type`: The parsed type used for actual value decoding
 #[derive(Debug)]
 pub struct StorageTypeInfo {
-    /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address => uint256)")
+    /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address
+    /// => uint256)")
     pub label: String,
     /// The parsed dynamic Solidity type used for decoding
     pub dyn_sol_type: DynSolType,
@@ -70,7 +71,7 @@ where
     S: serde::Serializer,
 {
     use serde::ser::SerializeMap;
-    
+
     if let Some(keys) = keys {
         let mut map = serializer.serialize_map(Some(1))?;
         if keys.len() == 1 {
@@ -100,8 +101,8 @@ impl Serialize for DecodedSlotValues {
     {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
-        state.serialize_field("previousValue", &StorageDecoder::format_value(&self.previous_value))?;
-        state.serialize_field("newValue", &StorageDecoder::format_value(&self.new_value))?;
+        state.serialize_field("previousValue", &format_value(&self.previous_value))?;
+        state.serialize_field("newValue", &format_value(&self.new_value))?;
         state.end()
     }
 }
@@ -126,13 +127,8 @@ impl StorageDecoder {
         Self { storage_layout }
     }
 
-    /// Identifies a storage slot and returns information about it.
-    pub fn identify(&self, slot: &B256) -> Option<SlotInfo> {
-        self.identify_with_mapping(slot, None)
-    }
-
-    /// Identifies a storage slot with optional mapping information for decoding mapped values.
-    pub fn identify_with_mapping(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+    /// Identifies a mapping slot with mapping information for decoding mapped values.
+    pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
         let slot_u256 = U256::from_be_bytes(slot.0);
         let slot_str = slot_u256.to_string();
 
@@ -170,8 +166,13 @@ impl StorageDecoder {
 
             if let Some(parsed_type) = dyn_type
                 && let DynSolType::FixedArray(_, _) = parsed_type
-                && let Some(slot_info) =
-                    self.handle_array_slot(storage, storage_type, slot_u256, array_start_slot, &slot_str)
+                && let Some(slot_info) = self.handle_array_slot(
+                    storage,
+                    storage_type,
+                    slot_u256,
+                    array_start_slot,
+                    &slot_str,
+                )
             {
                 return Some(slot_info);
             }
@@ -184,15 +185,9 @@ impl StorageDecoder {
                 return Some(slot_info);
             }
 
-            // Check if this is a mapping slot
             if let Some(mapping_slots) = mapping_slots
-                && let Some(slot_info) = self.handle_mapping(
-                    storage,
-                    storage_type,
-                    slot,
-                    &slot_str,
-                    mapping_slots,
-                )
+                && let Some(slot_info) =
+                    self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
             {
                 return Some(slot_info);
             }
@@ -204,25 +199,15 @@ impl StorageDecoder {
     /// Decodes a storage value using the provided type information.
     pub fn decode(&self, value: B256, slot_info: &SlotInfo) -> Option<DynSolValue> {
         // Find the storage type if we have full layout information
-        let storage_type = self.storage_layout.storage
+        let storage_type = self
+            .storage_layout
+            .storage
             .iter()
             .find(|s| s.slot == slot_info.slot)
             .and_then(|s| self.storage_layout.types.get(&s.storage_type));
 
         self.decode_storage_value(value, &slot_info.slot_type.dyn_sol_type, storage_type)
     }
-
-    /// Decodes a storage value with explicit type information.
-    pub fn decode_with_type(&self, value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
-        self.decode_storage_value(value, dyn_type, None)
-    }
-
-    /// Formats a decoded value as a raw string without type information.
-    pub fn format_value(value: &DynSolValue) -> String {
-        Self::format_dyn_sol_value_raw(value)
-    }
-
-    // Private helper methods
 
     fn handle_array_slot(
         &self,
@@ -332,7 +317,8 @@ impl StorageDecoder {
                     for member in &members {
                         if let Some(member_type_info) =
                             ctx.storage_layout.types.get(&member.storage_type)
-                            && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
+                            && let Some(member_type) =
+                                DynSolType::parse(&member_type_info.label).ok()
                         {
                             member_infos.push(SlotInfo {
                                 label: member.label.clone(),
@@ -353,8 +339,10 @@ impl StorageDecoder {
                     let struct_name =
                         storage_type.label.strip_prefix("struct ").unwrap_or(&storage_type.label);
                     let prop_names: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
-                    let member_types: Vec<DynSolType> =
-                        member_infos.iter().map(|info| info.slot_type.dyn_sol_type.clone()).collect();
+                    let member_types: Vec<DynSolType> = member_infos
+                        .iter()
+                        .map(|info| info.slot_type.dyn_sol_type.clone())
+                        .collect();
 
                     let parsed_type = DynSolType::CustomStruct {
                         name: struct_name.to_string(),
@@ -534,7 +522,7 @@ impl StorageDecoder {
                 && let Ok(sol_type) = DynSolType::parse(key_type_label)
                 && let Ok(decoded) = sol_type.abi_decode(&key.0)
             {
-                let decoded_key_str = Self::format_dyn_sol_value_raw(&decoded);
+                let decoded_key_str = format_value(&decoded);
                 decoded_keys.push(decoded_key_str.clone());
                 label = format!("{label}[{decoded_key_str}]");
             } else {
@@ -558,10 +546,7 @@ impl StorageDecoder {
         })
     }
 
-    fn resolve_mapping_type(
-        &self,
-        type_ref: &str,
-    ) -> Option<(Vec<String>, String, String)> {
+    fn resolve_mapping_type(&self, type_ref: &str) -> Option<(Vec<String>, String, String)> {
         let storage_type = self.storage_layout.types.get(type_ref)?;
 
         if storage_type.encoding != "mapping" {
@@ -581,13 +566,16 @@ impl StorageDecoder {
         if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
             if value_storage_type.encoding == "mapping" {
                 // Recursively resolve the nested mapping
-                let (nested_keys, final_value, _) =
-                    self.resolve_mapping_type(value_type_ref)?;
+                let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
                 return Some((key_types, final_value, storage_type.label.clone()));
             } else {
                 // Value is not a mapping, we're done
-                return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
+                return Some((
+                    key_types,
+                    value_storage_type.label.clone(),
+                    storage_type.label.clone(),
+                ));
             }
         }
 
@@ -616,9 +604,9 @@ impl StorageDecoder {
         storage_type: Option<&StorageType>,
     ) -> Option<DynSolValue> {
         // Storage values are always 32 bytes, stored as a single word
-        // For arrays, we need to unwrap to the base element type
         let mut actual_type = dyn_type;
         // Unwrap nested arrays to get to the base element type.
+        // For arrays, we need to unwrap to the base element type
         while let DynSolType::FixedArray(elem_type, _) = actual_type {
             actual_type = elem_type.as_ref();
         }
@@ -639,8 +627,7 @@ impl StorageDecoder {
 
                     // Calculate byte range for this member
                     let offset = member.offset as usize;
-                    let member_storage_type =
-                        self.storage_layout.types.get(&member.storage_type);
+                    let member_storage_type = self.storage_layout.types.get(&member.storage_type);
                     let size = member_storage_type
                         .and_then(|t| t.number_of_bytes.parse::<usize>().ok())
                         .unwrap_or(32);
@@ -669,30 +656,6 @@ impl StorageDecoder {
         // Use abi_decode to decode the value for non-struct types
         actual_type.abi_decode(&value.0).ok()
     }
-
-    fn format_dyn_sol_value_raw(value: &DynSolValue) -> String {
-        match value {
-            DynSolValue::Bool(b) => b.to_string(),
-            DynSolValue::Int(i, _) => i.to_string(),
-            DynSolValue::Uint(u, _) => u.to_string(),
-            DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
-            DynSolValue::Address(addr) => addr.to_string(),
-            DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
-            DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
-            DynSolValue::String(s) => s.clone(),
-            DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
-                let formatted: Vec<String> = values.iter().map(Self::format_dyn_sol_value_raw).collect();
-                format!("[{}]", formatted.join(", "))
-            }
-            DynSolValue::Tuple(values) => {
-                let formatted: Vec<String> = values.iter().map(Self::format_dyn_sol_value_raw).collect();
-                format!("({})", formatted.join(", "))
-            }
-            DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
-                Self::format_dyn_sol_value_raw(&DynSolValue::Tuple(tuple.clone()))
-            }
-        }
-    }
 }
 
 /// Context for recursive struct processing
@@ -700,4 +663,29 @@ struct StructContext<'a> {
     storage_layout: &'a Arc<StorageLayout>,
     target_slot: U256,
     slot_str: String,
+}
+
+/// Formats a [`DynSolValue`] as a raw string without type information and only the value itself.
+pub fn format_value(value: &DynSolValue) -> String {
+    match value {
+        DynSolValue::Bool(b) => b.to_string(),
+        DynSolValue::Int(i, _) => i.to_string(),
+        DynSolValue::Uint(u, _) => u.to_string(),
+        DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
+        DynSolValue::Address(addr) => addr.to_string(),
+        DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
+        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
+        DynSolValue::String(s) => s.clone(),
+        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+            let formatted: Vec<String> = values.iter().map(format_value).collect();
+            format!("[{}]", formatted.join(", "))
+        }
+        DynSolValue::Tuple(values) => {
+            let formatted: Vec<String> = values.iter().map(format_value).collect();
+            format!("({})", formatted.join(", "))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
+            format_value(&DynSolValue::Tuple(tuple.clone()))
+        }
+    }
 }

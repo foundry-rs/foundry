@@ -12,8 +12,10 @@ use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{read_json_file, write_json_file};
-use foundry_common::storage_decoder::{StorageDecoder, SlotInfo as DecoderSlotInfo, DecodedSlotValues as DecoderDecodedSlotValues};
+use foundry_common::{
+    fs::{read_json_file, write_json_file},
+    storage_decoder::{DecodedSlotValues, SlotInfo, StorageDecoder, format_value},
+};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -117,37 +119,6 @@ struct SlotStateDiff {
     slot_info: Option<SlotInfo>,
 }
 
-/// Custom serializer for mapping keys that creates "key" or "keys" field based on count
-fn serialize_mapping_keys<S>(keys: &Option<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use serde::ser::SerializeMap;
-
-    match keys {
-        None => serializer.serialize_none(),
-        Some(keys) => {
-            let mut map = serializer.serialize_map(Some(1))?;
-
-            if keys.len() == 1 {
-                // Single key: serialize as "key": "value"
-                map.serialize_entry("key", &keys[0])?;
-            } else {
-                // Multiple keys: serialize as "keys": ["value1", "value2", ...]
-                map.serialize_entry("keys", keys)?;
-            }
-
-            map.end()
-        }
-    }
-}
-
-// Type aliases for StorageDecoder types
-type SlotInfo = DecoderSlotInfo;
-type StorageTypeInfo = foundry_common::storage_decoder::StorageTypeInfo;
-
-type DecodedSlotValues = DecoderDecodedSlotValues;
-
 /// Balance diff info.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -221,8 +192,8 @@ impl Display for AccountStateDiffs {
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
                             slot_info.slot_type.dyn_sol_type,
-                            StorageDecoder::format_value(&decoded.previous_value),
-                            StorageDecoder::format_value(&decoded.new_value)
+                            format_value(&decoded.previous_value),
+                            format_value(&decoded.new_value)
                         )?;
                     }
                     (Some(slot_info), None) => {
@@ -1426,15 +1397,19 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
 
                                 let slot_info = layout.and_then(|layout| {
                                     let decoder = StorageDecoder::new(layout.clone());
-                                    // Convert internal MappingSlots to storage_decoder MappingSlots if available
-                                    if let Some(internal_slots) = mapping_slots {
-                                        let mut decoder_slots = foundry_common::storage_decoder::MappingSlots::default();
-                                        decoder_slots.keys = internal_slots.keys.clone();
-                                        decoder_slots.parent_slots = internal_slots.parent_slots.clone();
-                                        decoder.identify_with_mapping(&storage_access.slot, Some(&decoder_slots))
-                                    } else {
-                                        decoder.identify(&storage_access.slot)
-                                    }
+                                    // Convert internal MappingSlots to storage_decoder MappingSlots
+                                    // if available
+                                    let mapping_slots = mapping_slots.map(|ms| {
+                                        let mut decoder_slots =
+                                            foundry_common::storage_decoder::MappingSlots::default(
+                                            );
+                                        decoder_slots.keys = ms.keys.clone();
+                                        decoder_slots.parent_slots = ms.parent_slots.clone();
+
+                                        decoder_slots
+                                    });
+
+                                    decoder.identify(&storage_access.slot, mapping_slots.as_ref())
                                 });
 
                                 // Try to decode values if we have slot info
@@ -1501,19 +1476,9 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                         // decoded value
                                         (None, Some(info))
                                     } else {
-                                        // Not a struct, decode as a single value
-                                        let storage_layout =
-                                            storage_layouts.get(&storage_access.account);
-                                        let storage_type = storage_layout.and_then(|layout| {
-                                            layout
-                                                .storage
-                                                .iter()
-                                                .find(|s| s.slot == info.slot)
-                                                .and_then(|s| layout.types.get(&s.storage_type))
-                                        });
-
-                                        let decoder = storage_layout.map(|layout| StorageDecoder::new(layout.clone()));
-                                        let decoded = if let Some(ref decoder) = decoder {
+                                        let decoder = layout
+                                            .map(|layout| StorageDecoder::new(layout.clone()));
+                                        let decoded = if let Some(decoder) = &decoder {
                                             if let (Some(prev), Some(new)) = (
                                                 decoder.decode(storage_access.previousValue, &info),
                                                 decoder.decode(storage_access.newValue, &info),
@@ -1548,18 +1513,10 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 if let Some(slot_info) = &entry.slot_info
                                     && let Some(ref mut decoded) = entry.decoded
                                 {
-                                    // Get storage type info
-                                    let storage_type = layout.and_then(|layout| {
-                                        // Find the storage item that matches this slot
-                                        layout
-                                            .storage
-                                            .iter()
-                                            .find(|s| s.slot == slot_info.slot)
-                                            .and_then(|s| layout.types.get(&s.storage_type))
-                                    });
-
-                                    if let Some(decoder) = layout.map(|l| StorageDecoder::new(l.clone()))
-                                        && let Some(new_value) = decoder.decode(storage_access.newValue, slot_info)
+                                    if let Some(decoder) =
+                                        layout.map(|l| StorageDecoder::new(l.clone()))
+                                        && let Some(new_value) =
+                                            decoder.decode(storage_access.newValue, slot_info)
                                     {
                                         decoded.new_value = new_value;
                                     }
@@ -1627,7 +1584,6 @@ fn get_contract_data<'a>(
     // Fallback to fuzzy matching if exact match fails
     artifacts.find_by_deployed_code(&code_bytes)
 }
-
 
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
