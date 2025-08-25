@@ -298,6 +298,7 @@ interface Vm {
     function getBroadcast(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);
     function getBroadcasts(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);
     function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
+    function getChainId() external view returns (uint256 blockChainId);
     function getChain(string calldata chainAlias) external view returns (Chain memory chain);
     function getChain(uint256 chainId) external view returns (Chain memory chain);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
@@ -436,6 +437,7 @@ interface Vm {
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetGasMetering() external;
     function resetNonce(address account) external;
+    function resolveEnv(string calldata input) external returns (string memory);
     function resumeGasMetering() external;
     function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
@@ -552,9 +554,11 @@ interface Vm {
     function warp(uint256 newTimestamp) external;
     function writeFile(string calldata path, string calldata data) external;
     function writeFileBinary(string calldata path, bytes calldata data) external;
+    function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;
     function writeJson(string calldata json, string calldata path) external;
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
     function writeLine(string calldata path, string calldata data) external;
+    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
     function writeToml(string calldata json, string calldata path) external;
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 }

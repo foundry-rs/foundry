@@ -463,6 +463,13 @@ interface Vm {
 
     // -------- Block and Transaction Properties --------
 
+    /// Gets the current `block.chainid` of the currently selected environment.
+    /// You should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed
+    /// to be constant across a transaction, and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getChainId() external view returns (uint256 blockChainId);
+
     /// Sets `block.chainid`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function chainId(uint256 newChainId) external;
@@ -2027,6 +2034,10 @@ interface Vm {
 
     // ======== Environment Variables ========
 
+    /// Resolves the env variable placeholders of a given input string.
+    #[cheatcode(group = Environment)]
+    function resolveEnv(string calldata input) external returns (string memory);
+
     /// Sets environment variables.
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
@@ -2542,6 +2553,12 @@ interface Vm {
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
+    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
+    /// Unlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;
+
     // ======== TOML Parsing and Manipulation ========
 
     // -------- Reading --------
@@ -2646,6 +2663,12 @@ interface Vm {
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
+
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    /// Unlike `writeToml`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
 
     // ======== Cryptography ========
 
