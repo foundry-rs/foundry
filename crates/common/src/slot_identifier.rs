@@ -11,6 +11,10 @@ use serde::Serialize;
 use std::{str::FromStr, sync::Arc};
 use tracing::trace;
 
+// Constants for storage type encodings
+const ENCODING_INPLACE: &str = "inplace";
+const ENCODING_MAPPING: &str = "mapping";
+
 /// Information about a storage slot including its label, type, and decoded values.
 #[derive(Serialize, Debug)]
 pub struct SlotInfo {
@@ -20,7 +24,7 @@ pub struct SlotInfo {
     /// For struct members: dotted path (e.g., "myStruct.memberName")
     /// For array elements: name with indices (e.g., "myArray\[0\]", "matrix\[1\]\[2\]")
     /// For nested structures: full path (e.g., "outer.inner.field")
-    /// For mappings: base name with keys (e.g., "balances\[0x1234...\]")
+    /// For mappings: base name with keys (e.g., "balances\[0x1234...\]")/ex
     pub label: String,
     /// The Solidity type information
     #[serde(rename = "type", serialize_with = "serialize_slot_type")]
@@ -225,7 +229,7 @@ impl SlotIdentifier {
             }
 
             // Encoding types: <https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#json-output>
-            if storage_type.encoding == "inplace" {
+            if storage_type.encoding == ENCODING_INPLACE {
                 // Can be of type FixedArrays or Structs
                 // Handles the case where the accessed `slot` is maybe different from the base slot.
                 let array_start_slot = U256::from_str(&storage.slot).ok()?;
@@ -244,13 +248,13 @@ impl SlotIdentifier {
                 }
 
                 // If type parsing fails and the label is a struct
-                if storage_type.label.starts_with("struct ")
+                if is_struct(&storage_type.label)
                     && let Some(slot_info) =
                         self.handle_struct(storage, storage_type, slot_u256, &slot_str)
                 {
                     return Some(slot_info);
                 }
-            } else if storage_type.encoding == "mapping"
+            } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
                 && let Some(slot_info) =
                     self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
@@ -262,6 +266,14 @@ impl SlotIdentifier {
         None
     }
 
+    /// Handles identification of array slots.
+    ///
+    /// # Arguments
+    /// * `storage` - The storage metadata from the layout
+    /// * `storage_type` - Type information for the storage slot
+    /// * `slot` - The target slot being identified
+    /// * `array_start_slot` - The starting slot of the array in storage i.e base_slot
+    /// * `slot_str` - String representation of the slot for output
     fn handle_array_slot(
         &self,
         storage: &Storage,
@@ -310,6 +322,16 @@ impl SlotIdentifier {
         None
     }
 
+    /// Handles identification of struct slots.
+    ///
+    /// This function prepares the context for struct processing and delegates
+    /// to the recursive function for handling nested structs.
+    ///
+    /// # Arguments
+    /// * `storage` - The storage metadata from the layout
+    /// * `storage_type` - Type information for the storage
+    /// * `target_slot` - The target slot being identified
+    /// * `slot_str` - String representation of the slot for output
     fn handle_struct(
         &self,
         storage: &Storage,
@@ -335,6 +357,17 @@ impl SlotIdentifier {
         )
     }
 
+    /// Handles identification of mapping slots.
+    ///
+    /// Identifies mapping entries by walking up the parent chain to find the base slot,
+    /// then decodes the keys and builds the appropriate label.
+    ///
+    /// # Arguments
+    /// * `storage` - The storage metadata from the layout
+    /// * `storage_type` - Type information for the storage
+    /// * `slot` - The accessed slot being identified
+    /// * `slot_str` - String representation of the slot for output
+    /// * `mapping_slots` - Tracked mapping slot accesses for key resolution
     fn handle_mapping(
         &self,
         storage: &Storage,
@@ -352,7 +385,7 @@ impl SlotIdentifier {
         );
 
         // Verify it's actually a mapping type
-        if storage_type.encoding != "mapping" {
+        if storage_type.encoding != ENCODING_MAPPING {
             return None;
         }
 
@@ -433,7 +466,7 @@ impl SlotIdentifier {
     fn resolve_mapping_type(&self, type_ref: &str) -> Option<(Vec<String>, String, String)> {
         let storage_type = self.storage_layout.types.get(type_ref)?;
 
-        if storage_type.encoding != "mapping" {
+        if storage_type.encoding != ENCODING_MAPPING {
             // Not a mapping, return the type as-is
             return Some((vec![], storage_type.label.clone(), storage_type.label.clone()));
         }
@@ -575,7 +608,7 @@ fn handle_struct_recursive(
                 let member_label = format!("{}.{}", base_label, first_member.label);
 
                 // If the first member is itself a struct, recurse
-                if member_type_info.label.starts_with("struct ") {
+                if is_struct(&member_type_info.label) {
                     return handle_struct_recursive(
                         ctx,
                         &member_label,
@@ -610,20 +643,24 @@ fn handle_struct_recursive(
         let member_type_info = ctx.storage_layout.types.get(&member.storage_type)?;
         let member_label = format!("{}.{}", base_label, member.label);
 
+        // If this member is a struct, recurse into it
+        if is_struct(&member_type_info.label) {
+            let slot_info = handle_struct_recursive(
+                ctx,
+                &member_label,
+                member_type_info,
+                member_slot,
+                member.offset,
+                depth + 1,
+            );
+
+            if member_slot == ctx.target_slot || slot_info.is_some() {
+                return slot_info;
+            }
+        }
+
         if member_slot == ctx.target_slot {
             // Found the exact member slot
-
-            // If this member is a struct, recurse into it
-            if member_type_info.label.starts_with("struct ") {
-                return handle_struct_recursive(
-                    ctx,
-                    &member_label,
-                    member_type_info,
-                    member_slot,
-                    member.offset,
-                    depth + 1,
-                );
-            }
 
             // Regular member
             let member_type = DynSolType::parse(&member_type_info.label).ok()?;
@@ -639,20 +676,6 @@ fn handle_struct_recursive(
                 decoded: None,
                 keys: None,
             });
-        }
-
-        // If this member is a struct and the requested slot might be inside it, recurse
-        if member_type_info.label.starts_with("struct ")
-            && let Some(slot_info) = handle_struct_recursive(
-                ctx,
-                &member_label,
-                member_type_info,
-                member_slot,
-                member.offset,
-                depth + 1,
-            )
-        {
-            return Some(slot_info);
         }
     }
 
@@ -682,4 +705,9 @@ pub fn format_value(value: &DynSolValue) -> String {
             format_value(&DynSolValue::Tuple(tuple.clone()))
         }
     }
+}
+
+/// Checks if a given type label represents a struct type.
+pub fn is_struct(s: &str) -> bool {
+    s.starts_with("struct ")
 }
