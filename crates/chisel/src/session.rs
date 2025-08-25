@@ -7,7 +7,7 @@ use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use time::{format_description, OffsetDateTime};
+use time::{OffsetDateTime, format_description};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,7 +116,7 @@ impl ChiselSession {
         let mut latest = if let Some(e) = entries.next() {
             e?
         } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")))
+            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
         };
 
         let mut session_num = 1;

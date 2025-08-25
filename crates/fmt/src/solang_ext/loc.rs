@@ -90,6 +90,17 @@ impl CodeLocationExt for pt::ImportPath {
     }
 }
 
+impl CodeLocationExt for pt::VersionComparator {
+    fn loc(&self) -> pt::Loc {
+        match self {
+            Self::Plain { loc, .. }
+            | Self::Operator { loc, .. }
+            | Self::Or { loc, .. }
+            | Self::Range { loc, .. } => *loc,
+        }
+    }
+}
+
 macro_rules! impl_delegate {
     ($($t:ty),+ $(,)?) => {$(
         impl CodeLocationExt for $t {
@@ -111,6 +122,7 @@ impl_delegate! {
     pt::ErrorParameter,
     pt::EventDefinition,
     pt::EventParameter,
+    pt::PragmaDirective,
     // pt::FunctionDefinition,
     pt::HexLiteral,
     pt::Identifier,

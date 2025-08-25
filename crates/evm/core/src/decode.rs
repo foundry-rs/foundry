@@ -1,9 +1,9 @@
 //! Various utilities to decode test results.
 
-use crate::abi::{console, Vm};
+use crate::abi::{Vm, console};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{hex, map::HashMap, Log, Selector};
+use alloy_primitives::{Log, Selector, hex, map::HashMap};
 use alloy_sol_types::{
     ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
     SolInterface, SolValue,
@@ -55,7 +55,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    console::ds::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
+    console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
 }
 
 /// Decodes revert data.
@@ -129,11 +129,7 @@ impl RevertDecoder {
     /// than user output.
     pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
-            if err.is_empty() {
-                "<empty revert data>".to_string()
-            } else {
-                trimmed_hex(err)
-            }
+            if err.is_empty() { "<empty revert data>".to_string() } else { trimmed_hex(err) }
         })
     }
 
@@ -151,7 +147,7 @@ impl RevertDecoder {
         }
 
         // Solidity's `Panic(uint256)` and `Vm`'s custom errors.
-        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err, false) {
+        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err) {
             return Some(e.to_string());
         }
 
@@ -163,7 +159,7 @@ impl RevertDecoder {
                 for error in errors {
                     // If we don't decode, don't return an error, try to decode as a string
                     // later.
-                    if let Ok(decoded) = error.abi_decode_input(data, false) {
+                    if let Ok(decoded) = error.abi_decode_input(data) {
                         return Some(format!(
                             "{}({})",
                             error.name,
@@ -174,7 +170,7 @@ impl RevertDecoder {
             }
 
             if string_decoded.is_some() {
-                return string_decoded
+                return string_decoded;
             }
 
             // Generic custom error.
@@ -188,17 +184,17 @@ impl RevertDecoder {
                     }
                 }
                 s
-            })
+            });
         }
 
         if string_decoded.is_some() {
-            return string_decoded
+            return string_decoded;
         }
 
-        if let Some(status) = status {
-            if !status.is_ok() {
-                return Some(format!("EvmError: {status:?}"));
-            }
+        if let Some(status) = status
+            && !status.is_ok()
+        {
+            return Some(format!("EvmError: {status:?}"));
         }
         if err.is_empty() {
             None
@@ -211,10 +207,10 @@ impl RevertDecoder {
 /// Helper function that decodes provided error as an ABI encoded or an ASCII string (if not empty).
 fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     // ABI-encoded `string`.
-    if let Ok(s) = String::abi_decode(err, true) {
-        if !s.is_empty() {
-            return Some(s);
-        }
+    if let Ok(s) = String::abi_decode(err)
+        && !s.is_empty()
+    {
+        return Some(s);
     }
 
     // ASCII string.
@@ -272,7 +268,10 @@ mod tests {
             "0xe17594de"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x)");
+        assert_eq!(
+            decoder.decode(data, None),
+            "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000"
+        );
 
         /*
         abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))

@@ -2,8 +2,8 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::ProjectPathOpts, utils::LoadConfig};
 use foundry_compilers::{
-    resolver::{parse::SolData, Charset, TreeOptions},
     Graph,
+    resolver::{Charset, TreeOptions, parse::SolData},
 };
 
 /// CLI arguments for `forge tree`.

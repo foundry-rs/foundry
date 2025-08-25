@@ -2,13 +2,13 @@
 
 #![allow(rustdoc::private_doc_tests)]
 
-use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
+use crate::{EthApi, shutdown::Shutdown, tasks::block_listener::BlockListener};
 use alloy_network::{AnyHeader, AnyNetwork};
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
 use futures::StreamExt;
-use std::{fmt, future::Future};
+use std::fmt;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 pub mod block_listener;
@@ -52,7 +52,7 @@ impl TaskManager {
     /// ```
     /// use alloy_network::Ethereum;
     /// use alloy_provider::RootProvider;
-    /// use anvil::{spawn, NodeConfig};
+    /// use anvil::{NodeConfig, spawn};
     ///
     /// # async fn t() {
     /// let endpoint = "http://....";
@@ -110,7 +110,7 @@ impl TaskManager {
     /// ```
     /// use alloy_network::Ethereum;
     /// use alloy_provider::RootProvider;
-    /// use anvil::{spawn, NodeConfig};
+    /// use anvil::{NodeConfig, spawn};
     ///
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;

@@ -1,6 +1,6 @@
 use crate::{CallTrace, DecodedCallData};
-use alloy_primitives::{hex, Address, B256, U256};
-use alloy_sol_types::{abi, sol, SolCall};
+use alloy_primitives::{Address, B256, U256, hex};
+use alloy_sol_types::{SolCall, abi, sol};
 use foundry_evm_core::precompiles::{
     BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
     RIPEMD_160, SHA_256,
@@ -37,29 +37,20 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-macro_rules! tri {
-    ($e:expr) => {
-        match $e {
-            Ok(x) => x,
-            Err(_) => return None,
-        }
-    };
-}
-
 pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
-    address[..19].iter().all(|&x| x == 0) &&
-        matches!(
+    address[..19].iter().all(|&x| x == 0)
+        && matches!(
             address,
-            EC_RECOVER |
-                SHA_256 |
-                RIPEMD_160 |
-                IDENTITY |
-                MOD_EXP |
-                EC_ADD |
-                EC_MUL |
-                EC_PAIRING |
-                BLAKE_2F |
-                POINT_EVALUATION
+            EC_RECOVER
+                | SHA_256
+                | RIPEMD_160
+                | IDENTITY
+                | MOD_EXP
+                | EC_ADD
+                | EC_MUL
+                | EC_PAIRING
+                | BLAKE_2F
+                | POINT_EVALUATION
         )
 }
 
@@ -69,83 +60,252 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
         return None;
     }
 
-    let data = &trace.data;
+    for &precompile in PRECOMPILES {
+        if trace.address == precompile.address() {
+            let signature = precompile.signature();
 
-    let (signature, args) = match trace.address {
-        EC_RECOVER => {
-            let (sig, ecrecoverCall { hash, v, r, s }) = tri!(abi_decode_call(data));
-            (sig, vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
-        }
-        SHA_256 => (sha256Call::SIGNATURE, vec![data.to_string()]),
-        RIPEMD_160 => (ripemdCall::SIGNATURE, vec![data.to_string()]),
-        IDENTITY => (identityCall::SIGNATURE, vec![data.to_string()]),
-        MOD_EXP => (modexpCall::SIGNATURE, tri!(decode_modexp(data))),
-        EC_ADD => {
-            let (sig, ecaddCall { x1, y1, x2, y2 }) = tri!(abi_decode_call(data));
-            (sig, vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()])
-        }
-        EC_MUL => {
-            let (sig, ecmulCall { x1, y1, s }) = tri!(abi_decode_call(data));
-            (sig, vec![x1.to_string(), y1.to_string(), s.to_string()])
-        }
-        EC_PAIRING => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
-        BLAKE_2F => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
-        POINT_EVALUATION => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
-        _ => return None,
-    };
+            let args = precompile
+                .decode_call(&trace.data)
+                .unwrap_or_else(|_| vec![trace.data.to_string()]);
 
-    Some(DecodedCallTrace {
-        label: Some("PRECOMPILES".to_string()),
-        call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
-        // TODO: Decode return data too.
-        return_data: None,
-    })
+            let return_data = precompile
+                .decode_return(&trace.output)
+                .unwrap_or_else(|_| vec![trace.output.to_string()]);
+            let return_data = if return_data.len() == 1 {
+                return_data.into_iter().next().unwrap()
+            } else {
+                format!("({})", return_data.join(", "))
+            };
+
+            return Some(DecodedCallTrace {
+                label: Some("PRECOMPILES".to_string()),
+                call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
+                return_data: Some(return_data),
+            });
+        }
+    }
+
+    None
+}
+
+pub(super) trait Precompile {
+    fn address(&self) -> Address;
+    fn signature(&self) -> &'static str;
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        Ok(vec![hex::encode_prefixed(data)])
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        Ok(vec![hex::encode_prefixed(data)])
+    }
 }
 
 // Note: we use the ABI decoder, but this is not necessarily ABI-encoded data. It's just a
 // convenient way to decode the data.
 
-fn decode_modexp(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
-    let b_size = decoder.take_offset()?;
-    let e_size = decoder.take_offset()?;
-    let m_size = decoder.take_offset()?;
-    let b = decoder.take_slice_unchecked(b_size)?;
-    let e = decoder.take_slice_unchecked(e_size)?;
-    let m = decoder.take_slice_unchecked(m_size)?;
-    Ok(vec![
-        b_size.to_string(),
-        e_size.to_string(),
-        m_size.to_string(),
-        hex::encode_prefixed(b),
-        hex::encode_prefixed(e),
-        hex::encode_prefixed(m),
-    ])
+const PRECOMPILES: &[&dyn Precompile] = &[
+    &Ecrecover,
+    &Sha256,
+    &Ripemd160,
+    &Identity,
+    &ModExp,
+    &EcAdd,
+    &Ecmul,
+    &Ecpairing,
+    &Blake2f,
+    &PointEvaluation,
+];
+
+struct Ecrecover;
+impl Precompile for Ecrecover {
+    fn address(&self) -> Address {
+        EC_RECOVER
+    }
+
+    fn signature(&self) -> &'static str {
+        ecrecoverCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ecrecoverCall { hash, v, r, s } = ecrecoverCall::abi_decode_raw(data)?;
+        Ok(vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = ecrecoverCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
 }
 
-fn decode_ecpairing(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
-    let mut values = Vec::new();
-    // input must be either empty or a multiple of 6 32-byte values
-    let mut tmp = <[&B256; 6]>::default();
-    while !decoder.is_empty() {
-        for tmp in &mut tmp {
-            *tmp = decoder.take_word()?;
-        }
-        values.push(iter_to_string(tmp.iter().map(|x| U256::from_be_bytes(x.0))));
+struct Sha256;
+impl Precompile for Sha256 {
+    fn address(&self) -> Address {
+        SHA_256
     }
-    Ok(values)
+
+    fn signature(&self) -> &'static str {
+        sha256Call::SIGNATURE
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = sha256Call::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
+}
+
+struct Ripemd160;
+impl Precompile for Ripemd160 {
+    fn address(&self) -> Address {
+        RIPEMD_160
+    }
+
+    fn signature(&self) -> &'static str {
+        ripemdCall::SIGNATURE
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = ripemdCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
+}
+
+struct Identity;
+impl Precompile for Identity {
+    fn address(&self) -> Address {
+        IDENTITY
+    }
+
+    fn signature(&self) -> &'static str {
+        identityCall::SIGNATURE
+    }
+}
+
+struct ModExp;
+impl Precompile for ModExp {
+    fn address(&self) -> Address {
+        MOD_EXP
+    }
+
+    fn signature(&self) -> &'static str {
+        modexpCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let mut decoder = abi::Decoder::new(data);
+        let b_size = decoder.take_offset()?;
+        let e_size = decoder.take_offset()?;
+        let m_size = decoder.take_offset()?;
+        let b = decoder.take_slice(b_size)?;
+        let e = decoder.take_slice(e_size)?;
+        let m = decoder.take_slice(m_size)?;
+        Ok(vec![
+            b_size.to_string(),
+            e_size.to_string(),
+            m_size.to_string(),
+            hex::encode_prefixed(b),
+            hex::encode_prefixed(e),
+            hex::encode_prefixed(m),
+        ])
+    }
+}
+
+struct EcAdd;
+impl Precompile for EcAdd {
+    fn address(&self) -> Address {
+        EC_ADD
+    }
+
+    fn signature(&self) -> &'static str {
+        ecaddCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ecaddCall { x1, y1, x2, y2 } = ecaddCall::abi_decode_raw(data)?;
+        Ok(vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()])
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ecaddReturn { x, y } = ecaddCall::abi_decode_returns(data)?;
+        Ok(vec![x.to_string(), y.to_string()])
+    }
+}
+
+struct Ecmul;
+impl Precompile for Ecmul {
+    fn address(&self) -> Address {
+        EC_MUL
+    }
+
+    fn signature(&self) -> &'static str {
+        ecmulCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ecmulCall { x1, y1, s } = ecmulCall::abi_decode_raw(data)?;
+        Ok(vec![x1.to_string(), y1.to_string(), s.to_string()])
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ecmulReturn { x, y } = ecmulCall::abi_decode_returns(data)?;
+        Ok(vec![x.to_string(), y.to_string()])
+    }
+}
+
+struct Ecpairing;
+impl Precompile for Ecpairing {
+    fn address(&self) -> Address {
+        EC_PAIRING
+    }
+
+    fn signature(&self) -> &'static str {
+        ecpairingCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let mut decoder = abi::Decoder::new(data);
+        let mut values = Vec::new();
+        // input must be either empty or a multiple of 6 32-byte values
+        let mut tmp = <[&B256; 6]>::default();
+        while !decoder.is_empty() {
+            for tmp in &mut tmp {
+                *tmp = decoder.take_word()?;
+            }
+            values.push(iter_to_string(tmp.iter().map(|x| U256::from_be_bytes(x.0))));
+        }
+        Ok(values)
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = ecpairingCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
+}
+
+struct Blake2f;
+impl Precompile for Blake2f {
+    fn address(&self) -> Address {
+        BLAKE_2F
+    }
+
+    fn signature(&self) -> &'static str {
+        blake2fCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        decode_blake2f(data)
+    }
 }
 
 fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
-    let rounds = u32::from_be_bytes(decoder.take_slice_unchecked(4)?.try_into().unwrap());
+    let mut decoder = abi::Decoder::new(data);
+    let rounds = u32::from_be_bytes(decoder.take_slice(4)?.try_into().unwrap());
     let u64_le_list =
         |x: &'a [u8]| x.chunks_exact(8).map(|x| u64::from_le_bytes(x.try_into().unwrap()));
-    let h = u64_le_list(decoder.take_slice_unchecked(64)?);
-    let m = u64_le_list(decoder.take_slice_unchecked(128)?);
-    let t = u64_le_list(decoder.take_slice_unchecked(16)?);
-    let f = decoder.take_slice_unchecked(1)?[0];
+    let h = u64_le_list(decoder.take_slice(64)?);
+    let m = u64_le_list(decoder.take_slice(128)?);
+    let t = u64_le_list(decoder.take_slice(16)?);
+    let f = decoder.take_slice(1)?[0];
     Ok(vec![
         rounds.to_string(),
         iter_to_string(h),
@@ -155,25 +315,31 @@ fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
     ])
 }
 
-fn decode_kzg(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
-    let versioned_hash = decoder.take_word()?;
-    let z = decoder.take_word()?;
-    let y = decoder.take_word()?;
-    let commitment = decoder.take_slice_unchecked(48)?;
-    let proof = decoder.take_slice_unchecked(48)?;
-    Ok(vec![
-        versioned_hash.to_string(),
-        z.to_string(),
-        y.to_string(),
-        hex::encode_prefixed(commitment),
-        hex::encode_prefixed(proof),
-    ])
-}
+struct PointEvaluation;
+impl Precompile for PointEvaluation {
+    fn address(&self) -> Address {
+        POINT_EVALUATION
+    }
 
-fn abi_decode_call<T: SolCall>(data: &[u8]) -> alloy_sol_types::Result<(&'static str, T)> {
-    // raw because there are no selectors here
-    Ok((T::SIGNATURE, T::abi_decode_raw(data, false)?))
+    fn signature(&self) -> &'static str {
+        pointEvaluationCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let mut decoder = abi::Decoder::new(data);
+        let versioned_hash = decoder.take_word()?;
+        let z = decoder.take_word()?;
+        let y = decoder.take_word()?;
+        let commitment = decoder.take_slice(48)?;
+        let proof = decoder.take_slice(48)?;
+        Ok(vec![
+            versioned_hash.to_string(),
+            z.to_string(),
+            y.to_string(),
+            hex::encode_prefixed(commitment),
+            hex::encode_prefixed(proof),
+        ])
+    }
 }
 
 fn iter_to_string<I: Iterator<Item = T>, T: std::fmt::Display>(iter: I) -> String {
@@ -216,7 +382,7 @@ mod tests {
             30364cd4f8a293b1a04f0153548d3e01baad091c69097ca4e9f26be63e4095b5
         "
         );
-        let decoded = decode_ecpairing(&data).unwrap();
+        let decoded = Ecpairing.decode_call(&data).unwrap();
         // 4 arrays of 6 32-byte values
         assert_eq!(decoded.len(), 4);
     }

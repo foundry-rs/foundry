@@ -1,10 +1,9 @@
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest_async,
-    rpc::{next_http_archive_rpc_url, next_mainnet_etherscan_api_key},
+    TestCommand, TestProject, forgetest_async,
+    rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
-    TestCommand, TestProject,
 };
 
 #[expect(clippy::too_many_arguments)]
@@ -19,7 +18,7 @@ fn test_verify_bytecode(
     verifier_url: &str,
     expected_matches: (&str, &str),
 ) {
-    let etherscan_key = next_mainnet_etherscan_api_key();
+    let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
     // fetch and flatten source code
@@ -33,7 +32,7 @@ fn test_verify_bytecode(
     prj.add_source(contract_name, &source_code).unwrap();
     prj.write_config(config);
 
-    let etherscan_key = next_mainnet_etherscan_api_key();
+    let etherscan_key = next_etherscan_api_key();
     let mut args = vec![
         "verify-bytecode",
         addr,
@@ -55,10 +54,14 @@ fn test_verify_bytecode(
 
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
 
-    assert!(output
-        .contains(format!("Creation code matched with status {}", expected_matches.0).as_str()));
-    assert!(output
-        .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+    assert!(
+        output
+            .contains(format!("Creation code matched with status {}", expected_matches.0).as_str())
+    );
+    assert!(
+        output
+            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str())
+    );
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -74,7 +77,7 @@ fn test_verify_bytecode_with_ignore(
     ignore: &str,
     chain: &str,
 ) {
-    let etherscan_key = next_mainnet_etherscan_api_key();
+    let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_url();
 
     // fetch and flatten source code
@@ -128,11 +131,17 @@ fn test_verify_bytecode_with_ignore(
     }
 
     if ignore == "runtime" {
-        assert!(!output
-            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+        assert!(
+            !output.contains(
+                format!("Runtime code matched with status {}", expected_matches.1).as_str()
+            )
+        );
     } else {
-        assert!(output
-            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+        assert!(
+            output.contains(
+                format!("Runtime code matched with status {}", expected_matches.1).as_str()
+            )
+        );
     }
 }
 forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
@@ -151,7 +160,7 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -170,7 +179,7 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -237,7 +246,7 @@ forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -258,7 +267,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("ignored", "partial"),
         "creation",
         "1",
@@ -280,7 +289,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "ignored"),
         "runtime",
         "1",

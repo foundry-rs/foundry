@@ -1,4 +1,4 @@
-use crate::{writer::traits::ParamLike, AsDoc, CommentTag, Comments, Deployment, Markdown};
+use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown, writer::traits::ParamLike};
 use itertools::Itertools;
 use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
 use std::{
@@ -132,7 +132,7 @@ impl BufWriter {
 
         // There is nothing to write.
         if params.is_empty() || comments.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         self.write_bold(heading)?;

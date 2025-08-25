@@ -4,26 +4,27 @@
 //! concurrently active pairs at once.
 
 use super::CreateFork;
+use crate::Env;
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{map::HashMap, U256};
+use alloy_primitives::{U256, map::HashMap};
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
-use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
+use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
+    FutureExt, StreamExt,
+    channel::mpsc::{Receiver, Sender, channel},
     stream::{Fuse, Stream},
     task::{Context, Poll},
-    Future, FutureExt, StreamExt,
 };
-use revm::primitives::Env;
+use revm::context::BlockEnv;
 use std::{
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        atomic::AtomicUsize,
-        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
         Arc,
+        atomic::AtomicUsize,
+        mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
     time::Duration,
 };
@@ -80,26 +81,33 @@ impl MultiFork {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
-        // Spawn a light-weight thread with a thread-local async runtime just for
-        // sending and receiving data from the remote client(s).
-        std::thread::Builder::new()
-            .name("multi-fork-backend".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime");
 
-                rt.block_on(async move {
-                    // Flush cache every 60s, this ensures that long-running fork tests get their
-                    // cache flushed from time to time.
-                    // NOTE: we install the interval here because the `tokio::timer::Interval`
-                    // requires a rt.
-                    handler.set_flush_cache_interval(Duration::from_secs(60));
-                    handler.await
-                });
-            })
-            .expect("failed to spawn thread");
+        // Spawn a light-weight thread just for sending and receiving data from the remote
+        // client(s).
+        let fut = async move {
+            // Flush cache every 60s, this ensures that long-running fork tests get their
+            // cache flushed from time to time.
+            // NOTE: we install the interval here because the `tokio::timer::Interval`
+            // requires a rt.
+            handler.set_flush_cache_interval(Duration::from_secs(60));
+            handler.await
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => _ = rt.spawn(fut),
+            Err(_) => {
+                _ = std::thread::Builder::new()
+                    .name("multi-fork-backend".into())
+                    .spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("failed to build tokio runtime")
+                            .block_on(fut)
+                    })
+                    .expect("failed to spawn thread")
+            }
+        }
+
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
         fork
     }
@@ -158,6 +166,18 @@ impl MultiFork {
             .map_err(|e| eyre::eyre!("{:?}", e))
     }
 
+    /// Updates the fork's entire env
+    ///
+    /// This is required for tx level forking where we need to fork off the `block - 1` state but
+    /// still need use env settings for `env`.
+    pub fn update_block_env(&self, fork: ForkId, env: BlockEnv) -> eyre::Result<()> {
+        trace!(?fork, ?env, "update fork block");
+        self.handler
+            .clone()
+            .try_send(Request::UpdateEnv(fork, env))
+            .map_err(|e| eyre::eyre!("{:?}", e))
+    }
+
     /// Returns the corresponding fork if it exists.
     ///
     /// Returns `None` if no matching fork backend is available.
@@ -201,6 +221,8 @@ enum Request {
     GetEnv(ForkId, GetEnvSender),
     /// Updates the block number and timestamp of the fork.
     UpdateBlock(ForkId, U256, U256),
+    /// Updates the block the entire block env,
+    UpdateEnv(ForkId, BlockEnv),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
@@ -258,10 +280,10 @@ impl MultiForkHandler {
     #[expect(irrefutable_let_patterns)]
     fn find_in_progress_task(&mut self, id: &ForkId) -> Option<&mut Vec<CreateSender>> {
         for task in &mut self.pending_tasks {
-            if let ForkTask::Create(_, in_progress, _, additional) = task {
-                if in_progress == id {
-                    return Some(additional);
-                }
+            if let ForkTask::Create(_, in_progress, _, additional) = task
+                && in_progress == id
+            {
+                return Some(additional);
             }
         }
         None
@@ -300,12 +322,18 @@ impl MultiForkHandler {
         }
     }
 
+    /// Update the fork's block entire env
+    fn update_env(&mut self, fork_id: ForkId, env: BlockEnv) {
+        if let Some(fork) = self.forks.get_mut(&fork_id) {
+            fork.opts.env.evm_env.block_env = env;
+        }
+    }
     /// Update fork block number and timestamp. Used to preserve values set by `roll` and `warp`
     /// cheatcodes when new fork selected.
     fn update_block(&mut self, fork_id: ForkId, block_number: U256, block_timestamp: U256) {
         if let Some(fork) = self.forks.get_mut(&fork_id) {
-            fork.opts.env.block.number = block_number;
-            fork.opts.env.block.timestamp = block_timestamp;
+            fork.opts.env.evm_env.block_env.number = block_number;
+            fork.opts.env.evm_env.block_env.timestamp = block_timestamp;
         }
     }
 
@@ -331,6 +359,9 @@ impl MultiForkHandler {
             }
             Request::UpdateBlock(fork_id, block_number, block_timestamp) => {
                 self.update_block(fork_id, block_number, block_timestamp);
+            }
+            Request::UpdateEnv(fork_id, block_env) => {
+                self.update_env(fork_id, block_env);
             }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");
@@ -432,8 +463,8 @@ impl Future for MultiForkHandler {
             .flush_cache_interval
             .as_mut()
             .map(|interval| interval.poll_tick(cx).is_ready())
-            .unwrap_or_default() &&
-            !pin.forks.is_empty()
+            .unwrap_or_default()
+            && !pin.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
             let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
@@ -494,11 +525,11 @@ impl Drop for ShutDownMultiFork {
         trace!(target: "fork::multi", "initiating shutdown");
         let (sender, rx) = oneshot_channel();
         let req = Request::ShutDown(sender);
-        if let Some(mut handler) = self.handler.take() {
-            if handler.try_send(req).is_ok() {
-                let _ = rx.recv();
-                trace!(target: "fork::cache", "multifork backend shutdown");
-            }
+        if let Some(mut handler) = self.handler.take()
+            && handler.try_send(req).is_ok()
+        {
+            let _ = rx.recv();
+            trace!(target: "fork::cache", "multifork backend shutdown");
         }
     }
 }
@@ -519,7 +550,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     // Initialise the fork environment.
     let (env, block) = fork.evm_opts.fork_evm_env(&fork.url).await?;
     fork.env = env;
-    let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
+    let meta = BlockchainDbMeta::new(fork.env.evm_env.block_env.clone(), fork.url.clone());
 
     // We need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
@@ -527,7 +558,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(meta.cfg_env.chain_id, number)
+        Config::foundry_block_cache_dir(fork.env.evm_env.cfg_env.chain_id, number)
     } else {
         None
     };
@@ -535,7 +566,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    let fork_id = ForkId::new(&fork.opts.url, number.into());
+    let fork_id = ForkId::new(&fork.opts.url, Some(number));
 
     Ok((fork_id, fork, handler))
 }

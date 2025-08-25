@@ -1,7 +1,9 @@
-forgetest!(call, |prj, cmd| {
-    prj.add_source(
-        "call.sol",
+forgetest_init!(call, |prj, cmd| {
+    prj.add_test(
+        "call.t.sol",
         r#"
+        import {Test} from "forge-std/Test.sol";
+
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
@@ -12,22 +14,25 @@ forgetest!(call, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_code(1).stderr_eq(str![[r#"
-error: usage of unsafe cheatcode `vm.ffi`
- [FILE]:7:20
+    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+...
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+ [FILE]:9:20
   |
-7 |                 vm.ffi(inputs);
-  |                    ^^^
+9 |                 vm.ffi(inputs);
+  |                    ---
   |
-
-
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+...
 "#]]);
 });
 
-forgetest!(assignment, |prj, cmd| {
-    prj.add_source(
-        "assignment.sol",
+forgetest_init!(assignment, |prj, cmd| {
+    prj.add_test(
+        "assignment.t.sol",
         r#"
+        import {Test} from "forge-std/Test.sol";
+
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
@@ -38,24 +43,28 @@ forgetest!(assignment, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_code(1).stderr_eq(str![[r#"
-error: usage of unsafe cheatcode `vm.ffi`
- [FILE]:7:34
+    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+...
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+ [FILE]:9:34
   |
-7 |                 bytes stuff = vm.ffi(inputs);
-  |                                  ^^^
+9 |                 bytes stuff = vm.ffi(inputs);
+  |                                  ---
   |
-
-
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+...
 "#]]);
 });
 
-forgetest!(exit_code, |prj, cmd| {
-    prj.add_source(
-        "multiple.sol",
+forgetest_init!(exit_code, |prj, cmd| {
+    prj.add_test(
+        "multiple.t.sol",
         r#"
+        import {Test} from "forge-std/Test.sol";
+
         contract A is Test {
             function do_ffi() public {
+                string[] memory inputs = new string[](1);
                 vm.ffi(inputs);
                 vm.ffi(inputs);
                 vm.ffi(inputs);
@@ -65,28 +74,31 @@ forgetest!(exit_code, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_code(3).stderr_eq(str![[r#"
-error: usage of unsafe cheatcode `vm.ffi`
- [FILE]:6:20
+    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+...
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+ [FILE]:9:20
   |
-6 |                 vm.ffi(inputs);
-  |                    ^^^
+9 |                 vm.ffi(inputs);
+  |                    ---
   |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
-error: usage of unsafe cheatcode `vm.ffi`
- [FILE]:7:20
-  |
-7 |                 vm.ffi(inputs);
-  |                    ^^^
-  |
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+  [FILE]:10:20
+   |
+10 |                 vm.ffi(inputs);
+   |                    ---
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
-error: usage of unsafe cheatcode `vm.ffi`
- [FILE]:8:20
-  |
-8 |                 vm.ffi(inputs);
-  |                    ^^^
-  |
-
-
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+  [FILE]:11:20
+   |
+11 |                 vm.ffi(inputs);
+   |                    ---
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+...
 "#]]);
 });

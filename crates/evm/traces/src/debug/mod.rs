@@ -1,13 +1,13 @@
 mod sources;
 use crate::CallTraceNode;
 use alloy_dyn_abi::{
-    parser::{Parameters, Storage},
     DynSolType, DynSolValue, Specifier,
+    parser::{Parameters, Storage},
 };
 use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, SourceData};
 
@@ -105,9 +105,9 @@ impl<'a> DebugStepsWalker<'a> {
             return false;
         };
 
-        loc.offset() == other_loc.offset() &&
-            loc.length() == other_loc.length() &&
-            loc.index() == other_loc.index()
+        loc.offset() == other_loc.offset()
+            && loc.length() == other_loc.length()
+            && loc.index() == other_loc.index()
     }
 
     /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
@@ -131,10 +131,10 @@ impl<'a> DebugStepsWalker<'a> {
     /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::Out].
     fn jump_out(&mut self) {
         let Some((i, _)) = self.stack.iter().enumerate().rfind(|(_, (_, step_idx))| {
-            self.is_same_loc(*step_idx, self.current_step) ||
-                self.is_same_loc(step_idx + 1, self.current_step - 1)
+            self.is_same_loc(*step_idx, self.current_step)
+                || self.is_same_loc(step_idx + 1, self.current_step - 1)
         }) else {
-            return
+            return;
         };
         // We've found a match, remove all records between start and end, those
         // are considered invalid.
@@ -158,10 +158,10 @@ impl<'a> DebugStepsWalker<'a> {
             })
             .unwrap_or_default();
 
-        self.node.trace.steps[start_idx].decoded = Some(DecodedTraceStep::InternalCall(
+        self.node.trace.steps[start_idx].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
             DecodedInternalCall { func_name, args: inputs, return_data: outputs },
             self.current_step,
-        ));
+        )));
     }
 
     fn process(&mut self) {

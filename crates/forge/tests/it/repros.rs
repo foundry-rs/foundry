@@ -3,12 +3,12 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
-use alloy_primitives::{address, b256, Address, U256};
+use alloy_primitives::{Address, U256, address, b256};
 use forge::{
     decode::decode_console_logs,
     result::{TestKind, TestStatus},
 };
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
@@ -126,7 +126,7 @@ test_repro!(3347, false, None, |res| {
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
     let event = Event::parse("event log2(uint256, uint256)").unwrap();
-    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
+    let decoded = event.decode_log(&test.logs[0].data).unwrap();
     assert_eq!(
         decoded,
         DecodedEvent {
@@ -272,7 +272,7 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test_call.idx, 0);
     assert_eq!(test_call.children, [1, 2, 3]);
     assert_eq!(test_call.trace.depth, 0);
-    assert!(test_call.trace.success);
+    assert!(!test_call.trace.is_error());
 
     let expected = [
         ("log(string)", vec!["\"a\""]),
@@ -286,7 +286,7 @@ test_repro!(6501, false, None, |res| {
         assert_eq!(trace.address, HARDHAT_CONSOLE_ADDRESS);
         assert_eq!(decoded.label, Some("console".into()));
         assert_eq!(trace.depth, 1);
-        assert!(trace.success);
+        assert!(!trace.is_error());
         assert_eq!(
             decoded.call_data,
             Some(DecodedCallData {
@@ -401,3 +401,21 @@ test_repro!(7238);
 
 // https://github.com/foundry-rs/foundry/issues/10302
 test_repro!(10302);
+
+// https://github.com/foundry-rs/foundry/issues/10477
+test_repro!(10477);
+
+// https://github.com/foundry-rs/foundry/issues/10527
+test_repro!(10527);
+
+// https://github.com/foundry-rs/foundry/issues/10552
+test_repro!(10552);
+
+// https://github.com/foundry-rs/foundry/issues/10586
+test_repro!(10586);
+
+// https://github.com/foundry-rs/foundry/issues/10957
+test_repro!(10957);
+
+// https://github.com/foundry-rs/foundry/issues/11353
+test_repro!(11353);

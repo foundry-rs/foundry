@@ -1,17 +1,17 @@
 use eyre::{Context, Result};
-use foundry_common::compact_to_contract;
+use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
+    Artifact, Compiler, ProjectCompileOutput,
     artifacts::{
-        sourcemap::{SourceElement, SourceMap},
         Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
+        sourcemap::{SourceElement, SourceMap},
     },
     multi::MultiCompilerLanguage,
-    Artifact, Compiler, ProjectCompileOutput,
 };
-use foundry_evm_core::utils::PcIcMap;
+use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{interface::Session, Parser};
+use solar_parse::{Parser, interface::Session};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -94,9 +94,9 @@ impl ArtifactData {
                 })
             };
 
-            // Only parse bytecode if it's not empty.
-            let pc_ic_map = if let Some(bytes) = b.bytes() {
-                (!bytes.is_empty()).then(|| PcIcMap::new(bytes))
+            // Only parse bytecode if it's not empty, stripping placeholders if necessary.
+            let pc_ic_map = if let Some(bytes) = strip_bytecode_placeholders(&b.object) {
+                (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref()))
             } else {
                 None
             };
@@ -287,7 +287,7 @@ impl ContractSources {
                 source_map.get(pc as usize)
             }?;
             // if the source element has an index, find the sourcemap for that index
-            let res = source_element
+            source_element
                 .index()
                 // if index matches current file_id, return current source code
                 .and_then(|index| {
@@ -299,9 +299,7 @@ impl ContractSources {
                         .get(&artifact.build_id)?
                         .get(&source_element.index()?)
                         .map(|source| (source_element.clone(), source.as_ref()))
-                });
-
-            res
+                })
         })
     }
 }
