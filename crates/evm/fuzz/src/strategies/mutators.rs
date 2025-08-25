@@ -115,7 +115,8 @@ impl GaussianNoiseMutator for I256 {
     }
 }
 
-/// Mutator that changes the current value of an uint or int by applying gaussian noise.
+/// Mutator that bounds the current value of an uint or int in the given range.
+/// The mutated value is always different from the current value.
 pub trait BoundMutator: Sized + Copy + Debug {
     fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self>;
 }
