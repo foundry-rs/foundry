@@ -8,11 +8,11 @@ use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, TryRecvError},
         LazyLock,
+        mpsc::{self, TryRecvError},
     },
     thread,
     time::Duration,
@@ -70,7 +70,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
@@ -121,7 +121,7 @@ impl SpinnerReporter {
                             // end with a newline
                             let _ = sh_println!();
                             let _ = ack.send(());
-                            break
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),

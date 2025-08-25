@@ -1,6 +1,6 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use revm::{context::JournalTr, interpreter::Host};
+use revm::context::JournalTr;
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -49,11 +49,7 @@ impl Prank {
     /// Apply the prank by setting `used` to true if it is false
     /// Only returns self in the case it is updated (first application)
     pub fn first_time_applied(&self) -> Option<Self> {
-        if self.used {
-            None
-        } else {
-            Some(Self { used: true, ..*self })
-        }
+        if self.used { None } else { Some(Self { used: true, ..*self }) }
     }
 }
 
@@ -128,13 +124,17 @@ fn prank(
     single_call: bool,
     delegate_call: bool,
 ) -> Result {
+    // Ensure that we load the account of the pranked address and mark it as touched.
+    // This is necessary to ensure that account state changes (such as the account's `nonce`) are
+    // properly tracked.
+    let account = journaled_account(ccx.ecx, *new_caller)?;
+
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
-        let code = ccx
-            .load_account_code(*new_caller)
-            .ok_or_else(|| eyre::eyre!("cannot `prank` delegate call from an EOA"))?;
-
-        ensure!(!code.data.is_empty(), "cannot `prank` delegate call from an EOA");
+        ensure!(
+            account.info.clone().code.is_some_and(|code| !code.is_empty()),
+            "cannot `prank` delegate call from an EOA"
+        );
     }
 
     let depth = ccx.ecx.journaled_state.depth();

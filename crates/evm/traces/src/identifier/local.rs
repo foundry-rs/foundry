@@ -1,8 +1,8 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{map::HashMap, Address, Bytes};
-use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
+use alloy_primitives::{Address, Bytes, map::HashMap};
+use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
@@ -19,7 +19,6 @@ pub struct LocalTraceIdentifier<'a> {
 
 impl<'a> LocalTraceIdentifier<'a> {
     /// Creates a new local trace identifier.
-    #[inline]
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         let mut ordered_ids = known_contracts
             .iter()
@@ -126,11 +125,7 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         // Note: the diff score can be inaccurate for small contracts so we're using a relatively
         // high threshold here to avoid filtering out too many contracts.
-        if min_score < 0.85 {
-            min_score_id
-        } else {
-            None
-        }
+        if min_score < 0.85 { min_score_id } else { None }
     }
 
     /// Returns the index of the artifact with the given code length, or the index of the first

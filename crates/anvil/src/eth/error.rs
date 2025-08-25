@@ -1,7 +1,8 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError};
+use alloy_evm::overrides::StateOverrideError;
+use alloy_primitives::{B256, Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -17,6 +18,7 @@ use revm::{
     interpreter::InstructionResult,
 };
 use serde::Serialize;
+use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -40,7 +42,7 @@ pub enum BlockchainError {
     FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
-    #[error("Prevrandao not in th EVM's environment after merge")]
+    #[error("Prevrandao not in the EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
@@ -68,6 +70,9 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    /// Thrown when a requested transaction is not found
+    #[error("transaction not found")]
+    TransactionNotFound,
     #[error("Required data unavailable")]
     DataUnavailable,
     #[error("Trie error: {0}")]
@@ -80,22 +85,41 @@ pub enum BlockchainError {
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
-    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later.")]
+    #[error(
+        "EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later."
+    )]
     EIP1559TransactionUnsupportedAtHardfork,
-    #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
+    #[error(
+        "Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later."
+    )]
     EIP2930TransactionUnsupportedAtHardfork,
-    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    #[error(
+        "EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later."
+    )]
     EIP4844TransactionUnsupportedAtHardfork,
-    #[error("EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later.")]
+    #[error(
+        "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
+    )]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
+    #[error(
+        "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
+    )]
     DepositTransactionUnsupported,
-    #[error("UnknownTransactionType not supported ")]
+    #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
+    #[error("Transaction {hash} was added to the mempool but wasn't confirmed within {duration:?}")]
+    TransactionConfirmationTimeout {
+        /// Hash of the transaction that timed out
+        hash: B256,
+        /// Duration that was waited before timing out
+        duration: Duration,
+    },
+    #[error("Failed to parse transaction request: missing required fields")]
+    MissingRequiredFields,
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -154,20 +178,21 @@ where
 
 impl From<WalletError> for BlockchainError {
     fn from(value: WalletError) -> Self {
+        Self::Message(value.to_string())
+    }
+}
+
+impl<E> From<StateOverrideError<E>> for BlockchainError
+where
+    E: Into<Self>,
+{
+    fn from(value: StateOverrideError<E>) -> Self {
         match value {
-            WalletError::ValueNotZero => Self::Message("tx value not zero".to_string()),
-            WalletError::FromSet => Self::Message("tx from field is set".to_string()),
-            WalletError::NonceSet => Self::Message("tx nonce is set".to_string()),
-            WalletError::InvalidAuthorization => {
-                Self::Message("invalid authorization address".to_string())
-            }
-            WalletError::IllegalDestination => Self::Message(
-                "the destination of the transaction is not a delegated account".to_string(),
-            ),
-            WalletError::InternalError => Self::Message("internal error".to_string()),
-            WalletError::InvalidTransactionRequest => {
-                Self::Message("invalid tx request".to_string())
-            }
+            StateOverrideError::InvalidBytecode(err) => Self::StateOverrideError(err.to_string()),
+            StateOverrideError::BothStateAndStateDiff(addr) => Self::StateOverrideError(format!(
+                "state and state_diff can't be used together for account {addr}",
+            )),
+            StateOverrideError::Database(err) => err.into(),
         }
     }
 }
@@ -287,6 +312,8 @@ pub enum InvalidTransactionError {
     /// Thrown when an access list is used before the berlin hard fork.
     #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
     AuthorizationListNotSupported,
+    #[error("Transaction gas limit is greater than the block gas limit, gas_limit: {0}, cap: {1}")]
+    TxGasLimitGreaterThanCap(u64, u64),
     /// Forwards error from the revm
     #[error(transparent)]
     Revm(revm::context_interface::result::InvalidTransaction),
@@ -308,7 +335,7 @@ impl From<InvalidTransaction> for InvalidTransactionError {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
-                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+                Self::GasTooHigh(ErrDetail { detail: String::from("GasFloorMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
             InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
@@ -330,15 +357,19 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
-            InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::Eip1559NotSupported |
-            InvalidTransaction::Eip2930NotSupported |
-            InvalidTransaction::Eip4844NotSupported |
-            InvalidTransaction::Eip7702NotSupported |
-            InvalidTransaction::EofCreateShouldHaveToAddress |
-            InvalidTransaction::EmptyAuthorizationList |
-            InvalidTransaction::Eip7873NotSupported |
-            InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
+            InvalidTransaction::TxGasLimitGreaterThanCap { gas_limit, cap } => {
+                Self::TxGasLimitGreaterThanCap(gas_limit, cap)
+            }
+
+            InvalidTransaction::AuthorizationListInvalidFields
+            | InvalidTransaction::Eip1559NotSupported
+            | InvalidTransaction::Eip2930NotSupported
+            | InvalidTransaction::Eip4844NotSupported
+            | InvalidTransaction::Eip7702NotSupported
+            | InvalidTransaction::EmptyAuthorizationList
+            | InvalidTransaction::Eip7873NotSupported
+            | InvalidTransaction::Eip7873MissingTarget
+            | InvalidTransaction::MissingChainId => Self::Revm(err),
         }
     }
 }
@@ -347,8 +378,8 @@ impl From<OpTransactionError> for InvalidTransactionError {
     fn from(value: OpTransactionError) -> Self {
         match value {
             OpTransactionError::Base(err) => err.into(),
-            OpTransactionError::DepositSystemTxPostRegolith |
-            OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
+            OpTransactionError::DepositSystemTxPostRegolith
+            | OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
         }
     }
 }
@@ -393,6 +424,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
+                BlockchainError::TransactionConfirmationTimeout { .. } => {
+                    RpcError::internal_error_with("Transaction confirmation timeout")
+                }
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
@@ -404,7 +438,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                             msg = format!("{msg}: {reason}");
                         }
                         RpcError {
-                            // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
+                            // geth returns this error code on reverts, See <https://eips.ethereum.org/EIPS/eip-1474#specification>
                             code: ErrorCode::ExecutionError,
                             message: msg.into(),
                             data: serde_json::to_value(data).ok(),
@@ -482,6 +516,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::TransactionNotFound => RpcError {
+                    code: ErrorCode::ServerError(-32001),
+                    message: err.to_string().into(),
+                    data: None,
+                },
                 err @ BlockchainError::DataUnavailable => {
                     RpcError::internal_error_with(err.to_string())
                 }
@@ -518,6 +557,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
                 err @ BlockchainError::UnknownTransactionType => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::MissingRequiredFields => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

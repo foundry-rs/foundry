@@ -1,15 +1,15 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
+use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
 use foundry_config::{
-    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{pretty_err, read_string, OutputExt, TestCommand},
+    util::{OutputExt, TestCommand, read_string},
 };
 use semver::Version;
 use std::{
@@ -69,7 +69,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
+Find more information in the book: https://getfoundry.sh/forge/overview
 
 "#]]);
 });
@@ -499,6 +499,53 @@ Warning: Target directory is not empty, but `--force` was specified
     let gitignore = root.join(".gitignore");
     let gitignore = fs::read_to_string(gitignore).unwrap();
     assert_eq!(gitignore, "not foundry .gitignore");
+});
+
+// `forge init --use-parent-git` works on already initialized git repository
+forgetest!(can_init_using_parent_repo, |prj, cmd| {
+    let root = prj.root();
+
+    // initialize new git repo
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
+    assert!(root.join(".git").exists());
+
+    prj.create_file("README.md", "non-empty dir");
+    prj.create_file(".gitignore", "not foundry .gitignore");
+
+    let folder = "foundry-folder";
+    cmd.arg("init").arg(folder).arg("--force").arg("--use-parent-git").assert_success().stdout_eq(
+        str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]],
+    );
+
+    assert!(root.join(folder).join("lib/forge-std").exists());
+
+    // not overwritten
+    let gitignore = root.join(".gitignore");
+    let gitignore = fs::read_to_string(gitignore).unwrap();
+    assert_eq!(gitignore, "not foundry .gitignore");
+
+    // submodules are registered at root
+    let gitmodules = root.join(".gitmodules");
+    let gitmodules = fs::read_to_string(gitmodules).unwrap();
+    assert!(gitmodules.contains(
+        "
+	path = foundry-folder/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+"
+    ));
 });
 
 // Checks that remappings.txt and .vscode/settings.json is generated
@@ -1067,7 +1114,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
-    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
         config.ignored_error_codes = vec![];
@@ -1503,7 +1550,7 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
         prj.update_config(|config| {
             config.remappings = vec![
                 Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
-                // explicit remapping for sub-dependendy seems necessary for some reason
+                // explicit remapping for sub-dependency seems necessary for some reason
                 Remapping::from_str(
                     "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
                 )
@@ -2677,7 +2724,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                   | Deployment Size |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 117171                                            | 471             |       |        |       |         |
+| 117159                                            | 471             |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                   |                 |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2716,7 +2763,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:DelegateProxy",
     "deployment": {
-      "gas": 117171,
+      "gas": 117159,
       "size": 471
     },
     "functions": {
@@ -2928,7 +2975,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-| 328961                                    | 1163            |     |        |     |         |
+| 328949                                    | 1163            |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -2983,7 +3030,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328961,
+      "gas": 328949,
       "size": 1163
     },
     "functions": {
@@ -3005,10 +3052,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.update_config(|config| {
         let remapping = prj.paths().libraries[0].join("myDependency");
-        config.remappings =
-            vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
-                .unwrap()
-                .into()];
+        config.remappings = vec![
+            Remapping::from_str(&format!("myDependency/={}", remapping.display())).unwrap().into(),
+        ];
     });
 
     prj.add_lib(
@@ -3023,9 +3069,9 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_lib(
         "myDependency/src/Config.sol",
         r#"
-        import "src/interfaces/IConfig.sol";
+        import {IConfig} from "myDependency/src/interfaces/IConfig.sol";
 
-    contract Config {}
+    contract Config is IConfig {}
    "#,
     )
     .unwrap();
@@ -3033,9 +3079,11 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_source(
         "Greeter",
         r#"
-        import "myDependency/src/Config.sol";
+        import {Config} from "myDependency/src/Config.sol";
 
-    contract Greeter {}
+    contract Greeter {
+        Config config;
+    }
    "#,
     )
     .unwrap();
@@ -3154,58 +3202,6 @@ forgetest_init!(can_bind, |prj, cmd| {
 Compiler run successful!
 Generating bindings for [..] contracts
 Bindings have been generated to [..]
-
-"#]]);
-});
-
-// checks missing dependencies are auto installed
-forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
-    prj.clear();
-
-    // wipe forge-std
-    let forge_std_dir = prj.root().join("lib/forge-std");
-    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
-
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 2 tests for test/Counter.t.sol:CounterTest
-[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
-[PASS] test_Increment() ([GAS])
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
-
-"#]]);
-});
-
-// checks missing dependencies are auto installed
-forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
-    prj.clear();
-
-    // wipe forge-std
-    let forge_std_dir = prj.root().join("lib/forge-std");
-    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
-
-    // Build the project
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]]);
-
-    // Expect compilation to be skipped as no files have changed
-    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 "#]]);
 });
@@ -3721,7 +3717,7 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 +================================================================================================+
 | Deployment Cost                         | Deployment Size |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| 1545498                                 | 7578            |        |        |        |         |
+| 1544498                                 | 7573            |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 |                                         |                 |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
@@ -3729,7 +3725,7 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | setUp                                   | 218902          | 218902 | 218902 | 218902 | 1       |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| test_Increment                          | 54915           | 54915  | 54915  | 54915  | 1       |
+| test_Increment                          | 51847           | 51847  | 51847  | 51847  | 1       |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
 
 
@@ -3776,8 +3772,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/Counter.t.sol:CounterTest",
     "deployment": {
-      "gas": 1545498,
-      "size": 7578
+      "gas": 1544498,
+      "size": 7573
     },
     "functions": {
       "setUp()": {
@@ -3789,10 +3785,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
       },
       "test_Increment()": {
         "calls": 1,
-        "min": 54915,
-        "mean": 54915,
-        "median": 54915,
-        "max": 54915
+        "min": 51847,
+        "mean": 51847,
+        "median": 51847,
+        "max": 51847
       }
     }
   }

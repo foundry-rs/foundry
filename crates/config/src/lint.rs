@@ -25,7 +25,13 @@ pub struct LinterConfig {
     ///
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
+
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Default's to ["ERC"] to allow common names like `rescueERC20` or `ERC721TokenReceiver`.
+    pub mixed_case_exceptions: Vec<String>,
 }
+
 impl Default for LinterConfig {
     fn default() -> Self {
         Self {
@@ -33,6 +39,7 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            mixed_case_exceptions: vec!["ERC".to_string()],
         }
     }
 }
@@ -45,6 +52,7 @@ pub enum Severity {
     Low,
     Info,
     Gas,
+    CodeSize,
 }
 
 impl Severity {
@@ -55,6 +63,7 @@ impl Severity {
             Self::Low => Paint::yellow(message).bold().to_string(),
             Self::Info => Paint::cyan(message).bold().to_string(),
             Self::Gas => Paint::green(message).bold().to_string(),
+            Self::CodeSize => Paint::green(message).bold().to_string(),
         }
     }
 }
@@ -63,7 +72,7 @@ impl From<Severity> for Level {
     fn from(severity: Severity) -> Self {
         match severity {
             Severity::High | Severity::Med | Severity::Low => Self::Warning,
-            Severity::Info | Severity::Gas => Self::Note,
+            Severity::Info | Severity::Gas | Severity::CodeSize => Self::Note,
         }
     }
 }
@@ -76,6 +85,7 @@ impl fmt::Display for Severity {
             Self::Low => self.color("Low"),
             Self::Info => self.color("Info"),
             Self::Gas => self.color("Gas"),
+            Self::CodeSize => self.color("CodeSize"),
         };
         write!(f, "{colored}")
     }
@@ -102,7 +112,10 @@ impl FromStr for Severity {
             "low" => Ok(Self::Low),
             "info" => Ok(Self::Info),
             "gas" => Ok(Self::Gas),
-            _ => Err(format!("unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas``")),
+            "size" | "codesize" | "code-size" => Ok(Self::CodeSize),
+            _ => Err(format!(
+                "unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas`, `CodeSize`"
+            )),
         }
     }
 }

@@ -1,26 +1,26 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    preprocessor::TestOptimizerPreprocessor,
-    reports::{report_kind, ReportKind},
+    TestFunctionExt,
+    preprocessor::DynamicTestLinkingPreprocessor,
+    reports::{ReportKind, report_kind},
     shell,
     term::SpinnerReporter,
-    TestFunctionExt,
 };
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
+    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
     compilers::{
-        solc::{Solc, SolcCompiler},
         Compiler,
+        solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
-    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
 use std::{
@@ -146,13 +146,15 @@ impl ProjectCompiler {
         self.dynamic_test_linking = preprocess;
         self
     }
+
     /// Compiles the project.
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
         mut self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
-        TestOptimizerPreprocessor: Preprocessor<C>,
+        DynamicTestLinkingPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
@@ -180,7 +182,7 @@ impl ProjectCompiler {
             let mut compiler =
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
             if preprocess {
-                compiler = compiler.with_preprocessor(TestOptimizerPreprocessor);
+                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
             compiler.compile().map_err(Into::into)
         })
@@ -196,7 +198,6 @@ impl ProjectCompiler {
     /// let prj = config.project().unwrap();
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
-    #[instrument(target = "forge::compile", skip_all)]
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
         self,
         f: F,
@@ -297,8 +298,8 @@ impl ProjectCompiler {
                         .as_ref()
                         .map(|abi| {
                             abi.functions().any(|f| {
-                                f.test_function_kind().is_known() ||
-                                    matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                                f.test_function_kind().is_known()
+                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                             })
                         })
                         .unwrap_or(false);
@@ -519,7 +520,7 @@ pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     quiet: bool,
 ) -> Result<ProjectCompileOutput<C>>
 where
-    TestOptimizerPreprocessor: Preprocessor<C>,
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }

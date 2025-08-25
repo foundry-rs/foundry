@@ -638,7 +638,7 @@ contract Eip712HashStructTest is DSTest {
         assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
     }
 
-    function testHashPermitSingle_withTypeDefinion() public {
+    function testHashPermitSingle_withTypeDefinition() public {
         PermitDetails memory details = PermitDetails({
             token: 0x1111111111111111111111111111111111111111,
             amount: 1000 ether,
@@ -722,7 +722,7 @@ contract Eip712HashStructTest is DSTest {
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-[PASS] testHashPermitSingle_withTypeDefinion() ([GAS])
+[PASS] testHashPermitSingle_withTypeDefinition() ([GAS])
 Logs:
   PermitSingle struct hash from cheatcode:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
@@ -764,4 +764,95 @@ contract Eip712HashTypedDataTest is DSTest {
     .unwrap();
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
+});
+
+// repro: <https://github.com/foundry-rs/foundry/issues/11366>
+forgetest!(test_eip712_hash_typed_data_repro, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashTypedData.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+contract CounterStrike {
+    bytes32 public constant ATTACK_TYPEHASH = keccak256("Attack(address player,uint128 x,uint128 y,uint40 shootTime)");
+    bytes32 public constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
+    string public constant PROTOCOL_NAME = "CounterStrike";
+}
+
+contract CounterStrike_Test is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    struct EIP712Domain {
+        string name;
+        uint256 chainId;
+        address verifyingContract;
+    }
+
+    struct Attack {
+        address player;
+        uint128 x;
+        uint128 y;
+        uint40 shootTime;
+    }
+
+    string constant SCHEMA_EIP712_DOMAIN = "EIP712Domain(string name,uint256 chainId,address verifyingContract)";
+    string constant SCHEMA_ATTACK = "Attack(address player,uint128 x,uint128 y,uint40 shootTime)";
+
+    CounterStrike public counterStrike;
+    address public player;
+    uint256 public playerPrivateKey;
+    uint128 public x = 10_000e18;
+    uint128 public y = 20_000e18;
+    uint40 public shootTime = 12_345_678;
+
+    function setUp() public {
+        counterStrike = new CounterStrike();
+    }
+
+    function test_Attack() public view {
+        string memory domainJson = vm.serializeJsonType(
+            SCHEMA_EIP712_DOMAIN,
+            abi.encode(
+                EIP712Domain({
+                    name: counterStrike.PROTOCOL_NAME(),
+                    chainId: block.chainid,
+                    verifyingContract: address(counterStrike)
+                })
+            )
+        );
+        string memory messageJson = vm.serializeJsonType(
+            SCHEMA_ATTACK, abi.encode(Attack({ player: player, x: x, y: y, shootTime: shootTime }))
+        );
+
+        string memory typesJson = string.concat(
+            '{"EIP712Domain":[{"name":"name","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Attack":[{"name":"player","type":"address"},{"name":"x","type":"uint128"},{"name":"y","type":"uint128"},{"name":"shootTime","type":"uint40"}]}'
+        );
+        string memory primaryType = '"Attack"';
+        string memory typedDataJson = string.concat(
+            '{"types":',
+            typesJson,
+            ',"primaryType":',
+            primaryType,
+            ',"domain":',
+            domainJson,
+            ',"message":',
+            messageJson,
+            "}"
+        );
+
+        bytes32 digest = vm.eip712HashTypedData(typedDataJson);
+        console.logBytes32(digest);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
 });

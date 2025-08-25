@@ -7,7 +7,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, parse_ether_value, LoadConfig},
+    utils::{self, LoadConfig, parse_ether_value},
 };
 use std::str::FromStr;
 
@@ -22,6 +22,7 @@ pub struct EstimateArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// The block height to query at.
@@ -58,6 +59,7 @@ pub enum EstimateSubcommands {
         sig: Option<String>,
 
         /// Constructor arguments
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
 
         /// Ether to send in the transaction

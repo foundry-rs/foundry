@@ -1,9 +1,9 @@
 use crate::{
-    document::{read_context, DocumentContent},
+    CONTRACT_INHERITANCE_ID, CommentTag, Comments, CommentsRef, DEPLOYMENTS_ID, Document,
+    GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
+    document::{DocumentContent, read_context},
     parser::ParseSource,
     writer::BufWriter,
-    CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, DEPLOYMENTS_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;

@@ -1,8 +1,8 @@
 //! Commonly used constants.
 
-use alloy_consensus::Typed2718;
+use alloy_eips::Typed2718;
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{address, Address, Signature, B256};
+use alloy_primitives::{Address, B256, Signature, address};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -53,7 +53,6 @@ pub const TYPE_BINDING_PREFIX: &str = "string constant schema_";
 /// Transactions from these senders usually don't have a any fee information OR set absurdly high fees that exceed the gas limit (See: <https://github.com/foundry-rs/foundry/pull/10608>)
 ///
 /// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS] and [Address::ZERO]
-#[inline]
 pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, Address::ZERO].contains(&sender)
 }
@@ -68,8 +67,8 @@ pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
 pub fn is_impersonated_sig(sig: &Signature, ty: u8) -> bool {
     let impersonated_sig =
         Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
-    if ty != SYSTEM_TRANSACTION_TYPE &&
-        (sig == &impersonated_sig || sig.r() == impersonated_sig.r())
+    if ty != SYSTEM_TRANSACTION_TYPE
+        && (sig == &impersonated_sig || sig.r() == impersonated_sig.r())
     {
         return true;
     }

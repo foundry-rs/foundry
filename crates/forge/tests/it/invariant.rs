@@ -3,7 +3,7 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -671,13 +671,7 @@ async fn test_invariant_after_invariant() {
                     None,
                     None,
                 ),
-                (
-                    "invariant_failure()",
-                    false,
-                    Some("invariant failure".into()),
-                    None,
-                    None,
-                ),
+                ("invariant_failure()", false, Some("invariant failure".into()), None, None),
                 ("invariant_success()", true, None, None, None),
             ],
         )]),
@@ -815,7 +809,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 10, calls: 5000, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 5, calls: 2500, reverts: 0)
 ...
 "#]]);
 });
@@ -1120,9 +1114,9 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x00000000000000000000000000000000000014ba addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016b9 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -1142,11 +1136,11 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		vm.prank(0x00000000000000000000000000000000000014ba);
+		vm.prank(0x00000000000000000000000000000000000014aD);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x00000000000000000000000000000000000016b9);
+		vm.prank(0x00000000000000000000000000000000000016Ac);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
@@ -1166,9 +1160,9 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant_increment replay failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x00000000000000000000000000000000000014ba addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016b9 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -1445,4 +1439,127 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
+});
+
+// Tests that `targetSelector` and `excludeSelector` applied on test contract selectors are
+// applied.
+// <https://github.com/foundry-rs/foundry/issues/11006>
+forgetest_init!(invariant_target_test_include_exclude_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetIncludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldInclude1.selector;
+       selectors[1] = this.shouldInclude2.selector;
+       targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_include() public view {
+        require(include, "does not include");
+    }
+}
+
+contract InvariantTargetExcludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldExclude1.selector;
+       selectors[1] = this.shouldExclude2.selector;
+       excludeSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_exclude() public view {
+        require(include, "does not include");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_exclude"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
 });

@@ -1,16 +1,16 @@
-use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
+use alloy_evm::{Database, EthEvm, Evm, EvmEnv, eth::EthEvmContext};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
 use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
 use revm::{
+    DatabaseCommit, Inspector,
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
         BlockEnv, TxEnv,
+        result::{EVMError, ExecResultAndState, ExecutionResult, ResultAndState},
     },
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
     primitives::hardfork::SpecId,
-    DatabaseCommit, Inspector,
 };
 
 /// Alias for result type returned by [`Evm::transact`] methods.
@@ -54,13 +54,13 @@ where
     /// Converts the [`EthEvm::transact`] result to [`EitherEvmResult`].
     fn map_eth_result(
         &self,
-        result: Result<ResultAndState<HaltReason>, EVMError<DB::Error>>,
+        result: Result<ExecResultAndState<ExecutionResult>, EVMError<DB::Error>>,
     ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
-            Ok(result) => {
-                // Map the halt reason
-                Ok(result.map_haltreason(OpHaltReason::Base))
-            }
+            Ok(result) => Ok(ResultAndState {
+                result: result.result.map_haltreason(OpHaltReason::Base),
+                state: result.state,
+            }),
             Err(e) => Err(self.map_eth_err(e)),
         }
     }
@@ -107,6 +107,13 @@ where
     type Precompiles = P;
     type Spec = SpecId;
 
+    fn block(&self) -> &BlockEnv {
+        match self {
+            Self::Eth(evm) => evm.block(),
+            Self::Op(evm) => evm.block(),
+        }
+    }
+
     fn chain_id(&self) -> u64 {
         match self {
             Self::Eth(evm) => evm.chain_id(),
@@ -114,10 +121,17 @@ where
         }
     }
 
-    fn block(&self) -> &BlockEnv {
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
         match self {
-            Self::Eth(evm) => evm.block(),
-            Self::Op(evm) => evm.block(),
+            Self::Eth(evm) => evm.components(),
+            Self::Op(evm) => evm.components(),
+        }
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        match self {
+            Self::Eth(evm) => evm.components_mut(),
+            Self::Op(evm) => evm.components_mut(),
         }
     }
 
