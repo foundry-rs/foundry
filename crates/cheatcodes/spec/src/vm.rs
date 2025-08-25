@@ -463,6 +463,13 @@ interface Vm {
 
     // -------- Block and Transaction Properties --------
 
+    /// Gets the current `block.chainid` of the currently selected environment.
+    /// You should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed
+    /// to be constant across a transaction, and as a result will get optimized out by the compiler.
+    /// See https://github.com/foundry-rs/foundry/issues/6180
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getChainId() external view returns (uint256 blockChainId);
+
     /// Sets `block.chainid`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function chainId(uint256 newChainId) external;
@@ -2027,6 +2034,10 @@ interface Vm {
 
     // ======== Environment Variables ========
 
+    /// Resolves the env variable placeholders of a given input string.
+    #[cheatcode(group = Environment)]
+    function resolveEnv(string calldata input) external returns (string memory);
+
     /// Sets environment variables.
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
@@ -2182,182 +2193,6 @@ interface Vm {
     /// Returns true if `forge` command was executed in given context.
     #[cheatcode(group = Environment)]
     function isContext(ForgeContext context) external view returns (bool result);
-
-    // ======== Forks ========
-
-    /// Returns an array with the name of all the configured fork chains.
-    ///
-    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
-    #[cheatcode(group = Forking)]
-    function readForkChains() external view returns (string[] memory);
-
-    /// Returns an array with the ids of all the configured fork chains.
-    ///
-    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
-    #[cheatcode(group = Forking)]
-    function readForkChainIds() external view returns (uint256[] memory);
-
-    /// Returns the chain name of the currently selected fork.
-    #[cheatcode(group = Forking)]
-    function readForkChain() external view returns (string memory);
-
-    /// Returns the chain id of the currently selected fork.
-    #[cheatcode(group = Forking)]
-    function readForkChainId() external view returns (uint256);
-
-    /// Returns the rpc url of the currently selected fork.
-    ///
-    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
-    /// the rpc config is specifically informed in the fork config for that specific chain.
-    #[cheatcode(group = Forking)]
-    function readForkRpcUrl() external view returns (string memory);
-
-    /// Returns the rpc url of the corresponding chain id.
-    ///
-    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
-    /// the rpc config is specifically informed in the fork config for that specific chain.
-    #[cheatcode(group = Forking)]
-    function readForkChainRpcUrl(uint256 id) external view returns (string memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bool`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBool(string calldata key) external view returns (bool);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bool`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBool(uint256 chain, string calldata key) external view returns (bool);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bool`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBoolArray(string calldata key) external view returns (bool[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bool`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBoolArray(uint256 chain, string calldata key) external view returns (bool[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `int256`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkInt(string calldata key) external view returns (int256);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `int256`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainInt(uint256 chain, string calldata key) external view returns (int256);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `int256`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkIntArray(string calldata key) external view returns (int256[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `int256`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainIntArray(uint256 chain, string calldata key) external view returns (int256[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `uint256`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkUint(string calldata key) external view returns (uint256);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `uint256`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainUint(uint256 chain, string calldata key) external view returns (uint256);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `uint256`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkUintArray(string calldata key) external view returns (uint256[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `uint256`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainUintArray(uint256 chain, string calldata key) external view returns (uint256[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `address`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkAddress(string calldata key) external view returns (address);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `address`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainAddress(uint256 chain, string calldata key) external view returns (address);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `address`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkAddressArray(string calldata key) external view returns (address[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `address`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainAddressArray(uint256 chain, string calldata key) external view returns (address[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bytes32`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBytes32(string calldata key) external view returns (bytes32);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bytes32`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bytes32`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBytes32Array(string calldata key) external view returns (bytes32[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bytes32`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBytes32Array(uint256 chain, string calldata key) external view returns (bytes32[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `string`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkString(string calldata key) external view returns (string memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `string`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainString(uint256 chain, string calldata key) external view returns (string memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `string`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkStringArray(string calldata key) external view returns (string[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `string`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainStringArray(uint256 chain, string calldata key) external view returns (string[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as `bytes`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBytes(string calldata key) external view returns (bytes memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as `bytes`.
-    /// Reverts if the key was not found or the value could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the currently active fork and parses it as an array of `bytes`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkBytesArray(string calldata key) external view returns (bytes[] memory);
-
-    /// Gets the value for the key `key` from the `[fork.<chain>]` section of `foundry.toml` for the specified chain and parses it as an array of `bytes`.
-    /// Reverts if a key was not found or any of the values could not be parsed.
-    #[cheatcode(group = Forking)]
-    function readForkChainBytesArray(uint256 chain, string calldata key) external view returns (bytes[] memory);
 
     // ======== Scripts ========
     // -------- Broadcasting Transactions --------
@@ -2718,6 +2553,12 @@ interface Vm {
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
+    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
+    /// Unlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;
+
     // ======== TOML Parsing and Manipulation ========
 
     // -------- Reading --------
@@ -2822,6 +2663,12 @@ interface Vm {
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
+
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    /// Unlike `writeToml`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
 
     // ======== Cryptography ========
 
@@ -2997,6 +2844,10 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function ensNamehash(string calldata name) external pure returns (bytes32);
 
+    /// Returns an uint256 value bounded in given range and different from the current one.
+    #[cheatcode(group = Utilities)]
+    function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);
+
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
     function randomUint() external view returns (uint256);
@@ -3012,6 +2863,10 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external view returns (address);
+
+    /// Returns an int256 value bounded in given range and different from the current one.
+    #[cheatcode(group = Utilities)]
+    function bound(int256 current, int256 min, int256 max) external view returns (int256);
 
     /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
