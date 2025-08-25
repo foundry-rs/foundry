@@ -1,0 +1,3 @@
+[fmt]
+line_length = 80
+wrap_comments = true
