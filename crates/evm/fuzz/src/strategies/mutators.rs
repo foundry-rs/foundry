@@ -52,7 +52,12 @@ static THREE_SIGMA_MULTIPLIERS: &[f64] = &[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0];
 pub(crate) trait IncrementDecrementMutator: Sized + Copy + Debug {
     fn validate(old: Self, new: Self, size: usize) -> Option<Self>;
 
-    #[instrument(name = "mutator::increment_decrement", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "mutator::increment_decrement",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mutated = if test_runner.rng().random::<bool>() {
             self.wrapping_add(Self::ONE)
@@ -96,7 +101,12 @@ pub(crate) trait GaussianNoiseMutator: Sized + Copy + Debug {
 }
 
 impl GaussianNoiseMutator for U256 {
-    #[instrument(name = "U256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "U256::mutate_with_gaussian_noise",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
         let mut bytes: [u8; 32] = self.to_be_bytes();
@@ -106,7 +116,12 @@ impl GaussianNoiseMutator for U256 {
 }
 
 impl GaussianNoiseMutator for I256 {
-    #[instrument(name = "I256::mutate_with_gaussian_noise", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "I256::mutate_with_gaussian_noise",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_with_gaussian_noise(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let scale_factor = sample_gaussian_scale(&mut test_runner.rng())?;
         let mut bytes: [u8; 32] = self.to_be_bytes();
@@ -122,6 +137,7 @@ pub trait BoundMutator: Sized + Copy + Debug {
 }
 
 impl BoundMutator for U256 {
+    #[instrument(name = "U256::bound", level = "trace", skip(test_runner), ret)]
     fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
         if min > max || self < min || self > max || min == max {
             return None;
@@ -145,6 +161,7 @@ impl BoundMutator for U256 {
 }
 
 impl BoundMutator for I256 {
+    #[instrument(name = "I256::bound", level = "trace", skip(test_runner), ret)]
     fn bound(self, min: Self, max: Self, test_runner: &mut TestRunner) -> Option<Self> {
         if min > max || self < min || self > max || min == max {
             return None;
@@ -186,7 +203,7 @@ pub(crate) trait BitMutator: Sized + Copy + Debug {
 }
 
 impl BitMutator for U256 {
-    #[instrument(name = "U256::flip_random_bit", skip(size, test_runner), ret)]
+    #[instrument(name = "U256::flip_random_bit", level = "trace", skip(size, test_runner), ret)]
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
@@ -195,7 +212,7 @@ impl BitMutator for U256 {
 }
 
 impl BitMutator for I256 {
-    #[instrument(name = "I256::flip_random_bit", skip(size, test_runner), ret)]
+    #[instrument(name = "I256::flip_random_bit", level = "trace", skip(size, test_runner), ret)]
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
@@ -204,7 +221,7 @@ impl BitMutator for I256 {
 }
 
 impl BitMutator for Address {
-    #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
+    #[instrument(name = "Address::flip_random_bit", level = "trace", skip(_size, test_runner), ret)]
     fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut mutated = self;
         flip_random_bit_in_slice(mutated.as_mut_slice(), test_runner)?;
@@ -213,7 +230,7 @@ impl BitMutator for Address {
 }
 
 impl BitMutator for Word {
-    #[instrument(name = "Word::flip_random_bit", skip(size, test_runner), ret)]
+    #[instrument(name = "Word::flip_random_bit", level = "trace", skip(size, test_runner), ret)]
     fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes = self;
         let slice = &mut bytes[..size];
@@ -231,21 +248,36 @@ pub(crate) trait InterestingWordMutator: Sized + Copy + Debug {
 }
 
 impl InterestingWordMutator for U256 {
-    #[instrument(name = "U256::mutate_interesting_byte", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "U256::mutate_interesting_byte",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_byte_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
 
-    #[instrument(name = "U256::mutate_interesting_word", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "U256::mutate_interesting_word",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_word_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
 
-    #[instrument(name = "U256::mutate_interesting_dword", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "U256::mutate_interesting_dword",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
@@ -254,21 +286,36 @@ impl InterestingWordMutator for U256 {
 }
 
 impl InterestingWordMutator for I256 {
-    #[instrument(name = "I256::mutate_interesting_byte", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "I256::mutate_interesting_byte",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_byte_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_int_mutation(self, Self::from_be_bytes(bytes), size)
     }
 
-    #[instrument(name = "I256::mutate_interesting_word", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "I256::mutate_interesting_word",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_word_slice(&mut bytes[32 - size / 8..], test_runner)?;
         validate_int_mutation(self, Self::from_be_bytes(bytes), size)
     }
 
-    #[instrument(name = "I256::mutate_interesting_dword", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "I256::mutate_interesting_dword",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
@@ -277,21 +324,36 @@ impl InterestingWordMutator for I256 {
 }
 
 impl InterestingWordMutator for Address {
-    #[instrument(name = "Address::mutate_interesting_byte", skip(_size, test_runner), ret)]
+    #[instrument(
+        name = "Address::mutate_interesting_byte",
+        level = "trace",
+        skip(_size, test_runner),
+        ret
+    )]
     fn mutate_interesting_byte(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut mutated = self;
         mutate_interesting_byte_slice(mutated.as_mut_slice(), test_runner)?;
         (self != mutated).then_some(mutated)
     }
 
-    #[instrument(name = "Address::mutate_interesting_word", skip(_size, test_runner), ret)]
+    #[instrument(
+        name = "Address::mutate_interesting_word",
+        level = "trace",
+        skip(_size, test_runner),
+        ret
+    )]
     fn mutate_interesting_word(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut mutated = self;
         mutate_interesting_word_slice(mutated.as_mut_slice(), test_runner)?;
         (self != mutated).then_some(mutated)
     }
 
-    #[instrument(name = "Address::mutate_interesting_dword", skip(_size, test_runner), ret)]
+    #[instrument(
+        name = "Address::mutate_interesting_dword",
+        level = "trace",
+        skip(_size, test_runner),
+        ret
+    )]
     fn mutate_interesting_dword(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut mutated = self;
         mutate_interesting_dword_slice(mutated.as_mut_slice(), test_runner)?;
@@ -300,7 +362,12 @@ impl InterestingWordMutator for Address {
 }
 
 impl InterestingWordMutator for Word {
-    #[instrument(name = "Word::mutate_interesting_byte", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "Word::mutate_interesting_byte",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes = self;
         let slice = &mut bytes[..size];
@@ -308,7 +375,12 @@ impl InterestingWordMutator for Word {
         (self != bytes).then_some(bytes)
     }
 
-    #[instrument(name = "Word::mutate_interesting_word", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "Word::mutate_interesting_word",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes = self;
         let slice = &mut bytes[..size];
@@ -316,7 +388,12 @@ impl InterestingWordMutator for Word {
         (self != bytes).then_some(bytes)
     }
 
-    #[instrument(name = "Word::mutate_interesting_dword", skip(size, test_runner), ret)]
+    #[instrument(
+        name = "Word::mutate_interesting_dword",
+        level = "trace",
+        skip(size, test_runner),
+        ret
+    )]
     fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes = self;
         let slice = &mut bytes[..size];

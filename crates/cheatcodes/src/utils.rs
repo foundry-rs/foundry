@@ -78,18 +78,20 @@ impl Cheatcode for ensNamehashCall {
 impl Cheatcode for bound_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { current, min, max } = *self;
-        let val = U256::bound(current, min, max, state.test_runner());
-        ensure!(val.is_some(), "cannot bound {current} in [{min}, {max}] range");
-        Ok(val.unwrap().abi_encode())
+        let Some(mutated) = U256::bound(current, min, max, state.test_runner()) else {
+            bail!("cannot bound {current} in [{min}, {max}] range")
+        };
+        Ok(mutated.abi_encode())
     }
 }
 
 impl Cheatcode for bound_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { current, min, max } = *self;
-        let val = I256::bound(current, min, max, state.test_runner());
-        ensure!(val.is_some(), "cannot bound {current} in [{min}, {max}] range");
-        Ok(val.unwrap().abi_encode())
+        let Some(mutated) = I256::bound(current, min, max, state.test_runner()) else {
+            bail!("cannot bound {current} in [{min}, {max}] range")
+        };
+        Ok(mutated.abi_encode())
     }
 }
 
