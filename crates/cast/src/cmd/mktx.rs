@@ -1,4 +1,4 @@
-use crate::tx::{self, CastTxBuilder};
+use crate::tx::{self, CastTxBuilder, TransactionInputKind};
 use alloy_ens::NameOrAddress;
 use alloy_network::{EthereumWallet, TransactionBuilder, eip2718::Encodable2718};
 use alloy_primitives::{Address, hex};
@@ -56,6 +56,13 @@ pub struct MakeTxArgs {
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from", conflicts_with = "raw_unsigned")]
     ethsign: bool,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.  Some nodes do not allow both to exist, hardhat "fork a network"
+    /// is an example.
+    #[arg(long = "transaction-input-kind", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub transaction_input_kind: Option<TransactionInputKind>,
 }
 
 #[derive(Debug, Parser)]
@@ -77,7 +84,7 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign, transaction_input_kind } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -98,7 +105,7 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
+        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config, transaction_input_kind)
             .await?
             .with_to(to)
             .await?

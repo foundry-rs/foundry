@@ -1,6 +1,6 @@
 use crate::{
     Cast,
-    tx::{self, CastTxBuilder},
+    tx::{self, CastTxBuilder, TransactionInputKind},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
@@ -67,6 +67,13 @@ pub struct SendTxArgs {
         help_heading = "Transaction options"
     )]
     path: Option<PathBuf>,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.  Some nodes do not allow both to exist, hardhat "fork a network"
+    /// is an example.
+    #[arg(long = "transaction-input-kind", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub transaction_input_kind: Option<TransactionInputKind>,
 }
 
 #[derive(Debug, Parser)]
@@ -100,6 +107,7 @@ impl SendTxArgs {
             unlocked,
             path,
             timeout,
+            transaction_input_kind
         } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -135,7 +143,7 @@ impl SendTxArgs {
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
 
-        let builder = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config, transaction_input_kind)
             .await?
             .with_to(to)
             .await?

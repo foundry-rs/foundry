@@ -1,7 +1,7 @@
 use crate::{
     Cast,
     traces::TraceKind,
-    tx::{CastTxBuilder, SenderKind},
+    tx::{CastTxBuilder, SenderKind, TransactionInputKind},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -165,6 +165,13 @@ pub struct CallArgs {
     /// Override the block number.
     #[arg(long = "block.number", value_name = "NUMBER")]
     pub block_number: Option<u64>,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.  Some nodes do not allow both to exist, hardhat "fork a network"
+    /// is an example.
+    #[arg(long = "transaction-input-kind", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub transaction_input_kind: Option<TransactionInputKind>,
 }
 
 #[derive(Debug, Parser)]
@@ -216,6 +223,7 @@ impl CallArgs {
             data,
             with_local_artifacts,
             disable_labels,
+            transaction_input_kind,
             ..
         } = self;
 
@@ -244,7 +252,7 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
+        let (tx, func) = CastTxBuilder::new(&provider, tx, &config, transaction_input_kind)
             .await?
             .with_to(to)
             .await?

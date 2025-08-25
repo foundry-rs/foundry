@@ -1,4 +1,4 @@
-use crate::tx::{CastTxBuilder, SenderKind};
+use crate::tx::{CastTxBuilder, SenderKind, TransactionInputKind};
 use alloy_ens::NameOrAddress;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
@@ -45,6 +45,13 @@ pub struct EstimateArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// When calling an RPC with optionally an "input" or a "data" field,
+    /// by default both are populated.  Set this to populate one or the
+    /// other.  Some nodes do not allow both to exist, hardhat "fork a network"
+    /// is an example.
+    #[arg(long = "transaction-input-kind", help_heading = "explicitly use \"input\" or \"data\" when calling an rpc where required")]
+    pub transaction_input_kind: Option<TransactionInputKind>,
 }
 
 #[derive(Debug, Parser)]
@@ -74,7 +81,7 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, cost, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, cost, eth, command, transaction_input_kind } = self;
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
@@ -97,7 +104,7 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config, transaction_input_kind)
             .await?
             .with_to(to)
             .await?

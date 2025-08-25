@@ -26,6 +26,18 @@ use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::fmt::Write;
 
+use clap::ValueEnum;
+
+
+// TODO: replace with alloy TransactionInputKind when release is made
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum TransactionInputKind {
+    Input,
+    Data,
+    #[default]
+    Both,
+}
+
 /// Different sender kinds used by [`CastTxBuilder`].
 #[expect(clippy::large_enum_variant)]
 pub enum SenderKind<'a> {
@@ -147,12 +159,13 @@ pub struct CastTxBuilder<P, S> {
     etherscan_api_version: EtherscanApiVersion,
     access_list: Option<Option<AccessList>>,
     state: S,
+    transaction_input_kind: Option<TransactionInputKind>, 
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
-    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
+    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config, transaction_input_kind: Option<TransactionInputKind>) -> Result<Self> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
@@ -200,6 +213,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
+            transaction_input_kind: transaction_input_kind, 
         })
     }
 
@@ -217,6 +231,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
+            transaction_input_kind: self.transaction_input_kind, 
         })
     }
 }
@@ -275,6 +290,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
+            transaction_input_kind: self.transaction_input_kind, 
         })
     }
 }
@@ -323,7 +339,13 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
         let input = Bytes::copy_from_slice(&self.state.input);
-        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+        
+        match self.transaction_input_kind {
+            Some(TransactionInputKind::Input) => self.tx.input = TransactionInput { input: Some(input), data: Option::None },
+            Some(TransactionInputKind::Data) => self.tx.input = TransactionInput { input: Option::None, data: Some(input) },
+            Some(TransactionInputKind::Both) => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
+            None => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
+        }
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
