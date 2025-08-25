@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.18.4"
-source = "git+https://github.com/alloy-rs/evm.git?rev=2b2b09f#2b2b09fec26e5c87f2b048624b7055ae3d0800f9"
+source = "git+https://github.com/alloy-rs/evm.git?rev=3c6cebb#3c6cebb92c34c8d836a11857474c3c057d2a4ea1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -334,7 +334,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.18.4"
-source = "git+https://github.com/alloy-rs/evm.git?rev=2b2b09f#2b2b09fec26e5c87f2b048624b7055ae3d0800f9"
+source = "git+https://github.com/alloy-rs/evm.git?rev=3c6cebb#3c6cebb92c34c8d836a11857474c3c057d2a4ea1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4819,7 +4819,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.17.0"
-source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=83cdcf0#83cdcf0e677a1a1baaf08ea6303fc2919c7c2eb9"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=eee6563#eee6563393acf9ba2b38f1eecc2c2aaa1e2cb90d"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -8172,8 +8172,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.28.2"
-source = "git+https://github.com/zerosnacks/revm-inspectors.git?rev=74e215d#74e215d0496107f9037de20051a5b266d5a7ff55"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b5c15d9c33ae98988a2a6a8db85b6a9e3389d1f3f2fdb95628a992f2b65b2c1"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
