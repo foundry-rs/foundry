@@ -1196,7 +1196,6 @@ impl DatabaseExt for Backend {
 
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
-
                 active.journaled_state.depth = journaled_state.depth;
 
                 for addr in persistent_addrs {
