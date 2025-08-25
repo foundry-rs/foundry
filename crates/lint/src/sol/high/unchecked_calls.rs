@@ -3,8 +3,10 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit};
-use solar::interface::kw;
+use solar::{
+    ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
+    interface::kw,
+};
 use std::ops::ControlFlow;
 
 declare_forge_lint!(

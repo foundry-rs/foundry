@@ -6,11 +6,13 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use serde::Serialize;
-use solar::parse::interface::Session;
-use solar::sema::{
-    Gcx, Hir,
-    hir::StructId,
-    ty::{Ty, TyKind},
+use solar::{
+    parse::interface::Session,
+    sema::{
+        Gcx, Hir,
+        hir::StructId,
+        ty::{Ty, TyKind},
+    },
 };
 use std::{
     collections::BTreeMap,

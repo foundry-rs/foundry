@@ -3,8 +3,10 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar::ast::{self as ast, Span};
-use solar::sema::hir::{self, Res};
+use solar::{
+    ast::{self as ast, Span},
+    sema::hir::{self, Res},
+};
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,

@@ -9,15 +9,17 @@ use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::prelude::*;
-use solar::ast::{self as ast, visit::Visit as VisitAST};
-use solar::interface::{
-    Session,
-    diagnostics::{self, HumanEmitter, JsonEmitter},
-    source_map::{FileName, SourceFile},
-};
-use solar::sema::{
-    Compiler, Gcx,
-    hir::{self, Visit as VisitHIR},
+use solar::{
+    ast::{self as ast, visit::Visit as VisitAST},
+    interface::{
+        Session,
+        diagnostics::{self, HumanEmitter, JsonEmitter},
+        source_map::{FileName, SourceFile},
+    },
+    sema::{
+        Compiler, Gcx,
+        hir::{self, Visit as VisitHIR},
+    },
 };
 use std::{
     path::{Path, PathBuf},

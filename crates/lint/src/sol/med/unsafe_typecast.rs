@@ -3,8 +3,10 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar::ast::{LitKind, StrKind};
-use solar::sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind};
+use solar::{
+    ast::{LitKind, StrKind},
+    sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
+};
 
 declare_forge_lint!(
     UNSAFE_TYPECAST,

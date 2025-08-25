@@ -1,5 +1,4 @@
-use solar::interface::data_structures::Never;
-use solar::sema::hir;
+use solar::{interface::data_structures::Never, sema::hir};
 use std::ops::ControlFlow;
 
 use super::LintContext;

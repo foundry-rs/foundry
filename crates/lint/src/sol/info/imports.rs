@@ -1,6 +1,8 @@
-use solar::ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit};
-use solar::data_structures::map::FxIndexSet;
-use solar::interface::SourceMap;
+use solar::{
+    ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit},
+    data_structures::map::FxIndexSet,
+    interface::SourceMap,
+};
 use std::ops::ControlFlow;
 
 use super::Imports;
