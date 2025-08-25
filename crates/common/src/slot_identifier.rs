@@ -18,9 +18,9 @@ pub struct SlotInfo {
     ///
     /// For top-level variables: just the variable name (e.g., "myVariable")
     /// For struct members: dotted path (e.g., "myStruct.memberName")
-    /// For array elements: name with indices (e.g., "myArray[0]", "matrix[1][2]")
+    /// For array elements: name with indices (e.g., "myArray\[0\]", "matrix\[1\]\[2\]")
     /// For nested structures: full path (e.g., "outer.inner.field")
-    /// For mappings: base name with keys (e.g., "balances[0x1234...]")
+    /// For mappings: base name with keys (e.g., "balances\[0x1234...\]")
     pub label: String,
     /// The Solidity type information
     #[serde(rename = "type", serialize_with = "serialize_slot_type")]
