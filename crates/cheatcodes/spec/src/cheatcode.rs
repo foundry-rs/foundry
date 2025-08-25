@@ -86,12 +86,6 @@ pub enum Group {
     ///
     /// Safety: safe.
     Scripting,
-    /// Cheatcodes that interact with the program's forking configuration.
-    ///
-    /// Examples: `readForkChains`, `readForkChainRpcUrl`, `readForkUint`, `readForkAddressArray`.
-    ///
-    /// Safety: safe.
-    Forking,
     /// Cheatcodes that interact with the OS or filesystem.
     ///
     /// Examples: `ffi`, `projectRoot`, `writeFile`.
@@ -145,7 +139,6 @@ impl Group {
         match self {
             Self::Evm | Self::Testing => None,
             Self::Scripting
-            | Self::Forking
             | Self::Filesystem
             | Self::Environment
             | Self::String
@@ -162,7 +155,6 @@ impl Group {
             Self::Evm => "evm",
             Self::Testing => "testing",
             Self::Scripting => "scripting",
-            Self::Forking => "forking",
             Self::Filesystem => "filesystem",
             Self::Environment => "environment",
             Self::String => "string",
