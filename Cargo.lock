@@ -4346,6 +4346,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-evm-fuzz",
  "foundry-evm-traces",
  "foundry-wallets",
  "itertools 0.14.0",
