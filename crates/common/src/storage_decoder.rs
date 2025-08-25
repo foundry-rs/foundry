@@ -1,0 +1,703 @@
+//! Storage decoding utilities for Solidity storage layouts.
+//!
+//! This module provides functionality to identify and decode storage slots based on
+//! Solidity storage layout information from the compiler.
+
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{B256, U256, hex, map::B256HashMap};
+use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
+use serde::Serialize;
+use std::{str::FromStr, sync::Arc};
+use tracing::trace;
+
+/// Information about a storage slot including its label, type, and decoded values.
+#[derive(Serialize, Debug)]
+pub struct SlotInfo {
+    /// The variable name from the storage layout.
+    ///
+    /// For top-level variables: just the variable name (e.g., "myVariable")
+    /// For struct members: dotted path (e.g., "myStruct.memberName")
+    /// For array elements: name with indices (e.g., "myArray[0]", "matrix[1][2]")
+    /// For nested structures: full path (e.g., "outer.inner.field")
+    /// For mappings: base name with keys (e.g., "balances[0x1234...]")
+    pub label: String,
+    /// The Solidity type information
+    #[serde(rename = "type", serialize_with = "serialize_slot_type")]
+    pub slot_type: StorageTypeInfo,
+    /// Offset within the storage slot (for packed storage)
+    pub offset: i64,
+    /// The storage slot number as a string
+    pub slot: String,
+    /// For struct members, contains nested SlotInfo for each member
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<SlotInfo>>,
+    /// Decoded values (if available) - used for struct members
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoded: Option<DecodedSlotValues>,
+    /// Decoded mapping keys (serialized as "key" for single, "keys" for multiple)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        flatten,
+        serialize_with = "serialize_mapping_keys"
+    )]
+    pub keys: Option<Vec<String>>,
+}
+
+/// Wrapper type that holds both the original type label and the parsed DynSolType.
+///
+/// We need both because:
+/// - `label`: Used for serialization to ensure output matches user expectations
+/// - `dyn_sol_type`: The parsed type used for actual value decoding
+#[derive(Debug)]
+pub struct StorageTypeInfo {
+    /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address => uint256)")
+    pub label: String,
+    /// The parsed dynamic Solidity type used for decoding
+    pub dyn_sol_type: DynSolType,
+}
+
+/// Custom serializer for StorageTypeInfo that only outputs the label
+fn serialize_slot_type<S>(info: &StorageTypeInfo, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&info.label)
+}
+
+/// Custom serializer for mapping keys
+fn serialize_mapping_keys<S>(keys: &Option<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeMap;
+    
+    if let Some(keys) = keys {
+        let mut map = serializer.serialize_map(Some(1))?;
+        if keys.len() == 1 {
+            map.serialize_entry("key", &keys[0])?;
+        } else if keys.len() > 1 {
+            map.serialize_entry("keys", keys)?;
+        }
+        map.end()
+    } else {
+        serializer.serialize_none()
+    }
+}
+
+/// Decoded storage slot values
+#[derive(Debug)]
+pub struct DecodedSlotValues {
+    /// Initial decoded storage value
+    pub previous_value: DynSolValue,
+    /// Current decoded storage value
+    pub new_value: DynSolValue,
+}
+
+impl Serialize for DecodedSlotValues {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
+        state.serialize_field("previousValue", &StorageDecoder::format_value(&self.previous_value))?;
+        state.serialize_field("newValue", &StorageDecoder::format_value(&self.new_value))?;
+        state.end()
+    }
+}
+
+/// Tracks mapping slot accesses for key decoding
+#[derive(Debug, Clone, Default)]
+pub struct MappingSlots {
+    /// Maps a storage slot to its key (the value that was hashed to get this slot)
+    pub keys: B256HashMap<B256>,
+    /// Maps a storage slot to its parent slot (for nested mappings)
+    pub parent_slots: B256HashMap<B256>,
+}
+
+/// Storage decoder that uses Solidity storage layout to identify and decode storage slots.
+pub struct StorageDecoder {
+    storage_layout: Arc<StorageLayout>,
+}
+
+impl StorageDecoder {
+    /// Creates a new StorageDecoder with the given storage layout.
+    pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
+        Self { storage_layout }
+    }
+
+    /// Identifies a storage slot and returns information about it.
+    pub fn identify(&self, slot: &B256) -> Option<SlotInfo> {
+        self.identify_with_mapping(slot, None)
+    }
+
+    /// Identifies a storage slot with optional mapping information for decoding mapped values.
+    pub fn identify_with_mapping(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+        let slot_u256 = U256::from_be_bytes(slot.0);
+        let slot_str = slot_u256.to_string();
+
+        for storage in &self.storage_layout.storage {
+            let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
+            let dyn_type = DynSolType::parse(&storage_type.label).ok();
+
+            // Check if we're able to match on a slot from the layout
+            if storage.slot == slot_str
+                && let Some(parsed_type) = dyn_type
+            {
+                // Successfully parsed - handle arrays or simple types
+                let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
+                    format!("{}{}", storage.label, self.get_array_base_indices(&parsed_type))
+                } else {
+                    storage.label.clone()
+                };
+
+                return Some(SlotInfo {
+                    label,
+                    slot_type: StorageTypeInfo {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: parsed_type,
+                    },
+                    offset: storage.offset,
+                    slot: storage.slot.clone(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                });
+            }
+
+            // Handle the case where the accessed `slot` is maybe different from the base slot.
+            let array_start_slot = U256::from_str(&storage.slot).ok()?;
+
+            if let Some(parsed_type) = dyn_type
+                && let DynSolType::FixedArray(_, _) = parsed_type
+                && let Some(slot_info) =
+                    self.handle_array_slot(storage, storage_type, slot_u256, array_start_slot, &slot_str)
+            {
+                return Some(slot_info);
+            }
+
+            // If type parsing fails and the label is a struct
+            if storage_type.label.starts_with("struct ")
+                && let Some(slot_info) =
+                    self.handle_struct(storage, storage_type, slot_u256, &slot_str)
+            {
+                return Some(slot_info);
+            }
+
+            // Check if this is a mapping slot
+            if let Some(mapping_slots) = mapping_slots
+                && let Some(slot_info) = self.handle_mapping(
+                    storage,
+                    storage_type,
+                    slot,
+                    &slot_str,
+                    mapping_slots,
+                )
+            {
+                return Some(slot_info);
+            }
+        }
+
+        None
+    }
+
+    /// Decodes a storage value using the provided type information.
+    pub fn decode(&self, value: B256, slot_info: &SlotInfo) -> Option<DynSolValue> {
+        // Find the storage type if we have full layout information
+        let storage_type = self.storage_layout.storage
+            .iter()
+            .find(|s| s.slot == slot_info.slot)
+            .and_then(|s| self.storage_layout.types.get(&s.storage_type));
+
+        self.decode_storage_value(value, &slot_info.slot_type.dyn_sol_type, storage_type)
+    }
+
+    /// Decodes a storage value with explicit type information.
+    pub fn decode_with_type(&self, value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
+        self.decode_storage_value(value, dyn_type, None)
+    }
+
+    /// Formats a decoded value as a raw string without type information.
+    pub fn format_value(value: &DynSolValue) -> String {
+        Self::format_dyn_sol_value_raw(value)
+    }
+
+    // Private helper methods
+
+    fn handle_array_slot(
+        &self,
+        storage: &Storage,
+        storage_type: &StorageType,
+        slot: U256,
+        array_start_slot: U256,
+        slot_str: &str,
+    ) -> Option<SlotInfo> {
+        // Check if slot is within array bounds
+        let total_bytes = storage_type.number_of_bytes.parse::<u64>().ok()?;
+        let total_slots = total_bytes.div_ceil(32);
+
+        if slot >= array_start_slot && slot < array_start_slot + U256::from(total_slots) {
+            let parsed_type = DynSolType::parse(&storage_type.label).ok()?;
+            let index = (slot - array_start_slot).to::<u64>();
+            // Format the array element label based on array dimensions
+            let label = match &parsed_type {
+                DynSolType::FixedArray(inner, _) => {
+                    if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
+                        // 2D array: calculate row and column
+                        let row = index / (*inner_size as u64);
+                        let col = index % (*inner_size as u64);
+                        format!("{}[{row}][{col}]", storage.label)
+                    } else {
+                        // 1D array
+                        format!("{}[{index}]", storage.label)
+                    }
+                }
+                _ => storage.label.clone(),
+            };
+
+            return Some(SlotInfo {
+                label,
+                slot_type: StorageTypeInfo {
+                    label: storage_type.label.clone(),
+                    dyn_sol_type: parsed_type,
+                },
+                offset: 0,
+                slot: slot_str.to_string(),
+                members: None,
+                decoded: None,
+                keys: None,
+            });
+        }
+
+        None
+    }
+
+    fn handle_struct(
+        &self,
+        storage: &Storage,
+        storage_type: &StorageType,
+        target_slot: U256,
+        slot_str: &str,
+    ) -> Option<SlotInfo> {
+        let struct_start_slot = U256::from_str(&storage.slot).ok()?;
+
+        let ctx = StructContext {
+            storage_layout: &self.storage_layout,
+            target_slot,
+            slot_str: slot_str.to_string(),
+        };
+
+        self.handle_struct_recursive(
+            &ctx,
+            &storage.label,
+            storage_type,
+            struct_start_slot,
+            storage.offset,
+            0,
+        )
+    }
+
+    fn handle_struct_recursive(
+        &self,
+        ctx: &StructContext<'_>,
+        base_label: &str,
+        storage_type: &StorageType,
+        struct_start_slot: U256,
+        offset: i64,
+        depth: usize,
+    ) -> Option<SlotInfo> {
+        // Limit recursion depth to prevent stack overflow
+        const MAX_DEPTH: usize = 10;
+        if depth > MAX_DEPTH {
+            return None;
+        }
+
+        let members = storage_type
+            .other
+            .get("members")
+            .and_then(|v| serde_json::from_value::<Vec<Storage>>(v.clone()).ok())?;
+
+        // If this is the exact slot we're looking for (struct's base slot)
+        if struct_start_slot == ctx.target_slot {
+            // Find the member at slot offset 0 (the member that starts at this slot)
+            if let Some(first_member) = members.iter().find(|m| m.slot == "0") {
+                let member_type_info = ctx.storage_layout.types.get(&first_member.storage_type)?;
+
+                // Check if we have a single-slot struct (all members have slot "0")
+                let is_single_slot = members.iter().all(|m| m.slot == "0");
+
+                if is_single_slot {
+                    // Build member info for single-slot struct
+                    let mut member_infos = Vec::new();
+                    for member in &members {
+                        if let Some(member_type_info) =
+                            ctx.storage_layout.types.get(&member.storage_type)
+                            && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
+                        {
+                            member_infos.push(SlotInfo {
+                                label: member.label.clone(),
+                                slot_type: StorageTypeInfo {
+                                    label: member_type_info.label.clone(),
+                                    dyn_sol_type: member_type,
+                                },
+                                offset: member.offset,
+                                slot: ctx.slot_str.clone(),
+                                members: None,
+                                decoded: None,
+                                keys: None,
+                            });
+                        }
+                    }
+
+                    // Build the CustomStruct type
+                    let struct_name =
+                        storage_type.label.strip_prefix("struct ").unwrap_or(&storage_type.label);
+                    let prop_names: Vec<String> = members.iter().map(|m| m.label.clone()).collect();
+                    let member_types: Vec<DynSolType> =
+                        member_infos.iter().map(|info| info.slot_type.dyn_sol_type.clone()).collect();
+
+                    let parsed_type = DynSolType::CustomStruct {
+                        name: struct_name.to_string(),
+                        prop_names,
+                        tuple: member_types,
+                    };
+
+                    return Some(SlotInfo {
+                        label: base_label.to_string(),
+                        slot_type: StorageTypeInfo {
+                            label: storage_type.label.clone(),
+                            dyn_sol_type: parsed_type,
+                        },
+                        offset,
+                        slot: ctx.slot_str.clone(),
+                        decoded: None,
+                        members: if member_infos.is_empty() { None } else { Some(member_infos) },
+                        keys: None,
+                    });
+                } else {
+                    // Multi-slot struct - return the first member.
+                    let member_label = format!("{}.{}", base_label, first_member.label);
+
+                    // If the first member is itself a struct, recurse
+                    if member_type_info.label.starts_with("struct ") {
+                        return self.handle_struct_recursive(
+                            ctx,
+                            &member_label,
+                            member_type_info,
+                            struct_start_slot,
+                            first_member.offset,
+                            depth + 1,
+                        );
+                    }
+
+                    // Return the first member as a primitive
+                    return Some(SlotInfo {
+                        label: member_label,
+                        slot_type: StorageTypeInfo {
+                            label: member_type_info.label.clone(),
+                            dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
+                        },
+                        offset: first_member.offset,
+                        slot: ctx.slot_str.clone(),
+                        decoded: None,
+                        members: None,
+                        keys: None,
+                    });
+                }
+            }
+        }
+
+        // Not the base slot - search through members
+        for member in &members {
+            let member_slot_offset = U256::from_str(&member.slot).ok()?;
+            let member_slot = struct_start_slot + member_slot_offset;
+            let member_type_info = ctx.storage_layout.types.get(&member.storage_type)?;
+            let member_label = format!("{}.{}", base_label, member.label);
+
+            if member_slot == ctx.target_slot {
+                // Found the exact member slot
+
+                // If this member is a struct, recurse into it
+                if member_type_info.label.starts_with("struct ") {
+                    return self.handle_struct_recursive(
+                        ctx,
+                        &member_label,
+                        member_type_info,
+                        member_slot,
+                        member.offset,
+                        depth + 1,
+                    );
+                }
+
+                // Regular member
+                let member_type = DynSolType::parse(&member_type_info.label).ok()?;
+                return Some(SlotInfo {
+                    label: member_label,
+                    slot_type: StorageTypeInfo {
+                        label: member_type_info.label.clone(),
+                        dyn_sol_type: member_type,
+                    },
+                    offset: member.offset,
+                    slot: ctx.slot_str.clone(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                });
+            }
+
+            // If this member is a struct and the requested slot might be inside it, recurse
+            if member_type_info.label.starts_with("struct ")
+                && let Some(slot_info) = self.handle_struct_recursive(
+                    ctx,
+                    &member_label,
+                    member_type_info,
+                    member_slot,
+                    member.offset,
+                    depth + 1,
+                )
+            {
+                return Some(slot_info);
+            }
+        }
+
+        None
+    }
+
+    fn handle_mapping(
+        &self,
+        storage: &Storage,
+        storage_type: &StorageType,
+        slot: &B256,
+        slot_str: &str,
+        mapping_slots: &MappingSlots,
+    ) -> Option<SlotInfo> {
+        trace!(
+            "handle_mapping: storage.slot={}, slot={:?}, has_keys={}, has_parents={}",
+            storage.slot,
+            slot,
+            mapping_slots.keys.contains_key(slot),
+            mapping_slots.parent_slots.contains_key(slot)
+        );
+
+        // Verify it's actually a mapping type
+        if storage_type.encoding != "mapping" {
+            return None;
+        }
+
+        // Check if this slot is a known mapping entry
+        if !mapping_slots.keys.contains_key(slot) {
+            return None;
+        }
+
+        // Convert storage.slot to B256 for comparison
+        let storage_slot_b256 = B256::from(U256::from_str(&storage.slot).ok()?);
+
+        // Walk up the parent chain to collect keys and validate the base slot
+        let mut current_slot = *slot;
+        let mut keys_to_decode = Vec::new();
+        let mut found_base = false;
+
+        while let Some((key, parent)) =
+            mapping_slots.keys.get(&current_slot).zip(mapping_slots.parent_slots.get(&current_slot))
+        {
+            keys_to_decode.push(*key);
+
+            // Check if the parent is our base storage slot
+            if *parent == storage_slot_b256 {
+                found_base = true;
+                break;
+            }
+
+            // Move up to the parent for the next iteration
+            current_slot = *parent;
+        }
+
+        if !found_base {
+            trace!("Mapping slot {} does not match any parent in chain", storage.slot);
+            return None;
+        }
+
+        // Resolve the mapping type to get all key types and the final value type
+        let (key_types, value_type_label, full_type_label) =
+            self.resolve_mapping_type(&storage.storage_type)?;
+
+        // Reverse keys to process from outermost to innermost
+        keys_to_decode.reverse();
+
+        // Build the label with decoded keys and collect decoded key values
+        let mut label = storage.label.clone();
+        let mut decoded_keys = Vec::new();
+
+        // Decode each key using the corresponding type
+        for (i, key) in keys_to_decode.iter().enumerate() {
+            if let Some(key_type_label) = key_types.get(i)
+                && let Ok(sol_type) = DynSolType::parse(key_type_label)
+                && let Ok(decoded) = sol_type.abi_decode(&key.0)
+            {
+                let decoded_key_str = Self::format_dyn_sol_value_raw(&decoded);
+                decoded_keys.push(decoded_key_str.clone());
+                label = format!("{label}[{decoded_key_str}]");
+            } else {
+                let hex_key = hex::encode_prefixed(key.0);
+                decoded_keys.push(hex_key.clone());
+                label = format!("{label}[{hex_key}]");
+            }
+        }
+
+        // Parse the final value type for decoding
+        let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
+
+        Some(SlotInfo {
+            label,
+            slot_type: StorageTypeInfo { label: full_type_label, dyn_sol_type },
+            offset: storage.offset,
+            slot: slot_str.to_string(),
+            members: None,
+            decoded: None,
+            keys: Some(decoded_keys),
+        })
+    }
+
+    fn resolve_mapping_type(
+        &self,
+        type_ref: &str,
+    ) -> Option<(Vec<String>, String, String)> {
+        let storage_type = self.storage_layout.types.get(type_ref)?;
+
+        if storage_type.encoding != "mapping" {
+            // Not a mapping, return the type as-is
+            return Some((vec![], storage_type.label.clone(), storage_type.label.clone()));
+        }
+
+        // Get key and value type references
+        let key_type_ref = storage_type.key.as_ref()?;
+        let value_type_ref = storage_type.value.as_ref()?;
+
+        // Resolve the key type
+        let key_type = self.storage_layout.types.get(key_type_ref)?;
+        let mut key_types = vec![key_type.label.clone()];
+
+        // Check if the value is another mapping (nested case)
+        if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
+            if value_storage_type.encoding == "mapping" {
+                // Recursively resolve the nested mapping
+                let (nested_keys, final_value, _) =
+                    self.resolve_mapping_type(value_type_ref)?;
+                key_types.extend(nested_keys);
+                return Some((key_types, final_value, storage_type.label.clone()));
+            } else {
+                // Value is not a mapping, we're done
+                return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
+            }
+        }
+
+        None
+    }
+
+    fn get_array_base_indices(&self, dyn_type: &DynSolType) -> String {
+        match dyn_type {
+            DynSolType::FixedArray(inner, _) => {
+                if let DynSolType::FixedArray(_, _) = inner.as_ref() {
+                    // Nested array (2D or higher)
+                    format!("[0]{}", self.get_array_base_indices(inner))
+                } else {
+                    // Simple 1D array
+                    "[0]".to_string()
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn decode_storage_value(
+        &self,
+        value: B256,
+        dyn_type: &DynSolType,
+        storage_type: Option<&StorageType>,
+    ) -> Option<DynSolValue> {
+        // Storage values are always 32 bytes, stored as a single word
+        // For arrays, we need to unwrap to the base element type
+        let mut actual_type = dyn_type;
+        // Unwrap nested arrays to get to the base element type.
+        while let DynSolType::FixedArray(elem_type, _) = actual_type {
+            actual_type = elem_type.as_ref();
+        }
+
+        // For tuples (structs), we need to decode each member based on its offset
+        if let DynSolType::Tuple(member_types) = actual_type {
+            // If we have storage type info with members, decode each member from the value
+            if let Some(st) = storage_type
+                && let Some(members_value) = st.other.get("members")
+                && let Ok(members) = serde_json::from_value::<Vec<Storage>>(members_value.clone())
+                && members.len() == member_types.len()
+            {
+                let mut decoded_members = Vec::new();
+
+                for (i, member) in members.iter().enumerate() {
+                    // Get the member type
+                    let member_type = &member_types[i];
+
+                    // Calculate byte range for this member
+                    let offset = member.offset as usize;
+                    let member_storage_type =
+                        self.storage_layout.types.get(&member.storage_type);
+                    let size = member_storage_type
+                        .and_then(|t| t.number_of_bytes.parse::<usize>().ok())
+                        .unwrap_or(32);
+
+                    // Extract bytes for this member from the full value
+                    let mut member_bytes = [0u8; 32];
+                    if offset + size <= 32 {
+                        // For packed storage: offset 0 is at the rightmost position
+                        let byte_start = 32 - offset - size;
+                        member_bytes[32 - size..]
+                            .copy_from_slice(&value.0[byte_start..byte_start + size]);
+                    }
+
+                    // Decode the member value
+                    if let Ok(decoded) = member_type.abi_decode(&member_bytes) {
+                        decoded_members.push(decoded);
+                    } else {
+                        return None;
+                    }
+                }
+
+                return Some(DynSolValue::Tuple(decoded_members));
+            }
+        }
+
+        // Use abi_decode to decode the value for non-struct types
+        actual_type.abi_decode(&value.0).ok()
+    }
+
+    fn format_dyn_sol_value_raw(value: &DynSolValue) -> String {
+        match value {
+            DynSolValue::Bool(b) => b.to_string(),
+            DynSolValue::Int(i, _) => i.to_string(),
+            DynSolValue::Uint(u, _) => u.to_string(),
+            DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
+            DynSolValue::Address(addr) => addr.to_string(),
+            DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
+            DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
+            DynSolValue::String(s) => s.clone(),
+            DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+                let formatted: Vec<String> = values.iter().map(Self::format_dyn_sol_value_raw).collect();
+                format!("[{}]", formatted.join(", "))
+            }
+            DynSolValue::Tuple(values) => {
+                let formatted: Vec<String> = values.iter().map(Self::format_dyn_sol_value_raw).collect();
+                format!("({})", formatted.join(", "))
+            }
+            DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
+                Self::format_dyn_sol_value_raw(&DynSolValue::Tuple(tuple.clone()))
+            }
+        }
+    }
+}
+
+/// Context for recursive struct processing
+struct StructContext<'a> {
+    storage_layout: &'a Arc<StorageLayout>,
+    target_slot: U256,
+    slot_str: String,
+}

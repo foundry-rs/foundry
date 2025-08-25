@@ -31,6 +31,7 @@ pub mod reports;
 pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
+pub mod storage_decoder;
 pub mod term;
 pub mod traits;
 pub mod transactions;
