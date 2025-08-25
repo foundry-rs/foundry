@@ -821,6 +821,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function activeFork() external view returns (uint256 forkId);
 
+    /// Returns the chain id of the currently active fork. Reverts if no fork is currently active.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function activeChain() external view returns (uint256 chainId);
+
     /// Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function createFork(string calldata urlOrAlias) external returns (uint256 forkId);
@@ -2027,6 +2031,10 @@ interface Vm {
 
     // ======== Environment Variables ========
 
+    /// Resolves the env variable placeholders of a given input string.
+    #[cheatcode(group = Environment)]
+    function resolveEnv(string calldata input) external returns (string memory);
+
     /// Sets environment variables.
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
@@ -2646,6 +2654,12 @@ interface Vm {
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
+
+    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
+    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    /// Unlike `writeToml`, this cheatcode will create new keys if they didn't previously exist.
+    #[cheatcode(group = Toml)]
+    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
 
     // ======== Cryptography ========
 

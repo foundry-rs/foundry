@@ -32,6 +32,7 @@ interface Vm {
     function _expectCheatcodeRevert(bytes calldata revertData) external;
     function accessList(AccessListItem[] calldata access) external;
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function activeChain() external view returns (uint256 chainId);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
@@ -436,6 +437,7 @@ interface Vm {
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetGasMetering() external;
     function resetNonce(address account) external;
+    function resolveEnv(string calldata input) external returns (string memory);
     function resumeGasMetering() external;
     function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
@@ -555,6 +557,7 @@ interface Vm {
     function writeJson(string calldata json, string calldata path) external;
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
     function writeLine(string calldata path, string calldata data) external;
+    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
     function writeToml(string calldata json, string calldata path) external;
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
 }

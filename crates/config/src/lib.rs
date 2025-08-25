@@ -66,7 +66,7 @@ use etherscan::{
     EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
 };
 
-mod resolve;
+pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
