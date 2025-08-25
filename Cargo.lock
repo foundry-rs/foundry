@@ -4486,7 +4486,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#0d0bc9da6a20b5b835bf897bc4cc7f742e0ef3ff"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#1f138648935623aa5420223bc97dcf523fef1097"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4522,7 +4522,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#0d0bc9da6a20b5b835bf897bc4cc7f742e0ef3ff"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#1f138648935623aa5420223bc97dcf523fef1097"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4531,7 +4531,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#0d0bc9da6a20b5b835bf897bc4cc7f742e0ef3ff"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#1f138648935623aa5420223bc97dcf523fef1097"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4553,7 +4553,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#0d0bc9da6a20b5b835bf897bc4cc7f742e0ef3ff"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#1f138648935623aa5420223bc97dcf523fef1097"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4567,7 +4567,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.18.2"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#0d0bc9da6a20b5b835bf897bc4cc7f742e0ef3ff"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fparsed-sources#1f138648935623aa5420223bc97dcf523fef1097"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
