@@ -1329,10 +1329,12 @@ impl Backend {
             env.evm_env.block_env.basefee = current_base_fee;
             env.evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
 
-            // pick a random value for prevrandao
-            env.evm_env.block_env.prevrandao = Some(B256::random());
-
             let best_hash = self.blockchain.storage.read().best_hash;
+
+            let mut input = Vec::with_capacity(40);
+            input.extend_from_slice(best_hash.as_slice());
+            input.extend_from_slice(&block_number.to_le_bytes());
+            env.evm_env.block_env.prevrandao = Some(keccak256(&input));
 
             if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();
@@ -3657,5 +3659,64 @@ pub fn op_haltreason_to_instruction_result(op_reason: OpHaltReason) -> Instructi
     match op_reason {
         OpHaltReason::Base(eth_h) => eth_h.into(),
         OpHaltReason::FailedDeposit => InstructionResult::Stop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{NodeConfig, spawn};
+
+    #[tokio::test]
+    async fn test_deterministic_block_mining() {
+        // Test that mine_block produces deterministic block hashes with same initial conditions
+        let genesis_timestamp = 1743944919u64;
+
+        // Create two identical backends
+        let config_a = NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into());
+        let config_b = NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into());
+
+        let (api_a, _handle_a) = spawn(config_a).await;
+        let (api_b, _handle_b) = spawn(config_b).await;
+
+        // Mine empty blocks (no transactions) on both backends
+        let outcome_a_1 = api_a.backend.mine_block(vec![]).await;
+        let outcome_b_1 = api_b.backend.mine_block(vec![]).await;
+
+        // Both should mine the same block number
+        assert_eq!(outcome_a_1.block_number, outcome_b_1.block_number);
+
+        // Get the actual blocks to compare hashes
+        let block_a_1 =
+            api_a.block_by_number(outcome_a_1.block_number.into()).await.unwrap().unwrap();
+        let block_b_1 =
+            api_b.block_by_number(outcome_b_1.block_number.into()).await.unwrap().unwrap();
+
+        // The block hashes should be identical
+        assert_eq!(
+            block_a_1.header.hash, block_b_1.header.hash,
+            "Block hashes should be deterministic. Got {} vs {}",
+            block_a_1.header.hash, block_b_1.header.hash
+        );
+
+        // Mine another block to ensure it remains deterministic
+        let outcome_a_2 = api_a.backend.mine_block(vec![]).await;
+        let outcome_b_2 = api_b.backend.mine_block(vec![]).await;
+
+        let block_a_2 =
+            api_a.block_by_number(outcome_a_2.block_number.into()).await.unwrap().unwrap();
+        let block_b_2 =
+            api_b.block_by_number(outcome_b_2.block_number.into()).await.unwrap().unwrap();
+
+        assert_eq!(
+            block_a_2.header.hash, block_b_2.header.hash,
+            "Second block hashes should also be deterministic. Got {} vs {}",
+            block_a_2.header.hash, block_b_2.header.hash
+        );
+
+        // Ensure the blocks are different (sanity check)
+        assert_ne!(
+            block_a_1.header.hash, block_a_2.header.hash,
+            "Different blocks should have different hashes"
+        );
     }
 }
