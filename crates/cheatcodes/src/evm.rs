@@ -1397,19 +1397,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
 
                                 let slot_info = layout.and_then(|layout| {
                                     let decoder = StorageDecoder::new(layout.clone());
-                                    // Convert internal MappingSlots to storage_decoder MappingSlots
-                                    // if available
-                                    let mapping_slots = mapping_slots.map(|ms| {
-                                        let mut decoder_slots =
-                                            foundry_common::storage_decoder::MappingSlots::default(
-                                            );
-                                        decoder_slots.keys = ms.keys.clone();
-                                        decoder_slots.parent_slots = ms.parent_slots.clone();
-
-                                        decoder_slots
-                                    });
-
-                                    decoder.identify(&storage_access.slot, mapping_slots.as_ref())
+                                    decoder.identify(&storage_access.slot, mapping_slots)
                                 });
 
                                 // Try to decode values if we have slot info

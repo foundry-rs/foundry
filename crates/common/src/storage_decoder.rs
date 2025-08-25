@@ -3,8 +3,9 @@
 //! This module provides functionality to identify and decode storage slots based on
 //! Solidity storage layout information from the compiler.
 
+use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex, map::B256HashMap};
+use alloy_primitives::{B256, U256, hex};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::Serialize;
 use std::{str::FromStr, sync::Arc};
@@ -105,15 +106,6 @@ impl Serialize for DecodedSlotValues {
         state.serialize_field("newValue", &format_value(&self.new_value))?;
         state.end()
     }
-}
-
-/// Tracks mapping slot accesses for key decoding
-#[derive(Debug, Clone, Default)]
-pub struct MappingSlots {
-    /// Maps a storage slot to its key (the value that was hashed to get this slot)
-    pub keys: B256HashMap<B256>,
-    /// Maps a storage slot to its parent slot (for nested mappings)
-    pub parent_slots: B256HashMap<B256>,
 }
 
 /// Storage decoder that uses Solidity storage layout to identify and decode storage slots.
