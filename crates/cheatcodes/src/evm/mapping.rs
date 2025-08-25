@@ -1,8 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_primitives::{
-    Address, B256, U256, keccak256,
-    map::AddressHashMap,
-};
+use alloy_primitives::{Address, B256, U256, keccak256, map::AddressHashMap};
 use alloy_sol_types::SolValue;
 use foundry_common::mapping_slots::MappingSlots;
 use revm::{
