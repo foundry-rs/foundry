@@ -381,7 +381,6 @@ macro_rules! impl_value_enum {
             pub const ALL: &'static [Self] = &[$(Self::$field),+];
 
             /// Returns the string representation of `self`.
-            #[inline]
             pub const fn as_str(&self) -> &'static str {
                 match self {
                     $(
@@ -391,7 +390,6 @@ macro_rules! impl_value_enum {
             }
 
             /// Returns all the aliases of `self`.
-            #[inline]
             pub const fn aliases(&self) -> &'static [&'static str] {
                 match self {
                     $(
@@ -402,17 +400,14 @@ macro_rules! impl_value_enum {
         }
 
         impl ::clap::ValueEnum for $name {
-            #[inline]
             fn value_variants<'a>() -> &'a [Self] {
                 Self::ALL
             }
 
-            #[inline]
             fn to_possible_value(&self) -> Option<::clap::builder::PossibleValue> {
                 Some(::clap::builder::PossibleValue::new(Self::as_str(self)).aliases(Self::aliases(self)))
             }
 
-            #[inline]
             fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
                 let _ = ignore_case;
                 <Self as ::std::str::FromStr>::from_str(input)
