@@ -9,7 +9,7 @@ mod paths;
 pub use self::paths::ProjectPathOpts;
 
 mod utils;
-pub use self::utils::{solar_pcx_from_build_opts, solar_pcx_from_solc_project};
+pub use self::utils::{configure_pcx, configure_pcx_from_solc};
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
 // to be merged into an existing `foundry_config::Config`.

@@ -16,7 +16,7 @@ declare_forge_lint!(
 impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     fn check_expr(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {

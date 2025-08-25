@@ -16,7 +16,7 @@ declare_forge_lint!(
 impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     fn check_function(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -92,7 +92,7 @@ impl UnwrappedModifierLogic {
 
     fn get_snippet<'a>(
         &self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &hir::Hir<'_>,
         func: &hir::Function<'_>,
         before: &'a [hir::Stmt<'a>],

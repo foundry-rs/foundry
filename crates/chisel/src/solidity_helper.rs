@@ -173,7 +173,7 @@ impl SolidityHelper {
 
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
-        self.sess.enter(|| f(&self.sess));
+        self.sess.enter_sequential(|| f(&self.sess));
     }
 }
 

@@ -13,7 +13,7 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
-    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
+    fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(
             left_expr,
             BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },

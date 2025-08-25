@@ -26,7 +26,7 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for Imports {
     fn check_import_directive(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         import: &'ast ast::ImportDirective<'ast>,
     ) {
         // Non-aliased plain imports like `import "File.sol";`.
@@ -37,7 +37,7 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
         }
     }
 
-    fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast SourceUnit<'ast>) {
+    fn check_full_source_unit(&mut self, ctx: &LintContext<'ast, '_>, ast: &'ast SourceUnit<'ast>) {
         // Despite disabled lints are filtered inside `ctx.emit()`, we explicitly check
         // upfront to avoid the expensive full source unit traversal when unnecessary.
         if ctx.is_lint_enabled(UNUSED_IMPORT.id) {
@@ -70,7 +70,7 @@ impl<'ast> UnusedChecker<'ast> {
     }
 
     /// Check for unused imports and emit warnings.
-    fn check_unused_imports(&self, ast: &SourceUnit<'_>, ctx: &LintContext<'_>) {
+    fn check_unused_imports(&self, ast: &SourceUnit<'_>, ctx: &LintContext) {
         for item in ast.items.iter() {
             let span = item.span;
             let ast::ItemKind::Import(import) = &item.kind else { continue };
@@ -94,7 +94,7 @@ impl<'ast> UnusedChecker<'ast> {
         }
     }
 
-    fn unused_import(&self, ctx: &LintContext<'_>, span: Span) {
+    fn unused_import(&self, ctx: &LintContext, span: Span) {
         ctx.emit(&UNUSED_IMPORT, span);
     }
 }
@@ -126,20 +126,6 @@ impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
         }
 
         self.walk_using_directive(using)
-    }
-
-    fn visit_function_header(
-        &mut self,
-        header: &'ast solar_ast::FunctionHeader<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        // temporary workaround until solar also visits `override` and its paths <https://github.com/paradigmxyz/solar/pull/383>.
-        if let Some(ref override_) = header.override_ {
-            for path in override_.paths.iter() {
-                _ = self.visit_path(path);
-            }
-        }
-
-        self.walk_function_header(header)
     }
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {

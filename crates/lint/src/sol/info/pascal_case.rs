@@ -13,7 +13,7 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
-    fn check_item_struct(&mut self, ctx: &LintContext<'_>, strukt: &'ast ItemStruct<'ast>) {
+    fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
         let name = strukt.name.as_str();
         if name.len() > 1 && !is_pascal_case(name) {
             ctx.emit(&PASCAL_CASE_STRUCT, strukt.name.span);
