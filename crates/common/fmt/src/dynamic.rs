@@ -174,7 +174,7 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
             }
         }
         DynSolValue::Uint(i, _) => {
-            if let Ok(n) = TryInto::<u64>::try_into(i) {
+            if let Ok(n) = u64::try_from(i) {
                 // Use `serde_json::Number` if the number can be accurately represented.
                 Ok(Value::Number(n.into()))
             } else {
