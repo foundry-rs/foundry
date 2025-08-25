@@ -197,13 +197,13 @@ impl BindJsonArgs {
                         continue;
                     }
 
-                    if let FileName::Real(ref path) = source.file.name {
+                    if let FileName::Real(path) = &source.file.name {
                         structs_to_write.push(StructToWrite {
                             name: def.name.as_str().into(),
                             contract_name: def
                                 .contract
                                 .map(|id| hir.contract(id).name.as_str().into()),
-                            path: path.strip_prefix(root).unwrap_or_else(|_| path).to_path_buf(),
+                            path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
                             schema,
                             // will be filled later
                             import_alias: None,
