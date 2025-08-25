@@ -1,16 +1,12 @@
 use foundry_compilers::{
-    Compiler, Language, ProjectPathsConfig, apply_updates,
+    Compiler, ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::SolcLanguage,
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
     project::Preprocessor,
     solc::{SolcCompiler, SolcVersionedInput},
 };
-use solar_parse::{
-    ast::Span,
-    interface::{Session, SourceMap},
-};
-use solar_sema::ParsingContext;
+use solar_parse::{ast::Span, interface::SourceMap};
 use std::{
     collections::HashSet,
     ops::{ControlFlow, Range},
@@ -53,12 +49,10 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             return Ok(());
         }
 
-        let sess = solar_session_from_solc(input);
-        let mut compiler = solar_sema::Compiler::new(sess);
+        let mut compiler =
+            foundry_compilers::resolver::parse::SolParser::new(paths.with_language_ref()).compiler;
         let _ = compiler.enter_mut(|compiler| -> solar_parse::interface::Result {
-            // Set up the parsing context with the project paths.
             let mut pcx = compiler.parse();
-            solar_pcx_from_solc_no_sources(&mut pcx, input, paths);
 
             // Add the sources into the context.
             // Include all sources in the source map so as to not re-load them from disk, but only
@@ -81,24 +75,22 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             pcx.parse();
             let ControlFlow::Continue(()) = compiler.lower_asts()? else { return Ok(()) };
             let gcx = compiler.gcx();
-            let hir = &gcx.hir;
             // Collect tests and scripts dependencies and identify mock contracts.
             let deps = PreprocessorDependencies::new(
-                gcx.sess,
-                hir,
+                gcx,
                 &preprocessed_paths,
                 &paths.paths_relative().sources,
                 &paths.root,
                 mocks,
             );
             // Collect data of source contracts referenced in tests and scripts.
-            let data = collect_preprocessor_data(gcx.sess, hir, &deps.referenced_contracts);
+            let data = collect_preprocessor_data(gcx, &deps.referenced_contracts);
 
             // Extend existing sources with preprocessor deploy helper sources.
             sources.extend(create_deploy_helpers(&data));
 
             // Generate and apply preprocessor source updates.
-            apply_updates(sources, remove_bytecode_dependencies(hir, &deps, &data));
+            apply_updates(sources, remove_bytecode_dependencies(gcx, &deps, &data));
 
             Ok(())
         });
@@ -128,41 +120,4 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
         let paths = paths.clone().with_language::<SolcLanguage>();
         self.preprocess(solc, input, &paths, mocks)
     }
-}
-
-fn solar_session_from_solc(solc: &SolcVersionedInput) -> Session {
-    use solar_parse::interface::config;
-
-    Session::builder()
-        .with_buffer_emitter(Default::default())
-        .opts(config::Opts {
-            language: match solc.input.language {
-                SolcLanguage::Solidity => config::Language::Solidity,
-                SolcLanguage::Yul => config::Language::Yul,
-                _ => unimplemented!(),
-            },
-
-            // TODO: ...
-            /*
-            evm_version: solc.input.settings.evm_version,
-            */
-            ..Default::default()
-        })
-        .build()
-}
-
-fn solar_pcx_from_solc_no_sources(
-    pcx: &mut ParsingContext<'_>,
-    solc: &SolcVersionedInput,
-    paths: &ProjectPathsConfig<impl Language>,
-) {
-    pcx.file_resolver.set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&paths.root));
-    for remapping in &paths.remappings {
-        pcx.file_resolver.add_import_remapping(solar_sema::interface::config::ImportRemapping {
-            context: remapping.context.clone().unwrap_or_default(),
-            prefix: remapping.name.clone(),
-            path: remapping.path.clone(),
-        });
-    }
-    pcx.file_resolver.add_include_paths(solc.cli_settings.include_paths.iter().cloned());
 }
