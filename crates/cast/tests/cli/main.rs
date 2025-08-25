@@ -1559,7 +1559,7 @@ casttest!(estimate_explicit_data_field_input, |_prj, cmd| {
         "estimate",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "input",
         "--create",
         "0000",
@@ -1611,7 +1611,7 @@ casttest!(estimate_explicit_data_field_data, |_prj, cmd| {
         "estimate",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "data",
         "--create",
         "0000",
@@ -1676,7 +1676,7 @@ casttest!(access_list_explicit_data_field_input, |_prj, cmd| {
         "-33333",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "input"
     ]).assert_success();
 
@@ -1735,7 +1735,7 @@ casttest!(access_list_explicit_data_field_data, |_prj, cmd| {
         "-33333",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "data"
     ]).assert_success();
 
@@ -1776,7 +1776,7 @@ casttest!(mktx_explicit_data_field_input, |_prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "0x0000000000000000000000000000000000000001",
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "input",
         "--ethsign",
         "--from",
@@ -1822,7 +1822,7 @@ casttest!(mktx_explicit_data_field_data, |_prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "0x0000000000000000000000000000000000000001",
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "data",
         "--ethsign",
         "--from",
@@ -1852,11 +1852,11 @@ casttest!(mktx_explicit_data_field_invalid, |_prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "0x0000000000000000000000000000000000000001",
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "blah"
     ])
     .assert_failure().stderr_eq(str![[r#"
-error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+error: invalid value 'blah' for '--transaction-input-kind <transaction_input_kind>'
   [possible values: input, data, both]
 
 For more information, try '--help'.
@@ -2749,7 +2749,7 @@ casttest!(send_eip7702_explicit_data_field_input, async |_prj, cmd| {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "input",
         "--legacy"
     ])
@@ -2841,7 +2841,7 @@ casttest!(send_eip7702_explicit_data_field_data, async |_prj, cmd| {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "data",
         "--legacy"
     ])
@@ -2871,11 +2871,11 @@ casttest!(send_eip7702_explicit_data_field_invalid, async |_prj, cmd| {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "blah"
     ])
     .assert_failure().stderr_eq(str![[r#"
-error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+error: invalid value 'blah' for '--transaction-input-kind <transaction_input_kind>'
   [possible values: input, data, both]
 
 For more information, try '--help'.
@@ -3997,7 +3997,7 @@ casttest!(cast_call_explicit_data_field_input, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "input",
     ])
     .assert_success();
@@ -4045,7 +4045,7 @@ casttest!(cast_call_explicit_data_field_data, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "data",
     ])
     .assert_success();
@@ -4069,11 +4069,11 @@ casttest!(cast_call_explicit_data_field_invalid, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000",
         "--rpc-url",
         server.url("/").as_str(),
-        "--use-explicit-data-field",
+        "--transaction-input-kind",
         "blah",
     ])
     .assert_failure().stderr_eq(str![[r#"
-error: invalid value 'blah' for '--use-explicit-data-field <USE_EXPLICIT_DATA_FIELD>'
+error: invalid value 'blah' for '--transaction-input-kind <transaction_input_kind>'
   [possible values: input, data, both]
 
 For more information, try '--help'.

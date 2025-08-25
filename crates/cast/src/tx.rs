@@ -28,8 +28,10 @@ use std::fmt::Write;
 
 use clap::ValueEnum;
 
+
+// TODO: replace with alloy TransactionInputKind when release is made
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum TxDataField {
+pub enum TransactionInputKind {
     Input,
     Data,
     #[default]
@@ -157,13 +159,13 @@ pub struct CastTxBuilder<P, S> {
     etherscan_api_version: EtherscanApiVersion,
     access_list: Option<Option<AccessList>>,
     state: S,
-    use_explicit_data_field: Option<TxDataField>, 
+    transaction_input_kind: Option<TransactionInputKind>, 
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
-    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config, use_explicit_data_field: Option<TxDataField>) -> Result<Self> {
+    pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config, transaction_input_kind: Option<TransactionInputKind>) -> Result<Self> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
@@ -211,7 +213,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
-            use_explicit_data_field: use_explicit_data_field, 
+            transaction_input_kind: transaction_input_kind, 
         })
     }
 
@@ -229,7 +231,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
-            use_explicit_data_field: self.use_explicit_data_field, 
+            transaction_input_kind: self.transaction_input_kind, 
         })
     }
 }
@@ -288,7 +290,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
-            use_explicit_data_field: self.use_explicit_data_field, 
+            transaction_input_kind: self.transaction_input_kind, 
         })
     }
 }
@@ -338,10 +340,10 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
         let input = Bytes::copy_from_slice(&self.state.input);
         
-        match self.use_explicit_data_field {
-            Some(TxDataField::Input) => self.tx.input = TransactionInput { input: Some(input), data: Option::None },
-            Some(TxDataField::Data) => self.tx.input = TransactionInput { input: Option::None, data: Some(input) },
-            Some(TxDataField::Both) => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
+        match self.transaction_input_kind {
+            Some(TransactionInputKind::Input) => self.tx.input = TransactionInput { input: Some(input), data: Option::None },
+            Some(TransactionInputKind::Data) => self.tx.input = TransactionInput { input: Option::None, data: Some(input) },
+            Some(TransactionInputKind::Both) => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
             None => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) },
         }
 
