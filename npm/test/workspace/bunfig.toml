@@ -1,0 +1,4 @@
+install.registry.url = "http://localhost:4873"
+
+[install.cache]
+disable = true
