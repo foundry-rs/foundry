@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint, info::screaming_snake_case::is_screaming_snake_case},
 };
-use solar_ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
+use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
 
 declare_forge_lint!(
     MIXED_CASE_FUNCTION,
@@ -13,7 +13,7 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
-    fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
+    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name
             && !is_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
@@ -33,7 +33,7 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     fn check_variable_definition(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         var: &'ast VariableDefinition<'ast>,
     ) {
         if var.mutability.is_none()

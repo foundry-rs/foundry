@@ -3,8 +3,10 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar_ast::{LitKind, StrKind};
-use solar_sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind};
+use solar::{
+    ast::{LitKind, StrKind},
+    sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
+};
 
 declare_forge_lint!(
     UNSAFE_TYPECAST,
@@ -16,7 +18,7 @@ declare_forge_lint!(
 impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     fn check_expr(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
