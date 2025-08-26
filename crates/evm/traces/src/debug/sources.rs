@@ -11,7 +11,7 @@ use foundry_compilers::{
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{Parser, interface::Session};
+use solar::parse::{Parser, interface::Session};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -43,14 +43,14 @@ impl SourceData {
             }
             MultiCompilerLanguage::Solc(_) => {
                 let sess = Session::builder().with_silent_emitter(None).build();
-                let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
-                    let arena = solar_parse::ast::Arena::new();
+                let _ = sess.enter(|| -> solar::parse::interface::Result<()> {
+                    let arena = solar::parse::ast::Arena::new();
                     let filename = path.clone().into();
                     let mut parser =
                         Parser::from_source_code(&sess, &arena, filename, source.to_string())?;
                     let ast = parser.parse_file().map_err(|e| e.emit())?;
                     for item in ast.items {
-                        if let solar_parse::ast::ItemKind::Contract(contract) = &item.kind {
+                        if let solar::parse::ast::ItemKind::Contract(contract) = &item.kind {
                             let range = item.span.lo().to_usize()..item.span.hi().to_usize();
                             contract_definitions.push((contract.name.to_string(), range));
                         }
