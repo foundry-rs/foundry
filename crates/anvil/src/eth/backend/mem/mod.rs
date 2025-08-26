@@ -2689,69 +2689,82 @@ impl Backend {
             })
             .collect();
 
-        let mut states = self.states.write();
-        let parent_state =
-            states.get(&block.header.parent_hash).ok_or(BlockchainError::BlockNotFound)?;
-        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
 
-        // configure the blockenv for the block of the transaction
-        let mut env = self.env.read().clone();
+            // configure the blockenv for the block of the transaction
+            let mut env = self.env.read().clone();
 
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(block.header.number),
-            beneficiary: block.header.beneficiary,
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            prevrandao: Some(block.header.mix_hash),
-            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.header.gas_limit,
-            ..Default::default()
+            env.evm_env.block_env = BlockEnv {
+                number: U256::from(block.header.number),
+                beneficiary: block.header.beneficiary,
+                timestamp: U256::from(block.header.timestamp),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                gas_limit: block.header.gas_limit,
+                ..Default::default()
+            };
+
+            let executor = TransactionExecutor {
+                db: &mut cache_db,
+                validator: self,
+                pending: pool_txs.into_iter(),
+                block_env: env.evm_env.block_env.clone(),
+                cfg_env: env.evm_env.cfg_env.clone(),
+                parent_hash: block.header.parent_hash,
+                gas_used: 0,
+                blob_gas_used: 0,
+                enable_steps_tracing: self.enable_steps_tracing,
+                print_logs: self.print_logs,
+                print_traces: self.print_traces,
+                call_trace_decoder: self.call_trace_decoder.clone(),
+                precompile_factory: self.precompile_factory.clone(),
+                odyssey: self.odyssey,
+                optimism: self.is_optimism(),
+                blob_params: self.blob_params(),
+                cheats: self.cheats().clone(),
+            };
+
+            let _ = executor.execute();
+
+            let target_tx = block.transactions[index].clone();
+            let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
+            let tx_env = target_tx.to_revm_tx_env();
+
+            let config = tracer_config.into_json();
+            let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+
+            let result = evm
+                .transact(tx_env.clone())
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+            let trace = inspector
+                .json_result(
+                    result,
+                    &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
+                    &env.evm_env.block_env,
+                    &cache_db,
+                )
+                .map_err(|e| BlockchainError::Message(e.to_string()))?;
+            Ok(GethTrace::JS(trace))
         };
 
-        let executor = TransactionExecutor {
-            db: &mut cache_db,
-            validator: self,
-            pending: pool_txs.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env.clone(),
-            parent_hash: block.header.parent_hash,
-            gas_used: 0,
-            blob_gas_used: 0,
-            enable_steps_tracing: self.enable_steps_tracing,
-            print_logs: self.print_logs,
-            print_traces: self.print_traces,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-            precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            blob_params: self.blob_params(),
-            cheats: self.cheats().clone(),
-        };
-
-        let _ = executor.execute();
-
-        let target_tx = block.transactions[index].clone();
-        let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-        let tx_env = target_tx.to_revm_tx_env();
-
-        let config = tracer_config.into_json();
-        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
-        let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
-
-        let result = evm
-            .transact(tx_env.clone())
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
-
-        let trace = inspector
-            .json_result(
-                result,
-                &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                &env.evm_env.block_env,
-                &cache_db,
-            )
-            .map_err(|e| BlockchainError::Message(e.to_string()))?;
-        Ok(GethTrace::JS(trace))
+        let read_guard = self.states.upgradable_read();
+        if read_guard.has_state(&block.header.parent_hash) {
+            let state = read_guard
+                .get_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     /// Returns code by its hash
