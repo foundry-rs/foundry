@@ -12,6 +12,10 @@ use revm::precompile::{
 };
 use std::{borrow::Cow, sync::Arc};
 
+/// ID for the [`CheatEcrecover::precompile_id`] precompile.
+static PRECOMPILE_ID_CHEAT_ECRECOVER: PrecompileId =
+    PrecompileId::Custom(Cow::Borrowed("cheat_ecrecover"));
+
 /// Manages user modifications that may affect the node's behavior
 ///
 /// Contains the state of executed, non-eth standard cheat code RPC
@@ -128,7 +132,7 @@ impl Precompile for CheatEcrecover {
     }
 
     fn precompile_id(&self) -> &PrecompileId {
-        &PrecompileId::Custom(Cow::Borrowed("cheat_ecrecover"))
+        &PRECOMPILE_ID_CHEAT_ECRECOVER
     }
 
     fn is_pure(&self) -> bool {
