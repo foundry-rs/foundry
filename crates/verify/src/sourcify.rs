@@ -37,6 +37,16 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let body = self.prepare_verify_request(&args, &context).await?;
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
 
+        if !args.skip_is_verified_check && self.is_contract_verified(&args).await? {
+            sh_println!(
+                "\nContract [{}] {:?} is already verified. Skipping verification.",
+                context.target_name,
+                args.address.to_string()
+            )?;
+
+            return Ok(());
+        }
+
         trace!("submitting verification request {:?}", body);
 
         let client = reqwest::Client::new();
@@ -253,6 +263,40 @@ impl SourcifyVerificationProvider {
 
         Ok(req)
     }
+
+    async fn is_contract_verified(&self, args: &VerifyArgs) -> Result<bool> {
+        let chain_id = args.etherscan.chain.unwrap_or_default().id();
+        let base_url = args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL);
+        let url = format!("{}v2/contract/{}/{}", base_url, chain_id, args.address);
+
+        match reqwest::get(&url).await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    let contract_response: SourcifyContractResponse =
+                        response.json().await.wrap_err("Failed to parse contract response")?;
+
+                    let creation_exact = contract_response
+                        .creation_match
+                        .as_ref()
+                        .map(|s| s == "exact_match")
+                        .unwrap_or(false);
+
+                    let runtime_exact = contract_response
+                        .runtime_match
+                        .as_ref()
+                        .map(|s| s == "exact_match")
+                        .unwrap_or(false);
+
+                    Ok(creation_exact && runtime_exact)
+                } else {
+                    Ok(false)
+                }
+            }
+            Err(error) => Err(error).wrap_err_with(|| {
+                format!("Failed to query verification status for {}", args.address)
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -285,6 +329,10 @@ pub struct SourcifyJobResponse {
 pub struct SourcifyContractResponse {
     #[serde(rename = "match")]
     match_status: Option<String>,
+    #[serde(rename = "creationMatch")]
+    creation_match: Option<String>,
+    #[serde(rename = "runtimeMatch")]
+    runtime_match: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
