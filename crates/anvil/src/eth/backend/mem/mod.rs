@@ -137,9 +137,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
-/// Helper trait that combines DatabaseRef with Debug.
+/// Helper trait that combines revm::DatabaseRef with Debug.
 /// This is needed because alloy-evm requires Debug on Database implementations.
-/// Specific implementation for dyn Db since trait object upcasting is not stable.
+/// With trait upcasting now stable, we can now upcast from this trait to revm::DatabaseRef.
 pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl DatabaseRef for dyn crate::eth::backend::db::Db {}
@@ -1503,7 +1503,7 @@ impl Backend {
                 if let Some(block_overrides) = overrides.block {
                     cache_db.apply_block_overrides(*block_overrides, &mut block);
                 }
-                self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
+                self.call_with_state(&cache_db, request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1715,7 +1715,7 @@ impl Backend {
                         // recorded and included in logs
                         inspector = inspector.with_transfers();
                         let mut evm= self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
+                            &cache_db,
                             &env,
                             &mut inspector,
                         );
@@ -1724,7 +1724,7 @@ impl Backend {
                         evm.transact(env.tx)?
                     } else {
                         let mut evm = self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
+                            &cache_db,
                             &env,
                             &mut inspector,
                         );
@@ -1932,11 +1932,8 @@ impl Backend {
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm = self.new_evm_with_inspector_ref(
-                                &cache_db as &dyn DatabaseRef,
-                                &env,
-                                &mut inspector,
-                            );
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
                             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
@@ -1968,11 +1965,8 @@ impl Backend {
                                 .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         let env = self.build_call_env(request, fee_details, block.clone());
-                        let mut evm = self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
-                            &env,
-                            &mut inspector,
-                        );
+                        let mut evm =
+                            self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
                         let result = evm.transact(env.tx.clone())?;
                         let res = evm
                             .inspector_mut()
@@ -1990,11 +1984,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(
-                &cache_db as &dyn DatabaseRef,
-                &env,
-                &mut inspector,
-            );
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -2506,7 +2496,7 @@ impl Backend {
 
     pub fn get_code_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         address: Address,
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
@@ -2558,7 +2548,7 @@ impl Backend {
         address: Address,
     ) -> Result<U256, BlockchainError>
     where
-        D: DatabaseRef<Error = DatabaseError>,
+        D: DatabaseRef,
     {
         trace!(target: "backend", "get balance for {:?}", address);
         Ok(state.basic_ref(address)?.unwrap_or_default().balance)
