@@ -142,7 +142,13 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
 fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> {
     abis.into_iter()
         .map(|(contract_abi, name)| {
-            let source = foundry_cli::utils::abi_to_solidity(&contract_abi, &name);
+            let source = match foundry_cli::utils::abi_to_solidity(&contract_abi, &name) {
+                Ok(generated_source) => generated_source,
+                Err(e) => {
+                    sh_warn!("Failed to format interface for {name}: {e}")?;
+                    contract_abi.to_sol(&name, None)
+                }
+            };
             Ok(InterfaceSource { json_abi: serde_json::to_string_pretty(&contract_abi)?, source })
         })
         .collect()
