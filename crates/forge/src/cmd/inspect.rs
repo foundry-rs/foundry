@@ -1,5 +1,5 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_primitives::{hex, keccak256, U256};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
 use eyre::{Result, eyre};
@@ -108,7 +108,24 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                let mut bucket_rows: Vec<(String, String)> = Vec::new();
+                if let Some(raw) = artifact.raw_metadata.as_ref() {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+                        if let Some(constructor) = v
+                            .get("output")
+                            .and_then(|o| o.get("devdoc"))
+                            .and_then(|d| d.get("methods"))
+                            .and_then(|m| m.get("constructor"))
+                        {
+                            if let Some(obj) = constructor.as_object() {
+                                if let Some(val) = obj.get("custom:storage-bucket") {
+                                    bucket_rows = parse_storage_buckets_value(val);
+                                }
+                            }
+                        }
+                    }
+                }
+                print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -281,6 +298,7 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(
     storage_layout: Option<&StorageLayout>,
+    bucket_rows: Vec<(String, String)>,
     should_wrap: bool,
 ) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
@@ -300,23 +318,29 @@ pub fn print_storage_layout(
         Cell::new("Contract"),
     ];
 
-    print_table(
-        headers,
-        |table| {
-            for slot in &storage_layout.storage {
-                let storage_type = storage_layout.types.get(&slot.storage_type);
-                table.add_row([
-                    slot.label.as_str(),
-                    storage_type.map_or("?", |t| &t.label),
-                    &slot.slot,
-                    &slot.offset.to_string(),
-                    storage_type.map_or("?", |t| &t.number_of_bytes),
-                    &slot.contract,
-                ]);
-            }
-        },
-        should_wrap,
-    )
+    print_table(headers, |table| {
+        for slot in &storage_layout.storage {
+            let storage_type = storage_layout.types.get(&slot.storage_type);
+            table.add_row([
+                slot.label.as_str(),
+                storage_type.map_or("?", |t| &t.label),
+                &slot.slot,
+                &slot.offset.to_string(),
+                storage_type.map_or("?", |t| &t.number_of_bytes),
+                &slot.contract,
+            ]);
+        }
+        for (type_str, slot_dec) in &bucket_rows {
+            table.add_row([
+                "storage-bucket",
+                type_str.as_str(),
+                slot_dec.as_str(),
+                "0",
+                "32",
+                type_str.strip_prefix("struct ").unwrap_or(type_str.as_str()),
+            ]);
+        }
+    }, should_wrap)
 }
 
 fn print_method_identifiers(
@@ -606,6 +630,59 @@ fn missing_error(field: &str) -> eyre::Error {
         "{field} missing from artifact; \
          this could be a spurious caching issue, consider running `forge clean`"
     )
+}
+
+fn parse_bucket_pairs_from_str(s: &str) -> Vec<(String, String)> {
+    static BUCKET_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?ix)
+            (?P<name>[A-Za-z_][A-Za-z0-9_:\.\-]*)
+            \s+
+            (?:0x)?(?P<hex>[0-9a-f]{1,64})
+        ").unwrap()
+    });
+    BUCKET_PAIR_RE.captures_iter(s)
+        .filter_map(|cap| {
+            Some((
+                cap.get(1)?.as_str().to_string(), // name -> String
+                cap.get(2)?.as_str().to_string(), // 0x.. -> String
+            ))
+        })
+        .collect()
+}
+
+fn parse_storage_buckets_value(v: &serde_json::Value) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+
+    match v {
+        serde_json::Value::String(s) => pairs.extend(parse_bucket_pairs_from_str(s)),
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    pairs.extend(parse_bucket_pairs_from_str(s));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    pairs
+        .into_iter()
+        .filter_map(|(name, hex)| {
+            let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
+            let slot = U256::from_str_radix(hex_str, 16).ok()?;
+            let slot_hex = short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<32>()));
+            Some((format!("struct {}", name), slot_hex))
+        })
+        .collect()
+}
+
+fn short_hex(h: &str) -> String {
+    let s = h.strip_prefix("0x").unwrap_or(h);
+    if s.len() > 12 {
+        format!("0x{}…{}", &s[..6], &s[s.len()-4..])
+    } else {
+        format!("0x{s}")
+    }
 }
 
 #[cfg(test)]
