@@ -460,7 +460,7 @@ pub struct VerifyCheckArgs {
     ///
     /// For Etherscan - Submission GUID.
     ///
-    /// For Sourcify - Contract Address.
+    /// For Sourcify - Verification Job ID.
     pub id: String,
 
     #[command(flatten)]
