@@ -10,9 +10,7 @@ use revm::{
 impl Cheatcode for startMappingRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        if state.mapping_slots.is_none() {
-            state.mapping_slots = Some(Default::default());
-        }
+        state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
     }
 }

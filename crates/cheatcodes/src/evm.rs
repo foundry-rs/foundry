@@ -13,7 +13,7 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    slot_identifier::{SlotIdentifier, SlotInfo, format_value},
+    slot_identifier::{SlotIdentifier, SlotInfo},
 };
 use foundry_evm_core::{
     ContextExt,
@@ -37,6 +37,7 @@ use std::{
 };
 
 mod record_debug_step;
+use foundry_common::fmt::format_token_raw;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -189,8 +190,8 @@ impl Display for AccountStateDiffs {
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
                                 slot_info.slot_type.dyn_sol_type,
-                                format_value(&decoded.previous_value),
-                                format_value(&decoded.new_value)
+                                format_token_raw(&decoded.previous_value),
+                                format_token_raw(&decoded.new_value)
                             )?;
                         } else {
                             // Have slot info but no decoded values - show raw hex values
@@ -866,9 +867,7 @@ impl Cheatcode for startStateDiffRecordingCall {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
         // Enable mapping recording to track mapping slot accesses
-        if state.mapping_slots.is_none() {
-            state.mapping_slots = Some(Default::default());
-        }
+        state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
     }
 }

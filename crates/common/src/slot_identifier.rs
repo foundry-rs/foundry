@@ -6,6 +6,7 @@
 use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{B256, U256, hex};
+use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::Serialize;
 use std::{str::FromStr, sync::Arc};
@@ -175,8 +176,8 @@ impl Serialize for DecodedSlotValues {
         use serde::ser::SerializeStruct;
 
         let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
-        state.serialize_field("previousValue", &format_value(&self.previous_value))?;
-        state.serialize_field("newValue", &format_value(&self.new_value))?;
+        state.serialize_field("previousValue", &format_token_raw(&self.previous_value))?;
+        state.serialize_field("newValue", &format_token_raw(&self.new_value))?;
         state.end()
     }
 }
@@ -586,7 +587,7 @@ impl SlotIdentifier {
                 && let Ok(sol_type) = DynSolType::parse(key_type_label)
                 && let Ok(decoded) = sol_type.abi_decode(&key.0)
             {
-                let decoded_key_str = format_value(&decoded);
+                let decoded_key_str = format_token_raw(&decoded);
                 decoded_keys.push(decoded_key_str.clone());
                 label = format!("{label}[{decoded_key_str}]");
             } else {
@@ -660,31 +661,6 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
             }
         }
         _ => String::new(),
-    }
-}
-
-/// Formats a [`DynSolValue`] as a raw string without type information and only the value itself.
-pub fn format_value(value: &DynSolValue) -> String {
-    match value {
-        DynSolValue::Bool(b) => b.to_string(),
-        DynSolValue::Int(i, _) => i.to_string(),
-        DynSolValue::Uint(u, _) => u.to_string(),
-        DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
-        DynSolValue::Address(addr) => addr.to_string(),
-        DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
-        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
-        DynSolValue::String(s) => s.clone(),
-        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
-            let formatted: Vec<String> = values.iter().map(format_value).collect();
-            format!("[{}]", formatted.join(", "))
-        }
-        DynSolValue::Tuple(values) => {
-            let formatted: Vec<String> = values.iter().map(format_value).collect();
-            format!("({})", formatted.join(", "))
-        }
-        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
-            format_value(&DynSolValue::Tuple(tuple.clone()))
-        }
     }
 }
 
