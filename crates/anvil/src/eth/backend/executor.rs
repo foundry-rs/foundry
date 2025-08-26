@@ -172,12 +172,16 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     included.push(tx.transaction.clone());
                     tx
                 }
-                TransactionExecutionOutcome::Exhausted(tx) => {
+                TransactionExecutionOutcome::BlockGasExhausted(tx) => {
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
                     continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
                     trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    continue;
+                }
+                TransactionExecutionOutcome::TransactionGasExhausted(tx) => {
+                    trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "transaction gas limit exhausting, skipping transaction");
                     continue;
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
@@ -283,10 +287,12 @@ pub enum TransactionExecutionOutcome {
     Executed(ExecutedTransaction),
     /// Invalid transaction not executed
     Invalid(Arc<PoolTransaction>, InvalidTransactionError),
-    /// Execution skipped because could exceed gas limit
-    Exhausted(Arc<PoolTransaction>),
+    /// Execution skipped because could exceed block gas limit
+    BlockGasExhausted(Arc<PoolTransaction>),
     /// Execution skipped because it exceeded the blob gas limit
     BlobGasExhausted(Arc<PoolTransaction>),
+    /// Execution skipped because it exceeded the transaction gas limit
+    TransactionGasExhausted(Arc<PoolTransaction>),
     /// When an error occurred during execution
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
@@ -304,11 +310,18 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
-        if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
+        let max_block_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
+        if !env.evm_env.cfg_env.disable_block_gas_limit
+            && max_block_gas > env.evm_env.block_env.gas_limit
         {
-            return Some(TransactionExecutionOutcome::Exhausted(transaction));
+            return Some(TransactionExecutionOutcome::BlockGasExhausted(transaction));
         }
+
+        // TODO!
+        // check that we comply with the transaction's gas limit, if enabled
+        // if env.evm_env.cfg_env.tx_gas_limit_cap.is_none() {
+        // return Some(TransactionExecutionOutcome::TransactionGasExhausted(transaction));
+        // }
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
