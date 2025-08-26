@@ -36,7 +36,7 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
 };
 use regex::Regex;
@@ -66,7 +66,7 @@ use etherscan::{
     EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
 };
 
-mod resolve;
+pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
@@ -129,6 +129,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
+
+pub use semver;
 
 /// Foundry configuration
 ///
@@ -983,7 +985,7 @@ impl Config {
             return Ok(BTreeMap::new());
         }
 
-        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let graph = Graph::<MultiCompilerParser>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
 
         for res in &self.compilation_restrictions {

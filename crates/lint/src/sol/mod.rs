@@ -8,20 +8,22 @@ use crate::{
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
-use rayon::iter::{ParallelBridge, ParallelIterator};
-use solar_ast::{self as ast, visit::Visit as VisitAST};
-use solar_interface::{
-    Session, SourceMap,
-    diagnostics::{self, DiagCtxt, JsonEmitter},
-    source_map::{FileName, SourceFile},
-};
-use solar_sema::{
-    ParsingContext,
-    hir::{self, Visit as VisitHIR},
+use rayon::prelude::*;
+use solar::{
+    ast::{self as ast, visit::Visit as VisitAST},
+    interface::{
+        Session,
+        diagnostics::{self, HumanEmitter, JsonEmitter},
+        source_map::{FileName, SourceFile},
+    },
+    sema::{
+        Compiler, Gcx,
+        hir::{self, Visit as VisitHIR},
+    },
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock},
+    sync::LazyLock,
 };
 use thiserror::Error;
 
@@ -110,10 +112,10 @@ impl<'a> SolidityLinter<'a> {
             && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
     }
 
-    fn process_source_ast<'ast>(
-        &'ast self,
-        sess: &'ast Session,
-        ast: &'ast ast::SourceUnit<'ast>,
+    fn process_source_ast<'gcx>(
+        &self,
+        sess: &'gcx Session,
+        ast: &'gcx ast::SourceUnit<'gcx>,
         file: &SourceFile,
         path: &Path,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
@@ -159,12 +161,11 @@ impl<'a> SolidityLinter<'a> {
         Ok(())
     }
 
-    fn process_source_hir<'hir>(
+    fn process_source_hir<'gcx>(
         &self,
-        sess: &Session,
-        gcx: &solar_sema::ty::Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         source_id: hir::SourceId,
-        file: &'hir SourceFile,
+        file: &'gcx SourceFile,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -173,7 +174,7 @@ impl<'a> SolidityLinter<'a> {
         passes_and_lints.extend(info::create_late_lint_passes());
 
         // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
-        if let FileName::Real(ref path) = file.name
+        if let FileName::Real(path) = &file.name
             && !self.path_config.is_test_or_script(path)
         {
             passes_and_lints.extend(gas::create_late_lint_passes());
@@ -199,15 +200,19 @@ impl<'a> SolidityLinter<'a> {
 
         // Process the inline-config
         let comments = Comments::new(file);
-        let inline_config =
-            parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
+        let inline_config = parse_inline_config(
+            gcx.sess,
+            &comments,
+            InlineConfigSource::Hir((&gcx.hir, source_id)),
+        );
 
         // Run late lint visitor
-        let ctx = LintContext::new(sess, self.with_description, self.config(inline_config), lints);
+        let ctx =
+            LintContext::new(gcx.sess, self.with_description, self.config(inline_config), lints);
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source
-        _ = late_visitor.visit_nested_source(source_id);
+        let _ = late_visitor.visit_nested_source(source_id);
 
         Ok(())
     }
@@ -217,73 +222,40 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    /// Build solar session based on the linter config
-    fn init(&self) -> Session {
-        let mut builder = Session::builder();
-        if self.with_json_emitter {
-            let map = Arc::<SourceMap>::default();
-            let json_emitter = JsonEmitter::new(Box::new(std::io::stderr()), map.clone())
-                .rustc_like(true)
-                .ui_testing(false);
-
-            builder = builder.dcx(DiagCtxt::new(Box::new(json_emitter))).source_map(map);
+    fn configure(&self, compiler: &mut Compiler) {
+        let dcx = compiler.dcx_mut();
+        let sm = dcx.source_map_mut().unwrap().clone();
+        dcx.set_emitter(if self.with_json_emitter {
+            let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
+            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(false);
+            Box::new(json_emitter)
         } else {
-            builder = builder.with_stderr_emitter();
-        };
-
-        // Create a single session for all files
-        let mut sess = builder.build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-        sess
+            Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
+        });
+        dcx.set_flags_mut(|f| f.track_diagnostics = false);
     }
 
-    /// Run AST-based lints.
-    ///
-    /// Note: the `ParsingContext` should already have the sources loaded.
-    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
-        let sess = pcx.sess;
-        _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Parse the sources
-            let ast_arena = solar_sema::thread_local::ThreadLocal::new();
-            let ast_result = pcx.parse(&ast_arena);
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) {
+        compiler.enter_mut(|compiler| {
+            let gcx = compiler.gcx();
 
-            // Process each source in parallel
-            ast_result.sources.iter().par_bridge().for_each(|source| {
+            // Early lints.
+            gcx.sources.raw.par_iter().for_each(|source| {
                 if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
                     && input.iter().any(|input_path| path.ends_with(input_path))
                 {
-                    _ = self.process_source_ast(sess, ast, &source.file, path)
+                    let _ = self.process_source_ast(gcx.sess, ast, &source.file, path);
                 }
             });
 
-            Ok(())
-        });
-    }
-
-    /// Run HIR-based lints.
-    ///
-    /// Note: the `ParsingContext` should already have the sources loaded.
-    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
-        let sess = pcx.sess;
-        _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Parse and lower to HIR
-            let hir_arena = solar_sema::thread_local::ThreadLocal::new();
-            let hir_result = pcx.parse_and_lower(&hir_arena);
-
-            if let Ok(Some(gcx_wrapper)) = hir_result {
-                let gcx = gcx_wrapper.get();
-
-                // Process each source in parallel
-                gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
-                    if let FileName::Real(ref path) = source.file.name
-                        && input.iter().any(|input_path| path.ends_with(input_path))
-                    {
-                        _ = self.process_source_hir(sess, &gcx, source_id, &source.file);
-                    }
-                });
-            }
-
-            Ok(())
+            // Late lints.
+            gcx.hir.par_sources_enumerated().for_each(|(source_id, source)| {
+                if let FileName::Real(path) = &source.file.name
+                    && input.iter().any(|input_path| path.ends_with(input_path))
+                {
+                    let _ = self.process_source_hir(gcx, source_id, &source.file);
+                }
+            });
         });
     }
 }
