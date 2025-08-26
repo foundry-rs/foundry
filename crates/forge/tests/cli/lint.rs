@@ -66,6 +66,46 @@ const COUNTER_B: &str = r#"
     }
         "#;
 
+const COUNTER_WITH_CONST: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+uint256 constant MAX = 1000000;
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+        "#;
+
+const COUNTER_TEST_WITH_CONST: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import { Counter, MAX } from "../src/Counter.sol";
+
+contract CounterTest {
+  Counter public counter;
+
+  function setUp() public {
+    counter = new Counter();
+  }
+
+  function testFuzz_setNumber(uint256[MAX] calldata numbers) public {
+    for (uint256 i = 0; i < numbers.length; ++i) {
+      counter.setNumber(numbers[i]);
+    }
+  }
+}
+        "#;
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
@@ -474,6 +514,20 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 "#]
     ]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11392>
+forgetest!(can_lint_param_constants, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("Counter", COUNTER_WITH_CONST).unwrap();
+    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST).unwrap();
+
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // ------------------------------------------------------------------------------------------------
