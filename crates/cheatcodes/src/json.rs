@@ -361,6 +361,23 @@ impl Cheatcode for writeJson_1Call {
     }
 }
 
+impl Cheatcode for writeJsonUpsertCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { json: value, path, valueKey } = self;
+
+        // Read, parse, and update the JSON object
+        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let data_string = fs::read_to_string(&data_path)?;
+        let mut data =
+            serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string));
+        upsert_json_value(&mut data, value, valueKey)?;
+
+        // Write the updated content back to the file
+        let json_string = serde_json::to_string_pretty(&data)?;
+        super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
+    }
+}
+
 pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
     let json = parse_json_str(json)?;
     let values = select(&json, key)?;
@@ -643,11 +660,68 @@ pub(super) fn resolve_type(type_description: &str) -> Result<DynSolType> {
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
 }
 
+/// Upserts a value into a JSON object based on a dot-separated key.
+///
+/// This function navigates through a mutable `serde_json::Value` object using a
+/// path-like key. It creates nested JSON objects if they do not exist along the path.
+/// The value is inserted at the final key in the path.
+///
+/// # Arguments
+///
+/// * `data` - A mutable reference to the `serde_json::Value` to be modified.
+/// * `value` - The string representation of the value to upsert. This string is first parsed as
+///   JSON, and if that fails, it's treated as a plain JSON string.
+/// * `key` - A dot-separated string representing the path to the location for upserting.
+pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
+    // Parse the path key into segments.
+    let canonical_key = canonicalize_json_path(key);
+    let parts: Vec<&str> = canonical_key
+        .strip_prefix("$.")
+        .unwrap_or(key)
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if parts.is_empty() {
+        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
+    }
+
+    // Separate the final key from the path.
+    // Traverse the objects, creating intermediary ones if necessary.
+    if let Some((key_to_insert, path_to_parent)) = parts.split_last() {
+        let mut current_level = data;
+
+        for segment in path_to_parent {
+            if !current_level.is_object() {
+                return Err(fmt_err!("path segment '{segment}' does not resolve to an object."));
+            }
+            current_level = current_level
+                .as_object_mut()
+                .unwrap()
+                .entry(segment.to_string())
+                .or_insert(Value::Object(Map::new()));
+        }
+
+        // Upsert the new value
+        if let Some(parent_obj) = current_level.as_object_mut() {
+            parent_obj.insert(
+                key_to_insert.to_string(),
+                serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned())),
+            );
+        } else {
+            return Err(fmt_err!("final destination is not an object, cannot insert key."));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;
     use proptest::strategy::Strategy;
+    use serde_json::json;
 
     fn contains_tuple(value: &DynSolValue) -> bool {
         match value {
@@ -715,6 +789,53 @@ mod tests {
             let json = serialize_value_as_json(v.clone()).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);
+        }
+    }
+
+    #[test]
+    fn test_upsert_json_value() {
+        // Tuples of: (initial_json, key, value_to_upsert, expected)
+        let scenarios = vec![
+            // Simple key-value insert with a plain string
+            (json!({}), "foo", r#""bar""#, json!({"foo": "bar"})),
+            // Overwrite existing value with a number
+            (json!({"foo": "bar"}), "foo", "123", json!({"foo": 123})),
+            // Create nested objects
+            (json!({}), "a.b.c", r#""baz""#, json!({"a": {"b": {"c": "baz"}}})),
+            // Upsert into existing nested object with a boolean
+            (json!({"a": {"b": {}}}), "a.b.c", "true", json!({"a": {"b": {"c": true}}})),
+            // Upsert a JSON object as a value
+            (json!({}), "a.b", r#"{"d": "e"}"#, json!({"a": {"b": {"d": "e"}}})),
+            // Upsert a JSON array as a value
+            (json!({}), "myArray", r#"[1, "test", null]"#, json!({"myArray": [1, "test", null]})),
+        ];
+
+        for (mut initial, key, value_str, expected) in scenarios {
+            upsert_json_value(&mut initial, value_str, key).unwrap();
+            assert_eq!(initial, expected);
+        }
+
+        let error_scenarios = vec![
+            // Path traverses a non-object value
+            (
+                json!({"a": "a string value"}),
+                "a.b",
+                r#""bar""#,
+                "final destination is not an object, cannot insert key.",
+            ),
+            // Empty key should fail
+            (json!({}), "", r#""bar""#, "'valueKey' cannot be empty or just '$'"),
+            // Root path with a trailing dot should fail
+            (json!({}), "$.", r#""bar""#, "'valueKey' cannot be empty or just '$'"),
+        ];
+
+        for (mut initial, key, value_str, error_msg) in error_scenarios {
+            let result = upsert_json_value(&mut initial, value_str, key);
+            assert!(result.is_err(), "Expected an error for key: '{key}' but got Ok");
+            assert!(
+                result.unwrap_err().to_string().contains(error_msg),
+                "Error message for key '{key}' did not contain '{error_msg}'"
+            );
         }
     }
 }

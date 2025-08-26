@@ -82,10 +82,7 @@ impl InspectArgs {
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
-                let abi = artifact
-                    .abi
-                    .as_ref()
-                    .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+                let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi)?;
             }
             ContractArtifactField::Bytecode => {
@@ -276,7 +273,7 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
-        eyre::bail!("Could not get storage layout");
+        return Err(missing_error("storage layout"));
     };
 
     if shell::is_json() {
@@ -309,7 +306,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
 
 fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
     let Some(method_identifiers) = method_identifiers else {
-        eyre::bail!("Could not get method identifiers");
+        return Err(missing_error("method identifiers"));
     };
 
     if shell::is_json() {
@@ -541,7 +538,7 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
 
 fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     let Some(yul) = yul else {
-        eyre::bail!("Could not get IR output");
+        return Err(missing_error("IR output"));
     };
 
     static YUL_COMMENTS: LazyLock<Regex> =
@@ -558,17 +555,24 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
 
 fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
     let value = serde_json::to_value(obj)?;
-    let mut value_ref = &value;
-    if let Some(key) = key
-        && let Some(value2) = value.get(key)
+    let value = if let Some(key) = key
+        && let Some(value) = value.get(key)
     {
-        value_ref = value2;
-    }
-    let s = match value_ref.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value_ref:#}"),
+        value
+    } else {
+        &value
     };
-    Ok(s)
+    Ok(match value.as_str() {
+        Some(s) => s.to_string(),
+        None => format!("{value:#}"),
+    })
+}
+
+fn missing_error(field: &str) -> eyre::Error {
+    eyre!(
+        "{field} missing from artifact; \
+         this could be a spurious caching issue, consider running `forge clean`"
+    )
 }
 
 #[cfg(test)]
