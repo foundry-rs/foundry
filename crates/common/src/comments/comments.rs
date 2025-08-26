@@ -1,5 +1,5 @@
 use super::comment::{Comment, CommentStyle};
-use solar_parse::{
+use solar::parse::{
     ast::{CommentKind, Span},
     interface::{source_map::SourceFile, BytePos, CharPos, SourceMap},
     lexer::token::RawTokenKind as TokenKind,
@@ -87,7 +87,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
     }
     */
 
-    for token in solar_parse::Cursor::new(&text[pos..]) {
+    for token in solar::parse::Cursor::new(&text[pos..]) {
         let token_range = pos..pos + token.len as usize;
         let span = make_span(token_range.clone());
         let token_text = &text[token_range];
