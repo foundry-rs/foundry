@@ -1,6 +1,6 @@
 //! The `chisel` CLI: a fast, utilitarian, and verbose Solidity REPL.
 
-use chisel::args::run;
+use chisel2::args::run;
 
 #[global_allocator]
 static ALLOC: foundry_cli::utils::Allocator = foundry_cli::utils::new_allocator();

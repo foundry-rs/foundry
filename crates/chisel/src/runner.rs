@@ -48,7 +48,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
 
 /// ChiselRunner implementation
@@ -79,7 +79,7 @@ impl ChiselRunner {
     ///
     /// ### Returns
     ///
-    /// A tuple containing the deployed address of the bytecode as well as a
+    /// Optionally, a tuple containing the deployed address of the bytecode as well as a
     /// [ChiselResult] containing information about the result of the call to the deployed REPL
     /// contract.
     pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
@@ -135,7 +135,7 @@ impl ChiselRunner {
 
         let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, Some(return_ok!())) {
+        if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
             let init_gas_limit = self.executor.env().tx.gas_limit;
 
@@ -151,9 +151,9 @@ impl ChiselRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
-                    Some(InstructionResult::Revert)
-                    | Some(InstructionResult::OutOfGas)
-                    | Some(InstructionResult::OutOfFunds) => {
+                    InstructionResult::Revert
+                    | InstructionResult::OutOfGas
+                    | InstructionResult::OutOfFunds => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
@@ -173,7 +173,7 @@ impl ChiselRunner {
                     }
                 }
             }
-            // reset gas limit in the executor environment to its original value
+            // reset gas limit in the
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 
@@ -184,9 +184,7 @@ impl ChiselRunner {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
-            if !commit {
-                res = self.executor.call_raw(from, to, calldata.clone(), value)?;
-            }
+            res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         }
 
         if commit {
@@ -201,16 +199,10 @@ impl ChiselRunner {
             success: !reverted,
             gas_used,
             logs,
-            traces: traces
-                .map(|traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
-
-                    vec![(TraceKind::Execution, traces)]
-                })
-                .unwrap_or_default(),
+            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             labeled_addresses: labels,
             address: None,
-            state: chisel_state,
+            state: chisel_state.map(|(a, b, _c)| (a, b)), // TODO(dani)
         })
     }
 }

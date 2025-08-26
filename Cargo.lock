@@ -2616,39 +2616,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-name = "chisel"
-version = "1.3.2"
-dependencies = [
- "alloy-dyn-abi",
- "alloy-json-abi",
- "alloy-primitives",
- "clap",
- "dirs",
- "eyre",
- "forge-fmt",
- "foundry-cli",
- "foundry-common",
- "foundry-compilers",
- "foundry-config",
- "foundry-evm",
- "foundry-solang-parser",
- "regex",
- "reqwest",
- "revm",
- "rustyline",
- "semver 1.0.26",
- "serde",
- "serde_json",
- "solar-compiler",
- "strum 0.27.2",
- "time",
- "tracing",
- "tracing-subscriber 0.3.19",
- "walkdir",
- "yansi",
-]
-
-[[package]]
 name = "chisel2"
 version = "1.3.2"
 dependencies = [
