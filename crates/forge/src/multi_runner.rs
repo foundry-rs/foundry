@@ -483,12 +483,14 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
-        strategy: ExecutorStrategy,
+        mut strategy: ExecutorStrategy,
         root: &Path,
         output: &ProjectCompileOutput,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
+        strategy.runner.revive_set_compilation_output(strategy.context.as_mut(), output.clone());
+
         let contracts = output
             .artifact_ids()
             .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))

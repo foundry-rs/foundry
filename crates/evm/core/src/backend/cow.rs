@@ -271,6 +271,10 @@ impl DatabaseExt for CowBackend<'_> {
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
         self.backend.to_mut().set_blockhash(block_number, block_hash);
     }
+
+    fn get_test_contract_address(&self) -> Option<Address> {
+        self.backend.get_test_contract_address()
+    }
 }
 
 impl DatabaseRef for CowBackend<'_> {

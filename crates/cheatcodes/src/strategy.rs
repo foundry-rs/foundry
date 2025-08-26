@@ -46,7 +46,9 @@ impl CheatcodeInspectorStrategyContext for () {
 }
 
 /// Stateless strategy runner for [CheatcodeInspectorStrategy].
-pub trait CheatcodeInspectorStrategyRunner: Debug + Send + Sync {
+pub trait CheatcodeInspectorStrategyRunner:
+    Debug + Send + Sync + CheatcodeInspectorStrategyExt
+{
     /// Apply cheatcodes.
     fn apply_full(
         &self,
@@ -192,6 +194,8 @@ impl CheatcodeInspectorStrategyRunner for EvmCheatcodeInspectorStrategyRunner {
     }
 }
 
+impl CheatcodeInspectorStrategyExt for EvmCheatcodeInspectorStrategyRunner {}
+
 /// Defines the strategy for [super::Cheatcodes].
 #[derive(Debug)]
 pub struct CheatcodeInspectorStrategy {
@@ -211,6 +215,19 @@ impl CheatcodeInspectorStrategy {
 impl Clone for CheatcodeInspectorStrategy {
     fn clone(&self) -> Self {
         Self { runner: self.runner, context: self.context.new_cloned() }
+    }
+}
+
+/// Defined in revive-strategy
+pub trait CheatcodeInspectorStrategyExt {
+    fn revive_try_create(
+        &self,
+        _state: &mut crate::Cheatcodes,
+        _ecx: InnerEcx,
+        _input: &dyn CommonCreateInput,
+        _executor: &mut dyn CheatcodesExecutor,
+    ) -> Option<revm::interpreter::CreateOutcome> {
+        None
     }
 }
 

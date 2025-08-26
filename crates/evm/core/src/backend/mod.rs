@@ -380,6 +380,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// - Setting a blockhash for future blocks (number > block.number) has no effect
     /// - Setting a blockhash for blocks older than `block.number - 256` has no effect
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256);
+
+    /// Retrieves test contract's address
+    fn get_test_contract_address(&self) -> Option<Address>;
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
@@ -605,7 +608,13 @@ impl Backend {
         trace!(?acc, "setting test account");
         self.add_persistent_account(acc);
         self.allow_cheatcode_access(acc);
+        self.inner.test_contract = Some(acc);
         self
+    }
+
+    /// Returns the address of the test contract
+    pub fn get_test_contract(&self) -> Option<Address> {
+        self.inner.test_contract
     }
 
     /// Sets the caller address
@@ -1508,6 +1517,10 @@ impl DatabaseExt for Backend {
             self.mem_db.block_hashes.insert(block_number, block_hash);
         }
     }
+
+    fn get_test_contract_address(&self) -> Option<Address> {
+        self.get_test_contract()
+    }
 }
 
 impl DatabaseRef for Backend {
@@ -1669,6 +1682,11 @@ pub struct BackendInner {
     pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
+    /// Tracks the address of a Test contract
+    ///
+    /// This address can be used to inspect the state of the contract when a test is being
+    /// executed. E.g. the `_failed` variable of `DSTest`
+    pub test_contract: Option<Address>,
 }
 
 impl BackendInner {
@@ -1862,6 +1880,7 @@ impl Default for BackendInner {
                 TEST_CONTRACT_ADDRESS,
                 CALLER,
             ]),
+            test_contract: None,
         }
     }
 }

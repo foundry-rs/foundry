@@ -1,3 +1,6 @@
+use foundry_compilers::{
+    resolc::dual_compiled_contracts::DualCompiledContracts, ProjectCompileOutput,
+};
 use foundry_evm::executors::ExecutorStrategyContext;
 
 /// Defines the context for [crate::ReviveExecutorStrategyRunner].
@@ -5,6 +8,10 @@ use foundry_evm::executors::ExecutorStrategyContext;
 pub struct ReviveExecutorStrategyContext {
     /// Temporary flag to indicate if the executor is in PVM mode.
     pub(crate) wip_in_pvm: bool,
+    /// Dual compiled contracts.
+    pub(crate) dual_compiled_contracts: DualCompiledContracts,
+    /// Compilation output.
+    pub(crate) compilation_output: Option<ProjectCompileOutput>,
 }
 
 impl ExecutorStrategyContext for ReviveExecutorStrategyContext {
