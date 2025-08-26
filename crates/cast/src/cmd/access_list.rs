@@ -1,7 +1,8 @@
 use crate::{
-    tx::{CastTxBuilder, SenderKind},
     Cast,
+    tx::{CastTxBuilder, SenderKind},
 };
+use alloy_ens::NameOrAddress;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
@@ -9,7 +10,6 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::ens::NameOrAddress;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -27,7 +27,7 @@ pub struct AccessListArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
-    #[arg(value_name = "ARGS")]
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// The block height to query at.

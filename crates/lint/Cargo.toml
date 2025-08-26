@@ -1,0 +1,28 @@
+
+[package]
+name = "forge-lint"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# lib
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+
+solar.workspace = true
+# TODO: remove in next solar release: https://github.com/paradigmxyz/solar/pull/444
+solar-interface = { workspace = true, features = ["json"] }
+
+heck.workspace = true
+rayon.workspace = true
+thiserror.workspace = true

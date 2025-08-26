@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_compilers::artifacts::{output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::artifacts::{EvmVersion, output_selection::ContractOutputSelection};
 use serde::Serialize;
 
 mod core;
@@ -7,6 +7,9 @@ pub use self::core::BuildOpts;
 
 mod paths;
 pub use self::paths::ProjectPathOpts;
+
+mod utils;
+pub use self::utils::{configure_pcx, configure_pcx_from_solc};
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
 // to be merged into an existing `foundry_config::Config`.

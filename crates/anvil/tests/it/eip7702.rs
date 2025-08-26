@@ -1,12 +1,13 @@
 use crate::utils::http_provider;
-use alloy_consensus::{transaction::TxEip7702, SignableTransaction};
+use alloy_consensus::{SignableTransaction, transaction::TxEip7702};
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{bytes, U256};
+use alloy_primitives::{U256, bytes};
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {

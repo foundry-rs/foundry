@@ -1,28 +1,28 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
-    TestFilter,
+    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
+    runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
     compilers::Compiler,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
+    Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
+    executors::{Executor, ExecutorBuilder, FailFast},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
-    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     path::Path,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::Instant,
 };
 
@@ -286,8 +286,8 @@ pub struct TestRunnerConfig {
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
-    /// Whether to collect coverage info
-    pub coverage: bool,
+    /// Whether to collect line coverage info
+    pub line_coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -296,6 +296,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: FailFast,
 }
 
 impl TestRunnerConfig {
@@ -330,7 +332,7 @@ impl TestRunnerConfig {
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
         inspector.tracing(self.trace_mode());
-        inspector.collect_coverage(self.coverage);
+        inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.odyssey(self.odyssey);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
@@ -359,7 +361,7 @@ impl TestRunnerConfig {
                 stack
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
-                    .coverage(self.coverage)
+                    .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -394,8 +396,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Project config.
     pub config: Arc<Config>,
-    /// Whether or not to collect coverage info
-    pub coverage: bool,
+    /// Whether or not to collect line coverage info
+    pub line_coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -404,6 +406,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to exit early on test failure.
+    pub fail_fast: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -414,11 +418,12 @@ impl MultiContractRunnerBuilder {
             initial_balance: Default::default(),
             evm_spec: Default::default(),
             fork: Default::default(),
-            coverage: Default::default(),
+            line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
             odyssey: Default::default(),
+            fail_fast: false,
         }
     }
 
@@ -443,7 +448,7 @@ impl MultiContractRunnerBuilder {
     }
 
     pub fn set_coverage(mut self, enable: bool) -> Self {
-        self.coverage = enable;
+        self.line_coverage = enable;
         self
     }
 
@@ -454,6 +459,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+        self.fail_fast = fail_fast;
         self
     }
 
@@ -496,18 +506,20 @@ impl MultiContractRunnerBuilder {
             linker.contracts.keys(),
         )?;
 
-        let linked_contracts = linker.get_linked_artifacts(&libraries)?;
+        let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
-            let Some(abi) = &contract.abi else { continue };
+            let Some(abi) = contract.abi.as_ref() else { continue };
 
             // if it's a test, link it and add to deployable contracts
-            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                abi.functions().any(|func| func.name.is_any_test())
+            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+                && abi.functions().any(|func| func.name.is_any_test())
             {
+                linker.ensure_linked(contract, id)?;
+
                 let Some(bytecode) =
                     contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
                 else {
@@ -515,11 +527,14 @@ impl MultiContractRunnerBuilder {
                 };
 
                 deployable_contracts
-                    .insert(id.clone(), TestContract { abi: abi.clone(), bytecode });
+                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
             }
         }
 
-        let known_contracts = ContractsByArtifact::new(linked_contracts);
+        // Create known contracts with storage layout information
+        let known_contracts = ContractsByArtifact::with_storage_layout(
+            output.clone().with_stripped_file_prefixes(root),
+        );
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -535,23 +550,22 @@ impl MultiContractRunnerBuilder {
                 env,
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
-
-                coverage: self.coverage,
+                line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 odyssey: self.odyssey,
-
                 config: self.config,
+                fail_fast: FailFast::new(self.fail_fast),
             },
         })
     }
 }
 
 pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
-    (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions().any(|func| is_matching_test(func, filter))
+    (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+        && abi.functions().any(|func| is_matching_test(func, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.

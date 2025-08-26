@@ -1,12 +1,12 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
-    json::{
-        canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
-        parse_json_keys, resolve_type,
-    },
     Cheatcode, Cheatcodes, Result,
     Vm::*,
+    json::{
+        canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
+        parse_json_keys, resolve_type, upsert_json_value,
+    },
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
@@ -194,6 +194,25 @@ impl Cheatcode for writeToml_1Call {
     }
 }
 
+impl Cheatcode for writeTomlUpsertCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { json: value, path, valueKey } = self;
+
+        // Read and parse the TOML file
+        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let toml_data = fs::read_to_string(&data_path)?;
+
+        // Convert to JSON and update the object
+        let mut json_data: JsonValue =
+            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
+        upsert_json_value(&mut json_data, value, valueKey)?;
+
+        // Serialize back to TOML and write the updated content back to the file
+        let toml_string = format_json_to_toml(json_data)?;
+        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+    }
+}
+
 /// Parse
 fn parse_toml_str(toml: &str) -> Result<TomlValue> {
     toml::from_str(toml).map_err(|e| fmt_err!("failed parsing TOML: {e}"))
@@ -228,7 +247,7 @@ fn format_json_to_toml(json: JsonValue) -> Result<String> {
 }
 
 /// Convert a TOML value to a JSON value.
-fn toml_to_json_value(toml: TomlValue) -> JsonValue {
+pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
     match toml {
         TomlValue::String(s) => match s.as_str() {
             "null" => JsonValue::Null,

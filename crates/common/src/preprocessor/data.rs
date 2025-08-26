@@ -1,9 +1,9 @@
 use super::span_to_range;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
-use solar_parse::interface::{Session, SourceMap};
-use solar_sema::{
-    hir::{Contract, ContractId, Hir},
+use solar::sema::{
+    Gcx,
+    hir::{Contract, ContractId},
     interface::source_map::FileName,
 };
 use std::{
@@ -17,21 +17,19 @@ pub type PreprocessorData = BTreeMap<ContractId, ContractData>;
 
 /// Collects preprocessor data from referenced contracts.
 pub(crate) fn collect_preprocessor_data(
-    sess: &Session,
-    hir: &Hir<'_>,
+    gcx: Gcx<'_>,
     referenced_contracts: &HashSet<ContractId>,
 ) -> PreprocessorData {
     let mut data = PreprocessorData::default();
     for contract_id in referenced_contracts {
-        let contract = hir.contract(*contract_id);
-        let source = hir.source(contract.source);
+        let contract = gcx.hir.contract(*contract_id);
+        let source = gcx.hir.source(contract.source);
 
         let FileName::Real(path) = &source.file.name else {
             continue;
         };
 
-        let contract_data =
-            ContractData::new(hir, *contract_id, contract, path, source, sess.source_map());
+        let contract_data = ContractData::new(gcx, *contract_id, contract, path, source);
         data.insert(*contract_id, contract_data);
     }
     data
@@ -77,19 +75,18 @@ pub(crate) struct ContractData {
 
 impl ContractData {
     fn new(
-        hir: &Hir<'_>,
+        gcx: Gcx<'_>,
         contract_id: ContractId,
         contract: &Contract<'_>,
         path: &Path,
-        source: &solar_sema::hir::Source<'_>,
-        source_map: &SourceMap,
+        source: &solar::sema::hir::Source<'_>,
     ) -> Self {
         let artifact = format!("{}:{}", path.to_slash_lossy(), contract.name);
 
         // Process data for contracts with constructor and parameters.
         let constructor_data = contract
             .ctor
-            .map(|ctor_id| hir.function(ctor_id))
+            .map(|ctor_id| gcx.hir.function(ctor_id))
             .filter(|ctor| !ctor.parameters.is_empty())
             .map(|ctor| {
                 let mut abi_encode_args = vec![];
@@ -97,9 +94,10 @@ impl ContractData {
                 let mut arg_index = 0;
                 for param_id in ctor.parameters {
                     let src = source.file.src.as_str();
-                    let loc = span_to_range(source_map, hir.variable(*param_id).span);
+                    let loc =
+                        span_to_range(gcx.sess.source_map(), gcx.hir.variable(*param_id).span);
                     let mut new_src = src[loc].replace(" memory ", " ").replace(" calldata ", " ");
-                    if let Some(ident) = hir.variable(*param_id).name {
+                    if let Some(ident) = gcx.hir.variable(*param_id).name {
                         abi_encode_args.push(format!("args.{}", ident.name));
                     } else {
                         // Generate an unique name if constructor arg doesn't have one.
@@ -178,6 +176,7 @@ impl ContractData {
 
         let helper = format!(
             r#"
+// SPDX-License-Identifier: MIT
 pragma solidity >=0.4.0;
 
 import "{path}";

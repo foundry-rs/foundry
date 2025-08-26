@@ -1,44 +1,43 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
-use eyre::{bail, Context, OptionExt, Result};
+use eyre::{Context, OptionExt, Result, bail};
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
+use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
+    ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
     compilers::{
-        multi::{MultiCompiler, MultiCompilerLanguage},
         Language,
+        multi::{MultiCompiler, MultiCompilerLanguage},
     },
     utils::source_files_iter,
-    ProjectCompileOutput,
 };
 use foundry_config::{
-    figment,
+    Config, figment,
     figment::{
-        value::{Dict, Map},
         Metadata, Profile, Provider,
+        value::{Dict, Map},
     },
     filter::GlobMatcher,
-    Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -47,7 +46,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::PathBuf,
-    sync::{mpsc::channel, Arc},
+    sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -57,7 +56,7 @@ mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{format_invariant_metrics_table, TestSummaryReport};
+use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -187,6 +186,10 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
+    /// Disables the labels in the traces.
+    #[arg(long, help_heading = "Display options")]
+    pub disable_labels: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -209,6 +212,7 @@ impl TestArgs {
     /// Returns sources which include any tests to be executed.
     /// If no filters are provided, sources are filtered by existence of test/invariant methods in
     /// them, If filters are provided, sources are additionally filtered by them.
+    #[instrument(target = "forge::test", skip_all)]
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
@@ -355,6 +359,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
@@ -526,6 +531,7 @@ impl TestArgs {
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
+            .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -560,11 +566,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 ||
-                self.gas_report ||
-                self.debug ||
-                self.flamegraph ||
-                self.flamechart;
+            let identify_addresses = verbosity >= 3
+                || self.gas_report
+                || self.debug
+                || self.flamegraph
+                || self.flamechart;
 
             // Print suite header.
             if !silent {
@@ -587,10 +593,10 @@ impl TestArgs {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        if !metrics.is_empty() {
-                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
-                        }
+                    if let TestKind::Invariant { metrics, .. } = &result.kind
+                        && !metrics.is_empty()
+                    {
+                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
                     }
 
                     // We only display logs at level 2 and above
@@ -613,9 +619,7 @@ impl TestArgs {
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
-                decoder
-                    .labels
-                    .extend(result.labeled_addresses.iter().map(|(k, v)| (*k, v.clone())));
+                decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
@@ -922,12 +926,12 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test() {
-                if let Some(test_match) = test_name.split("(").next() {
-                    filter.push_str(test_match);
-                    if failures.peek().is_some() {
-                        filter.push('|');
-                    }
+            if test_name.is_any_test()
+                && let Some(test_match) = test_name.split("(").next()
+            {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
                 }
             }
         }

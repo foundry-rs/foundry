@@ -1,4 +1,4 @@
-use alloy_primitives::{Sign, I256, U256};
+use alloy_primitives::{I256, Sign, U256};
 use yansi::Paint;
 
 /// Returns the number expressed as a string in exponential notation
@@ -15,7 +15,6 @@ use yansi::Paint;
 ///     1234124124 -> 1.23e9
 ///     10000000 -> 1e7
 /// ```
-#[inline]
 pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool, sign: Sign) -> String {
     let stringified = value.to_string();
     let exponent = stringified.len() - 1;
@@ -55,7 +54,7 @@ pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool, sign
 /// ```
 pub fn format_uint_exp(num: U256) -> String {
     if num < U256::from(10_000) {
-        return num.to_string()
+        return num.to_string();
     }
 
     let exp = to_exp_notation(num, 4, true, Sign::Positive);

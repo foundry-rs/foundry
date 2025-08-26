@@ -81,17 +81,17 @@ impl Iterator for QuotedRanges<'_> {
         let (quote, start) = loop {
             let (state, idx, _) = self.0.next()?;
             match state {
-                QuoteState::Opening(quote) |
-                QuoteState::Escaping(quote) |
-                QuoteState::Escaped(quote) |
-                QuoteState::String(quote) => break (quote, idx),
+                QuoteState::Opening(quote)
+                | QuoteState::Escaping(quote)
+                | QuoteState::Escaped(quote)
+                | QuoteState::String(quote) => break (quote, idx),
                 QuoteState::Closing(quote) => return Some((quote, idx, idx)),
                 QuoteState::None => {}
             }
         };
         for (state, idx, _) in self.0.by_ref() {
             if matches!(state, QuoteState::Closing(_)) {
-                return Some((quote, start, idx))
+                return Some((quote, start, idx));
             }
         }
         None
@@ -113,11 +113,11 @@ pub trait QuotedStringExt {
     fn is_quoted(&self) -> bool {
         let mut iter = self.quote_state_char_indices();
         if !matches!(iter.next(), Some((QuoteState::Opening(_), _, _))) {
-            return false
+            return false;
         }
         while let Some((state, _, _)) = iter.next() {
             if matches!(state, QuoteState::Closing(_)) {
-                return iter.next().is_none()
+                return iter.next().is_none();
             }
         }
         false

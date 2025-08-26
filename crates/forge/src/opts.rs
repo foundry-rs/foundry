@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
 };
@@ -18,7 +18,7 @@ use std::path::PathBuf;
     name = "forge",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/forge/overview",
     next_display_order = None,
 )]
 pub struct Forge {
@@ -62,7 +62,7 @@ pub enum ForgeSubcommand {
     /// Install one or multiple dependencies.
     ///
     /// If no arguments are provided, then existing dependencies will be installed.
-    #[command(visible_alias = "i")]
+    #[command(visible_aliases = ["i", "add"])]
     Install(InstallArgs),
 
     /// Remove one or multiple dependencies.
@@ -96,7 +96,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: clap_complete::Shell,
+        shell: foundry_common::clap::Shell,
     },
 
     /// Generate Fig autocompletion spec.
@@ -132,6 +132,10 @@ pub enum ForgeSubcommand {
     /// Format Solidity source files.
     Fmt(FmtArgs),
 
+    /// Lint Solidity source files
+    #[command(visible_alias = "l")]
+    Lint(LintArgs),
+
     /// Get specialized information about a smart contract.
     #[command(visible_alias = "in")]
     Inspect(inspect::InspectArgs),
@@ -141,6 +145,8 @@ pub enum ForgeSubcommand {
     Tree(tree::TreeArgs),
 
     /// Detects usage of unsafe cheat codes in a project and its dependencies.
+    ///
+    /// This is an alias for `forge lint --only-lint unsafe-cheatcode`.
     Geiger(geiger::GeigerArgs),
 
     /// Generate documentation for the project.

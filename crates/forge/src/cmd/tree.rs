@@ -2,8 +2,8 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::ProjectPathOpts, utils::LoadConfig};
 use foundry_compilers::{
-    resolver::{parse::SolData, Charset, TreeOptions},
     Graph,
+    resolver::{Charset, TreeOptions},
 };
 
 /// CLI arguments for `forge tree`.
@@ -28,7 +28,7 @@ foundry_config::impl_figment_convert!(TreeArgs, project_paths);
 impl TreeArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let graph = Graph::<SolData>::resolve(&config.project_paths())?;
+        let graph = <Graph>::resolve(&config.project_paths())?;
         let opts = TreeOptions { charset: self.charset, no_dedupe: self.no_dedupe };
         graph.print_with_options(opts);
 
