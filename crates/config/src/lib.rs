@@ -491,8 +491,11 @@ pub struct Config {
     /// Useful for more correct gas accounting and EVM behavior in general.
     pub isolate: bool,
 
-    /// Whether to disable the block gas limit.
+    /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    pub enable_tx_gas_limit: bool,
 
     /// Address labels
     pub labels: AddressHashMap<String>,
@@ -2411,6 +2414,7 @@ impl Default for Config {
             block_prevrandao: Default::default(),
             block_gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_accept_invalid_certs: false,
