@@ -1,6 +1,7 @@
 use crate::prelude::CHISEL_CHAR;
 use alloy_primitives::Address;
 use clap::{CommandFactory, Parser};
+use itertools::Itertools;
 use yansi::Paint;
 
 /// Chisel REPL commands.
@@ -85,7 +86,8 @@ pub enum ChiselCommand {
     #[command(visible_alias = "t")]
     Traces,
 
-    /// Set calldata (`msg.data`) for the current session (appended after function selector).
+    /// Set calldata (`msg.data`) for the current session (appended after function selector). Clears
+    /// it if no argument provided.
     #[command(visible_alias = "cd")]
     Calldata {
         /// Calldata (empty to clear).
@@ -93,15 +95,16 @@ pub enum ChiselCommand {
     },
 
     /// Dump the raw memory.
-    #[command(visible_alias = "md", next_help_heading = "Debug")]
+    #[command(name = "memdump", visible_alias = "md", next_help_heading = "Debug")]
     MemDump,
 
     /// Dump the raw stack.
-    #[command(visible_alias = "sd")]
+    #[command(name = "stackdump", visible_alias = "sd")]
     StackDump,
 
-    /// Display the raw value of a variable's stack allocation.
-    #[command(visible_alias = "rs")]
+    /// Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in
+    /// length, this will display their memory pointer.
+    #[command(name = "rawstack", visible_alias = "rs")]
     RawStack {
         /// Variable name.
         var: String,
@@ -138,25 +141,23 @@ impl ChiselCommand {
                                 std::iter::once(cmd.get_name())
                                     .chain(cmd.get_visible_aliases())
                                     .map(|s| format!("!{}", s.green()))
-                                    .collect::<Vec<_>>()
-                                    .join(" | "),
+                                    .format(" | "),
                                 {
                                     let usage = get_usage(cmd);
                                     if usage.is_empty() {
                                         String::new()
                                     } else {
-                                        format!(" {}", usage)
+                                        format!(" {usage}")
                                     }
                                 }
                                 .green(),
                                 cmd.get_about().expect("command is missing about"),
                             ))
-                            .collect::<Vec<String>>()
-                            .join("\n")
+                            .format("\n")
                     )
                 })
-                .collect::<Vec<String>>()
-                .join("\n")
+                .format("\n")
+                .to_string()
         )
     }
 }
