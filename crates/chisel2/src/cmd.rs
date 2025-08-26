@@ -8,7 +8,7 @@ use yansi::Paint;
 #[derive(Debug, Parser)]
 #[command(disable_help_flag = true, disable_help_subcommand = true)]
 pub enum ChiselCommand {
-    /// Print helpful information about chisel.
+    /// Display all commands.
     #[command(visible_alias = "h", next_help_heading = "General")]
     Help,
 
@@ -157,7 +157,6 @@ impl ChiselCommand {
                     )
                 })
                 .format("\n")
-                .to_string()
         )
     }
 }

@@ -163,7 +163,10 @@ async fn handle_cli_command(
         ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
         ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
-            let _ = d.dispatch_command(ChiselCommand::Load { id }).await?;
+            let ControlFlow::Continue(()) = d.dispatch_command(ChiselCommand::Load { id }).await?
+            else {
+                return Ok(ControlFlow::Break(()));
+            };
             d.dispatch_command(ChiselCommand::Source).await
         }
         ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
