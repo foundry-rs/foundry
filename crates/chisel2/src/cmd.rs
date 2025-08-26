@@ -114,11 +114,11 @@ impl ChiselCommand {
         let mut categories = Vec::new();
         let mut cat = None;
         for sub in cmd.get_subcommands() {
-            if let Some(cat_) = sub.get_next_help_heading() {
-                if Some(cat_) != cat {
-                    cat = Some(cat_);
-                    categories.push((cat_, vec![]));
-                }
+            if let Some(cat_) = sub.get_next_help_heading()
+                && Some(cat_) != cat
+            {
+                cat = Some(cat_);
+                categories.push((cat_, vec![]));
             }
             categories.last_mut().unwrap().1.push(sub);
         }
@@ -175,6 +175,6 @@ mod tests {
 
     #[test]
     fn print_help() {
-        eprintln!("{}", ChiselCommand::format_help());
+        let _ = sh_eprintln!("{}", ChiselCommand::format_help());
     }
 }

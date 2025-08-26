@@ -115,10 +115,10 @@ impl SessionSource {
         };
 
         // Consider yul return statement as final statement (if it's loc is lower) .
-        if let Some(yul_return_span) = last_yul_return_span {
-            if yul_return_span.hi() < source_span.lo() {
-                source_span = yul_return_span;
-            }
+        if let Some(yul_return_span) = last_yul_return_span
+            && yul_return_span.hi() < source_span.lo()
+        {
+            source_span = yul_return_span;
         }
 
         // Map the source location of the final statement of the `run()` function to its

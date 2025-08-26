@@ -368,7 +368,7 @@ impl ChiselDispatcher {
         {
             endpoint.clone()
         } else {
-            RpcEndpointUrl::Env(url.to_string()).into()
+            RpcEndpointUrl::Env(url).into()
         };
         let fork_url = endpoint.resolve().url()?;
 
@@ -515,11 +515,11 @@ impl ChiselDispatcher {
     pub(crate) async fn show_raw_stack(&mut self, var: String) -> Result<()> {
         let source = self.source_mut();
         let line = format!("bytes32 __raw__; assembly {{ __raw__ := {var} }}");
-        if let Ok((new_source, _)) = source.clone_with_new_line(line) {
-            if let (_, Some(res)) = new_source.inspect("__raw__").await? {
-                sh_println!("{res}")?;
-                return Ok(());
-            }
+        if let Ok((new_source, _)) = source.clone_with_new_line(line)
+            && let (_, Some(res)) = new_source.inspect("__raw__").await?
+        {
+            sh_println!("{res}")?;
+            return Ok(());
         }
 
         eyre::bail!("Variable must exist within `run()` function.")
@@ -544,12 +544,12 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
         only_trivia = false;
 
         // Ensure that addresses are correctly checksummed.
-        if let Literal { kind: RawLiteralKind::Int { base: Base::Hexadecimal, .. } } = token.kind {
-            if token.len == 42 {
-                let range = pos..pos + 42;
-                if let Ok(addr) = input[range.clone()].parse::<Address>() {
-                    new_input.to_mut().replace_range(range, addr.to_checksum_buffer(None).as_str());
-                }
+        if let Literal { kind: RawLiteralKind::Int { base: Base::Hexadecimal, .. } } = token.kind
+            && token.len == 42
+        {
+            let range = pos..pos + 42;
+            if let Ok(addr) = input[range.clone()].parse::<Address>() {
+                new_input.to_mut().replace_range(range, addr.to_checksum_buffer(None).as_str());
             }
         }
     }
