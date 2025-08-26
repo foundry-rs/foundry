@@ -86,7 +86,7 @@ impl InspectArgs {
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
-                let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"));
+                let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi, wrap)?;
             }
             ContractArtifactField::Bytecode => {
