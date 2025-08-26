@@ -40,11 +40,15 @@ pub struct InspectArgs {
     /// Whether to remove comments when inspecting `ir` and `irOptimized` artifact fields.
     #[arg(long, short, help_heading = "Display options")]
     pub strip_yul_comments: bool,
+
+    /// Whether to wrap the table to the terminal width.
+    #[arg(long, short, help_heading = "Display options")]
+    pub wrap: bool,
 }
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, strip_yul_comments } = self;
+        let Self { contract, field, build, strip_yul_comments, wrap } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -83,7 +87,7 @@ impl InspectArgs {
         match field {
             ContractArtifactField::Abi => {
                 let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
-                print_abi(abi)?;
+                print_abi(abi, wrap)?;
             }
             ContractArtifactField::Bytecode => {
                 print_json_str(&artifact.bytecode, Some("object"))?;
@@ -98,13 +102,13 @@ impl InspectArgs {
                 print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                print_method_identifiers(&artifact.method_identifiers)?;
+                print_method_identifiers(&artifact.method_identifiers, wrap)?;
             }
             ContractArtifactField::GasEstimates => {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref())?;
+                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -126,11 +130,11 @@ impl InspectArgs {
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
-                print_errors_events(&out, true)?;
+                print_errors_events(&out, true, wrap)?;
             }
             ContractArtifactField::Events => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
-                print_errors_events(&out, false)?;
+                print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
                 let standard_json = if let Some(version) = solc_version {
@@ -184,66 +188,70 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .join(",")
 }
 
-fn print_abi(abi: &JsonAbi) -> Result<()> {
+fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
     if shell::is_json() {
         return print_json(abi);
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
-    print_table(headers, |table| {
-        // Print events
-        for ev in abi.events.iter().flat_map(|(_, events)| events) {
-            let types = parse_event_params(&ev.inputs);
-            let selector = ev.selector().to_string();
-            table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
-        }
+    print_table(
+        headers,
+        |table| {
+            // Print events
+            for ev in abi.events.iter().flat_map(|(_, events)| events) {
+                let types = parse_event_params(&ev.inputs);
+                let selector = ev.selector().to_string();
+                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+            }
 
-        // Print errors
-        for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-            let selector = er.selector().to_string();
-            table.add_row([
-                "error",
-                &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
-                &selector,
-            ]);
-        }
+            // Print errors
+            for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+                let selector = er.selector().to_string();
+                table.add_row([
+                    "error",
+                    &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
+                    &selector,
+                ]);
+            }
 
-        // Print functions
-        for func in abi.functions.iter().flat_map(|(_, f)| f) {
-            let selector = func.selector().to_string();
-            let state_mut = func.state_mutability.as_json_str();
-            let func_sig = if !func.outputs.is_empty() {
-                format!(
-                    "{}({}) {state_mut} returns ({})",
-                    func.name,
-                    get_ty_sig(&func.inputs),
-                    get_ty_sig(&func.outputs)
-                )
-            } else {
-                format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
-            };
-            table.add_row(["function", &func_sig, &selector]);
-        }
+            // Print functions
+            for func in abi.functions.iter().flat_map(|(_, f)| f) {
+                let selector = func.selector().to_string();
+                let state_mut = func.state_mutability.as_json_str();
+                let func_sig = if !func.outputs.is_empty() {
+                    format!(
+                        "{}({}) {state_mut} returns ({})",
+                        func.name,
+                        get_ty_sig(&func.inputs),
+                        get_ty_sig(&func.outputs)
+                    )
+                } else {
+                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+                };
+                table.add_row(["function", &func_sig, &selector]);
+            }
 
-        if let Some(constructor) = abi.constructor() {
-            let state_mut = constructor.state_mutability.as_json_str();
-            table.add_row([
-                "constructor",
-                &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
-                "",
-            ]);
-        }
+            if let Some(constructor) = abi.constructor() {
+                let state_mut = constructor.state_mutability.as_json_str();
+                table.add_row([
+                    "constructor",
+                    &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
+                    "",
+                ]);
+            }
 
-        if let Some(fallback) = &abi.fallback {
-            let state_mut = fallback.state_mutability.as_json_str();
-            table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
-        }
+            if let Some(fallback) = &abi.fallback {
+                let state_mut = fallback.state_mutability.as_json_str();
+                table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
+            }
 
-        if let Some(receive) = &abi.receive {
-            let state_mut = receive.state_mutability.as_json_str();
-            table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
-        }
-    })
+            if let Some(receive) = &abi.receive {
+                let state_mut = receive.state_mutability.as_json_str();
+                table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
+            }
+        },
+        should_wrap,
+    )
 }
 
 fn get_ty_sig(inputs: &[Param]) -> String {
@@ -271,7 +279,10 @@ fn internal_ty(ty: &InternalType) -> String {
     }
 }
 
-pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
+pub fn print_storage_layout(
+    storage_layout: Option<&StorageLayout>,
+    should_wrap: bool,
+) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
         return Err(missing_error("storage layout"));
     };
@@ -289,22 +300,29 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
         Cell::new("Contract"),
     ];
 
-    print_table(headers, |table| {
-        for slot in &storage_layout.storage {
-            let storage_type = storage_layout.types.get(&slot.storage_type);
-            table.add_row([
-                slot.label.as_str(),
-                storage_type.map_or("?", |t| &t.label),
-                &slot.slot,
-                &slot.offset.to_string(),
-                storage_type.map_or("?", |t| &t.number_of_bytes),
-                &slot.contract,
-            ]);
-        }
-    })
+    print_table(
+        headers,
+        |table| {
+            for slot in &storage_layout.storage {
+                let storage_type = storage_layout.types.get(&slot.storage_type);
+                table.add_row([
+                    slot.label.as_str(),
+                    storage_type.map_or("?", |t| &t.label),
+                    &slot.slot,
+                    &slot.offset.to_string(),
+                    storage_type.map_or("?", |t| &t.number_of_bytes),
+                    &slot.contract,
+                ]);
+            }
+        },
+        should_wrap,
+    )
 }
 
-fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
+fn print_method_identifiers(
+    method_identifiers: &Option<BTreeMap<String, String>>,
+    should_wrap: bool,
+) -> Result<()> {
     let Some(method_identifiers) = method_identifiers else {
         return Err(missing_error("method identifiers"));
     };
@@ -315,14 +333,18 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
 
-    print_table(headers, |table| {
-        for (method, identifier) in method_identifiers {
-            table.add_row([method, identifier]);
-        }
-    })
+    print_table(
+        headers,
+        |table| {
+            for (method, identifier) in method_identifiers {
+                table.add_row([method, identifier]);
+            }
+        },
+        should_wrap,
+    )
 }
 
-fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
+fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool) -> Result<()> {
     if shell::is_json() {
         return print_json(map);
     }
@@ -332,17 +354,28 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
     } else {
         vec![Cell::new("Event"), Cell::new("Topic")]
     };
-    print_table(headers, |table| {
-        for (method, selector) in map {
-            table.add_row([method, selector.as_str().unwrap()]);
-        }
-    })
+    print_table(
+        headers,
+        |table| {
+            for (method, selector) in map {
+                table.add_row([method, selector.as_str().unwrap()]);
+            }
+        },
+        should_wrap,
+    )
 }
 
-fn print_table(headers: Vec<Cell>, add_rows: impl FnOnce(&mut Table)) -> Result<()> {
+fn print_table(
+    headers: Vec<Cell>,
+    add_rows: impl FnOnce(&mut Table),
+    should_wrap: bool,
+) -> Result<()> {
     let mut table = Table::new();
     table.apply_modifier(UTF8_ROUND_CORNERS);
     table.set_header(headers);
+    if should_wrap {
+        table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
+    }
     add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
