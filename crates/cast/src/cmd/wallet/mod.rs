@@ -269,7 +269,7 @@ impl WalletSubcommands {
                 let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
 
                 let path = if let Some(path) = path {
-                    match dunce::canonicalize(path.clone()) {
+                    match dunce::canonicalize(&path) {
                         Ok(path) => {
                             if !path.is_dir() {
                                 // we require path to be an existing directory
