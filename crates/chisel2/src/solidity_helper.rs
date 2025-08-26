@@ -3,21 +3,21 @@
 
 use crate::{
     dispatcher::PROMPT_ARROW,
-    prelude::{ChiselCommand, COMMAND_LEADER, PROMPT_ARROW_STR},
+    prelude::{COMMAND_LEADER, ChiselCommand, PROMPT_ARROW_STR},
 };
 use clap::Parser;
 use rustyline::{
+    Helper,
     completion::Completer,
     highlight::{CmdKind, Highlighter},
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
-    Helper,
 };
 use solar_parse::{
+    Cursor, Lexer,
     interface::{Session, SessionGlobals},
     lexer::token::{RawLiteralKind, RawTokenKind},
     token::Token,
-    Cursor, Lexer,
 };
 use std::{borrow::Cow, cell::RefCell, fmt, ops::Range, rc::Rc};
 use yansi::{Color, Style};
@@ -88,7 +88,7 @@ impl SolidityHelper {
     /// Highlights a Solidity source string.
     pub fn highlight<'a>(&self, input: &'a str) -> Cow<'a, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(input)
+            return Cow::Borrowed(input);
         }
 
         // Highlight commands separately
@@ -157,18 +157,18 @@ impl SolidityHelper {
             match token.kind {
                 OpenParen | OpenBrace | OpenBracket => stack.push(token.kind),
                 CloseParen | CloseBrace | CloseBracket => match (stack.pop(), token.kind) {
-                    (Some(OpenParen), CloseParen) |
-                    (Some(OpenBrace), CloseBrace) |
-                    (Some(OpenBracket), CloseBracket) => {}
+                    (Some(OpenParen), CloseParen)
+                    | (Some(OpenBrace), CloseBrace)
+                    | (Some(OpenBracket), CloseBracket) => {}
                     (Some(wanted), _) => {
                         return ValidationResult::Invalid(Some(format!(
                             "Mismatched brackets: {wanted:?} is not properly closed"
-                        )))
+                        )));
                     }
                     (None, c) => {
                         return ValidationResult::Invalid(Some(format!(
                             "Mismatched brackets: {c:?} is unpaired"
-                        )))
+                        )));
                     }
                 },
 
@@ -176,7 +176,7 @@ impl SolidityHelper {
                     if !terminated {
                         return ValidationResult::Invalid(Some(
                             "Unterminated string literal".to_string(),
-                        ))
+                        ));
                     }
                 }
 
@@ -184,7 +184,7 @@ impl SolidityHelper {
                     if !terminated {
                         return ValidationResult::Invalid(Some(
                             "Unterminated block comment".to_string(),
-                        ))
+                        ));
                     }
                 }
 
@@ -239,7 +239,7 @@ impl Highlighter for SolidityHelper {
         _default: bool,
     ) -> Cow<'b, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(prompt)
+            return Cow::Borrowed(prompt);
         }
 
         let mut out = prompt.to_string();
@@ -295,9 +295,9 @@ fn token_style(token: &Token) -> Style {
         Literal(..) => Color::Yellow.foreground(),
 
         Ident(
-            Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
-            Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
-            Modifier | Immutable | Unchecked,
+            Memory | Storage | Calldata | Public | Private | Internal | External | Constant | Pure
+            | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override | Modifier
+            | Immutable | Unchecked,
         ) => Color::Cyan.foreground(),
 
         Ident(s) if s.is_elementary_type() => Color::Blue.foreground(),

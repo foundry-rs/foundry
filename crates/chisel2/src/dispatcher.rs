@@ -7,7 +7,7 @@ use crate::{
     prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
     source::SessionSource,
 };
-use alloy_primitives::{hex, Address};
+use alloy_primitives::{Address, hex};
 use clap::Parser;
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
@@ -15,9 +15,9 @@ use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
-        decode_trace_arena,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena,
     },
 };
 use reqwest::Url;
@@ -130,7 +130,7 @@ impl ChiselDispatcher {
             return match ChiselCommand::try_parse_from(command.split_whitespace()) {
                 Ok(cmd) => self.dispatch_command(cmd).await,
                 Err(e) => eyre::bail!("unrecognized command: {e}"),
-            }
+            };
         }
 
         let source = self.source_mut();

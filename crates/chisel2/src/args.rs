@@ -9,7 +9,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::fs;
-use rustyline::{config::Configurer, error::ReadlineError, Editor};
+use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
@@ -86,7 +86,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
-                    break
+                    break;
                 } else {
                     sh_println!("(To exit, press Ctrl+C again)")?;
                     interrupt = true;
@@ -95,7 +95,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             Err(ReadlineError::Eof) => break,
             Err(err) => {
                 sh_err!("{err}")?;
-                break
+                break;
             }
         }
     }

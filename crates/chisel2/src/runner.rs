@@ -3,13 +3,13 @@
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
 
-use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
     traces::{TraceKind, Traces},
 };
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{InstructionResult, return_ok};
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
 static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
@@ -151,9 +151,9 @@ impl ChiselRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
-                    InstructionResult::Revert |
-                    InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFunds => {
+                    InstructionResult::Revert
+                    | InstructionResult::OutOfGas
+                    | InstructionResult::OutOfFunds => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
@@ -161,9 +161,9 @@ impl ChiselRunner {
                         // if last two successful estimations only vary by 10%, we consider this to
                         // sufficiently accurate
                         const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                            last_highest_gas_limit <
-                            1
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
+                            / last_highest_gas_limit
+                            < 1
                         {
                             // update the gas
                             gas_used = highest_gas_limit;

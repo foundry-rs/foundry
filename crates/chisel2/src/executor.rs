@@ -4,7 +4,7 @@
 
 use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{hex, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, hex};
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
@@ -162,7 +162,7 @@ impl SessionSource {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source");
-                return Ok((true, None))
+                return Ok((true, None));
             }
         };
 
@@ -180,7 +180,7 @@ impl SessionSource {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((true, None))
+                        return Ok((true, None));
                     }
                 }
             }
@@ -191,7 +191,7 @@ impl SessionSource {
             let output = source_without_inspector.build()?;
             if let Some(event) = output.intermediate.get_event(input) {
                 let formatted = format_event_definition(output.intermediate.gcx(), event)?;
-                return Ok((false, Some(formatted)))
+                return Ok((false, Some(formatted)));
             }
 
             // we were unable to check the event
@@ -200,7 +200,7 @@ impl SessionSource {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((false, None))
+            return Ok((false, None));
         }
 
         let Some((stack, memory)) = &res.state else {
@@ -216,7 +216,7 @@ impl SessionSource {
                 }
             }
 
-            return Err(eyre::eyre!("Failed to inspect expression"))
+            return Err(eyre::eyre!("Failed to inspect expression"));
         };
 
         // let output = source
@@ -430,10 +430,10 @@ fn should_continue(expr: &hir::Expr<'_>) -> bool {
         hir::ExprKind::Assign(..) => true,
         hir::ExprKind::Unary(u, _) => matches!(
             u.kind,
-            hir::UnOpKind::PreInc |
-                hir::UnOpKind::PreDec |
-                hir::UnOpKind::PostInc |
-                hir::UnOpKind::PostDec,
+            hir::UnOpKind::PreInc
+                | hir::UnOpKind::PreDec
+                | hir::UnOpKind::PostInc
+                | hir::UnOpKind::PostDec,
         ),
 
         // Array.pop()

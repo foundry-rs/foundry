@@ -4,9 +4,10 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_common::{
+    ContractsByArtifact,
     abi::fetch_abi_from_etherscan,
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_target_path, fs, shell, ContractsByArtifact,
+    find_target_path, fs, shell,
 };
 use foundry_config::load_config;
 use itertools::Itertools;
