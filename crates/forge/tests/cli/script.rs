@@ -2300,7 +2300,7 @@ interface Vm {
 }
 
 contract WalletScript is Script {
-    function run() public {
+    function run() public view {
         address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }
