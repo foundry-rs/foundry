@@ -7130,9 +7130,9 @@
       "func": {
         "id": "noAccessList",
         "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
-        "declaration": "function noAccessList() external view;",
+        "declaration": "function noAccessList() external;",
         "visibility": "external",
-        "mutability": "view",
+        "mutability": "",
         "signature": "noAccessList()",
         "selector": "0x238ad778",
         "selectorBytes": [

@@ -595,7 +595,7 @@ interface Vm {
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function noAccessList() external view;
+    function noAccessList() external;
 
     /// Utility cheatcode to mark specific storage slot as warm, simulating a prior read.
     #[cheatcode(group = Evm, safety = Unsafe)]
