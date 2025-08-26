@@ -173,6 +173,7 @@ impl Serialize for DecodedSlotValues {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
+
         let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
         state.serialize_field("previousValue", &format_value(&self.previous_value))?;
         state.serialize_field("newValue", &format_value(&self.new_value))?;
