@@ -375,7 +375,7 @@ interface Vm {
 
     /// Get the nonce of a `Wallet`.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
+    function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
 
     /// Loads a storage slot from an address.
     #[cheatcode(group = Evm, safety = Safe)]
@@ -413,7 +413,7 @@ interface Vm {
 
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
-    function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
@@ -448,17 +448,18 @@ interface Vm {
 
     /// Gets the number of elements in the mapping at the given slot, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);
+    function getMappingLength(address target, bytes32 mappingSlot) external view returns (uint256 length);
 
     /// Gets the elements at index idx of the mapping at the given slot, for a given address. The
     /// index must be less than the length of the mapping (i.e. the number of keys in the mapping).
     #[cheatcode(group = Evm, safety = Safe)]
-    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
+    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);
 
     /// Gets the map key and parent of a mapping at a given slot, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
     function getMappingKeyAndParentOf(address target, bytes32 elementSlot)
         external
+        view
         returns (bool found, bytes32 key, bytes32 parent);
 
     // -------- Block and Transaction Properties --------
@@ -718,7 +719,7 @@ interface Vm {
 
     /// Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
+    function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);
 
     // ----- Arbitrary Snapshots -----
 
@@ -890,6 +891,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
         external
+        view
         returns (EthGetLogs[] memory logs);
 
     // --- Behavior ---
@@ -931,7 +933,7 @@ interface Vm {
 
     /// Gets all the recorded logs.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getRecordedLogs() external returns (Log[] memory logs);
+    function getRecordedLogs() external view returns (Log[] memory logs);
 
     // -------- Gas Metering --------
 
@@ -2281,7 +2283,7 @@ interface Vm {
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 
     // ======== Utilities ========
 
@@ -2347,7 +2349,7 @@ interface Vm {
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     /// Returns true if `search` is found in `subject`, false otherwise.
     #[cheatcode(group = String)]
-    function contains(string calldata subject, string calldata search) external returns (bool result);
+    function contains(string calldata subject, string calldata search) external pure returns (bool result);
 
     // ======== JSON Parsing and Manipulation ========
 
