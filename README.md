@@ -198,19 +198,19 @@ Here are a few examples of what you can do:
 **Check the latest block on Ethereum Mainnet**:
 
 ```sh
-cast block-number --rpc-url https://eth.merkle.io
+cast block-number --rpc-url  https://merkle.io/ethereum-rpc
 ```
 
 **Check the Ether balance of `vitalik.eth`**
 
 ```sh
-cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
+cast balance vitalik.eth --ether --rpc-url  https://merkle.io/ethereum-rpc
 ```
 
 **Replay and trace a transaction**
 
 ```sh
-cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
+cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url  https://merkle.io/ethereum-rpc
 ```
 
 Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces using verified source maps, providing more detailed and human-readable information.
