@@ -258,7 +258,7 @@ impl SourcifyVerificationProvider {
             std_json_input,
             compiler_version,
             contract_identifier,
-            creation_transaction_hash: None, // Could be added as an option later
+            creation_transaction_hash: args.creation_transaction_hash.map(|h| h.to_string()),
         };
 
         Ok(req)
