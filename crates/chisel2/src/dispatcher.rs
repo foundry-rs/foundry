@@ -28,6 +28,7 @@ use solar::{
 };
 use std::{
     borrow::Cow,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -127,7 +128,7 @@ impl ChiselDispatcher {
     }
 
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
-    pub async fn dispatch(&mut self, mut input: &str) -> Result<()> {
+    pub async fn dispatch(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
         if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
             return match ChiselCommand::try_parse_from(command.split_whitespace()) {
                 Ok(cmd) => self.dispatch_command(cmd).await,
@@ -147,7 +148,7 @@ impl ChiselDispatcher {
             if !input.is_empty() {
                 source.add_run_code(input);
             }
-            return Ok(());
+            return Ok(ControlFlow::Continue(()));
         }
 
         // Create new source with exact input appended and parse
@@ -161,16 +162,16 @@ impl ChiselDispatcher {
         }
         if !should_continue {
             debug!(%input, ?res, "inspect success");
-            return Ok(());
+            return Ok(ControlFlow::Continue(()));
         }
 
         if do_execute {
-            self.execute_and_replace(new_source).await
+            self.execute_and_replace(new_source).await.map(ControlFlow::Continue)
         } else {
             let out = new_source.build()?;
             debug!(%input, ?out, "skipped execute and rebuild source");
             *self.source_mut() = new_source;
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
     }
 
@@ -255,10 +256,17 @@ impl ChiselDispatcher {
 /// [`ChiselCommand`] implementations.
 impl ChiselDispatcher {
     /// Dispatches a [`ChiselCommand`].
-    pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> Result<()> {
+    pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> Result<ControlFlow<()>> {
+        match cmd {
+            ChiselCommand::Quit => Ok(ControlFlow::Break(())),
+            cmd => self.dispatch_command_impl(cmd).await.map(ControlFlow::Continue),
+        }
+    }
+
+    async fn dispatch_command_impl(&mut self, cmd: ChiselCommand) -> Result<()> {
         match cmd {
             ChiselCommand::Help => self.show_help(),
-            ChiselCommand::Quit => self.quit(),
+            ChiselCommand::Quit => unreachable!(),
             ChiselCommand::Clear => self.clear_source(),
             ChiselCommand::Save { id } => self.save_session(id),
             ChiselCommand::Load { id } => self.load_session(&id),
@@ -280,12 +288,6 @@ impl ChiselDispatcher {
 
     pub(crate) fn show_help(&self) -> Result<()> {
         sh_println!("{}", ChiselCommand::format_help())
-    }
-
-    pub(crate) fn quit(&self) -> Result<()> {
-        // TODO(dani): Don't call `exit`.
-        // Exit the process with status code `0` for success.
-        std::process::exit(0);
     }
 
     pub(crate) fn clear_source(&mut self) -> Result<()> {

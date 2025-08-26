@@ -10,7 +10,7 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
-use std::path::PathBuf;
+use std::{ops::ControlFlow, path::PathBuf};
 use tracing::debug;
 use yansi::Paint;
 
@@ -33,6 +33,15 @@ pub fn setup() -> Result<()> {
     Ok(())
 }
 
+macro_rules! try_cf {
+    ($e:expr) => {
+        match $e {
+            ControlFlow::Continue(()) => {}
+            ControlFlow::Break(()) => return Ok(()),
+        }
+    };
+}
+
 /// Run the subcommand.
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
@@ -53,7 +62,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     evaluate_prelude(&mut dispatcher, args.prelude).await?;
 
     if let Some(cmd) = args.cmd {
-        handle_cli_command(&mut dispatcher, cmd).await?;
+        try_cf!(handle_cli_command(&mut dispatcher, cmd).await?);
         return Ok(());
     }
 
@@ -78,8 +87,12 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 // Dispatch and match results.
                 let r = dispatcher.dispatch(&line).await;
                 dispatcher.helper.set_errored(r.is_err());
-                if let Err(e) = r {
-                    sh_err!("{}", foundry_common::errors::display_chain(&e))?;
+                match r {
+                    Ok(ControlFlow::Continue(())) => {}
+                    Ok(ControlFlow::Break(())) => break,
+                    Err(e) => {
+                        sh_err!("{}", foundry_common::errors::display_chain(&e))?;
+                    }
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -114,7 +127,7 @@ async fn evaluate_prelude(
     let Some(prelude_dir) = maybe_prelude else { return Ok(()) };
     if prelude_dir.is_file() {
         sh_println!("{} {}", "Loading prelude source file:".yellow(), prelude_dir.display())?;
-        load_prelude_file(dispatcher, prelude_dir).await?;
+        try_cf!(load_prelude_file(dispatcher, prelude_dir).await?);
         sh_println!("{}\n", "Prelude source file loaded successfully!".green())?;
     } else {
         let prelude_sources = fs::files_with_ext(&prelude_dir, "sol");
@@ -122,7 +135,7 @@ async fn evaluate_prelude(
         for source_file in prelude_sources {
             print_success_msg = true;
             sh_println!("{} {}", "Loading prelude source file:".yellow(), source_file.display())?;
-            load_prelude_file(dispatcher, source_file).await?;
+            try_cf!(load_prelude_file(dispatcher, source_file).await?);
         }
 
         if print_success_msg {
@@ -133,32 +146,29 @@ async fn evaluate_prelude(
 }
 
 /// Loads a single Solidity file into the prelude.
-async fn load_prelude_file(dispatcher: &mut ChiselDispatcher, file: PathBuf) -> Result<()> {
+async fn load_prelude_file(
+    dispatcher: &mut ChiselDispatcher,
+    file: PathBuf,
+) -> Result<ControlFlow<()>> {
     let prelude = fs::read_to_string(file)
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
     dispatcher.dispatch(&prelude).await
 }
 
-async fn handle_cli_command(d: &mut ChiselDispatcher, cmd: ChiselSubcommand) -> Result<()> {
+async fn handle_cli_command(
+    d: &mut ChiselDispatcher,
+    cmd: ChiselSubcommand,
+) -> Result<ControlFlow<()>> {
     match cmd {
-        ChiselSubcommand::List => {
-            d.dispatch_command(ChiselCommand::ListSessions).await?;
-        }
-        ChiselSubcommand::Load { id } => {
-            d.dispatch_command(ChiselCommand::Load { id }).await?;
-        }
+        ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
+        ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
-            d.dispatch_command(ChiselCommand::Load { id }).await?;
-            d.dispatch_command(ChiselCommand::Source).await?;
+            let _ = d.dispatch_command(ChiselCommand::Load { id }).await?;
+            d.dispatch_command(ChiselCommand::Source).await
         }
-        ChiselSubcommand::ClearCache => {
-            d.dispatch_command(ChiselCommand::ClearCache).await?;
-        }
-        ChiselSubcommand::Eval { command } => {
-            d.dispatch(&command).await?;
-        }
+        ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
+        ChiselSubcommand::Eval { command } => d.dispatch(&command).await,
     }
-    Ok(())
 }
 
 fn chisel_history_file() -> Option<PathBuf> {
