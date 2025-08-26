@@ -39,7 +39,7 @@ use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -317,11 +317,13 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             return Some(TransactionExecutionOutcome::BlockGasExhausted(transaction));
         }
 
-        // TODO!
-        // check that we comply with the transaction's gas limit, if enabled
-        // if env.evm_env.cfg_env.tx_gas_limit_cap.is_none() {
-        // return Some(TransactionExecutionOutcome::TransactionGasExhausted(transaction));
-        // }
+        // check that we comply with the transaction's gas limit as imposed by Osaka (EIP-7825)
+        if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
+            && transaction.pending_transaction.transaction.gas_limit()
+                > env.evm_env.cfg_env().tx_gas_limit_cap()
+        {
+            return Some(TransactionExecutionOutcome::TransactionGasExhausted(transaction));
+        }
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
