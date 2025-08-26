@@ -224,7 +224,6 @@ mod tests {
     use super::*;
     use solang_parser::parse;
 
-    #[inline]
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
         let mut doc = Parser::new(comments, src.to_owned());

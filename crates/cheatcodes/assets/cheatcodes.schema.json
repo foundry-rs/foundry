@@ -242,11 +242,6 @@
           "const": "scripting"
         },
         {
-          "description": "Cheatcodes that interact with the program's forking configuration.\n\nExamples: `readForkChains`, `readForkChainRpcUrl`, `readForkUint`, `readForkAddressArray`.\n\nSafety: safe.",
-          "type": "string",
-          "const": "forking"
-        },
-        {
           "description": "Cheatcodes that interact with the OS or filesystem.\n\nExamples: `ffi`, `projectRoot`, `writeFile`.\n\nSafety: safe.",
           "type": "string",
           "const": "filesystem"
