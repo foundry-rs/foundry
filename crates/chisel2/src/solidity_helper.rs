@@ -13,9 +13,9 @@ use rustyline::{
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
 };
-use solar_parse::{
+use solar::parse::{
     Cursor, Lexer,
-    interface::{Session, SessionGlobals},
+    interface::Session,
     lexer::token::{RawLiteralKind, RawTokenKind},
     token::Token,
 };
@@ -42,7 +42,6 @@ struct Inner {
 
     do_paint: bool,
     sess: Session,
-    globals: SessionGlobals,
 }
 
 impl Default for SolidityHelper {
@@ -69,7 +68,6 @@ impl SolidityHelper {
                 errored: false,
                 do_paint: yansi::is_enabled(),
                 sess: Session::builder().with_silent_emitter(None).build(),
-                globals: SessionGlobals::new(),
             })),
         }
     }
@@ -172,7 +170,7 @@ impl SolidityHelper {
                     }
                 },
 
-                Literal { kind: Str { terminated, .. } | HexStr { terminated, .. } } => {
+                Literal { kind: Str { terminated, .. } } => {
                     if !terminated {
                         return ValidationResult::Invalid(Some(
                             "Unterminated string literal".to_string(),
@@ -220,7 +218,7 @@ impl SolidityHelper {
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
         let this = self.inner.borrow();
-        this.globals.set(|| this.sess.enter(|| f(&this.sess)));
+        this.sess.enter_sequential(|| f(&this.sess));
     }
 }
 
@@ -285,7 +283,7 @@ impl Helper for SolidityHelper {}
 #[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
-    use solar_parse::{
+    use solar::parse::{
         interface::kw::*,
         token::{TokenKind::*, TokenLitKind::*},
     };

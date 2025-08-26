@@ -12,7 +12,7 @@ use foundry_evm::{
     inspectors::CheatsConfig, traces::TraceMode,
 };
 use itertools::Itertools;
-use solar_sema::{
+use solar::sema::{
     ast::Span,
     hir,
     ty::{Gcx, Ty},
@@ -404,10 +404,10 @@ fn format_event_definition<'gcx>(gcx: Gcx<'gcx>, id: hir::EventId) -> Result<Str
                 .iter()
                 .map(|&id| {
                     let param = gcx.hir.variable(id);
+                    let ty = gcx.type_of_item(id.into());
                     format!(
                         "{}{}{}",
-                        // param.ty,
-                        "<ty>", // TODO(dani): param.ty.display(gcx),
+                        ty.display(gcx),
                         if param.indexed { " indexed" } else { "" },
                         if let Some(name) = param.name {
                             format!(" {name}")
@@ -487,5 +487,393 @@ impl Iterator for InstructionIter<'_> {
             ([0; 32], 0)
         };
         Some(Instruction { pc, opcode, data, data_len })
+    }
+}
+
+#[cfg(false)] // TODO(dani): re-enable
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::{error::SolcError, solc::Solc};
+    use semver::Version;
+    use std::sync::Mutex;
+
+    #[test]
+    fn test_const() {
+        assert_eq!(USIZE_MAX_AS_U256.to::<u64>(), usize::MAX as u64);
+        assert_eq!(USIZE_MAX_AS_U256.to::<u64>(), usize::MAX as u64);
+    }
+
+    #[test]
+    fn test_expressions() {
+        static EXPRESSIONS: &[(&str, DynSolType)] = {
+            use DynSolType::*;
+            &[
+                // units
+                // uint
+                ("1 seconds", Uint(256)),
+                ("1 minutes", Uint(256)),
+                ("1 hours", Uint(256)),
+                ("1 days", Uint(256)),
+                ("1 weeks", Uint(256)),
+                ("1 wei", Uint(256)),
+                ("1 gwei", Uint(256)),
+                ("1 ether", Uint(256)),
+                // int
+                ("-1 seconds", Int(256)),
+                ("-1 minutes", Int(256)),
+                ("-1 hours", Int(256)),
+                ("-1 days", Int(256)),
+                ("-1 weeks", Int(256)),
+                ("-1 wei", Int(256)),
+                ("-1 gwei", Int(256)),
+                ("-1 ether", Int(256)),
+                //
+                ("true ? 1 : 0", Uint(256)),
+                ("true ? -1 : 0", Int(256)),
+                // misc
+                //
+
+                // ops
+                // uint
+                ("1 + 1", Uint(256)),
+                ("1 - 1", Uint(256)),
+                ("1 * 1", Uint(256)),
+                ("1 / 1", Uint(256)),
+                ("1 % 1", Uint(256)),
+                ("1 ** 1", Uint(256)),
+                ("1 | 1", Uint(256)),
+                ("1 & 1", Uint(256)),
+                ("1 ^ 1", Uint(256)),
+                ("1 >> 1", Uint(256)),
+                ("1 << 1", Uint(256)),
+                // int
+                ("int(1) + 1", Int(256)),
+                ("int(1) - 1", Int(256)),
+                ("int(1) * 1", Int(256)),
+                ("int(1) / 1", Int(256)),
+                ("1 + int(1)", Int(256)),
+                ("1 - int(1)", Int(256)),
+                ("1 * int(1)", Int(256)),
+                ("1 / int(1)", Int(256)),
+                //
+
+                // assign
+                ("uint256 a; a--", Uint(256)),
+                ("uint256 a; --a", Uint(256)),
+                ("uint256 a; a++", Uint(256)),
+                ("uint256 a; ++a", Uint(256)),
+                ("uint256 a; a   = 1", Uint(256)),
+                ("uint256 a; a  += 1", Uint(256)),
+                ("uint256 a; a  -= 1", Uint(256)),
+                ("uint256 a; a  *= 1", Uint(256)),
+                ("uint256 a; a  /= 1", Uint(256)),
+                ("uint256 a; a  %= 1", Uint(256)),
+                ("uint256 a; a  &= 1", Uint(256)),
+                ("uint256 a; a  |= 1", Uint(256)),
+                ("uint256 a; a  ^= 1", Uint(256)),
+                ("uint256 a; a <<= 1", Uint(256)),
+                ("uint256 a; a >>= 1", Uint(256)),
+                //
+
+                // bool
+                ("true && true", Bool),
+                ("true || true", Bool),
+                ("true == true", Bool),
+                ("true != true", Bool),
+                ("true < true", Bool),
+                ("true <= true", Bool),
+                ("true > true", Bool),
+                ("true >= true", Bool),
+                ("!true", Bool),
+                //
+            ]
+        };
+
+        let source = &mut source();
+
+        let array_expressions: &[(&str, DynSolType)] = &[
+            ("[1, 2, 3]", fixed_array(DynSolType::Uint(256), 3)),
+            ("[uint8(1), 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
+            ("[int8(1), 2, 3]", fixed_array(DynSolType::Int(8), 3)),
+            ("new uint256[](3)", array(DynSolType::Uint(256))),
+            ("uint256[] memory a = new uint256[](3);\na[0]", DynSolType::Uint(256)),
+            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(DynSolType::Uint(256))),
+        ];
+        generic_type_test(source, array_expressions);
+        generic_type_test(source, EXPRESSIONS);
+    }
+
+    #[test]
+    fn test_types() {
+        static TYPES: &[(&str, DynSolType)] = {
+            use DynSolType::*;
+            &[
+                // bool
+                ("bool", Bool),
+                ("true", Bool),
+                ("false", Bool),
+                //
+
+                // int and uint
+                ("uint", Uint(256)),
+                ("uint(1)", Uint(256)),
+                ("1", Uint(256)),
+                ("0x01", Uint(256)),
+                ("int", Int(256)),
+                ("int(1)", Int(256)),
+                ("int(-1)", Int(256)),
+                ("-1", Int(256)),
+                ("-0x01", Int(256)),
+                //
+
+                // address
+                ("address", Address),
+                ("address(0)", Address),
+                ("0x690B9A9E9aa1C9dB991C7721a92d351Db4FaC990", Address),
+                ("payable(0)", Address),
+                ("payable(address(0))", Address),
+                //
+
+                // string
+                ("string", String),
+                ("string(\"hello world\")", String),
+                ("\"hello world\"", String),
+                ("unicode\"hello world 😀\"", String),
+                //
+
+                // bytes
+                ("bytes", Bytes),
+                ("bytes(\"hello world\")", Bytes),
+                ("bytes(unicode\"hello world 😀\")", Bytes),
+                ("hex\"68656c6c6f20776f726c64\"", Bytes),
+                //
+            ]
+        };
+
+        let mut types: Vec<(String, DynSolType)> = Vec::with_capacity(96 + 32 + 100);
+        for (n, b) in (8..=256).step_by(8).zip(1..=32) {
+            types.push((format!("uint{n}(0)"), DynSolType::Uint(n)));
+            types.push((format!("int{n}(0)"), DynSolType::Int(n)));
+            types.push((format!("bytes{b}(0x00)"), DynSolType::FixedBytes(b)));
+        }
+
+        for n in 0..=32 {
+            types.push((
+                format!("uint256[{n}]"),
+                DynSolType::FixedArray(Box::new(DynSolType::Uint(256)), n),
+            ));
+        }
+
+        generic_type_test(&mut source(), TYPES);
+        generic_type_test(&mut source(), &types);
+    }
+
+    #[test]
+    fn test_global_vars() {
+        init_tracing();
+
+        // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
+        let global_variables = {
+            use DynSolType::*;
+            &[
+                // abi
+                ("abi.decode(bytes, (uint8[13]))", Tuple(vec![FixedArray(Box::new(Uint(8)), 13)])),
+                ("abi.decode(bytes, (address, bytes))", Tuple(vec![Address, Bytes])),
+                ("abi.decode(bytes, (uint112, uint48))", Tuple(vec![Uint(112), Uint(48)])),
+                ("abi.encode(_, _)", Bytes),
+                ("abi.encodePacked(_, _)", Bytes),
+                ("abi.encodeWithSelector(bytes4, _, _)", Bytes),
+                ("abi.encodeCall(function(), (_, _))", Bytes),
+                ("abi.encodeWithSignature(string, _, _)", Bytes),
+                //
+
+                //
+                ("bytes.concat()", Bytes),
+                ("bytes.concat(_)", Bytes),
+                ("bytes.concat(_, _)", Bytes),
+                ("string.concat()", String),
+                ("string.concat(_)", String),
+                ("string.concat(_, _)", String),
+                //
+
+                // block
+                ("block.basefee", Uint(256)),
+                ("block.chainid", Uint(256)),
+                ("block.coinbase", Address),
+                ("block.difficulty", Uint(256)),
+                ("block.gaslimit", Uint(256)),
+                ("block.number", Uint(256)),
+                ("block.timestamp", Uint(256)),
+                //
+
+                // tx
+                ("gasleft()", Uint(256)),
+                ("msg.data", Bytes),
+                ("msg.sender", Address),
+                ("msg.sig", FixedBytes(4)),
+                ("msg.value", Uint(256)),
+                ("tx.gasprice", Uint(256)),
+                ("tx.origin", Address),
+                //
+
+                // assertions
+                // assert(bool)
+                // require(bool)
+                // revert()
+                // revert(string)
+                //
+
+                //
+                ("blockhash(uint)", FixedBytes(32)),
+                ("keccak256(bytes)", FixedBytes(32)),
+                ("sha256(bytes)", FixedBytes(32)),
+                ("ripemd160(bytes)", FixedBytes(20)),
+                ("ecrecover(bytes32, uint8, bytes32, bytes32)", Address),
+                ("addmod(uint, uint, uint)", Uint(256)),
+                ("mulmod(uint, uint, uint)", Uint(256)),
+                //
+
+                // address
+                ("address(_)", Address),
+                ("address(this)", Address),
+                // ("super", Type::Custom("super".to_string))
+                // (selfdestruct(address payable), None)
+                ("address.balance", Uint(256)),
+                ("address.code", Bytes),
+                ("address.codehash", FixedBytes(32)),
+                ("address.send(uint256)", Bool),
+                // (address.transfer(uint256), None)
+                //
+
+                // type
+                ("type(C).name", String),
+                ("type(C).creationCode", Bytes),
+                ("type(C).runtimeCode", Bytes),
+                ("type(I).interfaceId", FixedBytes(4)),
+                ("type(uint256).min", Uint(256)),
+                ("type(int128).min", Int(128)),
+                ("type(int256).min", Int(256)),
+                ("type(uint256).max", Uint(256)),
+                ("type(int128).max", Int(128)),
+                ("type(int256).max", Int(256)),
+                ("type(Enum1).min", Uint(256)),
+                ("type(Enum1).max", Uint(256)),
+                // function
+                ("this.run.address", Address),
+                ("this.run.selector", FixedBytes(4)),
+            ]
+        };
+
+        generic_type_test(&mut source(), global_variables);
+    }
+
+    #[track_caller]
+    fn source() -> SessionSource {
+        // synchronize solc install
+        static PRE_INSTALL_SOLC_LOCK: Mutex<bool> = Mutex::new(false);
+
+        // on some CI targets installing results in weird malformed solc files, we try installing it
+        // multiple times
+        let version = "0.8.20";
+        for _ in 0..3 {
+            let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
+            if !*is_preinstalled {
+                let solc = Solc::find_or_install(&version.parse().unwrap())
+                    .map(|solc| (solc.version.clone(), solc));
+                match solc {
+                    Ok((v, solc)) => {
+                        // successfully installed
+                        let _ = sh_println!("found installed Solc v{v} @ {}", solc.solc.display());
+                        break;
+                    }
+                    Err(e) => {
+                        // try reinstalling
+                        let _ = sh_err!("error while trying to re-install Solc v{version}: {e}");
+                        let solc = Solc::blocking_install(&version.parse().unwrap());
+                        if solc.map_err(SolcError::from).is_ok() {
+                            *is_preinstalled = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let solc = Solc::find_or_install(&Version::new(0, 8, 19)).expect("could not install solc");
+        SessionSource::new(solc, Default::default())
+    }
+
+    fn array(ty: DynSolType) -> DynSolType {
+        DynSolType::Array(Box::new(ty))
+    }
+
+    fn fixed_array(ty: DynSolType, len: usize) -> DynSolType {
+        DynSolType::FixedArray(Box::new(ty), len)
+    }
+
+    fn parse(s: &mut SessionSource, input: &str, clear: bool) -> IntermediateOutput {
+        if clear {
+            s.drain_run();
+            s.drain_top_level_code();
+            s.drain_global_code();
+        }
+
+        *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
+
+        let input = format!("{};", input.trim_end().trim_end_matches(';'));
+        let (mut _s, _) = s.clone_with_new_line(input).unwrap();
+        *s = _s.clone();
+        let s = &mut _s;
+
+        if let Err(e) = s.parse() {
+            for err in e {
+                let _ = sh_eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
+            }
+            let source = s.to_repl_source();
+            panic!("could not parse input:\n{source}")
+        }
+        s.generate_intermediate_output().expect("could not generate intermediate output")
+    }
+
+    fn expr(stmts: &[pt::Statement]) -> pt::Expression {
+        match stmts.last().expect("no statements") {
+            pt::Statement::Expression(_, e) => e.clone(),
+            s => panic!("Not an expression: {s:?}"),
+        }
+    }
+
+    fn get_type(
+        s: &mut SessionSource,
+        input: &str,
+        clear: bool,
+    ) -> (Option<Type>, IntermediateOutput) {
+        let intermediate = parse(s, input, clear);
+        let run_func_body = intermediate.run_func_body().expect("no run func body");
+        let expr = expr(run_func_body);
+        (Type::from_expression(&expr).map(Type::map_special), intermediate)
+    }
+
+    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<DynSolType> {
+        let (ty, intermediate) = get_type(s, input, clear);
+        ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
+    }
+
+    fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
+    where
+        T: AsRef<str> + std::fmt::Display + 'a,
+        I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
+    {
+        for (input, expected) in input.into_iter() {
+            let input = input.as_ref();
+            let ty = get_type_ethabi(s, input, true);
+            assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
+        }
+    }
+
+    fn init_tracing() {
+        let _ = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 }

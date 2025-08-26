@@ -41,13 +41,12 @@ dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
 revm.workspace = true
-rustyline = "16"
+rustyline = "17"
 itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 time = { version = "0.3", features = ["formatting"] }
-tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
@@ -59,3 +58,5 @@ tracing-subscriber.workspace = true
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]

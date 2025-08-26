@@ -20,8 +20,7 @@ pub fn run() -> Result<()> {
 
     let args = Chisel::parse();
     args.global.init()?;
-
-    run_command(args)
+    args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
@@ -35,7 +34,6 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
-#[tokio::main]
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
     let (config, evm_opts) = args.load_config_and_evm_opts()?;

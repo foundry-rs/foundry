@@ -2635,7 +2635,7 @@ dependencies = [
  "regex",
  "reqwest",
  "revm",
- "rustyline",
+ "rustyline 16.0.0",
  "semver 1.0.26",
  "serde",
  "serde_json",
@@ -2666,13 +2666,12 @@ dependencies = [
  "itertools 0.14.0",
  "reqwest",
  "revm",
- "rustyline",
+ "rustyline 17.0.1",
  "semver 1.0.26",
  "serde",
  "serde_json",
  "solar-compiler",
  "time",
- "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
  "walkdir",
@@ -8554,6 +8553,28 @@ dependencies = [
  "unicode-width 0.2.0",
  "utf8parse",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rustyline"
+version = "17.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6614df0b6d4cfb20d1d5e295332921793ce499af3ebc011bf1e393380e1e492"
+dependencies = [
+ "bitflags 2.9.3",
+ "cfg-if",
+ "clipboard-win",
+ "fd-lock",
+ "home",
+ "libc",
+ "log",
+ "memchr",
+ "nix 0.30.1",
+ "radix_trie",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
+ "utf8parse",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

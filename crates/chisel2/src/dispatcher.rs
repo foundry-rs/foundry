@@ -22,8 +22,10 @@ use foundry_evm::{
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use solar_parse::lexer::token::{RawLiteralKind, RawTokenKind};
-use solar_sema::ast::Base;
+use solar::{
+    parse::lexer::token::{RawLiteralKind, RawTokenKind},
+    sema::ast::Base,
+};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -471,7 +473,7 @@ impl ChiselDispatcher {
             .into_iter()
             .next()
             .ok_or_else(|| eyre::eyre!("No ABI found for address {address} on Etherscan"))?;
-        let code = foundry_cli::utils::abi_to_solidity(&abi, &name);
+        let code = foundry_cli::utils::abi_to_solidity(&abi, &name)?;
         self.source_mut().add_global_code(&code);
         sh_println!("Added {address}'s interface to source as `{name}`")
     }
@@ -528,7 +530,7 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
     let mut current_pos = 0;
     let mut only_trivia = true;
     let mut new_input = Cow::Borrowed(input);
-    for token in solar_parse::Cursor::new(input) {
+    for token in solar::parse::Cursor::new(input) {
         use RawTokenKind::*;
 
         let pos = current_pos as usize;

@@ -13,8 +13,10 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solar_parse::interface::diagnostics::EmittedDiagnostics;
-use solar_sema::{hir, interface::Session, ty::Gcx};
+use solar::{
+    parse::interface::diagnostics::EmittedDiagnostics,
+    sema::{Compiler, hir, interface::Session, ty::Gcx},
+};
 use std::{cell::OnceCell, fmt, path::PathBuf};
 use walkdir::WalkDir;
 
@@ -26,7 +28,7 @@ static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
-    pub intermediate: IntermediateOutput<'static>,
+    pub intermediate: IntermediateOutput,
     pub compiler: CompilerOutput,
 }
 
@@ -37,8 +39,8 @@ impl fmt::Debug for GeneratedOutput {
 }
 
 /// Intermediate output for the compiled [SessionSource]
-pub struct IntermediateOutput<'gcx> {
-    gcx: solar_sema::GcxWrapper<'gcx>,
+pub struct IntermediateOutput {
+    compiler: Compiler,
     /// `REPL::run`
     run: hir::FunctionId,
 }
@@ -394,34 +396,34 @@ contract {contract_name} {{
 
     pub fn parse(&self) -> Result<(), EmittedDiagnostics> {
         let sess = self.make_session();
-        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
-            let arena = solar_parse::ast::Arena::new();
+        let _ = sess.enter_sequential(|| -> solar::parse::interface::Result<()> {
+            let arena = solar::parse::ast::Arena::new();
             let filename = self.file_name.clone().into();
             let src = self.to_repl_source();
-            let mut parser = solar_parse::Parser::from_source_code(&sess, &arena, filename, src)?;
+            let mut parser = solar::parse::Parser::from_source_code(&sess, &arena, filename, src)?;
             let _ast = parser.parse_file().map_err(|e| e.emit())?;
             Ok(())
         });
         sess.dcx.emitted_errors().unwrap()
     }
 
-    pub fn analyze(&self) -> Result<IntermediateOutput<'static>, EmittedDiagnostics> {
+    pub fn analyze(&self) -> Result<IntermediateOutput, EmittedDiagnostics> {
         todo!()
     }
 
-    fn make_session(&self) -> solar_parse::interface::Session {
+    fn make_session(&self) -> solar::parse::interface::Session {
         // TODO(dani): use future common utilities for solc input -> solar session
-        solar_parse::interface::Session::builder().with_buffer_emitter(Default::default()).build()
+        solar::parse::interface::Session::builder().with_buffer_emitter(Default::default()).build()
     }
 }
 
-impl<'gcx> IntermediateOutput<'gcx> {
-    pub fn gcx(&self) -> Gcx<'gcx> {
-        self.gcx.get()
+impl IntermediateOutput {
+    pub fn gcx(&self) -> Gcx<'_> {
+        todo!()
     }
 
-    pub fn sess(&self) -> &'gcx Session {
-        self.gcx().sess
+    pub fn sess(&self) -> &Session {
+        self.compiler.sess()
     }
 
     // TODO(dani)
@@ -437,7 +439,7 @@ impl<'gcx> IntermediateOutput<'gcx> {
     }
 
     /// Returns the body of the `REPL::run()` function.
-    pub fn run_func_body(&self) -> hir::Block<'gcx> {
+    pub fn run_func_body(&self) -> hir::Block<'_> {
         self.gcx().hir.function(self.run).body.expect("`run` has no body")
     }
 }
