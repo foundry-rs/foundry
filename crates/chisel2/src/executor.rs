@@ -2,6 +2,8 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
+use std::ops::ControlFlow;
+
 use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, U256, hex};
@@ -13,7 +15,6 @@ use foundry_evm::{
 };
 use itertools::Itertools;
 use solar::sema::{
-    ast::Span,
     hir,
     ty::{Gcx, Ty},
 };
@@ -32,115 +33,21 @@ impl SessionSource {
     /// Returns an error if compilation fails.
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
-        let compiled = self.build()?;
+        let output = self.build()?;
 
-        let (_, contract) = compiled
-            .compiler
-            .contracts_iter()
-            .find(|&(name, _)| name == "REPL")
-            .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
+        let (bytecode, final_pc) = output.enter(|output| -> Result<_> {
+            let contract = output
+                .repl_contract()
+                .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
+            let bytecode = contract
+                .get_bytecode_bytes()
+                .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
+            Ok((bytecode.into_owned(), output.final_pc(contract)?))
+        })?;
+        dbg!(final_pc);
 
-        // These *should* never panic after a successful compilation.
-        let bytecode = contract
-            .get_bytecode_bytes()
-            .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
-        let deployed_bytecode = contract
-            .get_deployed_bytecode_bytes()
-            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
+        let Some(final_pc) = final_pc else { return Ok(Default::default()) };
 
-        // Fetch the run function's body statement
-        let run_body = compiled.intermediate.run_func_body();
-
-        // Record loc of first yul block return statement (if any).
-        // This is used to decide which is the final statement within the `run()` method.
-        // see <https://github.com/foundry-rs/foundry/issues/4617>.
-        let last_yul_return_span: Option<Span> = run_body.iter().find_map(|stmt| {
-            // TODO(dani): Yul is not yet lowered to HIR.
-            let _ = stmt;
-            /*
-            if let hir::StmtKind::Assembly { block, .. } = stmt {
-                if let Some(stmt) = block.last() {
-                    if let pt::YulStatement::FunctionCall(yul_call) = stmt {
-                        if yul_call.id.name == "return" {
-                            return Some(stmt.loc())
-                        }
-                    }
-                }
-            }
-            */
-            None
-        });
-
-        // Find the last statement within the "run()" method and get the program
-        // counter via the source map.
-        let Some(last_stmt) = run_body.last() else {
-            return Ok((Address::ZERO, ChiselResult::default()));
-        };
-
-        // If the final statement is some type of block (assembly, unchecked, or regular),
-        // we need to find the final statement within that block. Otherwise, default to
-        // the source loc of the final statement of the `run()` function's block.
-        //
-        // There is some code duplication within the arms due to the difference between
-        // the [pt::Statement] type and the [pt::YulStatement] types.
-        let mut source_span = match last_stmt.kind {
-            // TODO(dani): Yul is not yet lowered to HIR.
-            /*
-            pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
-                let last_statement = block.statements.iter().rev().find(|statement| {
-                    !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
-                });
-                if let Some(statement) = last_statement {
-                    statement.loc()
-                } else {
-                    // In the case where the block is empty, attempt to grab the statement
-                    // before the asm block. Because we use saturating sub to get the second
-                    // to last index, this can always be safely unwrapped.
-                    run_body[run_body.len().saturating_sub(2)].span
-                }
-            }
-            */
-            hir::StmtKind::UncheckedBlock(stmts) | hir::StmtKind::Block(stmts) => {
-                if let Some(stmt) = stmts.last() {
-                    stmt.span
-                } else {
-                    // In the case where the block is empty, attempt to grab the statement
-                    // before the block. Because we use saturating sub to get the second to
-                    // last index, this can always be safely unwrapped.
-                    run_body[run_body.len().saturating_sub(2)].span
-                }
-            }
-            _ => last_stmt.span,
-        };
-
-        // Consider yul return statement as final statement (if it's loc is lower) .
-        if let Some(yul_return_span) = last_yul_return_span
-            && yul_return_span.hi() < source_span.lo()
-        {
-            source_span = yul_return_span;
-        }
-
-        // Map the source location of the final statement of the `run()` function to its
-        // corresponding runtime program counter
-        let final_pc = {
-            let range =
-                compiled.intermediate.sess().source_map().span_to_source(source_span).unwrap().1;
-            let offset = range.start as u32;
-            let length = range.len() as u32;
-            contract
-                .get_source_map_deployed()
-                .unwrap()
-                .unwrap()
-                .into_iter()
-                .zip(InstructionIter::new(&deployed_bytecode))
-                .filter(|(s, _)| s.offset() == offset && s.length() == length)
-                .map(|(_, i)| i.pc)
-                .max()
-                .unwrap_or_default()
-        };
-
-        let bytecode = bytecode.into_owned();
         let mut runner = self.build_runner(final_pc).await?;
         runner.run(bytecode)
     }
@@ -156,13 +63,13 @@ impl SessionSource {
     /// If the input is valid `Ok((continue, formatted_output))` where:
     /// - `continue` is true if the input should be appended to the source
     /// - `formatted_output` is the formatted value, if any
-    pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
+    pub async fn inspect(&self, input: &str) -> Result<(ControlFlow<()>, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
         let mut source = match self.clone_with_new_line(line) {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source");
-                return Ok((true, None));
+                return Ok((ControlFlow::Continue(()), None));
             }
         };
 
@@ -180,7 +87,7 @@ impl SessionSource {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((true, None));
+                        return Ok((ControlFlow::Continue(()), None));
                     }
                 }
             }
@@ -189,9 +96,12 @@ impl SessionSource {
         // If abi-encoding the input failed, check whether it is an event
         if let Some(err) = err {
             let output = source_without_inspector.build()?;
-            if let Some(event) = output.intermediate.get_event(input) {
-                let formatted = format_event_definition(output.intermediate.gcx(), event)?;
-                return Ok((false, Some(formatted)));
+
+            let formatted_event = output.enter(|output| {
+                output.get_event(input).map(|event| format_event_definition(output.gcx(), event))
+            });
+            if let Some(formatted_event) = formatted_event {
+                return Ok((ControlFlow::Break(()), Some(formatted_event)));
             }
 
             // we were unable to check the event
@@ -200,7 +110,7 @@ impl SessionSource {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((false, None));
+            return Ok((ControlFlow::Break(()), None));
         }
 
         let Some((stack, memory)) = &res.state else {
@@ -219,18 +129,15 @@ impl SessionSource {
             return Err(eyre::eyre!("Failed to inspect expression"));
         };
 
-        // let output = source
-        //     .output
-        //     .as_ref()
-        //     .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
-
-        // Either the expression referred to by `input`, or the last expression, which was wrapped
-        // in `abi.encode`.
+        // Either the expression referred to by `input`, or the last expression,
+        // which was wrapped in `abi.encode`.
         // TODO(dani): type_of_expr() of the abi.encode argument
-        let resolved_input: Option<(Ty<'_>, bool)> = None;
-        let Some((ty, should_continue)) = resolved_input else { return Ok((true, None)) };
+        let resolved_input: Option<(Ty<'_>, ControlFlow<()>)> = None;
+        let Some((ty, should_continue)) = resolved_input else {
+            return Ok((ControlFlow::Continue(()), None));
+        };
         // TODO(dani): format types even if no value?
-        let Some(ty) = ty_to_dyn_sol_type(ty) else { return Ok((true, None)) };
+        let Some(ty) = ty_to_dyn_sol_type(ty) else { return Ok((ControlFlow::Continue(()), None)) };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
@@ -391,9 +298,9 @@ fn format_token(token: DynSolValue) -> String {
 }
 
 // TODO: Verbosity option
-fn format_event_definition<'gcx>(gcx: Gcx<'gcx>, id: hir::EventId) -> Result<String> {
+fn format_event_definition<'gcx>(gcx: Gcx<'gcx>, id: hir::EventId) -> String {
     let event = gcx.hir.event(id);
-    Ok(format!(
+    format!(
         "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         "event".red(),
         SolidityHelper::new().highlight(&format!(
@@ -420,7 +327,7 @@ fn format_event_definition<'gcx>(gcx: Gcx<'gcx>, id: hir::EventId) -> Result<Str
         )),
         gcx.item_signature(id.into()).cyan(),
         gcx.event_selector(id).cyan(),
-    ))
+    )
 }
 
 /// Whether execution should continue after inspecting this expression.
@@ -449,45 +356,6 @@ fn ty_to_dyn_sol_type(ty: Ty<'_>) -> Option<DynSolType> {
     // TODO(dani)
     let _ = ty;
     None
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Instruction {
-    pub pc: usize,
-    pub opcode: u8,
-    pub data: [u8; 32],
-    pub data_len: u8,
-}
-
-struct InstructionIter<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> InstructionIter<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-}
-
-impl Iterator for InstructionIter<'_> {
-    type Item = Instruction;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pc = self.offset;
-        self.offset += 1;
-        let opcode = *self.bytes.get(pc)?;
-        let (data, data_len) = if matches!(opcode, 0x60..=0x7F) {
-            let mut data = [0; 32];
-            let data_len = (opcode - 0x60 + 1) as usize;
-            data[..data_len].copy_from_slice(&self.bytes[self.offset..self.offset + data_len]);
-            self.offset += data_len;
-            (data, data_len as u8)
-        } else {
-            ([0; 32], 0)
-        };
-        Some(Instruction { pc, opcode, data, data_len })
-    }
 }
 
 #[cfg(false)] // TODO(dani): re-enable

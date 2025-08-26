@@ -8,7 +8,6 @@ use crate::{
     source::SessionSource,
 };
 use alloy_primitives::{Address, hex};
-use clap::Parser;
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_config::RpcEndpointUrl;
@@ -130,7 +129,7 @@ impl ChiselDispatcher {
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
     pub async fn dispatch(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
         if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
-            return match ChiselCommand::try_parse_from(command.split_whitespace()) {
+            return match ChiselCommand::parse(command) {
                 Ok(cmd) => self.dispatch_command(cmd).await,
                 Err(e) => eyre::bail!("unrecognized command: {e}"),
             };
@@ -152,15 +151,15 @@ impl ChiselDispatcher {
         }
 
         // Create new source with exact input appended and parse
-        let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
+        let (mut new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
         // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
         // Should change up how this works.
-        let (should_continue, res) = source.inspect(input).await?;
+        let (cf, res) = source.inspect(input).await?;
         if let Some(res) = &res {
             let _ = sh_println!("{res}");
         }
-        if !should_continue {
+        if cf.is_break() {
             debug!(%input, ?res, "inspect success");
             return Ok(ControlFlow::Continue(()));
         }
@@ -314,7 +313,7 @@ impl ChiselDispatcher {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
-        let new_session = match id {
+        let mut new_session = match id {
             "latest" => ChiselSession::latest(),
             id => ChiselSession::load(id),
         }

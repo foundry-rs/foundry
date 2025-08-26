@@ -29,10 +29,9 @@ impl ChiselSession {
     /// ### Returns
     ///
     /// A new instance of [ChiselSession]
-    pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
-        let solc = config.solc()?;
+    pub fn new(config: SessionSourceConfig) -> Result<Self> {
         // Return initialized ChiselSession with set solc version
-        Ok(Self { source: SessionSource::new(solc, config), id: None })
+        Ok(Self { source: SessionSource::new(config)?, id: None })
     }
 
     /// Render the full source code for the current session.

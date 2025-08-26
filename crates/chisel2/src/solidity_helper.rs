@@ -5,7 +5,6 @@ use crate::{
     dispatcher::PROMPT_ARROW,
     prelude::{COMMAND_LEADER, ChiselCommand, PROMPT_ARROW_STR},
 };
-use clap::Parser;
 use rustyline::{
     Helper,
     completion::Completer,
@@ -90,7 +89,7 @@ impl SolidityHelper {
         }
 
         // Highlight commands separately
-        if input.starts_with(COMMAND_LEADER) {
+        if let Some(full_cmd) = input.strip_prefix(COMMAND_LEADER) {
             let (cmd, rest) = match input.split_once(' ') {
                 Some((cmd, rest)) => (cmd, Some(rest)),
                 None => (input, None),
@@ -101,7 +100,7 @@ impl SolidityHelper {
 
             // cmd
             out.push(COMMAND_LEADER);
-            let cmd_res = ChiselCommand::try_parse_from(input.split_whitespace());
+            let cmd_res = ChiselCommand::parse(full_cmd);
             let style = (if cmd_res.is_ok() { Color::Green } else { Color::Red }).foreground();
             Self::paint_unchecked(cmd, style, &mut out);
 

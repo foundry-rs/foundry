@@ -112,6 +112,7 @@ impl SessionSource {
                     source_loc = yul_return;
                 }
 
+                dbg!(source_loc, &self.to_repl_source()[source_loc.start()..source_loc.end()]);
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter
                 let final_pc = {
@@ -128,6 +129,7 @@ impl SessionSource {
                         .max()
                         .unwrap_or_default()
                 };
+                dbg!(final_pc);
 
                 // Create a new runner
                 let mut runner = self.prepare_runner(final_pc).await?;

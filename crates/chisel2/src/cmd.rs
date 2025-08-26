@@ -112,6 +112,13 @@ pub enum ChiselCommand {
 }
 
 impl ChiselCommand {
+    pub fn parse(input: &str) -> eyre::Result<Self> {
+        let args = input.split_whitespace();
+        let args = std::iter::once("chisel").chain(args);
+        Self::try_parse_from(args)
+            .map_err(|e| eyre::eyre!("{}; for more information, see `!help`", e.kind()))
+    }
+
     pub fn format_help() -> String {
         let cmd = Self::command();
         let mut categories = Vec::new();
