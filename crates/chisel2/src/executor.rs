@@ -357,11 +357,17 @@ fn should_continue(expr: &hir::Expr<'_>) -> bool {
 }
 
 fn ty_to_dyn_sol_type(gcx: Gcx<'_>, ty: Ty<'_>) -> Option<DynSolType> {
+    ty_to_dyn_sol_type_rec(gcx, ty)
+        .inspect_err(|e| debug!("ty_to_dyn_sol_type: failed to convert {ty:?}: {e}"))
+        .ok()
+}
+
+fn ty_to_dyn_sol_type_rec(gcx: Gcx<'_>, ty: Ty<'_>) -> Result<DynSolType, &'static str> {
     use DynSolType as DT;
     use TyKind as T;
     use hir::ElementaryType as ET;
 
-    Some(match ty.kind {
+    Ok(match ty.kind {
         T::Elementary(t) => match t {
             ET::Address(_) => DT::Address,
             ET::Bool => DT::Bool,
@@ -370,39 +376,44 @@ fn ty_to_dyn_sol_type(gcx: Gcx<'_>, ty: Ty<'_>) -> Option<DynSolType> {
             ET::Int(size) => DT::Int(size.bits() as usize),
             ET::UInt(size) => DT::Uint(size.bits() as usize),
             ET::FixedBytes(size) => DT::FixedBytes(size.bytes() as usize),
-            _ => return None,
+            _ => return Err("unsupported elementary type"),
         },
         T::StringLiteral(..) => DT::String,
         T::IntLiteral(size) => DT::Uint(size.bits() as usize),
-        T::Ref(ty, _) => ty_to_dyn_sol_type(gcx, ty)?,
+        T::Ref(ty, _) => ty_to_dyn_sol_type_rec(gcx, ty)?,
 
-        T::DynArray(elem) => DT::Array(Box::new(ty_to_dyn_sol_type(gcx, elem)?)),
-        T::Array(elem, size) => {
-            DT::FixedArray(Box::new(ty_to_dyn_sol_type(gcx, elem)?), size.try_into().ok()?)
-        }
+        T::DynArray(elem) => DT::Array(Box::new(ty_to_dyn_sol_type_rec(gcx, elem)?)),
+        T::Array(elem, size) => DT::FixedArray(
+            Box::new(ty_to_dyn_sol_type_rec(gcx, elem)?),
+            size.try_into().map_err(|_| "array size too large")?,
+        ),
         T::Tuple(items) => DT::Tuple(
-            items.iter().copied().map(|ty| ty_to_dyn_sol_type(gcx, ty)).collect::<Option<_>>()?,
+            items
+                .iter()
+                .copied()
+                .map(|ty| ty_to_dyn_sol_type_rec(gcx, ty))
+                .collect::<Result<_, _>>()?,
         ),
 
         T::Contract(_) => DT::Address,
         T::Struct(id) => {
             if gcx.struct_recursiveness(id).is_recursive() {
-                return None;
+                return Err("recursive struct");
             }
             let items = gcx.struct_field_types(id);
             DT::Tuple(
                 items
                     .iter()
                     .copied()
-                    .map(|ty| ty_to_dyn_sol_type(gcx, ty))
-                    .collect::<Option<_>>()?,
+                    .map(|ty| ty_to_dyn_sol_type_rec(gcx, ty))
+                    .collect::<Result<_, _>>()?,
             )
         }
         T::Enum(_) => DT::Uint(8),
         T::FnPtr(_) => DT::Function,
-        T::Udvt(ty, _) => ty_to_dyn_sol_type(gcx, ty)?,
+        T::Udvt(ty, _) => ty_to_dyn_sol_type_rec(gcx, ty)?,
 
-        _ => return None,
+        _ => return Err("unsupported type"),
     })
 }
 

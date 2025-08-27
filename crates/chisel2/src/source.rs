@@ -153,7 +153,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
             .source_map()
             .ok_or_else(|| eyre::eyre!("No source map found for `REPL` contract"))??
             .into_iter()
-            .zip(InstructionIter::new(&deployed_bytecode_bytes))
+            .zip(InstructionIter::new(deployed_bytecode_bytes))
             .filter(|(s, _)| s.offset() == offset && s.length() == length)
             .map(|(_, i)| i.pc)
             .max()
