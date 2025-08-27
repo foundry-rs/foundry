@@ -124,7 +124,7 @@ impl BuildArgs {
     fn lint(&self, project: &Project, config: &Config, files: Option<&[PathBuf]>) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
-            let linter = SolidityLinter::new(config.project_paths())
+            let linter = SolidityLinter::new(config.project_paths(), config.lint.fail_on)
                 .with_json_emitter(format_json)
                 .with_description(!format_json)
                 .with_severity(if config.lint.severity.is_empty() {
@@ -176,7 +176,7 @@ impl BuildArgs {
                     let _ = compiler.lower_asts();
                     Ok(())
                 })?;
-                linter.lint(&input_files, &mut compiler);
+                linter.lint(&input_files, &mut compiler)?;
             }
         }
 

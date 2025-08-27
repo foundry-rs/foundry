@@ -26,3 +26,4 @@ solar-interface = { workspace = true, features = ["json"] }
 heck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+eyre.workspace = true

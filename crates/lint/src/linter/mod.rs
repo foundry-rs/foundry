@@ -4,8 +4,9 @@ mod late;
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
 
+use eyre::Result;
 use foundry_compilers::Language;
-use foundry_config::lint::Severity;
+use foundry_config::lint::{FailOn, Severity};
 use solar::{
     interface::{
         Session, Span,
@@ -41,7 +42,10 @@ pub trait Linter: Send + Sync {
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> Result<()>;
+
+    /// Minimum diagnostic level at which the linter should finish with a non-zero exit code.
+    fn fail_on(&self) -> FailOn;
 }
 
 pub trait Lint {

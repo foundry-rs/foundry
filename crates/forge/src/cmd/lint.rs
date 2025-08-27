@@ -9,7 +9,10 @@ use foundry_cli::{
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{filter::expand_globs, lint::Severity};
+use foundry_config::{
+    filter::expand_globs,
+    lint::{FailOn, Severity},
+};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -33,6 +36,11 @@ pub struct LintArgs {
     /// Activates the linter's JSON formatter (rustc-compatible).
     #[arg(long)]
     pub(crate) json: bool,
+
+    /// Specifies the minimum diagnostic level at which the process should finish with a non-zero.
+    /// exit code.
+    #[arg(long, value_name = "LEVEL")]
+    pub fail_on: Option<FailOn>,
 
     #[command(flatten)]
     pub(crate) build: BuildOpts,
@@ -100,11 +108,17 @@ impl LintArgs {
             None => config.lint.severity.clone(),
         };
 
+        // Override default fail_on level config with user-defined severity
+        let fail_on = match self.fail_on {
+            Some(level) => level,
+            None => config.lint.fail_on,
+        };
+
         if project.compiler.solc.is_none() {
             return Err(eyre!("Linting not supported for this language"));
         }
 
-        let linter = SolidityLinter::new(path_config)
+        let linter = SolidityLinter::new(path_config, fail_on)
             .with_json_emitter(self.json)
             .with_description(true)
             .with_lints(include)
@@ -120,7 +134,7 @@ impl LintArgs {
             let _ = compiler.lower_asts();
             Ok(())
         })?;
-        linter.lint(&input, &mut compiler);
+        linter.lint(&input, &mut compiler)?;
 
         Ok(())
     }

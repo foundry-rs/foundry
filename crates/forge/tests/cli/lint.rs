@@ -187,6 +187,7 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
             mixed_case_exceptions: vec!["MIXED".to_string()],
+            fail_on: foundry_config::lint::FailOn::Never,
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -528,6 +529,54 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
+});
+
+forgetest!(can_fail_on_lints, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+
+    // [OUTPUT: WARN + NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Note;
+        config.lint.severity = Default::default();
+    });
+
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // [OUTPUT: WARN + NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
+        config.lint.severity = Default::default();
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // [OUTPUT: WARN + NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Never;
+        config.lint.severity = Default::default();
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    // [OUTPUT: NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Note;
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // [OUTPUT: NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    // [OUTPUT: NOTE]
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Never;
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
 });
 
 // ------------------------------------------------------------------------------------------------

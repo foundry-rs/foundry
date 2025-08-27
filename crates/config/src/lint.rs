@@ -7,7 +7,7 @@ use solar::interface::diagnostics::Level;
 use std::str::FromStr;
 use yansi::Paint;
 
-/// Contains the config and rule set
+/// Contains the config and rule set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
@@ -18,13 +18,16 @@ pub struct LinterConfig {
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
     pub exclude_lints: Vec<String>,
 
-    /// Globs to ignore
+    /// Globs to ignore.
     pub ignore: Vec<String>,
 
     /// Whether to run linting during `forge build`.
     ///
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
+
+    /// Set the failure threshold.
+    pub fail_on: FailOn,
 
     /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
     ///
@@ -39,12 +42,26 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            fail_on: FailOn::Never,
             mixed_case_exceptions: vec!["ERC".to_string()],
         }
     }
 }
 
-/// Severity of a lint
+/// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FailOn {
+    /// Always exit with zero code.
+    #[default]
+    Never,
+    /// Exit with a non-zero code if any warnings are found.
+    Warning,
+    /// Exit with a non-zero code if any notes or warnings are found.
+    Note,
+}
+
+/// Severity of a lint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
 pub enum Severity {
     High,

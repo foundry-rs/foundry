@@ -4125,6 +4125,7 @@ dependencies = [
 name = "forge-lint"
 version = "1.3.2"
 dependencies = [
+ "eyre",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
@@ -4503,7 +4504,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "solar-parse",
+ "solar-parse 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "solar-sema",
  "svm-rs",
  "svm-rs-builds",
@@ -9123,15 +9124,14 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06a528b6d7fb62bb6b99db5dc4ea6d4b85ee2ff910a3e952c9c2fbc9c5b68a23"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
  "either",
  "num-rational",
  "semver 1.0.26",
- "solar-data-structures",
+ "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-interface",
  "solar-macros",
  "strum 0.27.2",
@@ -9140,24 +9140,22 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f726b10330517ecfa1e66e781ed55fb720ac02e3995453d14f6f90fe53ed8f63"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
  "solar-config",
- "solar-data-structures",
+ "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-interface",
  "solar-macros",
- "solar-parse",
+ "solar-parse 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-sema",
 ]
 
 [[package]]
 name = "solar-config"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0446799e12df8126895ec1721982c53df0149046e668cc7fc88efe27d1d59292"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "strum 0.27.2",
 ]
@@ -9178,10 +9176,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-data-structures"
+version = "0.1.6"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+dependencies = [
+ "bumpalo",
+ "index_vec",
+ "indexmap 2.11.0",
+ "parking_lot",
+ "rayon",
+ "rustc-hash 2.1.1",
+ "smallvec",
+]
+
+[[package]]
 name = "solar-interface"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00512f582ca82c245e6f3d512db64a3c57f4c6cf164bfb578d3b6fc879a9f531"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -9190,7 +9201,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9199,9 +9210,9 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-config",
- "solar-data-structures",
+ "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-macros",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9209,8 +9220,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73ecd98081d2aa15f8747a484a772e059df5359c2936e8caa8fd18ecc51e4a8e"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9234,7 +9244,28 @@ dependencies = [
  "ruint",
  "smallvec",
  "solar-ast",
- "solar-data-structures",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-interface",
+ "tracing",
+]
+
+[[package]]
+name = "solar-parse"
+version = "0.1.6"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+dependencies = [
+ "alloy-primitives",
+ "bitflags 2.9.3",
+ "bumpalo",
+ "itertools 0.10.5",
+ "memchr",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "ruint",
+ "smallvec",
+ "solar-ast",
+ "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-interface",
  "tracing",
 ]
@@ -9242,8 +9273,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1cc26771a9627566194b5fda0b8b3ff0f63ab71f028c7ed0d3cc07fb6b2e1f6"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9257,10 +9287,10 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-ast",
- "solar-data-structures",
+ "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "solar-interface",
  "solar-macros",
- "solar-parse",
+ "solar-parse 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
  "strum 0.27.2",
  "thread_local",
  "tracing",
