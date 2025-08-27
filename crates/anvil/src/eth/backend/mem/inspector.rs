@@ -7,7 +7,8 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
-        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, render_trace_arena_inner,
+        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, StackSnapshotType,
+        render_trace_arena_inner,
     },
 };
 use revm::{
@@ -72,7 +73,12 @@ impl AnvilInspector {
 
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
+        self.tracer = Some(TracingInspector::new(
+            TracingInspectorConfig::all()
+                .set_steps(true)
+                .set_memory_snapshots(true)
+                .set_stack_snapshots(StackSnapshotType::Full),
+        ));
         self
     }
 
