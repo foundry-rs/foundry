@@ -107,7 +107,7 @@ use op_revm::{
 use parking_lot::{Mutex, RwLock};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
@@ -3405,13 +3405,23 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::GasTooLow);
             }
 
-            // Check gas limit against block gas limit, if block gas limit is set.
+            // Check tx gas limit against block gas limit, if block gas limit is set.
             if !env.evm_env.cfg_env.disable_block_gas_limit
                 && tx.gas_limit() > env.evm_env.block_env.gas_limit
             {
-                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
+                warn!(target: "backend", "[{:?}] tx gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                     detail: String::from("tx.gas_limit > env.block.gas_limit"),
+                }));
+            }
+
+            // Check tx gas limit against tx gas limit cap (Osaka hard fork and later)
+            if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
+                && tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
+            {
+                warn!(target: "backend", "[{:?}] tx gas limit too high", tx.hash());
+                return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
                 }));
             }
 
