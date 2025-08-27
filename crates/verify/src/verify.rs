@@ -92,7 +92,7 @@ pub struct VerifyArgs {
     pub guess_constructor_args: bool,
 
     /// The hash of the transaction which created the contract. Optional for Sourcify.
-    #[arg(long, value_parser = validate_tx_hash)]
+    #[arg(long)]
     pub creation_transaction_hash: Option<TxHash>,
 
     /// The `solc` version to use to build the smart contract.
@@ -511,25 +511,6 @@ impl figment::Provider for VerifyCheckArgs {
     }
 }
 
-fn validate_tx_hash(hash: &str) -> Result<TxHash, String> {
-    let hash = hash.trim();
-
-    let hash_without_prefix = hash
-        .strip_prefix("0x")
-        .ok_or_else(|| "Transaction hash must start with '0x'".to_string())?;
-    if hash_without_prefix.len() != 64 {
-        return Err(format!(
-            "Transaction hash must be 64 hex characters after '0x', got {}",
-            hash_without_prefix.len()
-        ));
-    }
-    if !hash_without_prefix.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("Transaction hash must contain only hexadecimal characters".to_string());
-    }
-
-    hash.parse::<TxHash>().map_err(|e| format!("Failed to parse transaction hash: {}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,37 +524,5 @@ mod tests {
             "--via-ir",
         ]);
         assert!(args.via_ir);
-    }
-
-    #[test]
-    fn test_validate_tx_hash() {
-        let result =
-            validate_tx_hash("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap().to_string(),
-            "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        );
-
-        assert!(
-            validate_tx_hash("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
-                .is_err()
-        );
-        assert!(validate_tx_hash("0x123").is_err());
-        assert!(
-            validate_tx_hash(
-                "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef00"
-            )
-            .is_err()
-        );
-        assert!(
-            validate_tx_hash("0x1234567890abcdefg234567890abcdef1234567890abcdef1234567890abcdef")
-                .is_err()
-        );
-        assert!(validate_tx_hash("").is_err());
-        assert!(
-            validate_tx_hash("abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab")
-                .is_err()
-        );
     }
 }
