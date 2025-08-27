@@ -7,7 +7,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
-        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, StackSnapshotType,
+        CallTraceDecoder, SparsedTraceArena, StackSnapshotType, TracingInspectorConfig,
         render_trace_arena_inner,
     },
 };
