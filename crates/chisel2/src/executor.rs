@@ -16,7 +16,7 @@ use foundry_evm::{
 use itertools::Itertools;
 use solar::sema::{
     hir,
-    ty::{Gcx, Ty},
+    ty::{Gcx, Ty, TyKind},
 };
 use tracing::debug;
 use yansi::Paint;
@@ -112,6 +112,7 @@ impl SessionSource {
             debug!(%err, %input, "failed abi encode input");
             return Ok((ControlFlow::Break(()), None));
         }
+        drop(source_without_inspector);
 
         let Some((stack, memory)) = &res.state else {
             // Show traces and logs, if there are any, and return an error
@@ -137,7 +138,10 @@ impl SessionSource {
             return Ok((ControlFlow::Continue(()), None));
         };
         // TODO(dani): format types even if no value?
-        let Some(ty) = ty_to_dyn_sol_type(ty) else { return Ok((ControlFlow::Continue(()), None)) };
+        let output = source.build()?;
+        let Some(ty) = output.enter(|output| ty_to_dyn_sol_type(output.gcx(), ty)) else {
+            return Ok((ControlFlow::Continue(()), None));
+        };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
@@ -352,10 +356,54 @@ fn should_continue(expr: &hir::Expr<'_>) -> bool {
     }
 }
 
-fn ty_to_dyn_sol_type(ty: Ty<'_>) -> Option<DynSolType> {
-    // TODO(dani)
-    let _ = ty;
-    None
+fn ty_to_dyn_sol_type(gcx: Gcx<'_>, ty: Ty<'_>) -> Option<DynSolType> {
+    use DynSolType as DT;
+    use TyKind as T;
+    use hir::ElementaryType as ET;
+
+    Some(match ty.kind {
+        T::Elementary(t) => match t {
+            ET::Address(_) => DT::Address,
+            ET::Bool => DT::Bool,
+            ET::String => DT::String,
+            ET::Bytes => DT::Bytes,
+            ET::Int(size) => DT::Int(size.bits() as usize),
+            ET::UInt(size) => DT::Uint(size.bits() as usize),
+            ET::FixedBytes(size) => DT::FixedBytes(size.bytes() as usize),
+            _ => return None,
+        },
+        T::StringLiteral(..) => DT::String,
+        T::IntLiteral(size) => DT::Uint(size.bits() as usize),
+        T::Ref(ty, _) => ty_to_dyn_sol_type(gcx, ty)?,
+
+        T::DynArray(elem) => DT::Array(Box::new(ty_to_dyn_sol_type(gcx, elem)?)),
+        T::Array(elem, size) => {
+            DT::FixedArray(Box::new(ty_to_dyn_sol_type(gcx, elem)?), size.try_into().ok()?)
+        }
+        T::Tuple(items) => DT::Tuple(
+            items.iter().copied().map(|ty| ty_to_dyn_sol_type(gcx, ty)).collect::<Option<_>>()?,
+        ),
+
+        T::Contract(_) => DT::Address,
+        T::Struct(id) => {
+            if gcx.struct_recursiveness(id).is_recursive() {
+                return None;
+            }
+            let items = gcx.struct_field_types(id);
+            DT::Tuple(
+                items
+                    .iter()
+                    .copied()
+                    .map(|ty| ty_to_dyn_sol_type(gcx, ty))
+                    .collect::<Option<_>>()?,
+            )
+        }
+        T::Enum(_) => DT::Uint(8),
+        T::FnPtr(_) => DT::Function,
+        T::Udvt(ty, _) => ty_to_dyn_sol_type(gcx, ty)?,
+
+        _ => return None,
+    })
 }
 
 #[cfg(false)] // TODO(dani): re-enable

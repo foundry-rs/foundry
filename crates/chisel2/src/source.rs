@@ -284,14 +284,6 @@ impl Clone for SessionSource {
     }
 }
 
-// TODO(dani)
-/*
-if solc.version < MIN_VM_VERSION && !config.no_vm {
-    tracing::info!(version=%solc.version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
-    config.no_vm = true;
-}
-*/
-
 impl SessionSource {
     /// Creates a new source given a solidity compiler version
     ///
@@ -321,15 +313,11 @@ impl SessionSource {
         })
     }
 
-    /// Clones the [SessionSource] and appends a new line of code. Will return
-    /// an error result if the new line fails to be parsed.
+    /// Clones the [SessionSource] and appends a new line of code.
     ///
-    /// ### Returns
-    ///
-    /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
-    /// source code.
+    /// Returns `true` if the new line was added to `run()`.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
-        if let Some(parsed) = self
+        if let Some((new_source, fragment)) = self
             .parse_fragment(&content)
             .or_else(|| {
                 content.push(';');
@@ -340,16 +328,7 @@ impl SessionSource {
                 self.parse_fragment(&content)
             })
         {
-            let mut new_source = self.clone();
-            // Flag that tells the dispatcher whether to build or execute the session
-            // source based on the scope of the new code.
-            match parsed {
-                ParseTreeFragment::Function => new_source.add_run_code(&content),
-                ParseTreeFragment::Contract => new_source.add_contract_code(&content),
-                ParseTreeFragment::Source => new_source.add_global_code(&content),
-            };
-
-            Ok((new_source, matches!(parsed, ParseTreeFragment::Function)))
+            Ok((new_source, matches!(fragment, ParseTreeFragment::Function)))
         } else {
             eyre::bail!("\"{}\"", content.trim());
         }
@@ -357,22 +336,25 @@ impl SessionSource {
 
     /// Parses a fragment of Solidity code in memory and assigns it a scope within the
     /// [`SessionSource`].
-    fn parse_fragment(&self, buffer: &str) -> Option<ParseTreeFragment> {
+    fn parse_fragment(&self, buffer: &str) -> Option<(Self, ParseTreeFragment)> {
         #[track_caller]
         fn debug_errors(errors: &EmittedDiagnostics) {
             tracing::debug!("{errors}");
         }
 
-        match self.clone().add_run_code(buffer).parse() {
-            Ok(_) => return Some(ParseTreeFragment::Function),
+        let mut this = self.clone();
+        match this.add_run_code(buffer).parse() {
+            Ok(()) => return Some((this, ParseTreeFragment::Function)),
             Err(e) => debug_errors(&e),
         }
-        match self.clone().add_contract_code(buffer).parse() {
-            Ok(_) => return Some(ParseTreeFragment::Contract),
+        this = self.clone();
+        match this.add_contract_code(buffer).parse() {
+            Ok(()) => return Some((this, ParseTreeFragment::Contract)),
             Err(e) => debug_errors(&e),
         }
-        match self.clone().add_global_code(buffer).parse() {
-            Ok(_) => return Some(ParseTreeFragment::Source),
+        this = self.clone();
+        match this.add_global_code(buffer).parse() {
+            Ok(()) => return Some((this, ParseTreeFragment::Source)),
             Err(e) => debug_errors(&e),
         }
         None
