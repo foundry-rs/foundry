@@ -8,8 +8,9 @@ use eyre::{OptionExt, Result};
 use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-        ConfigurableContractArtifact, ContractBytecodeSome, Offsets, StorageLayout,
+        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactContractBytecodeCow,
+        CompactDeployedBytecode, ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
+        StorageLayout,
     },
     utils::canonicalized,
 };
@@ -101,6 +102,58 @@ impl ContractData {
     }
 }
 
+/// Builder for creating a `ContractsByArtifact` instance, optionally including storage layouts
+/// from project compile output.
+pub struct ContractsByArtifactBuilder<'a> {
+    /// All compiled artifact bytecodes (borrowed).
+    artifacts: BTreeMap<ArtifactId, CompactContractBytecodeCow<'a>>,
+    /// Optionally collected storage layouts for matching artifact IDs.
+    storage_layouts: BTreeMap<ArtifactId, StorageLayout>,
+}
+
+impl<'a> ContractsByArtifactBuilder<'a> {
+    /// Creates a new builder from artifacts with present bytecode iterator.
+    pub fn new(
+        artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecodeCow<'a>)>,
+    ) -> Self {
+        Self { artifacts: artifacts.into_iter().collect(), storage_layouts: BTreeMap::new() }
+    }
+
+    /// Adds storage layouts from `ProjectCompileOutput` to known artifacts.
+    pub fn with_storage_layouts(mut self, output: ProjectCompileOutput) -> Self {
+        self.storage_layouts = output
+            .into_artifacts()
+            .filter_map(|(id, artifact)| artifact.storage_layout.map(|layout| (id, layout)))
+            .collect();
+        self
+    }
+
+    /// Builds `ContractsByArtifact`.
+    pub fn build(self) -> ContractsByArtifact {
+        let map = self
+            .artifacts
+            .into_iter()
+            .filter_map(|(id, artifact)| {
+                let name = id.name.clone();
+                let CompactContractBytecodeCow { abi, bytecode, deployed_bytecode } = artifact;
+
+                Some((
+                    id.clone(),
+                    ContractData {
+                        name,
+                        abi: abi?.into_owned(),
+                        bytecode: bytecode.map(|b| b.into_owned().into()),
+                        deployed_bytecode: deployed_bytecode.map(|b| b.into_owned().into()),
+                        storage_layout: self.storage_layouts.get(&id).map(|l| Arc::new(l.clone())),
+                    },
+                ))
+            })
+            .collect();
+
+        ContractsByArtifact(Arc::new(map))
+    }
+}
+
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
@@ -123,28 +176,6 @@ impl ContractsByArtifact {
                         bytecode: bytecode.map(Into::into),
                         deployed_bytecode: deployed_bytecode.map(Into::into),
                         storage_layout: None,
-                    },
-                ))
-            })
-            .collect();
-        Self(Arc::new(map))
-    }
-
-    /// Creates a new instance from project compile output, preserving storage layouts.
-    pub fn with_storage_layout(output: ProjectCompileOutput) -> Self {
-        let map = output
-            .into_artifacts()
-            .filter_map(|(id, artifact)| {
-                let name = id.name.clone();
-                let abi = artifact.abi?;
-                Some((
-                    id,
-                    ContractData {
-                        name,
-                        abi,
-                        bytecode: artifact.bytecode.map(Into::into),
-                        deployed_bytecode: artifact.deployed_bytecode.map(Into::into),
-                        storage_layout: artifact.storage_layout.map(Arc::new),
                     },
                 ))
             })
