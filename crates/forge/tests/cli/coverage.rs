@@ -1850,6 +1850,60 @@ contract ArrayConditionTest is DSTest {
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/11432
+// Test coverage for linked libraries.
+forgetest!(linked_library, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+library LibCounter {
+    function increment(uint256 number) external returns (uint256) {
+        return number + 1;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = LibCounter.increment(number);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CounterTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function testIncrement() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 100% coverage for linked libraries.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-----------------+---------------+---------------+---------------+---------------╮
+| File            | % Lines       | % Statements  | % Branches    | % Funcs       |
++=================================================================================+
+| src/Counter.sol | 100.00% (4/4) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (2/2) |
+|-----------------+---------------+---------------+---------------+---------------|
+| Total           | 100.00% (4/4) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (2/2) |
+╰-----------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10422>
 // Test that line hits are properly recorded in lcov report.
 forgetest!(do_while_lcov, |prj, cmd| {
