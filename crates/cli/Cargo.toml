@@ -22,7 +22,7 @@ foundry-wallets.workspace = true
 foundry-block-explorers.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
-solar-sema.workspace = true
+solar.workspace = true
 
 alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true

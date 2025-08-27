@@ -566,6 +566,7 @@ pub fn find_matching_contract_artifact(
         Ok(artifact.clone())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

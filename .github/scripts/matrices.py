@@ -128,6 +128,8 @@ def main():
                     flags += " --features=isolate-by-default"
                 name += os_str
 
+                flags += " --no-fail-fast"
+
                 obj = Expanded(
                     name=name,
                     runner_label=target.runner_label,
