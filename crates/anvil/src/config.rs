@@ -381,9 +381,7 @@ Genesis Number
 
         let gas_limit = match self.gas_limit {
             // if we have a disabled flag we should max out the limit
-            Some(_) | None if self.disable_block_gas_limit && !self.enable_tx_gas_limit => {
-                Some(u64::MAX.to_string())
-            }
+            Some(_) | None if self.disable_block_gas_limit => Some(u64::MAX.to_string()),
             Some(limit) => Some(limit.to_string()),
             _ => None,
         };
