@@ -3409,23 +3409,23 @@ impl TransactionValidator for Backend {
             if !env.evm_env.cfg_env.disable_block_gas_limit
                 && tx.gas_limit() > env.evm_env.block_env.gas_limit
             {
-                warn!(target: "backend", "[{:?}] tx gas too high", tx.hash());
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                     detail: String::from("tx.gas_limit > env.block.gas_limit"),
                 }));
             }
 
-            // Check tx gas limit against tx gas limit cap (Osaka hard fork and later)
+            // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
             if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
                 && tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
             {
-                warn!(target: "backend", "[{:?}] tx gas limit too high", tx.hash());
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                     detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
                 }));
             }
 
-            // EIP-1559 fee validation (London hard fork and later)
+            // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
                 if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
                     warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
