@@ -300,44 +300,41 @@ impl SourcifyVerificationProvider {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcifyVerifyRequest {
-    #[serde(rename = "stdJsonInput")]
     std_json_input: serde_json::Value,
-    #[serde(rename = "compilerVersion")]
     compiler_version: String,
-    #[serde(rename = "contractIdentifier")]
     contract_identifier: String,
-    #[serde(rename = "creationTransactionHash", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     creation_transaction_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcifyVerificationResponse {
-    #[serde(rename = "verificationId")]
     verification_id: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcifyJobResponse {
-    #[serde(rename = "isJobCompleted")]
     is_job_completed: bool,
     contract: SourcifyContractResponse,
     error: Option<SourcifyErrorResponse>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcifyContractResponse {
     #[serde(rename = "match")]
     match_status: Option<String>,
-    #[serde(rename = "creationMatch")]
     creation_match: Option<String>,
-    #[serde(rename = "runtimeMatch")]
     runtime_match: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcifyErrorResponse {
-    #[serde(rename = "customCode")]
     custom_code: String,
     message: String,
 }
