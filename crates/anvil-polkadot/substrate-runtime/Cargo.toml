@@ -1,0 +1,39 @@
+[package]
+name = "substrate-runtime"
+description = "A solochain dev runtime for revive."
+version = "0.0.0"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+
+[dependencies]
+array-bytes = { version = "6.2.2", default-features = false }
+codec = { version = "3.7.5", default-features = false, package = "parity-scale-codec" }
+polkadot-sdk = { version = "2507.1.0", default-features = false, features = [
+	"pallet-balances",
+	"pallet-revive",
+	"pallet-sudo",
+	"pallet-timestamp",
+	"pallet-transaction-payment",
+	"pallet-transaction-payment-rpc-runtime-api",
+	"parachains-common",
+	"runtime",
+	"with-tracing",
+] }
+scale-info = { version = "2.11.6", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[build-dependencies]
+polkadot-sdk = { version = "2507.1.0", default-features = false, optional = true, features = ["substrate-wasm-builder"] }
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"polkadot-sdk/std",
+	"scale-info/std",
+	"serde_json/std",
+]

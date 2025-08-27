@@ -30,6 +30,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: wasm32-unknown-unknown
+          components: rust-src
+          toolchain: nightly-x86_64-unknown-linux-gnu
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items
         env:
@@ -51,6 +60,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: wasm32-unknown-unknown
+          components: rust-src
+          toolchain: stable
       - run: cargo test --workspace --doc
 
   codespell:
@@ -71,6 +89,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: wasm32-unknown-unknown
+          components: rust-src
+          toolchain: nightly-x86_64-unknown-linux-gnu
       - run: cargo clippy --workspace --all-targets --all-features
         env:
           RUSTFLAGS: -Dwarnings
@@ -95,6 +122,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
@@ -109,7 +140,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo hack check --each-feature --exclude-features isolate-by-default
+      - name: Install protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: wasm32-unknown-unknown
+          components: rust-src
+          toolchain: stable
+      # Exclude substrate-runtime because it can only be compiled for wasm32 without the std feature.
+      # It's anyway compiled without std when building anvil-polkadot (by the wasm builder).
+      - run: cargo hack check --each-feature --exclude-features isolate-by-default --exclude substrate-runtime
+      # Add another step for running cargo check on substrate runtime (without excluding the default std feature)
+      - run: cargo hack check -p substrate-runtime --each-feature --exclude-no-default-features
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@main

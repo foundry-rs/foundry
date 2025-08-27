@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/anvil/",
+    "crates/anvil-polkadot",
+    "crates/anvil-polkadot/substrate-runtime",
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
@@ -161,6 +163,10 @@ trezor-client.opt-level = "z"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
+anvil-core = { path = "crates/anvil/core" }
+anvil-rpc = { path = "crates/anvil/rpc" }
+anvil-server = { path = "crates/anvil/server" }
+substrate-runtime = { path = "crates/anvil-polkadot/substrate-runtime" }
 cast = { path = "crates/cast" }
 chisel = { path = "crates/chisel" }
 forge = { path = "crates/forge" }
@@ -309,7 +315,7 @@ soldeer-commands = "=0.5.4"
 soldeer-core = { version = "=0.5.4", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.13"
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.5"
 tokio = "1"
 toml = "0.8"
 tower = "0.5"
@@ -322,7 +328,6 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 serial_test = "2.0"
-polkadot-sdk = { version = "2507.1.0" }
 
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used

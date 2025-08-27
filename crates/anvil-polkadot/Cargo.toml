@@ -1,0 +1,140 @@
+[package]
+name = "anvil-polkadot"
+description = "Local ethereum-compatible node based on polkadot-sdk"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "anvil-polkadot"
+path = "bin/main.rs"
+
+[dependencies]
+# foundry internal
+substrate-runtime = { path = "substrate-runtime" }
+polkadot-sdk = { version = "2507.1.0", default-features = false, features = [
+    "sc-allocator",
+	"sc-basic-authorship",
+	"sc-block-builder",
+	"sc-chain-spec",
+	"sc-cli",
+	"sc-client-api",
+	"sc-client-db",
+	"sc-consensus",
+	"sc-consensus-manual-seal",
+    "sc-executor",
+	"sc-executor-common",
+	"sc-executor-wasmtime",
+	"sc-keystore",
+	"sc-network-types",
+    "sc-rpc",
+	"sc-rpc-api",
+	"sc-rpc-server",
+	"sc-rpc-spec-v2",
+	"sc-service",
+	"sc-state-db",
+	"sc-tracing",
+	"sc-transaction-pool",
+	"sc-transaction-pool-api",
+	"sc-utils",
+	"sp-blockchain",
+	"sp-consensus",
+	"sp-core-hashing",
+	"sp-core-hashing-proc-macro",
+	"sp-database",
+	"sp-panic-handler",
+	"sp-rpc",
+	"std",
+    "substrate-frame-rpc-support",
+	"substrate-frame-rpc-system",
+	"substrate-rpc-client",
+	"substrate-wasm-builder",
+] }
+anvil-core.workspace = true
+anvil-server = { workspace = true, features = ["clap"] }
+anvil-rpc.workspace = true
+foundry-cli.workspace = true
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-evm.workspace = true
+
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
+alloy-contract = { workspace = true, features = ["pubsub"] }
+alloy-network.workspace = true
+alloy-eips.workspace = true
+alloy-rlp.workspace = true
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
+alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
+alloy-serde.workspace = true
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "debug-api",
+    "trace-api",
+] }
+alloy-transport.workspace = true
+alloy-chains.workspace = true
+alloy-genesis.workspace = true
+alloy-trie.workspace = true
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+
+# axum related
+axum.workspace = true
+hyper.workspace = true
+
+# tracing
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# async
+tokio = { workspace = true }
+parking_lot.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+futures-timer = { version = "3.0.3" }
+
+# misc
+flate2 = "1.0"
+serde_json.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+yansi.workspace = true
+tempfile.workspace = true
+itertools.workspace = true
+rand.workspace = true
+eyre.workspace = true
+
+# cli
+clap = { version = "4", features = [
+    "derive",
+    "env",
+    "wrap_help",
+] }
+clap_complete = { version = "4" }
+chrono.workspace = true
+clap_complete_fig = "4"
+
+[dev-dependencies]
+alloy-provider = { workspace = true, features = ["txpool-api"] }
+alloy-pubsub.workspace = true
+foundry-test-utils.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+op-alloy-rpc-types.workspace = true
+
+[features]
+default = []
+asm-keccak = ["alloy-primitives/asm-keccak"]
