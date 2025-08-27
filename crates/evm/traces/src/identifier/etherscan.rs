@@ -45,7 +45,7 @@ impl EtherscanIdentifier {
             return Ok(None);
         }
 
-        let config = match config.get_etherscan_config_with_chain(chain) {
+        let config = match config.get_etherscan_config_with_chain(chain, false) {
             Ok(Some(config)) => config,
             Ok(None) => {
                 warn!(target: "traces::etherscan", "etherscan config not found");

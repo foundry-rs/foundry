@@ -262,7 +262,8 @@ impl EtherscanVerificationProvider {
         // API key passed.
         let is_etherscan = verifier_type.is_etherscan()
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
-        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+        let etherscan_config =
+            config.get_etherscan_config_with_chain(Some(chain), !verifier_type.is_etherscan())?;
 
         let api_version = verifier_args.verifier_api_version.unwrap_or_else(|| {
             if is_etherscan {
