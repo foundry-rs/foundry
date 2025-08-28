@@ -14,7 +14,7 @@ forgetest_init!(call, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+    cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
  [FILE]:9:20
@@ -23,6 +23,8 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   |                    ---
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+
+Error: aborting due to 1 linter note
 ...
 "#]]);
 });
@@ -43,7 +45,7 @@ forgetest_init!(assignment, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+    cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
  [FILE]:9:34
@@ -52,6 +54,8 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   |                                  ---
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+
+Error: aborting due to 1 linter note
 ...
 "#]]);
 });
@@ -74,7 +78,7 @@ forgetest_init!(exit_code, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
+    cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
  [FILE]:9:20
@@ -99,6 +103,8 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
    |                    ---
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
+
+Error: aborting due to 3 linter notes
 ...
 "#]]);
 });
