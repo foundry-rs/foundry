@@ -547,8 +547,15 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     prj.update_config(|config| {
         config.lint.deny = foundry_config::lint::DenyLevel::Notes;
     });
-
     cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.lint.deny = foundry_config::lint::DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure();
+    cmd.forge_fuse().args(["lint", "--deny warnings"]).assert_failure();
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 
     // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
 
@@ -567,6 +574,12 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
         config.lint.deny = foundry_config::lint::DenyLevel::Notes;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.lint.deny = foundry_config::lint::DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });
 
 // ------------------------------------------------------------------------------------------------
