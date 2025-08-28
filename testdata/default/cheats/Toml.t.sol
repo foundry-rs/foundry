@@ -421,4 +421,28 @@ contract WriteTomlTest is DSTest {
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
     }
+
+    function test_writeToml_createKeys() public {
+        string memory path = "fixtures/Toml/write_test.toml";
+        string memory toml = vm.readFile(path);
+
+        bool exists = vm.keyExistsToml(toml, ".parent");
+        assertTrue(!exists);
+        exists = vm.keyExistsToml(toml, ".parent.child");
+        assertTrue(!exists);
+        exists = vm.keyExistsToml(toml, ".parent.child.value");
+        assertTrue(!exists);
+
+        // Write to nested path, creating intermediate keys
+        vm.writeToml(vm.toString(uint256(42)), path, ".parent.child.value");
+
+        // Verify the value was written and intermediate keys were created
+        toml = vm.readFile(path);
+        uint256 value = abi.decode(vm.parseToml(toml, ".parent.child.value"), (uint256));
+        assertEq(value, 42);
+
+        // Clean up the test file by removing the parent key we added
+        vm.removeFile(path);
+        vm.writeToml("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
+    }
 }

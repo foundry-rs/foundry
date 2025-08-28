@@ -2,10 +2,10 @@ use alloy_json_abi::{ContractObject, JsonAbi};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_block_explorers::Client;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_common::{
     ContractsByArtifact,
+    abi::fetch_abi_from_etherscan,
     compile::{PathOrContractInfo, ProjectCompiler},
     find_target_path, fs, shell,
 };
@@ -65,7 +65,7 @@ impl InterfaceArgs {
             load_abi_from_file(&contract, name)?
         } else {
             match Address::from_str(&contract) {
-                Ok(address) => fetch_abi_from_etherscan(address, &etherscan).await?,
+                Ok(address) => fetch_abi_from_etherscan(address, &etherscan.load_config()?).await?,
                 Err(_) => load_abi_from_artifact(&contract)?,
             }
         };

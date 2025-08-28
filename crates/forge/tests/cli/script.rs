@@ -2296,11 +2296,11 @@ forgetest_init!(can_get_script_wallets, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
-    function run() public {
+    function run() public view {
         address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }

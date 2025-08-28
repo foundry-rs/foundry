@@ -1,7 +1,4 @@
-use super::{
-    creation_code::fetch_creation_code_from_etherscan,
-    interface::{fetch_abi_from_etherscan, load_abi_from_file},
-};
+use super::{creation_code::fetch_creation_code_from_etherscan, interface::load_abi_from_file};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
@@ -11,6 +8,10 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
+use foundry_common::abi::fetch_abi_from_etherscan;
+use foundry_config::Config;
+
+foundry_config::impl_figment_convert!(ConstructorArgsArgs, etherscan, rpc);
 
 /// CLI arguments for `cast creation-args`.
 #[derive(Parser)]
@@ -32,16 +33,16 @@ pub struct ConstructorArgsArgs {
 
 impl ConstructorArgsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, mut etherscan, rpc, abi_path } = self;
+        let mut config = self.load_config()?;
 
-        let config = rpc.load_config()?;
+        let Self { contract, abi_path, etherscan: _, rpc: _ } = self;
+
         let provider = utils::get_provider(&config)?;
-        let chain = provider.get_chain_id().await?;
-        etherscan.chain = Some(chain.into());
+        config.chain = Some(provider.get_chain_id().await?.into());
 
-        let bytecode = fetch_creation_code_from_etherscan(contract, &etherscan, provider).await?;
+        let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
 
-        let args_arr = parse_constructor_args(bytecode, contract, &etherscan, abi_path).await?;
+        let args_arr = parse_constructor_args(bytecode, contract, &config, abi_path).await?;
         for arg in args_arr {
             let _ = sh_println!("{arg}");
         }
@@ -54,13 +55,13 @@ impl ConstructorArgsArgs {
 async fn parse_constructor_args(
     bytecode: Bytes,
     contract: Address,
-    etherscan: &EtherscanOpts,
+    config: &Config,
     abi_path: Option<String>,
 ) -> Result<Vec<String>> {
     let abi = if let Some(abi_path) = abi_path {
         load_abi_from_file(&abi_path, None)?
     } else {
-        fetch_abi_from_etherscan(contract, etherscan).await?
+        fetch_abi_from_etherscan(contract, config).await?
     };
 
     let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
