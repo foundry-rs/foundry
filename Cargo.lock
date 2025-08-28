@@ -9124,14 +9124,14 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
  "either",
  "num-rational",
  "semver 1.0.26",
- "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-interface",
  "solar-macros",
  "strum 0.27.2",
@@ -9140,22 +9140,22 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
  "solar-config",
- "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-interface",
  "solar-macros",
- "solar-parse 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-parse 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-sema",
 ]
 
 [[package]]
 name = "solar-config"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "strum 0.27.2",
 ]
@@ -9178,7 +9178,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9192,12 +9192,11 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "annotate-snippets",
  "anstream",
  "anstyle",
- "const-hex",
  "derive_more",
  "dunce",
  "inturn",
@@ -9210,7 +9209,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-config",
- "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-macros",
  "thiserror 1.0.69",
  "tracing",
@@ -9220,7 +9219,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9252,7 +9251,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.3",
@@ -9265,7 +9264,7 @@ dependencies = [
  "ruint",
  "smallvec",
  "solar-ast",
- "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-interface",
  "tracing",
 ]
@@ -9273,7 +9272,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.6"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx#baffdcdcc78e4073e0b7979b5f79568fa902ef6f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#011570cdfbb317943d1aff51e9918517ef41378e"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9287,10 +9286,10 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-ast",
- "solar-data-structures 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-interface",
  "solar-macros",
- "solar-parse 0.1.6 (git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fdiag-ctx)",
+ "solar-parse 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "strum 0.27.2",
  "thread_local",
  "tracing",

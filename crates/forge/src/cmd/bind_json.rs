@@ -177,7 +177,7 @@ impl BindJsonArgs {
                     .source_map()
                     .new_source_file(path.clone(), source.content.as_str())
                 {
-                    target_files.insert(src_file.stable_id);
+                    target_files.insert(Arc::clone(&src_file));
                     pcx.add_file(src_file);
                 }
             }
@@ -193,7 +193,7 @@ impl BindJsonArgs {
                     let def = hir.strukt(id);
                     let source = hir.source(def.source);
 
-                    if !target_files.contains(&source.file.stable_id) {
+                    if !target_files.contains(&source.file) {
                         continue;
                     }
 
