@@ -24,6 +24,23 @@ impl<'a> dyn TestFilter + 'a {
     }
 }
 
+/// A test filter that filters out nothing.
+#[derive(Clone, Debug, Default)]
+pub struct EmptyTestFilter(());
+impl TestFilter for EmptyTestFilter {
+    fn matches_test(&self, _test_signature: &str) -> bool {
+        true
+    }
+
+    fn matches_contract(&self, _contract_name: &str) -> bool {
+        true
+    }
+
+    fn matches_path(&self, _path: &Path) -> bool {
+        true
+    }
+}
+
 /// Extension trait for `Function`.
 pub trait TestFunctionExt {
     /// Returns the kind of test function.
