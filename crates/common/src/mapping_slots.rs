@@ -24,10 +24,9 @@ impl MappingSlots {
     pub fn insert(&mut self, slot: B256) -> bool {
         match self.seen_sha3.get(&slot).copied() {
             Some((key, parent)) => {
-                if self.keys.contains_key(&slot) {
+                if self.keys.insert(slot, key).is_some() {
                     return false;
                 }
-                self.keys.insert(slot, key);
                 self.parent_slots.insert(slot, parent);
                 self.children.entry(parent).or_default().push(slot);
                 self.insert(parent);
