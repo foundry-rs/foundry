@@ -24,7 +24,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
-Error: aborting due to 1 linter note
+Error: aborting due to 1 linter note(s)
 ...
 "#]]);
 });
@@ -55,7 +55,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
-Error: aborting due to 1 linter note
+Error: aborting due to 1 linter note(s)
 ...
 "#]]);
 });
@@ -104,7 +104,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
-Error: aborting due to 3 linter notes
+Error: aborting due to 3 linter note(s)
 ...
 "#]]);
 });
