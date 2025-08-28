@@ -12,6 +12,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
+use revm::DatabaseRef;
 use foundry_compilers::utils::canonicalized;
 use foundry_config::Config;
 use foundry_evm::{
@@ -28,7 +29,7 @@ use foundry_evm::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
         invariant::InvariantContract,
     },
-    traces::{TraceKind, TraceMode, load_contracts},
+    traces::{SparsedTraceArena, TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -69,6 +70,8 @@ pub struct ContractRunner<'a> {
     tcfg: Cow<'a, TestRunnerConfig>,
     /// The parent runner.
     mcr: &'a MultiContractRunner,
+    /// Mapping of deployed contract addresses to their names and ABIs for backtrace support.
+    contracts_by_address: ContractsByAddress,
 }
 
 impl<'a> std::ops::Deref for ContractRunner<'a> {
@@ -99,6 +102,7 @@ impl<'a> ContractRunner<'a> {
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
+            contracts_by_address: ContractsByAddress::new(),
         }
     }
 
@@ -153,6 +157,9 @@ impl<'a> ContractRunner<'a> {
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
         result.address = address;
+        
+        // Register the test contract in our mapping for backtrace support
+        self.contracts_by_address.insert(address, (self.name.to_string(), self.contract.abi.clone()));
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction
@@ -479,6 +486,248 @@ impl<'a> std::ops::Deref for FunctionRunner<'a> {
 }
 
 impl<'a> FunctionRunner<'a> {
+    /// Extract a backtrace from failed test traces
+    fn extract_test_backtrace(&self, traces: &SparsedTraceArena) -> Option<crate::backtrace::Backtrace> {
+        // Build source maps for address mapping
+        let mut address_to_source_map = HashMap::new();
+        let mut address_to_sources = HashMap::new();
+        
+        // Build a comprehensive contracts mapping
+        let mut all_contracts = self.cr.contracts_by_address.clone();
+        
+        // Try to identify all contracts deployed during test execution
+        // Walk through all unique addresses in the trace
+        let mut seen_addresses = std::collections::HashSet::new();
+        for node in traces.arena.nodes() {
+            seen_addresses.insert(node.trace.address);
+        }
+        
+        // For each address, try to identify the contract
+        for addr in seen_addresses {
+            if !all_contracts.contains_key(&addr) {
+                // Try to find by bytecode
+                if let Ok(Some(account)) = self.executor.backend().basic_ref(addr) {
+                    if let Some(code) = &account.code {
+                        if !code.is_empty() {
+                            // Try to find matching contract by checking all known contracts
+                            // Look in the complete known_contracts list which includes all compiled contracts
+                            if let Some((id, _)) = self.cr.mcr.known_contracts.find_by_deployed_code(&code.bytes_ref().as_ref()) {
+                                // Found a match!
+                                if let Some(contract_data) = self.cr.mcr.contracts.get(id) {
+                                    all_contracts.insert(addr, (id.name.clone(), contract_data.abi.clone()));
+                                } else {
+                                    // At least use the name from the artifact ID
+                                    all_contracts.insert(addr, (id.name.clone(), Default::default()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Try to identify contracts from deployed bytecode
+        for node in traces.arena.nodes() {
+            let addr = node.trace.address;
+            if !all_contracts.contains_key(&addr) {
+                // Check if the trace has a decoded label (like "Helper::doCalculation")
+                if let Some(decoded) = &node.trace.decoded {
+                    if let Some(ref label) = decoded.label {
+                        // Extract contract name from label (format: "ContractName::functionName")
+                        if let Some(contract_part) = label.split("::").next() {
+                            // First, try to find by exact name match
+                            let mut found = false;
+                            for (artifact_id, contract_data) in &self.cr.mcr.contracts {
+                                if artifact_id.name == contract_part {
+                                    all_contracts.insert(addr, (contract_part.to_string(), contract_data.abi.clone()));
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            
+                            // If not found by exact match, still use the contract name from the label
+                            if !found {
+                                // The contract might be deployed during test, so we won't have its ABI
+                                // But we can still use the name from the decoded trace
+                                all_contracts.insert(addr, (contract_part.to_string(), Default::default()));
+                            }
+                        }
+                    }
+                }
+                
+                // Also try to identify by bytecode
+                if !all_contracts.contains_key(&addr) {
+                    if let Ok(Some(account)) = self.executor.backend().basic_ref(addr) {
+                        if let Some(code) = &account.code {
+                            if !code.is_empty() {
+                                // Try to find matching contract by deployed bytecode
+                                if let Some((id, _)) = self.cr.mcr.known_contracts.find_by_deployed_code(&code.bytes_ref().as_ref()) {
+                                    if let Some(contract_data) = self.cr.mcr.contracts.get(id) {
+                                        all_contracts.insert(addr, (id.name.clone(), contract_data.abi.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        
+        // Add mappings for all known contracts
+        for (addr, (name, _abi)) in &all_contracts {
+            // Find the artifact ID for this contract name
+            let mut found = false;
+            for (artifact_id, source_maps) in &self.cr.mcr.source_maps {
+                // Check for exact match or if the artifact ends with the contract name
+                // This handles both "ContractName" and "path/to/file.sol:ContractName" formats
+                if artifact_id.name == *name || 
+                   artifact_id.name.ends_with(&format!(":{}", name)) {
+                    address_to_source_map.insert(*addr, source_maps.clone());
+                    if let Some(sources) = self.cr.mcr.source_files.get(artifact_id) {
+                        address_to_sources.insert(*addr, sources.clone());
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            
+            // If not found in source_maps, check for partial name matches
+            if !found {
+                // If the name contains ':', try without the file prefix
+                let contract_only = if name.contains(':') {
+                    name.split(':').last().unwrap_or(name)
+                } else {
+                    name
+                };
+                
+                tracing::info!(
+                    "Looking for source maps for contract {} (from {})",
+                    contract_only,
+                    name
+                );
+                
+                // Log all available artifact IDs in source_maps
+                for (id, _) in &self.cr.mcr.source_maps {
+                    tracing::info!("Available source map artifact: {}", id.name);
+                }
+                
+                // Log all available artifact IDs in source_files
+                for (id, sources) in &self.cr.mcr.source_files {
+                    tracing::info!(
+                        "Available source files for artifact {}: {} files",
+                        id.name,
+                        sources.len()
+                    );
+                }
+                
+                for (artifact_id, source_maps) in &self.cr.mcr.source_maps {
+                    // Check if artifact name matches the contract name exactly
+                    // or ends with :ContractName pattern
+                    if artifact_id.name == contract_only || 
+                       artifact_id.name.ends_with(&format!(":{}", contract_only)) {
+                        address_to_source_map.insert(*addr, source_maps.clone());
+                        if let Some(sources) = self.cr.mcr.source_files.get(artifact_id) {
+                            address_to_sources.insert(*addr, sources.clone());
+                            tracing::info!(
+                                "Found {} source files for contract {} at address {}",
+                                sources.len(),
+                                contract_only,
+                                addr
+                            );
+                        } else {
+                            tracing::info!(
+                                "No source files found for artifact {} (contract {})",
+                                artifact_id.name,
+                                contract_only
+                            );
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Build deployed bytecode mapping
+        let mut deployed_bytecodes = HashMap::new();
+        
+        tracing::info!(
+            "Total deployed bytecodes available: {}",
+            self.cr.mcr.deployed_bytecodes.len()
+        );
+        
+        for (artifact_id, _) in &self.cr.mcr.deployed_bytecodes {
+            tracing::info!("Available artifact: {}", artifact_id.name);
+        }
+        
+        // Log all contracts we're looking for
+        for (addr, (name, _)) in &all_contracts {
+            tracing::info!(
+                "Contract in all_contracts: {} at address {}",
+                name,
+                addr
+            );
+        }
+        
+        for (addr, (name, _)) in &all_contracts {
+            // Find the deployed bytecode for this contract
+            tracing::info!(
+                "Looking for deployed bytecode for {} at address {}",
+                name,
+                addr
+            );
+            
+            // Extract just the contract name without path prefixes
+            let contract_only = if let Some(idx) = name.rfind(':') {
+                &name[idx + 1..]
+            } else {
+                name
+            };
+            
+            for (artifact_id, bytecode) in &self.cr.mcr.deployed_bytecodes {
+                // Check if artifact name matches the contract name exactly
+                // or ends with :ContractName pattern
+                if artifact_id.name == contract_only || 
+                   artifact_id.name.ends_with(&format!(":{}", contract_only)) {
+                    tracing::info!(
+                        "Found deployed bytecode for {} (artifact: {})",
+                        name,
+                        artifact_id.name
+                    );
+                    deployed_bytecodes.insert(*addr, bytecode.clone());
+                    break;
+                }
+            }
+        }
+        
+        // Log what we found
+        tracing::info!(
+            "Found source maps for {} addresses",
+            address_to_source_map.len()
+        );
+        for addr in address_to_source_map.keys() {
+            tracing::info!("Have source map for address: {}", addr);
+        }
+        
+        tracing::info!(
+            "Found deployed bytecodes for {} addresses",
+            deployed_bytecodes.len()
+        );
+        for addr in deployed_bytecodes.keys() {
+            tracing::info!("Have deployed bytecode for address: {}", addr);
+        }
+        
+        // Extract the backtrace
+        crate::backtrace::extract_backtrace(
+            traces,
+            &all_contracts,
+            &address_to_source_map,
+            &address_to_sources,
+            self.executor.backend(),
+            &deployed_bytecodes,
+        )
+    }
     fn new(cr: &'a ContractRunner<'a>, setup: &'a TestSetup) -> Self {
         Self {
             tcfg: match &cr.tcfg {
@@ -573,7 +822,15 @@ impl<'a> FunctionRunner<'a> {
 
         let success =
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
-        self.result.single_result(success, reason, raw_call_result);
+        
+        // Extract backtrace for failed tests when verbosity >= 3
+        if !success && self.tcfg.verbosity >= 3 {
+            if let Some(ref traces) = raw_call_result.traces {
+                self.result.backtrace = self.extract_test_backtrace(traces);
+            }
+        }
+        
+        self.result.single_result(success, reason, raw_call_result, self.tcfg.verbosity);
         self.result
     }
 
@@ -681,14 +938,22 @@ impl<'a> FunctionRunner<'a> {
                         args,
                         raw_call_result.traces.clone(),
                     )));
-                self.result.single_result(false, reason, raw_call_result);
+                
+                // Extract backtrace for failed tests when verbosity >= 3
+                if self.tcfg.verbosity >= 3 {
+                    if let Some(ref traces) = raw_call_result.traces {
+                        self.result.backtrace = self.extract_test_backtrace(traces);
+                    }
+                }
+                
+                self.result.single_result(false, reason, raw_call_result, self.tcfg.verbosity);
                 return self.result;
             }
 
             // If it's the last iteration and all other runs succeeded, then use last call result
             // for logs and traces.
             if i == fixtures_len - 1 {
-                self.result.single_result(true, None, raw_call_result);
+                self.result.single_result(true, None, raw_call_result, self.tcfg.verbosity);
                 return self.result;
             }
         }

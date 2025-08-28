@@ -9,6 +9,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
 use foundry_compilers::{
+    artifacts::sourcemap::SourceMap,
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
     compilers::Compiler,
@@ -29,7 +30,7 @@ use rayon::prelude::*;
 use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     path::Path,
     sync::{Arc, mpsc},
@@ -40,6 +41,8 @@ use std::{
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
+    /// Deployed bytecode (runtime code)
+    pub deployed_bytecode: Option<Bytes>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -64,6 +67,13 @@ pub struct MultiContractRunner {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig,
+    
+    /// Source maps for contracts (creation, deployed)
+    pub source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)>,
+    /// Source files content mapped by artifact
+    pub source_files: HashMap<ArtifactId, Vec<(String, String)>>,
+    /// Deployed bytecode for contracts (for accurate PC mapping)
+    pub deployed_bytecodes: HashMap<ArtifactId, Bytes>,
 }
 
 impl std::ops::Deref for MultiContractRunner {
@@ -81,6 +91,11 @@ impl std::ops::DerefMut for MultiContractRunner {
 }
 
 impl MultiContractRunner {
+    /// Set the verbosity level for test output.
+    pub fn set_verbosity(&mut self, verbosity: u8) {
+        self.tcfg.verbosity = verbosity;
+    }
+
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
@@ -298,6 +313,8 @@ pub struct TestRunnerConfig {
     pub odyssey: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: FailFast,
+    /// Verbosity level for output.
+    pub verbosity: u8,
 }
 
 impl TestRunnerConfig {
@@ -373,11 +390,18 @@ impl TestRunnerConfig {
     }
 
     fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+        let mut mode = TraceMode::default()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
-            .with_state_changes(verbosity() > 4)
+            .with_state_changes(verbosity() > 4);
+        
+        // Enable step recording for backtraces when verbosity >= 3
+        if self.evm_opts.verbosity >= 3 && mode < TraceMode::JumpSimple {
+            mode = TraceMode::JumpSimple;
+        }
+        
+        mode
     }
 }
 
@@ -526,8 +550,20 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                deployable_contracts
-                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
+                // Get deployed bytecode as well
+                let deployed_bytecode = contract
+                    .get_deployed_bytecode_bytes()
+                    .map(|b| b.into_owned())
+                    .filter(|b| !b.is_empty());
+                
+                deployable_contracts.insert(
+                    id.clone(),
+                    TestContract {
+                        abi: abi.clone().into_owned(),
+                        bytecode,
+                        deployed_bytecode,
+                    },
+                );
             }
         }
 
@@ -535,6 +571,154 @@ impl MultiContractRunnerBuilder {
         let known_contracts = ContractsByArtifact::with_storage_layout(
             output.clone().with_stripped_file_prefixes(root),
         );
+        
+        // Collect source maps and source files for backtrace support
+        let mut source_maps = HashMap::new();
+        let mut source_files = HashMap::new();
+        
+        // First, collect ALL source files from the compilation output with their proper indices
+        // This is critical for source mapping to work correctly
+        let mut all_sources_by_version: HashMap<semver::Version, Vec<(String, String)>> = HashMap::new();
+        
+        // Iterate through all source files in the compilation output
+        tracing::info!("Starting to collect source files from compilation output");
+        
+        // Try to get sources from the compilation output first
+        let source_count = output.output().sources.sources_with_version().count();
+        tracing::info!("Found {} source files in compilation output", source_count);
+        
+        if source_count > 0 {
+            // Fresh compilation - sources are available
+            for (path, source_file, version) in output.output().sources.sources_with_version() {
+                let source_content = if let Ok(content) = std::fs::read_to_string(root.join(&path)) {
+                    content
+                } else {
+                    // If we can't read the file, use empty content
+                    // This might happen for virtual files or missing files
+                    String::new()
+                };
+                
+                // Store the source file at the correct index for this version
+                let sources = all_sources_by_version.entry(version.clone()).or_insert_with(Vec::new);
+                // Ensure we have enough space for this source ID
+                while sources.len() <= source_file.id as usize {
+                    sources.push((String::new(), String::new()));
+                }
+                // Place the source at its correct index
+                sources[source_file.id as usize] = (path.to_string_lossy().to_string(), source_content);
+            }
+        } else {
+            // Cached compilation - try to read source mappings from build info
+            tracing::info!("No sources in output, trying to read from build info");
+            
+            // Read build info files to get source ID to path mappings
+            // We may have multiple build info files from different compilation runs
+            let build_info_dir = root.join("out/build-info");
+            if build_info_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&build_info_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
+                            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                                // Parse the build info JSON to get source_id_to_path and build ID
+                                if let Ok(build_info) = serde_json::from_str::<serde_json::Value>(&content) {
+                                    // Extract build ID for this compilation unit
+                                    let build_id = build_info.get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    
+                                    if let Some(source_map) = build_info.get("source_id_to_path").and_then(|v| v.as_object()) {
+                                        // Try to determine the Solidity version from the build info
+                                        let version = if let Some(language) = build_info.get("language").and_then(|v| v.as_str()) {
+                                            if language == "Solidity" {
+                                                // Default to 0.8.30 for Solidity (could be extracted from metadata if needed)
+                                                semver::Version::new(0, 8, 30)
+                                            } else {
+                                                // Default version for other languages
+                                                semver::Version::new(0, 0, 0)
+                                            }
+                                        } else {
+                                            semver::Version::new(0, 8, 30)
+                                        };
+                                        
+                                        // Create a unique key using build ID to avoid source ID collisions
+                                        // For now, we'll still use version as the key since artifacts are keyed by version
+                                        // In a more complete implementation, we'd need to map artifacts to their build IDs
+                                        let sources = all_sources_by_version.entry(version.clone()).or_insert_with(Vec::new);
+                                        
+                                        // Process each source ID
+                                        for (id_str, path_value) in source_map {
+                                            if let (Ok(id), Some(path_str)) = (id_str.parse::<usize>(), path_value.as_str()) {
+                                                // Ensure we have enough space
+                                                while sources.len() <= id {
+                                                    sources.push((String::new(), String::new()));
+                                                }
+                                                
+                                                // Read the source file content
+                                                let source_content = if let Ok(content) = std::fs::read_to_string(root.join(path_str)) {
+                                                    content
+                                                } else {
+                                                    String::new()
+                                                };
+                                                
+                                                sources[id] = (path_str.to_string(), source_content);
+                                            }
+                                        }
+                                        
+                                        tracing::info!(
+                                            "Loaded {} source mappings from build info (build_id: {})",
+                                            sources.len(),
+                                            build_id
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Now collect source maps and associate them with the correct source files
+        for (id, artifact) in output.artifact_ids() {
+            let id = id.with_stripped_file_prefixes(root);
+            
+            // Extract source maps if available
+            if let (Some(creation_map), Some(deployed_map)) = (
+                artifact.get_source_map().and_then(|r| r.ok()),
+                artifact.get_source_map_deployed().and_then(|r| r.ok()),
+            ) {
+                source_maps.insert(id.clone(), (creation_map, deployed_map));
+            }
+            
+            // Associate the artifact with its complete source file list based on version
+            if let Some(sources) = all_sources_by_version.get(&id.version) {
+                source_files.insert(id.clone(), sources.clone());
+                tracing::info!(
+                    "Associated {} source files with artifact {}",
+                    sources.len(),
+                    id.name
+                );
+            } else {
+                tracing::info!(
+                    "No sources found for version {} (artifact {})",
+                    id.version,
+                    id.name
+                );
+            }
+        }
+
+        // Build deployed bytecodes map for ALL contracts (not just test contracts)
+        // This is needed for backtrace resolution of dynamically deployed contracts
+        let mut deployed_bytecodes = HashMap::new();
+        for (id, artifact) in output.artifact_ids() {
+            let id = id.with_stripped_file_prefixes(root);
+            if let Some(deployed) = artifact.get_deployed_bytecode_bytes()
+                .map(|b| b.into_owned())
+                .filter(|b| !b.is_empty()) {
+                deployed_bytecodes.insert(id.clone(), deployed);
+            }
+        }
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -558,7 +742,11 @@ impl MultiContractRunnerBuilder {
                 odyssey: self.odyssey,
                 config: self.config,
                 fail_fast: FailFast::new(self.fail_fast),
+                verbosity: 0, // Default to 0, will be set by test command
             },
+            source_maps,
+            source_files,
+            deployed_bytecodes,
         })
     }
 }

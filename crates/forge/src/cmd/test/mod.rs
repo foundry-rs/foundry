@@ -347,7 +347,7 @@ impl TestArgs {
 
         // Prepare the test builder.
         let config = Arc::new(config);
-        let runner = MultiContractRunnerBuilder::new(config.clone())
+        let mut runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
             .initial_balance(evm_opts.initial_balance)
@@ -358,6 +358,9 @@ impl TestArgs {
             .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
+
+        // Set verbosity for backtrace support
+        runner.set_verbosity(verbosity);
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -586,6 +589,15 @@ impl TestArgs {
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
+
+                    // Display backtrace for failed tests when verbosity >= 3
+                    if verbosity >= 3 && result.status == TestStatus::Failure {
+                        if let Some(ref backtrace) = result.backtrace {
+                            if !backtrace.is_empty() {
+                                sh_println!("{}", backtrace)?;
+                            }
+                        }
+                    }
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind
