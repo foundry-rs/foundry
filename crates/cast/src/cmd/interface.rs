@@ -137,19 +137,6 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
     Ok(vec![(abi.clone(), contract.name().unwrap_or(name).to_string())])
 }
 
-/// Fetches the ABI of a contract from Etherscan.
-pub async fn fetch_abi_from_etherscan(
-    address: Address,
-    etherscan: &EtherscanOpts,
-) -> Result<Vec<(JsonAbi, String)>> {
-    let config = etherscan.load_config()?;
-    let chain = config.chain.unwrap_or_default();
-    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new(chain, api_key)?;
-    let source = client.contract_source_code(address).await?;
-    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
-}
-
 /// Converts a vector of tuples containing the ABI and contract name into a vector of
 /// `InterfaceSource` objects.
 fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> {
