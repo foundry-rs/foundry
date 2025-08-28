@@ -21,6 +21,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::expand_globs,
+    lint::DenyLevel,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -176,7 +177,11 @@ impl BuildArgs {
                     let _ = compiler.lower_asts();
                     Ok(())
                 })?;
-                linter.lint(&input_files, config.lint.fail_on, &mut compiler)?;
+                linter.lint(
+                    &input_files,
+                    if config.deny_warnings { DenyLevel::Warnings } else { config.lint.deny },
+                    &mut compiler,
+                )?;
             }
         }
 

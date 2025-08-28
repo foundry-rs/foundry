@@ -7,7 +7,7 @@ use crate::{
 };
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::lint::{FailOn, Severity};
+use foundry_config::lint::{DenyLevel, Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as VisitAST},
@@ -239,7 +239,7 @@ impl<'a> Linter for SolidityLinter<'a> {
     fn lint(
         &self,
         input: &[PathBuf],
-        fail_on: FailOn,
+        deny: DenyLevel,
         compiler: &mut Compiler,
     ) -> eyre::Result<()> {
         compiler.enter_mut(|compiler| {
@@ -266,9 +266,9 @@ impl<'a> Linter for SolidityLinter<'a> {
 
         // Handle diagnostics and fail if necessary.
         const MSG: &str = "aborting due to ";
-        match (fail_on, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
-            // Fail on warnings.
-            (FailOn::Warning, w, n) if w > 0 => {
+        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+            // Deny warnings.
+            (DenyLevel::Warnings, w, n) if w > 0 => {
                 if n > 0 {
                     Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
                 } else {
@@ -276,8 +276,8 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
             }
 
-            // Fail on any diagnostic.
-            (FailOn::Note, w, n) if w > 0 || n > 0 => match (w, n) {
+            // Deny any diagnostic.
+            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
                 (w, n) if w > 0 && n > 0 => {
                     Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
                 }

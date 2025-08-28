@@ -11,7 +11,7 @@ use foundry_cli::{
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{
     filter::expand_globs,
-    lint::{FailOn, Severity},
+    lint::{DenyLevel, Severity},
 };
 use std::path::PathBuf;
 
@@ -40,7 +40,7 @@ pub struct LintArgs {
     /// Specifies the minimum diagnostic level at which the process should finish with a non-zero.
     /// exit code.
     #[arg(long, value_name = "LEVEL")]
-    pub fail_on: Option<FailOn>,
+    pub deny: Option<DenyLevel>,
 
     #[command(flatten)]
     pub(crate) build: BuildOpts,
@@ -105,6 +105,13 @@ impl LintArgs {
         // Override default severity config with user-defined severity
         let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
+        // Override default `deny` level config < `deny_warnings` config < user-defined `deny` level
+        let deny = self.deny.unwrap_or(if config.deny_warnings {
+            DenyLevel::Warnings
+        } else {
+            config.lint.deny
+        });
+
         if project.compiler.solc.is_none() {
             return Err(eyre!("Linting not supported for this language"));
         }
@@ -126,8 +133,7 @@ impl LintArgs {
             Ok(())
         })?;
 
-        // Override default fail_on level config with user-defined severity
-        linter.lint(&input, self.fail_on.unwrap_or(config.lint.fail_on), &mut compiler)?;
+        linter.lint(&input, deny, &mut compiler)?;
 
         Ok(())
     }

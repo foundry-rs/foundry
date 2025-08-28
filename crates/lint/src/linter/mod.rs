@@ -6,7 +6,7 @@ pub use late::{LateLintPass, LateLintVisitor};
 
 use eyre::Result;
 use foundry_compilers::Language;
-use foundry_config::lint::{FailOn, Severity};
+use foundry_config::lint::{DenyLevel, Severity};
 use solar::{
     interface::{
         Session, Span,
@@ -43,8 +43,8 @@ pub trait Linter: Send + Sync {
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
     ///
-    /// Should return an error based on the configured [`FailOn`] level and the emitted diagnostics.
-    fn lint(&self, input: &[PathBuf], fail_on: FailOn, compiler: &mut Compiler) -> Result<()>;
+    /// Should return an error based on the configured [`DenyLevel`] and the emitted diagnostics.
+    fn lint(&self, input: &[PathBuf], deny: DenyLevel, compiler: &mut Compiler) -> Result<()>;
 }
 
 pub trait Lint {

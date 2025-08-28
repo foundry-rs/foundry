@@ -187,7 +187,7 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
             mixed_case_exceptions: vec!["MIXED".to_string()],
-            fail_on: foundry_config::lint::FailOn::Never,
+            deny: foundry_config::lint::DenyLevel::Never,
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -537,15 +537,15 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
 
     // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
 
-    cmd.forge_fuse().arg("lint").assert_success(); // FailOn::Never (default)
+    cmd.forge_fuse().arg("lint").assert_success(); // DenyLevel::Never (default)
 
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
+        config.lint.deny = foundry_config::lint::DenyLevel::Warnings;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Note;
+        config.lint.deny = foundry_config::lint::DenyLevel::Notes;
     });
 
     cmd.forge_fuse().arg("lint").assert_failure();
@@ -553,18 +553,18 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
 
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Never;
+        config.lint.deny = foundry_config::lint::DenyLevel::Never;
         config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
     });
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
+        config.lint.deny = foundry_config::lint::DenyLevel::Warnings;
     });
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Note;
+        config.lint.deny = foundry_config::lint::DenyLevel::Notes;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 });

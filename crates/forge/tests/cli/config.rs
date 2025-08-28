@@ -1088,7 +1088,7 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
-fail_on = "never"
+deny = "never"
 mixed_case_exceptions = ["ERC"]
 
 [doc]
@@ -1316,7 +1316,7 @@ exclude = []
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "fail_on": "never",
+    "deny": "never",
     "mixed_case_exceptions": [
       "ERC"
     ]

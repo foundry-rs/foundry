@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::BuildOpts;
-use foundry_config::{impl_figment_convert, lint::FailOn};
+use foundry_config::{impl_figment_convert, lint::DenyLevel};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge geiger`.
@@ -51,7 +51,7 @@ impl GeigerArgs {
             lint: Some(vec!["unsafe-cheatcode".to_string()]),
             json: false,
             build: self.build,
-            fail_on: Some(FailOn::Note),
+            deny: Some(DenyLevel::Notes),
         };
 
         // Run the lint command with the geiger-specific configuration
