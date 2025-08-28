@@ -424,6 +424,7 @@ contract WriteTomlTest is DSTest {
 
     function test_writeToml_createKeys() public {
         string memory path = "fixtures/Toml/write_test.toml";
+        string memory toml = vm.readFile(path);
 
         bool exists = vm.keyExistsToml(toml, ".parent");
         assertTrue(!exists);
