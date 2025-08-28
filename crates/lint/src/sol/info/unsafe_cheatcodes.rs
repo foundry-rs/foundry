@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{Expr, ExprKind};
+use solar::ast::{Expr, ExprKind};
 
 declare_forge_lint!(
     UNSAFE_CHEATCODE_USAGE,
@@ -25,7 +25,7 @@ const UNSAFE_CHEATCODES: [&str; 9] = [
 ];
 
 impl<'ast> EarlyLintPass<'ast> for UnsafeCheatcodes {
-    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
+    fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
         if let ExprKind::Call(lhs, _args) = &expr.kind
             && let ExprKind::Member(_lhs, member) = &lhs.kind
             && UNSAFE_CHEATCODES.iter().any(|&c| c == member.as_str())

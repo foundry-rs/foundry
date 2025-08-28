@@ -3,7 +3,6 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
-import "./StateDiffTestUtils.sol";
 
 contract MappingStorage {
     // Simple mappings only
@@ -30,7 +29,7 @@ contract MappingStorage {
     }
 }
 
-contract StateDiffMappingsTest is StateDiffTestUtils {
+contract StateDiffMappingsTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     MappingStorage public mappingStorage;
 
@@ -52,20 +51,14 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         emit log_string(stateDiffText);
 
         // Verify text format contains the mapping label
-        assertContains(
-            stateDiffText,
-            "balances[0x0000000000000000000000000000000000001234]",
-            "Text format should contain mapping label"
-        );
+        assertTrue(vm.contains(stateDiffText, "balances[0x0000000000000000000000000000000000001234]"));
 
         // Verify text format contains the value type
-        assertContains(stateDiffText, "uint256", "Text format should contain value type");
+        assertTrue(vm.contains(stateDiffText, "uint256"));
 
         // Verify text format contains decoded values (shown with arrow)
-        assertContains(stateDiffText, ": 0", "Text format should contain initial value");
-        assertContains(
-            stateDiffText, "1000000000000000000000", "Text format should contain new value (1000 ether in wei)"
-        );
+        assertTrue(vm.contains(stateDiffText, ": 0"));
+        assertTrue(vm.contains(stateDiffText, "1000000000000000000000"));
 
         // Test JSON format output
         string memory json = vm.getStateDiffJson();
@@ -73,32 +66,20 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         emit log_string(json);
 
         // The JSON should contain the decoded mapping slot with proper label
-        assertContains(
-            json,
-            '"label":"balances[0x0000000000000000000000000000000000001234]"',
-            "JSON should contain 'balances[0x0000...1234]' label"
-        );
+        assertTrue(vm.contains(json, '"label":"balances[0x0000000000000000000000000000000000001234]"'));
 
         // Check the type is correctly identified
-        assertContains(json, '"type":"mapping(address => uint256)"', "JSON should contain mapping type");
+        assertTrue(vm.contains(json, '"type":"mapping(address => uint256)"'));
 
         // Check decoded values
-        assertContains(
-            json,
-            '"decoded":{"previousValue":"0","newValue":"1000000000000000000000"}',
-            "JSON should decode balance value correctly (1000 ether = 1000000000000000000000 wei)"
-        );
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"0","newValue":"1000000000000000000000"}'));
 
         // Check that the key field is present for simple mapping
-        assertContains(
-            json,
-            '"key":"0x0000000000000000000000000000000000001234"',
-            "JSON should contain decoded key field for simple mapping"
-        );
+        assertTrue(vm.contains(json, '"key":"0x0000000000000000000000000000000000001234"'));
 
         // Stop recording and verify we have account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
-        assertTrue(accesses.length > 0, "Should have account accesses");
+        assertTrue(accesses.length > 0);
 
         // The AccountAccess structure contains information about storage changes
         // but the label and decoded values are only available in the string/JSON outputs
@@ -122,19 +103,13 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         emit log_string(stateDiffText);
 
         // Verify text format contains decoded values for uint256 key
-        assertContains(stateDiffText, "owners[12345]", "Text format should contain owners mapping with decimal key");
-        assertContains(
-            stateDiffText,
-            "address): 0x0000000000000000000000000000000000000000",
-            "Text format should contain initial address value"
-        );
-        assertContains(
-            stateDiffText, "0x0000000000000000000000000000000000007777", "Text format should contain new address value"
-        );
+        assertTrue(vm.contains(stateDiffText, "owners[12345]"));
+        assertTrue(vm.contains(stateDiffText, "address): 0x0000000000000000000000000000000000000000"));
+        assertTrue(vm.contains(stateDiffText, "0x0000000000000000000000000000000000007777"));
 
         // Verify text format contains decoded values for bytes32 key
-        assertContains(stateDiffText, "bool): false", "Text format should contain initial bool value");
-        assertContains(stateDiffText, "true", "Text format should contain new bool value");
+        assertTrue(vm.contains(stateDiffText, "bool): false"));
+        assertTrue(vm.contains(stateDiffText, "true"));
 
         // Get state diff JSON
         string memory json = vm.getStateDiffJson();
@@ -144,23 +119,22 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         emit log_string(json);
 
         // Check uint256 key mapping
-        assertContains(json, '"label":"owners[12345]"', "Should contain owners mapping with uint256 key");
-        assertContains(json, '"type":"mapping(uint256 => address)"', "Should contain uint256=>address mapping type");
-        assertContains(
-            json,
-            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000007777"}',
-            "Should decode owner address correctly"
+        assertTrue(vm.contains(json, '"label":"owners[12345]"'));
+        assertTrue(vm.contains(json, '"type":"mapping(uint256 => address)"'));
+        assertTrue(
+            vm.contains(
+                json,
+                '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000007777"}'
+            )
         );
 
         // Check bytes32 key mapping - the key will be shown as hex
-        assertContains(json, '"label":"flags[', "Should contain flags mapping label");
-        assertContains(json, '"type":"mapping(bytes32 => bool)"', "Should contain bytes32=>bool mapping type");
-        assertContains(
-            json, '"decoded":{"previousValue":"false","newValue":"true"}', "Should decode flag bool value correctly"
-        );
+        assertTrue(vm.contains(json, '"label":"flags['));
+        assertTrue(vm.contains(json, '"type":"mapping(bytes32 => bool)"'));
+        assertTrue(vm.contains(json, '"decoded":{"previousValue":"false","newValue":"true"}'));
 
         // Check that the key field is present for uint256 key mapping
-        assertContains(json, '"key":"12345"', "JSON should contain decoded key field for uint256 mapping");
+        assertTrue(vm.contains(json, '"key":"12345"'));
 
         // Stop recording
         vm.stopAndReturnStateDiff();
@@ -190,35 +164,25 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         emit log_string(stateDiffText);
 
         // Verify text format contains nested mapping labels
-        assertContains(
-            stateDiffText,
-            "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]",
-            "Text format should contain first nested mapping label"
+        assertTrue(
+            vm.contains(
+                stateDiffText,
+                "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]"
+            )
         );
-        assertContains(
-            stateDiffText,
-            "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]",
-            "Text format should contain second nested mapping label"
+        assertTrue(
+            vm.contains(
+                stateDiffText,
+                "allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]"
+            )
         );
         // The text format shows the value type (uint256) not the full mapping type
-        assertContains(stateDiffText, "uint256): 0", "Text format should contain value type");
+        assertTrue(vm.contains(stateDiffText, "uint256): 0"));
 
         // Verify text format contains decoded values for nested mappings
-        assertContains(
-            stateDiffText,
-            "500000000000000000000",
-            "Text format should contain decoded value for owner1->spender1 (500 ether)"
-        );
-        assertContains(
-            stateDiffText,
-            "750000000000000000000",
-            "Text format should contain decoded value for owner1->spender2 (750 ether)"
-        );
-        assertContains(
-            stateDiffText,
-            "1000000000000000000000",
-            "Text format should contain decoded value for owner2->spender3 (1000 ether)"
-        );
+        assertTrue(vm.contains(stateDiffText, "500000000000000000000"));
+        assertTrue(vm.contains(stateDiffText, "750000000000000000000"));
+        assertTrue(vm.contains(stateDiffText, "1000000000000000000000"));
 
         // Test JSON format output
         string memory json = vm.getStateDiffJson();
@@ -228,57 +192,55 @@ contract StateDiffMappingsTest is StateDiffTestUtils {
         // Check that all three nested mapping entries are correctly decoded
 
         // Entry 1: owner1 -> spender1
-        assertContains(
-            json,
-            '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]"',
-            "Should contain first nested mapping label (owner1 -> spender1)"
+        assertTrue(
+            vm.contains(
+                json,
+                '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000002222]"'
+            )
         );
-        assertContains(
-            json, '"newValue":"500000000000000000000"', "Should have correct value for owner1 -> spender1 (500 ether)"
-        );
+        assertTrue(vm.contains(json, '"newValue":"500000000000000000000"'));
 
         // Entry 2: owner1 -> spender2 (same owner, different spender)
-        assertContains(
-            json,
-            '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]"',
-            "Should contain second nested mapping label (owner1 -> spender2)"
+        assertTrue(
+            vm.contains(
+                json,
+                '"label":"allowances[0x0000000000000000000000000000000000001111][0x0000000000000000000000000000000000003333]"'
+            )
         );
-        assertContains(
-            json, '"newValue":"750000000000000000000"', "Should have correct value for owner1 -> spender2 (750 ether)"
-        );
+        assertTrue(vm.contains(json, '"newValue":"750000000000000000000"'));
 
         // Entry 3: owner2 -> spender3 (different owner)
-        assertContains(
-            json,
-            '"label":"allowances[0x0000000000000000000000000000000000004444][0x0000000000000000000000000000000000005555]"',
-            "Should contain third nested mapping label (owner2 -> spender3)"
+        assertTrue(
+            vm.contains(
+                json,
+                '"label":"allowances[0x0000000000000000000000000000000000004444][0x0000000000000000000000000000000000005555]"'
+            )
         );
-        assertContains(
-            json, '"newValue":"1000000000000000000000"', "Should have correct value for owner2 -> spender3 (1000 ether)"
-        );
+        assertTrue(vm.contains(json, '"newValue":"1000000000000000000000"'));
 
         // Check the type is correctly identified for all entries
-        assertContains(
-            json, '"type":"mapping(address => mapping(address => uint256))"', "Should contain nested mapping type"
-        );
+        assertTrue(vm.contains(json, '"type":"mapping(address => mapping(address => uint256))"'));
 
         // Check that the keys field is present for nested mappings
-        assertContains(
-            json,
-            '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000002222"]',
-            "JSON should contain decoded keys array for owner1->spender1 nested mapping"
+        assertTrue(
+            vm.contains(
+                json,
+                '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000002222"]'
+            )
         );
 
-        assertContains(
-            json,
-            '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000003333"]',
-            "JSON should contain decoded keys array for owner1->spender2 nested mapping"
+        assertTrue(
+            vm.contains(
+                json,
+                '"keys":["0x0000000000000000000000000000000000001111","0x0000000000000000000000000000000000003333"]'
+            )
         );
 
-        assertContains(
-            json,
-            '"keys":["0x0000000000000000000000000000000000004444","0x0000000000000000000000000000000000005555"]',
-            "JSON should contain decoded keys array for owner2->spender3 nested mapping"
+        assertTrue(
+            vm.contains(
+                json,
+                '"keys":["0x0000000000000000000000000000000000004444","0x0000000000000000000000000000000000005555"]'
+            )
         );
 
         // Stop recording

@@ -7,7 +7,10 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
+use foundry_common::{
+    ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
+    shell::verbosity,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
@@ -531,10 +534,10 @@ impl MultiContractRunnerBuilder {
             }
         }
 
-        // Create known contracts with storage layout information
-        let known_contracts = ContractsByArtifact::with_storage_layout(
-            output.clone().with_stripped_file_prefixes(root),
-        );
+        // Create known contracts from linked contracts and storage layout information (if any).
+        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
+            .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
+            .build();
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,

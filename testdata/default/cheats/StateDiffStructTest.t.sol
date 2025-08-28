@@ -3,7 +3,6 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
-import "./StateDiffTestUtils.sol";
 
 contract DiffTest {
     // slot 0
@@ -50,7 +49,7 @@ contract DiffTest {
     }
 }
 
-contract StateDiffStructTest is StateDiffTestUtils {
+contract StateDiffStructTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     DiffTest internal test;
 
@@ -73,35 +72,37 @@ contract StateDiffStructTest is StateDiffTestUtils {
         emit log_string(stateDiffJson);
 
         // Check that the struct is properly labeled
-        assertContains(stateDiffJson, '"label":"testStruct"', "Should contain 'testStruct' label");
+        assertTrue(vm.contains(stateDiffJson, '"label":"testStruct"'));
 
         // Check that the type is correctly identified as a struct
-        assertContains(stateDiffJson, '"type":"struct DiffTest.TestStruct"', "Should contain struct type");
+        assertTrue(vm.contains(stateDiffJson, '"type":"struct DiffTest.TestStruct"'));
 
         // Check for members field - structs have members with individual decoded values
-        assertContains(stateDiffJson, '"members":', "Should contain members field for struct");
+        assertTrue(vm.contains(stateDiffJson, '"members":'));
 
         // Check that member 'a' is properly decoded
-        assertContains(stateDiffJson, '"label":"a"', "Should contain member 'a' label");
-        assertContains(stateDiffJson, '"type":"uint128"', "Should contain uint128 type for members");
+        assertTrue(vm.contains(stateDiffJson, '"label":"a"'));
+        assertTrue(vm.contains(stateDiffJson, '"type":"uint128"'));
 
         // Check that member 'b' is properly decoded
-        assertContains(stateDiffJson, '"label":"b"', "Should contain member 'b' label");
+        assertTrue(vm.contains(stateDiffJson, '"label":"b"'));
 
         // The members should have decoded values
         // Check specific decoded values for each member in the members array
         // Member 'a' at offset 0 should have previous value 0 and new value 1
-        assertContains(
-            stateDiffJson,
-            '{"label":"a","type":"uint128","offset":0,"slot":"0","decoded":{"previousValue":"0","newValue":"1"}}',
-            "Member 'a' should be decoded with previous=0, new=1"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '{"label":"a","type":"uint128","offset":0,"slot":"0","decoded":{"previousValue":"0","newValue":"1"}}'
+            )
         );
 
         // Member 'b' at offset 16 should have previous value 0 and new value 2
-        assertContains(
-            stateDiffJson,
-            '{"label":"b","type":"uint128","offset":16,"slot":"0","decoded":{"previousValue":"0","newValue":"2"}}',
-            "Member 'b' should be decoded with previous=0, new=2"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '{"label":"b","type":"uint128","offset":16,"slot":"0","decoded":{"previousValue":"0","newValue":"2"}}'
+            )
         );
 
         // Verify the raw storage values are correct
@@ -109,15 +110,11 @@ contract StateDiffStructTest is StateDiffTestUtils {
         // So the value 0x0000000000000000000200000000000000000000000000000001 represents:
         // - First 16 bytes (a): 0x0000000000000000000000000000000001 = 1
         // - Last 16 bytes (b):  0x0000000000000000000000000000000002 = 2
-        assertContains(
-            stateDiffJson,
-            '"0x0000000000000000000000000000000200000000000000000000000000000001"',
-            "Should contain the correct packed storage value"
-        );
+        assertTrue(vm.contains(stateDiffJson, '"0x0000000000000000000000000000000200000000000000000000000000000001"'));
 
         // Stop recording and verify we get the expected account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
-        assertTrue(accesses.length > 0, "Should have account accesses");
+        assertTrue(accesses.length > 0);
 
         // Find the storage access for our struct
         bool foundStructAccess = false;
@@ -128,18 +125,16 @@ contract StateDiffStructTest is StateDiffTestUtils {
                     if (access.slot == bytes32(uint256(0)) && access.isWrite) {
                         foundStructAccess = true;
                         // Verify the storage values
-                        assertEq(access.previousValue, bytes32(uint256(0)), "Previous value should be 0");
+                        assertEq(access.previousValue, bytes32(uint256(0)));
                         assertEq(
-                            access.newValue,
-                            bytes32(uint256(0x0000000000000000000200000000000000000000000000000001)),
-                            "New value should pack a=1 and b=2"
+                            access.newValue, bytes32(uint256(0x0000000000000000000200000000000000000000000000000001))
                         );
                     }
                 }
             }
         }
 
-        assertTrue(foundStructAccess, "Should have found struct storage access");
+        assertTrue(foundStructAccess);
     }
 
     function testMultiSlotStruct() public {
@@ -161,9 +156,7 @@ contract StateDiffStructTest is StateDiffTestUtils {
         emit log_string(stateDiffJson);
 
         // Check that the struct's first member is properly labeled
-        assertContains(
-            stateDiffJson, '"label":"multiSlotStruct.value1"', "Should contain 'multiSlotStruct.value1' label"
-        );
+        assertTrue(vm.contains(stateDiffJson, '"label":"multiSlotStruct.value1"'));
 
         // For multi-slot structs, the base slot now shows the first member's type
         // The struct type itself is not shown since we decode the first member directly
@@ -173,45 +166,30 @@ contract StateDiffStructTest is StateDiffTestUtils {
 
         // Check that each member slot is properly labeled
         // Note: slot 1 now shows multiSlotStruct.value1 since it's the first member
-        assertContains(
-            stateDiffJson,
-            '"label":"multiSlotStruct.value1"',
-            "Should contain multiSlotStruct.value1 label for first slot"
-        );
-        assertContains(stateDiffJson, '"label":"multiSlotStruct.addr"', "Should contain member 'addr' label");
-        assertContains(stateDiffJson, '"label":"multiSlotStruct.value2"', "Should contain member 'value2' label");
+        assertTrue(vm.contains(stateDiffJson, '"label":"multiSlotStruct.value1"'));
+        assertTrue(vm.contains(stateDiffJson, '"label":"multiSlotStruct.addr"'));
+        assertTrue(vm.contains(stateDiffJson, '"label":"multiSlotStruct.value2"'));
 
         // Check member types
-        assertContains(stateDiffJson, '"type":"uint256"', "Should contain uint256 type");
-        assertContains(stateDiffJson, '"type":"address"', "Should contain address type");
+        assertTrue(vm.contains(stateDiffJson, '"type":"uint256"'));
+        assertTrue(vm.contains(stateDiffJson, '"type":"address"'));
 
         // Check that value1 is properly decoded from slot 1
-        assertContains(
-            stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"123456789"}',
-            "value1 should be decoded from slot 1"
-        );
+        assertTrue(vm.contains(stateDiffJson, '"decoded":{"previousValue":"0","newValue":"123456789"}'));
 
         // Also verify the raw hex value
-        assertContains(
-            stateDiffJson,
-            "0x00000000000000000000000000000000000000000000000000000000075bcd15",
-            "Slot 1 should contain value1 in hex"
-        );
+        assertTrue(vm.contains(stateDiffJson, "0x00000000000000000000000000000000000000000000000000000000075bcd15"));
 
         // Slot 2 should have the address decoded
-        assertContains(
-            stateDiffJson,
-            '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x00000000000000000000000000000000DeaDBeef"}',
-            "Address should be decoded from slot 2"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x00000000000000000000000000000000DeaDBeef"}'
+            )
         );
 
         // Slot 3 should have value2 decoded
-        assertContains(
-            stateDiffJson,
-            '"decoded":{"previousValue":"0","newValue":"987654321"}',
-            "Value2 should be decoded from slot 3"
-        );
+        assertTrue(vm.contains(stateDiffJson, '"decoded":{"previousValue":"0","newValue":"987654321"}'));
 
         // Stop recording
         vm.stopAndReturnStateDiff();
@@ -237,40 +215,41 @@ contract StateDiffStructTest is StateDiffTestUtils {
         emit log_string("State diff JSON (testdata):");
         emit log_string(stateDiffJson);
 
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.inner.value1","type":"uint256","offset":0,"slot":"4","decoded":{"previousValue":"0","newValue":"111111111"}',
-            "Should decode inner.value1 correctly"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"label":"nestedStruct.inner.value1","type":"uint256","offset":0,"slot":"4","decoded":{"previousValue":"0","newValue":"111111111"}'
+            )
         );
 
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.inner.addr","type":"address","offset":0,"slot":"5","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000cafE"}',
-            "Should decode inner.addr correctly"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"label":"nestedStruct.inner.addr","type":"address","offset":0,"slot":"5","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000cafE"}'
+            )
         );
 
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.inner.value2","type":"uint256","offset":0,"slot":"6","decoded":{"previousValue":"0","newValue":"222222222"}',
-            "Should decode inner.value2 correctly"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"label":"nestedStruct.inner.value2","type":"uint256","offset":0,"slot":"6","decoded":{"previousValue":"0","newValue":"222222222"}'
+            )
         );
 
-        assertContains(
-            stateDiffJson,
-            "0x00000000000000000000000000000000000000000000000000000000069f6bc7",
-            "Slot 4 should contain inner.value1 in hex"
+        assertTrue(vm.contains(stateDiffJson, "0x00000000000000000000000000000000000000000000000000000000069f6bc7"));
+
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"label":"nestedStruct.value","type":"uint256","offset":0,"slot":"7","decoded":{"previousValue":"0","newValue":"333333333"}'
+            )
         );
 
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.value","type":"uint256","offset":0,"slot":"7","decoded":{"previousValue":"0","newValue":"333333333"}',
-            "Should decode nestedStruct.value correctly"
-        );
-
-        assertContains(
-            stateDiffJson,
-            '"label":"nestedStruct.owner","type":"address","offset":0,"slot":"8","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000bEEF"}',
-            "Should decode nestedStruct.owner correctly"
+        assertTrue(
+            vm.contains(
+                stateDiffJson,
+                '"label":"nestedStruct.owner","type":"address","offset":0,"slot":"8","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000bEEF"}'
+            )
         );
 
         // Stop recording
