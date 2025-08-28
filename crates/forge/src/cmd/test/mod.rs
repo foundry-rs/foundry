@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::matches_contract,
+    multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -239,7 +239,7 @@ impl TestArgs {
         // Filter sources by their abis and contract names.
         let mut test_sources = abis
             .iter()
-            .filter(|(id, abi)| matches_contract(id, abi, filter))
+            .filter(|(id, abi)| matches_artifact(filter, id, abi))
             .map(|(id, _)| id.source.clone())
             .collect::<BTreeSet<_>>();
 
