@@ -17,6 +17,5 @@ const { instance } = await WebAssembly.instantiateStreaming(fetch(url), imports)
 console.info('instance', instance)
 wbg.__wbg_set_wasm(instance.exports)
 if (instance.exports.__wbindgen_start) {
-  // (instance.exports.__wbindgen_start as any)()
-  instance.exports.__wbindgen_start
+  (instance.exports.__wbindgen_start as () => void)()
 }
