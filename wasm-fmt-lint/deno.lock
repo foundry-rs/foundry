@@ -1,8 +1,34 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/assert@*": "1.0.14",
+    "jsr:@std/assert@^1.0.14": "1.0.14",
+    "jsr:@std/expect@*": "1.0.17",
+    "jsr:@std/internal@^1.0.10": "1.0.10",
+    "npm:ts-dedent@*": "2.2.0",
+    "npm:ts-dedent@^2.2.0": "2.2.0",
+    "npm:typed-query-selector@*": "2.12.0",
+    "npm:typed-query-selector@^2.12.0": "2.12.0",
     "npm:vite@7.1.3": "7.1.3_picomatch@4.0.3",
     "npm:vite@^7.1.3": "7.1.3_picomatch@4.0.3"
+  },
+  "jsr": {
+    "@std/assert@1.0.14": {
+      "integrity": "68d0d4a43b365abc927f45a9b85c639ea18a9fab96ad92281e493e4ed84abaa4",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/expect@1.0.17": {
+      "integrity": "316b47dd65c33e3151344eb3267bf42efba17d1415425f07ed96185d67fc04d9",
+      "dependencies": [
+        "jsr:@std/assert@^1.0.14",
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.10": {
+      "integrity": "e3be62ce42cab0e177c27698e5d9800122f67b766a0bea6ca4867886cbde8cf7"
+    }
   },
   "npm": {
     "@esbuild/aix-ppc64@0.25.9": {
@@ -343,6 +369,12 @@
         "picomatch"
       ]
     },
+    "ts-dedent@2.2.0": {
+      "integrity": "sha512-q5W7tVM71e2xjHZTlgfTDoPF/SmqKG5hddq9SzR49CH2hayqRKJtQ4mtRlSxKaJlR/+9rEM+mnBHf7I2/BQcpQ=="
+    },
+    "typed-query-selector@2.12.0": {
+      "integrity": "sha512-SbklCd1F0EiZOyPiW192rrHZzZ5sBijB6xM+cpmrwDqObvdtunOHHIk9fCGsoK5JVIYXoyEp4iEdE3upFH3PAg=="
+    },
     "vite@7.1.3_picomatch@4.0.3": {
       "integrity": "sha512-OOUi5zjkDxYrKhTV3V7iKsoS37VUM7v40+HuwEmcrsf11Cdx9y3DIr2Px6liIcZFwt3XSRpQvFpL3WVy7ApkGw==",
       "dependencies": [
@@ -361,6 +393,9 @@
   },
   "workspace": {
     "dependencies": [
+      "npm:ts-dedent@^2.2.0",
+      "npm:typed-query-selector@*",
+      "npm:typed-query-selector@^2.12.0",
       "npm:vite@^7.1.3"
     ]
   }

@@ -1,12 +1,15 @@
 {
   "tasks": {
     "dev": "vite",
-    "wasmbuild": "RUSTFLAGS='--cfg=getrandom_backend=wasm_js' deno run -A jsr:@deno/wasmbuild@0.19.2 -p wasm-fmt-lint --out ./wasm-fmt-lint/dis",
+    "wasmbuild": "RUSTFLAGS='--cfg=getrandom_backend=wasm_js' deno run -A jsr:@deno/wasmbuild@0.19.2 -p wasm-fmt-lint --out ./wasm-fmt-lint/dist",
+    "build": "deno task wasmbuild",
     "test": "deno test --allow-all wasm-fmt-lint"
   },
   "nodeModulesDir": "auto",
   "imports": {
-    "vite": "npm:vite@^7.1.3"
+    "vite": "npm:vite@^7.1.3",
+    "ts-dedent": "npm:ts-dedent@^2.2.0",
+    "typed-query-selector": "npm:typed-query-selector@^2.12.0"
   },
   "fmt": {
     "semiColons": false,
@@ -21,11 +24,10 @@
   },
   "compilerOptions": {
     "strict": true,
-    "allowJs": true,
-    "checkJs": true,
     "strictNullChecks": true,
     "verbatimModuleSyntax": true,
-    "lib": ["deno.window", "dom", "dom.iterable"]
+    "lib": ["deno.window", "dom", "dom.iterable"],
+    "types": ["npm:typed-query-selector"]
   },
   "unstable": ["sloppy-imports"]
 }

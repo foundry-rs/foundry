@@ -13,8 +13,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-config.workspace = true
-
 alloy-primitives.workspace = true
 
 ariadne = "0.5"
@@ -22,6 +20,10 @@ itertools.workspace = true
 solang-parser.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+foundry-config.workspace = true
 
 [dev-dependencies]
 itertools.workspace = true

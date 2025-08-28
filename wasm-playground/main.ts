@@ -1,4 +1,4 @@
-import * as Cast from './dist/wasm_playground.ts'
+import * as Cast from './dist/wasm_playground.js'
 
 // await Cast.__wasmReady
 

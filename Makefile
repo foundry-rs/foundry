@@ -151,3 +151,17 @@ dprint-check: ## Check formatting with dprint
 		cargo install dprint; \
 	fi
 	dprint check
+
+# WASM-specific RUSTFLAGS (commented out to prevent global export)
+# RUSTFLAGS='-C target-cpu=mvp -C opt-level=z --cfg=getrandom_backend="wasm_js"'
+
+# run all necessary commands for a given workspace/project
+.PHONY: run-all
+run-all: ## Run all necessary commands for a given workspace/project
+	cargo +nightly fmt -p $(x) -- --config-path=rustfmt.toml
+	cargo +nightly clippy -p $(x)
+	cargo +nightly deny --all-features check all
+
+	deno fmt $(x)
+	deno lint $(x)
+	deno test --allow-all $(x)

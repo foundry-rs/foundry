@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-read --allow-net
 
 // Test script for wasm-playground functions
-import * as wasm from './dist/wasm_playground.ts'
+import * as wasm from './dist/wasm_playground.js'
 
 const url = 'https://reth-ethereum.ithaca.xyz/rpc'
 
@@ -64,7 +64,9 @@ const calldata = wasm.calldata_encode('transfer(address,uint256)', [
   '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb3',
   '1000000000000000000',
 ])
-console.log(`calldata_encode("transfer(address,uint256)", [...]) = ${calldata}`)
+console.log(
+  `calldata_encode("transfer(address,uint256)", [...]) = ${calldata}`,
+)
 
 // Test ABI encoding
 console.log('\n=== ABI Encoding ===')

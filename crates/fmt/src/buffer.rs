@@ -4,7 +4,7 @@ use crate::{
     comments::{CommentState, CommentStringExt},
     string::{QuoteState, QuotedStringExt},
 };
-use foundry_config::fmt::IndentStyle;
+use crate::IndentStyle;
 use std::fmt::Write;
 
 /// An indent group. The group may optionally skip the first line

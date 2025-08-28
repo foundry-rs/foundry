@@ -25,7 +25,8 @@ members = [
     "crates/macros/",
     "crates/test-utils/",
     "crates/lint/",
-    "wasm-playground/"
+    "wasm-playground/",
+    "wasm-fmt-lint/"
 ]
 resolver = "2"
 
@@ -349,6 +350,7 @@ tracing-subscriber = "0.3"
 url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
+is-terminal = "=0.4.11"
 path-slash = "0.2"
 jiff = "0.2"
 heck = "0.5"

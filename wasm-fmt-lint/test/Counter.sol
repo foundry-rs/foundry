@@ -1,0 +1,1 @@
+contract A { struct B { uint256 c; } }

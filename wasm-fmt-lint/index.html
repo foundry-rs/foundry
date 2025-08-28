@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WASM FMT/LINT Playground</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin: 16px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+      pre {
+        background: #111;
+        color: #eaeaea;
+        padding: 12px;
+        border-radius: 6px;
+        overflow: auto;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      button {
+        padding: 6px 10px;
+      }
+      label {
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>wasm-fmt-lint</h1>
+    <div class="actions">
+      <button id="btn-format">Format</button>
+      <label>
+        <input type="checkbox" id="format-on-input" checked /> format on input
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <h3>Input</h3>
+        <textarea id="input"></textarea>
+      </div>
+      <div>
+        <h3>Formatted</h3>
+        <pre id="output"></pre>
+      </div>
+    </div>
+    <h3>Diagnostics</h3>
+    <pre id="diagnostics"></pre>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
