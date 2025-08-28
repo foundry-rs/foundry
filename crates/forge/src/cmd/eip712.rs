@@ -83,6 +83,7 @@ impl Eip712Args {
             Ok(())
         })?;
 
+        // `compiler.sess()` inside of `ProjectCompileOutput` is built with `with_buffer_emitter`.
         let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
         if compiler.sess().dcx.has_errors().is_err() {
             eyre::bail!("{diags}");
