@@ -311,14 +311,11 @@ impl FuzzDictionary {
 
         // If we have a storage layout, use SlotIdentifier for better type identification
         if let Some(slot_identifier) =
-            layout.and_then(|l| Some(SlotIdentifier::new(l.clone().into())))
+            layout.map(|l| SlotIdentifier::new(l.clone().into()))
             // Identify Slot Type
             && let Some(slot_info) = slot_identifier.identify(&slot, None)
         {
-            self.sample_values
-                .entry(slot_info.slot_type.dyn_sol_type.clone())
-                .or_default()
-                .insert(value);
+            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
             self.insert_value(value);
             let value = U256::from_be_bytes(value.0);
