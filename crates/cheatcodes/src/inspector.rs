@@ -1218,6 +1218,10 @@ where {
             }]);
         }
 
+        if let Some(result) = self.strategy.runner.revive_try_call(self, ecx, call, executor) {
+            return Some(result);
+        }
+
         None
     }
 

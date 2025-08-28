@@ -30,7 +30,7 @@ use polkadot_sdk::{
 
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
+        opcode as op, CallInputs, CallOutcome, CreateOutcome, Gas, InstructionResult, Interpreter,
         InterpreterResult,
     },
     primitives::{CreateScheme, SignedAuthorization},
@@ -412,6 +412,119 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                         gas,
                     },
                     address: None,
+                })
+            }
+        }
+    }
+
+    /// Try handling the `CALL` within PVM.
+    ///
+    /// If `Some` is returned then the result must be returned immediately, else the call must be
+    /// handled in EVM.
+    fn revive_try_call(
+        &self,
+        state: &mut foundry_cheatcodes::Cheatcodes,
+        ecx: InnerEcx<'_, '_, '_>,
+        call: &CallInputs,
+        _executor: &mut dyn foundry_cheatcodes::CheatcodesExecutor,
+    ) -> Option<CallOutcome> {
+        let ctx = get_context_ref_mut(state.strategy.context.as_mut());
+
+        if !ctx.using_pvm {
+            return None;
+        }
+
+        if ecx
+            .db
+            .get_test_contract_address()
+            .map(|addr| call.bytecode_address == addr)
+            .unwrap_or_default()
+        {
+            tracing::info!(
+                "running call in EVM, instead of PVM (Test Contract) {:#?}",
+                call.bytecode_address
+            );
+            return None;
+        }
+
+        tracing::info!("running call in PVM {:#?}", call);
+
+        let max_gas =
+            <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::encode(
+                Default::default(),
+                Weight::MAX,
+                1u128 << 99,
+            );
+        let gas_limit = sp_core::U256::from(call.gas_limit).min(max_gas);
+
+        let res = ctx.revive_test_externalities.lock().unwrap().execute_with(|| {
+            let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
+                &H160::from_slice(call.caller.as_slice()),
+            ));
+            let evm_value = sp_core::U256::from_little_endian(&call.call_value().as_le_bytes());
+
+            let (gas_limit, storage_deposit_limit) =
+                <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
+                    gas_limit,
+                )
+                .expect("gas limit is valid");
+            let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
+            let target = H160::from_slice(call.target_address.as_slice());
+
+            Pallet::<Runtime>::bare_call(
+                origin,
+                target,
+                evm_value,
+                gas_limit,
+                storage_deposit_limit,
+                call.input.to_vec(),
+            )
+        });
+
+        let mut gas = Gas::new(call.gas_limit);
+        let gas_used =
+            <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::encode(
+                gas_limit,
+                res.gas_required,
+                res.storage_deposit.charge_or_zero(),
+            );
+        match res.result {
+            Ok(result) => {
+                let _ = gas.record_cost(gas_used.as_u64());
+
+                let outcome = if result.did_revert() {
+                    CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: result.data.into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    }
+                } else {
+                    CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Return,
+                            output: result.data.into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    }
+                };
+
+                Some(outcome)
+            }
+            Err(e) => {
+                tracing::error!("Contract call failed: {e:#?}");
+                Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Bytes::from_iter(
+                            format!("Contract call failed: {e:#?}").as_bytes(),
+                        ),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
                 })
             }
         }

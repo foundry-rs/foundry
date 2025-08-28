@@ -229,6 +229,16 @@ pub trait CheatcodeInspectorStrategyExt {
     ) -> Option<revm::interpreter::CreateOutcome> {
         None
     }
+
+    fn revive_try_call(
+        &self,
+        _state: &mut crate::Cheatcodes,
+        _ecx: InnerEcx,
+        _input: &CallInputs,
+        _executor: &mut dyn CheatcodesExecutor,
+    ) -> Option<revm::interpreter::CallOutcome> {
+        None
+    }
 }
 
 // Legacy type aliases for backward compatibility
