@@ -98,6 +98,8 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         "rustls=off",
         // Tokio
         "mio=off",
+        // Too verbose
+        "jsonpath_lib=off",
     ];
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
