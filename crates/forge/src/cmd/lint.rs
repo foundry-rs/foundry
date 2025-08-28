@@ -118,7 +118,7 @@ impl LintArgs {
             return Err(eyre!("Linting not supported for this language"));
         }
 
-        let linter = SolidityLinter::new(path_config, fail_on)
+        let linter = SolidityLinter::new(path_config)
             .with_json_emitter(self.json)
             .with_description(true)
             .with_lints(include)
@@ -134,7 +134,7 @@ impl LintArgs {
             let _ = compiler.lower_asts();
             Ok(())
         })?;
-        linter.lint(&input, &mut compiler)?;
+        linter.lint(&input, fail_on, &mut compiler)?;
 
         Ok(())
     }

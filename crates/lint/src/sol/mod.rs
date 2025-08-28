@@ -50,7 +50,6 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 /// vulnerabilities gas optimizations, and best practices.
 #[derive(Debug)]
 pub struct SolidityLinter<'a> {
-    fail_on: FailOn,
     path_config: ProjectPathsConfig,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
@@ -62,9 +61,8 @@ pub struct SolidityLinter<'a> {
 }
 
 impl<'a> SolidityLinter<'a> {
-    pub fn new(path_config: ProjectPathsConfig, fail_on: FailOn) -> Self {
+    pub fn new(path_config: ProjectPathsConfig) -> Self {
         Self {
-            fail_on,
             path_config,
             with_description: true,
             severity: None,
@@ -225,10 +223,6 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn fail_on(&self) -> FailOn {
-        self.fail_on
-    }
-
     fn configure(&self, compiler: &mut Compiler) {
         let dcx = compiler.dcx_mut();
         let sm = dcx.source_map_mut().unwrap().clone();
@@ -242,7 +236,12 @@ impl<'a> Linter for SolidityLinter<'a> {
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
     }
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+    fn lint(
+        &self,
+        input: &[PathBuf],
+        fail_on: FailOn,
+        compiler: &mut Compiler,
+    ) -> eyre::Result<()> {
         compiler.enter_mut(|compiler| {
             let gcx = compiler.gcx();
 
@@ -267,7 +266,7 @@ impl<'a> Linter for SolidityLinter<'a> {
 
         // Handle diagnostics and fail if necessary.
         let s = |count| if count == 1 { "" } else { "s" };
-        match (self.fail_on(), compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+        match (fail_on, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
             // Fail on warnings.
             (FailOn::Warning, w, n) if w > 0 => Err(eyre::eyre!(
                 "aborting due to {w} linter warning{ws}{notes}\n",

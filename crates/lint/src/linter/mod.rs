@@ -42,10 +42,9 @@ pub trait Linter: Send + Sync {
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> Result<()>;
-
-    /// Minimum diagnostic level at which the linter should finish with a non-zero exit code.
-    fn fail_on(&self) -> FailOn;
+    ///
+    /// Should return an error based on the configured [`FailOn`] level and the emitted diagnostics.
+    fn lint(&self, input: &[PathBuf], fail_on: FailOn, compiler: &mut Compiler) -> Result<()>;
 }
 
 pub trait Lint {
