@@ -108,7 +108,8 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                let bucket_rows = parse_storage_buckets_value(artifact.raw_metadata.as_ref()).unwrap_or_default();
+                let bucket_rows =
+                    parse_storage_buckets_value(artifact.raw_metadata.as_ref()).unwrap_or_default();
                 print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, wrap)?;
             }
             ContractArtifactField::DevDoc => {
@@ -666,9 +667,8 @@ fn parse_storage_buckets_value(raw_metadata: Option<&String>) -> Option<Vec<(Str
             .filter_map(|(name, hex): (String, String)| {
                 let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
                 let slot = U256::from_str_radix(hex_str, 16).ok()?;
-                let slot_hex = short_hex(
-                    &alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<32>()),
-                );
+                let slot_hex =
+                    short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<32>()));
                 Some((name, slot_hex))
             })
             .collect(),
