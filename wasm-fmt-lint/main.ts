@@ -1,6 +1,5 @@
 import { dedent } from 'ts-dedent'
-import * as W from './build/wasm_fmt_lint.internal.js'
-console.info(W)
+import * as W from './wasm_browser.ts'
 const textAreaElement = document.querySelector('textarea#input')
 if (!textAreaElement) throw new Error('textAreaElement not found')
 const outputElement = document.querySelector('pre#output')
@@ -28,7 +27,7 @@ function runFormat() {
       throw new Error('textAreaElement or outputElement not found')
     }
 
-    const res = W.fmt_with_config(textAreaElement.value, {}) as {
+    const res = W.fmt_with_config(textAreaElement.value, W.fmt_config_default()) as {
       formatted: string
     }
     outputElement.textContent = res.formatted ??

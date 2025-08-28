@@ -1,8 +1,22 @@
-// Stable browser wrapper around generated wasm + internal glue.
-// Loads wasm via `new URL(..., import.meta.url)` so bundlers rewrite the asset URL.
+// Stable wrapper that explicitly instantiates the wasm and wires it into the internal glue.
 export * from './build/wasm_fmt_lint.internal.js'
-import { __wbg_set_wasm } from './build/wasm_fmt_lint.internal.js'
+import * as wbg from './build/wasm_fmt_lint.internal.js'
 
-const wasmUrl = new URL('./build/wasm_fmt_lint.wasm', import.meta.url)
-const { instance } = await WebAssembly.instantiateStreaming(fetch(wasmUrl), {})
-__wbg_set_wasm(instance.exports as any)
+const url = new URL('./build/wasm_fmt_lint.wasm', import.meta.url)
+
+// Create imports object from all __wbg_ and __wbindgen_ exports
+const imports = {
+  './wasm_fmt_lint.internal.js': Object.fromEntries(
+    Object.entries(wbg)
+      .filter(([key]) => key.startsWith('__wbg_') || key.startsWith('__wbindgen_'))
+      .map(([key, value]) => [key, value])
+  )
+}
+
+const { instance } = await WebAssembly.instantiateStreaming(fetch(url), imports)
+console.info('instance', instance)
+wbg.__wbg_set_wasm(instance.exports)
+if (instance.exports.__wbindgen_start) {
+  // (instance.exports.__wbindgen_start as any)()
+  instance.exports.__wbindgen_start
+}

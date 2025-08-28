@@ -7,6 +7,11 @@ extern "C" {
     fn log(s: &str);
 }
 
+#[wasm_bindgen(start)]
+pub fn start() {
+    // No-op: allows generated wrappers to call __wbindgen_start safely.
+}
+
 // #[wasm_bindgen]
 // pub fn __wasm_start() {
 //     // Intentionally left blank; exported to satisfy wasmbuild's startup call.

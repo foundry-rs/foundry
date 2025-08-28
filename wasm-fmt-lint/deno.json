@@ -1,7 +1,7 @@
 {
   "tasks": {
     "dev": "vite",
-    "wasmbuild": "RUSTFLAGS='--cfg=getrandom_backend=wasm_js' deno run -A jsr:@deno/wasmbuild@0.19.2 -p wasm-fmt-lint --out ./wasm-fmt-lint/dist",
+    "wasmbuild": "RUSTFLAGS='--cfg=getrandom_backend=wasm_js' deno run -A jsr:@deno/wasmbuild@0.19.2 -p wasm-fmt-lint --out ./wasm-fmt-lint/build",
     "build": "deno task wasmbuild",
     "test": "deno test --allow-all wasm-fmt-lint"
   },
