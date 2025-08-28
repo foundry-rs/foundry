@@ -105,13 +105,6 @@ impl LintArgs {
         // Override default severity config with user-defined severity
         let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
-        // Override default `deny` level config < `deny_warnings` config < user-defined `deny` level
-        let deny = self.deny.unwrap_or(if config.deny_warnings {
-            DenyLevel::Warnings
-        } else {
-            config.lint.deny
-        });
-
         if project.compiler.solc.is_none() {
             return Err(eyre!("Linting not supported for this language"));
         }
@@ -133,7 +126,7 @@ impl LintArgs {
             Ok(())
         })?;
 
-        linter.lint(&input, deny, &mut compiler)?;
+        linter.lint(&input, self.deny.unwrap_or(config.get_deny_level()), &mut compiler)?;
 
         Ok(())
     }

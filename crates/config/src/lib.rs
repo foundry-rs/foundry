@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::cache::StorageCachingConfig;
+use crate::{cache::StorageCachingConfig, lint::DenyLevel};
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -1496,6 +1496,20 @@ impl Config {
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
         if self.root.join(&self.script).exists() { get_dir_remapping(&self.script) } else { None }
+    }
+
+    /// Returns the [`DenyLevel`] of the linter. Accounts for the most restrictive configuration.
+    pub fn get_deny_level(&self) -> DenyLevel {
+        match self.lint.deny {
+            DenyLevel::Notes => DenyLevel::Notes,
+            other => {
+                if self.deny_warnings {
+                    DenyLevel::Warnings
+                } else {
+                    other
+                }
+            }
+        }
     }
 
     /// Returns the `Optimizer` based on the configured settings
