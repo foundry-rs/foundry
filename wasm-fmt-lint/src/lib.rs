@@ -4,18 +4,13 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
+    fn log(value: &str);
 }
 
 #[wasm_bindgen(start)]
 pub fn start() {
     // No-op: allows generated wrappers to call __wbindgen_start safely.
 }
-
-// #[wasm_bindgen]
-// pub fn __wasm_start() {
-//     // Intentionally left blank; exported to satisfy wasmbuild's startup call.
-// }
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct FormatResult {

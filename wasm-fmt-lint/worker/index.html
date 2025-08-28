@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WASM FMT/LINT Playground</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <textarea id="input"></textarea>
+    <button id="btn-format">Format</button>
+    <pre id="output"></pre>
+    <script>
+      const formatElement = document.querySelector('button#btn-format')
+      const inputElement = document.querySelector('textarea#input')
+      const outputElement = document.querySelector('pre#output')
+
+      const worker = new Worker('./worker.js', { type: 'module' })
+
+      worker.onmessage = (event) => {
+        const type = event.data.type
+
+        if (type === 'FETCH_WASM') {
+          fetch('./pkg/wasm_fmt_lint_bg.wasm')
+            .then((response) => response.arrayBuffer())
+            .then((bytes) => {
+              worker.postMessage({ type: 'INIT_WASM', bytes }, [bytes])
+            })
+            .catch((error) =>
+              console.error('Error fetching WASM:', error)
+            )
+        }
+
+        if (type === 'WASM_FETCHED') {
+          console.log('WASM_FETCHED')
+        }
+
+        if (type === 'FORMAT_DONE') {
+          outputElement.textContent = event.data.output
+        }
+      }
+
+      formatElement.addEventListener(
+        'click',
+        () => {
+          const input = inputElement.value
+          worker.postMessage({ type: 'FORMAT', input })
+        },
+      )
+    </script>
+  </body>
+</html>

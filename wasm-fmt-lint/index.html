@@ -1,69 +1,151 @@
 <!DOCTYPE html>
-<html>
+<html class="bg-[#101010] text-white m-0 overflow-hidden">
   <head>
-    <title>WASM FMT/LINT Playground</title>
+    <title>Foundry Linter Playground</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://esm.sh/firacode/distr/fira_code.css"
+      rel="stylesheet"
+    >
+
+    <link
+      rel="stylesheet"
+      href="https://esm.sh/@shoelace-style/shoelace/cdn/themes/dark.css"
+    />
+    <script
+      type="module"
+      src="https://esm.sh/@shoelace-style/shoelace/cdn/shoelace-autoloader.js"
+    ></script>
+    <script
+      type="module"
+      data-shoelace="https://esm.sh/@shoelace-style/shoelace"
+    >
+      import 'https://esm.sh/@shoelace-style/shoelace/cdn/components/split-panel/split-panel.js'
+    </script>
     <style>
-      * {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        margin: 16px;
+      body {
+        font-family: 'Fira Code', monospace;
       }
-      textarea {
-        width: 100%;
-        min-height: 220px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 13px;
+      @supports (font-variation-settings: normal) {
+        body,
+        pre,
+        code {
+          font-family: 'Fira Code VF', monospace;
+        }
       }
-      pre {
-        background: #111;
-        color: #eaeaea;
-        padding: 12px;
-        border-radius: 6px;
-        overflow: auto;
-      }
-      .row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      .actions {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      button {
-        padding: 6px 10px;
-      }
-      label {
-        font-weight: 600;
+      div#result > .shiki {
+        height: 100%;
       }
 
-      pre#diagnostics {
-        height: 400px;
+      pre.shiki-vesper {
+        padding-left: 1rem !important;
+        font-weight: 300 !important;
+      }
+      pre > code {
+        font-weight: 300 !important;
       }
     </style>
   </head>
-  <body>
-    <h1>wasm-fmt-lint</h1>
-    <div class="actions">
-      <button id="btn-format">Format</button>
-      <label>
-        <input type="checkbox" id="format-on-input" checked /> format on input
-      </label>
-    </div>
-    <div class="row">
-      <div>
-        <h3>Input</h3>
-        <textarea id="input"></textarea>
-      </div>
-      <div>
-        <h3>Formatted</h3>
-        <pre id="output"></pre>
-      </div>
-    </div>
-    <h3>Diagnostics</h3>
-    <pre id="diagnostics"></pre>
+  <body
+    class="h-screen flex flex-col"
+    data-id="wasm-fmt-lint-playground"
+  >
+    <section
+      class="flex-1 bg-[rgb(20,20,20)] border-b-[1.5px] border-[#FFC799]/20 overflow-hidden"
+    >
+      <sl-split-panel class="h-full w-full">
+        <sl-icon
+          slot="divider"
+          name="grip-vertical"
+          class="text-white w-4 h-4 bg-[#FFC799]"
+        ></sl-icon>
+        <div
+          slot="start"
+          class="h-full w-full flex items-center justify-center overflow-hidden"
+        >
+          <div
+            id="editor"
+            data-action="editor"
+            class="h-full w-full min-h-[24rem] grow-1 overflow-hidden"
+          >
+          </div>
+        </div>
+
+        <div
+          slot="end"
+          class="h-full flex items-center justify-center overflow-hidden bg-[#101010]"
+        >
+          <div
+            id="result"
+            data-action="result-container"
+            class="h-full w-full min-h-full grow-1 overflow-hidden ml-4 mt-4 text-[15px]"
+          >
+          </div>
+        </div>
+      </sl-split-panel>
+    </section>
+
+    <section
+      id="diagnostics-container"
+      class="hidden invisible h-0 w-0"
+      data-action="diagnostics-container"
+    >
+      <pre id="diagnostics" data-action="diagnostics"></pre>
+    </section>
+
+    <footer
+      class="w-full text-right pr-2.5 text-sm bg-[#101010] flex-shrink-0"
+    >
+      <section
+        class="w-full flex flex-col sm:flex-row sm:space-x-4 items-center justify-between text-sm uppercase px-2"
+      >
+        <div class="flex flex-row justify-between items-center">
+          <button
+            id="format"
+            data-action="format"
+            title="Format the code"
+            class="text-white pr-3 pl-1 py-2 border-r-[1px] border-[#FFC799]/20 uppercase"
+          >
+            Format
+          </button>
+          <!-- TODO: unhide this button when linting is implemented -->
+          <button
+            id="lint"
+            data-action="lint"
+            title="Lint the code"
+            class="bg-zinc-800 text-white px-3 sm:px-4 py-2 hidden"
+          >
+            Lint
+          </button>
+          <label class="text-left ml-2 text-[10px] sm:text-xs">
+            <input
+              type="checkbox"
+              id="format-on-input"
+              title="Format the code on input"
+              class=""
+            />
+            format on input
+          </label>
+        </div>
+        <a
+          target="_blank"
+          class="mt-2 sm:mt-0 text-[10px] sm:text-xs"
+          href="https://github.com/foundry-rs/foundry"
+        >
+          foundry-rs/foundry
+        </a>
+      </section>
+    </footer>
+    <script>
+      const splitPanel = document.querySelector('sl-split-panel')
+      window.onload = () => {
+        if (window.innerWidth < 900) {
+          splitPanel?.setAttribute('vertical', '')
+        } else splitPanel?.removeAttribute('vertical')
+      }
+    </script>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

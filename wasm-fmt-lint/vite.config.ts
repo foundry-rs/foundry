@@ -13,7 +13,6 @@ export default defineConfig((config) => {
     build: {
       target: 'esnext',
       emptyOutDir: true,
-      // assetsDir: 'build',
     },
   }
 })

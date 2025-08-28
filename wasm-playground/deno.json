@@ -16,7 +16,7 @@
   "lint": {
     "rules": {
       "tags": ["recommended"],
-      "exclude": ["no-sloppy-imports"]
+      "exclude": ["no-sloppy-imports", "no-explicit-any"]
     }
   },
   "compilerOptions": {

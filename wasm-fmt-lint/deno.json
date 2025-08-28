@@ -7,6 +7,11 @@
   },
   "nodeModulesDir": "auto",
   "imports": {
+    "@shikijs/langs": "npm:@shikijs/langs@^3.12.0",
+    "@shikijs/monaco": "npm:@shikijs/monaco@^3.12.0",
+    "@shikijs/themes": "npm:@shikijs/themes@^3.12.0",
+    "monaco-editor-core": "npm:monaco-editor-core@^0.52.2",
+    "shiki": "npm:shiki@^3.12.0",
     "vite": "npm:vite@^7.1.3",
     "ts-dedent": "npm:ts-dedent@^2.2.0",
     "typed-query-selector": "npm:typed-query-selector@^2.12.0"
@@ -19,15 +24,15 @@
   "lint": {
     "rules": {
       "tags": ["recommended"],
-      "exclude": ["no-sloppy-imports"]
+      "exclude": ["no-sloppy-imports", "no-explicit-any"]
     }
   },
   "compilerOptions": {
     "strict": true,
     "strictNullChecks": true,
     "verbatimModuleSyntax": true,
-    "lib": ["deno.window", "dom", "dom.iterable"],
-    "types": ["npm:typed-query-selector"]
+    "types": ["npm:typed-query-selector"],
+    "lib": ["deno.window", "dom", "dom.iterable"]
   },
   "unstable": ["sloppy-imports"]
 }

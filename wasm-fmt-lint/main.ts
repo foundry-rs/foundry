@@ -1,34 +1,78 @@
+import vesper from '@shikijs/themes/vesper'
+
 import { dedent } from 'ts-dedent'
 import * as W from './wasm_browser.ts'
-const textAreaElement = document.querySelector('textarea#input')
-if (!textAreaElement) throw new Error('textAreaElement not found')
-const outputElement = document.querySelector('pre#output')
+import * as monaco from 'monaco-editor-core'
+import { shikiToMonaco } from '@shikijs/monaco'
+import { createHighlighterCore } from 'shiki/core'
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
+
+function debounce<T extends (...args: Array<any>) => any>(
+  fn: T,
+  delay: number,
+) {
+  let timeout: ReturnType<typeof setTimeout>
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeout)
+    timeout = setTimeout(() => fn(...args), delay)
+  }
+}
+
+const highlighter = await createHighlighterCore({
+  themes: [
+    vesper,
+    import('shiki/themes/github-light-default'),
+  ],
+  langs: [
+    // () => import('shiki/langs/json'),
+    () => import('shiki/langs/solidity'),
+  ],
+  engine: createOnigurumaEngine(import('shiki/wasm')),
+})
+
+monaco.languages.register({ id: 'json' })
+monaco.languages.register({ id: 'solidity' })
+
+const resultElement = document.querySelector('div#result')
+const formatButtonElement = document.querySelector('button#format')
 const diagnosticsElement = document.querySelector('pre#diagnostics')
-const buttonElement = document.querySelector('button#btn-format')
 const onInputElement = document.querySelector('input#format-on-input')
 
-// Seed example source
-textAreaElement.textContent = dedent /* sol */`
-contract A { struct B { uint256 c; } }
-`.trim()
+// const getDefaultConfiguration = () => W.fmt_config_default() ?? ({})
 
-function runFormat() {
+// Seed example source
+const exampleSource = dedent /* sol */`// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+contract Foo{event E(address indexed a, uint b);
+  function bar(address a,uint256 b) external { emit E(a,b); }
+}`.trim()
+
+const runFormatDebounced = debounce(runFormat, 1_500)
+
+function runFormat(params: {
+  source: string
+}) {
   if (!diagnosticsElement) throw new Error('diagnosticsElement not found')
   diagnosticsElement.textContent = ''
 
   try {
-    if (!textAreaElement || !outputElement) {
-      throw new Error('textAreaElement or outputElement not found')
-    }
-    const res = W.fmt_with_config(
-      textAreaElement.value,
+    const { formatted: output } = W.fmt_with_config(
+      params.source,
       W.fmt_config_default(),
     ) as { formatted: string }
-    outputElement.textContent = res.formatted ??
-      JSON.stringify(res, null, 2)
-  } catch (e) {
-    console.error(e)
-    const err = e as { error?: string } | string
+
+    if (!resultElement) throw new Error('resultElement not found')
+
+    const html = highlighter.codeToHtml(output, {
+      theme: 'vesper',
+      lang: 'solidity',
+    })
+    resultElement.innerHTML = html
+
+    editor.setValue(output)
+  } catch (error) {
+    console.error(error)
+    const err = error as { error?: string } | string
     if (!diagnosticsElement) throw new Error('diagnosticsElement not found')
     diagnosticsElement.textContent = typeof err === 'string'
       ? err
@@ -36,12 +80,65 @@ function runFormat() {
   }
 }
 
-buttonElement?.addEventListener('click', (event) => {
-  console.info(event)
-  runFormat()
-})
-textAreaElement?.addEventListener('input', (_event) => {
-  if (onInputElement?.checked) runFormat()
+formatButtonElement?.addEventListener(
+  'click',
+  (_) => runFormat({ source: editor.getValue() }),
+)
+
+shikiToMonaco(highlighter, monaco)
+
+const editorElement = document.querySelector('div#editor')
+if (!editorElement) throw new Error('editorElement not found')
+
+const editor = monaco.editor.create(editorElement, {
+  value: exampleSource,
+  language: 'solidity',
+  theme: 'vesper',
+  fontFamily: 'Fira Code',
+  fontSize: 15,
+  fontLigatures: true,
+  minimap: {
+    enabled: false,
+  },
+  scrollBeyondLastLine: false,
+  scrollbar: {
+    alwaysConsumeMouseWheel: false,
+  },
+  renderLineHighlight: 'none',
+  padding: {
+    top: 10,
+  },
+  guides: {
+    indentation: false,
+  },
+  folding: false,
+  lineNumbersMinChars: 3,
+  // fontWeight: '300',
 })
 
-runFormat()
+const splitPanel = document.querySelector('sl-split-panel')
+
+globalThis.addEventListener('resize', (_event) => {
+  if (globalThis.innerWidth < 900) splitPanel?.setAttribute('vertical', '')
+  else splitPanel?.removeAttribute('vertical')
+
+  editor.layout({
+    width: editorElement.offsetWidth,
+    height: editorElement.offsetHeight,
+  })
+})
+
+globalThis.addEventListener('sl-reposition', (_event) => {
+  editor.layout({
+    width: editorElement.offsetWidth,
+    height: editorElement.offsetHeight,
+  })
+})
+
+editor.onDidChangeModelContent((_event) => {
+  if (onInputElement?.checked) {
+    runFormatDebounced({ source: editor.getValue() })
+  }
+})
+
+runFormat({ source: exampleSource })

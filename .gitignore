@@ -15,3 +15,5 @@ _
 .vite
 *.zip
 build
+pkg
+.wrangler
