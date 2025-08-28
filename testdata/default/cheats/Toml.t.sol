@@ -424,6 +424,7 @@ contract WriteTomlTest is DSTest {
 
     function test_writeToml_createKeys() public {
         string memory path = "fixtures/Toml/write_test.toml";
+        string memory toml = vm.readFile(path);
 
         bool exists = vm.keyExistsToml(toml, ".parent");
         assertTrue(!exists);
@@ -436,7 +437,7 @@ contract WriteTomlTest is DSTest {
         vm.writeToml(vm.toString(uint256(42)), path, ".parent.child.value");
 
         // Verify the value was written and intermediate keys were created
-        string memory toml = vm.readFile(path);
+        toml = vm.readFile(path);
         uint256 value = abi.decode(vm.parseToml(toml, ".parent.child.value"), (uint256));
         assertEq(value, 42);
 

@@ -495,7 +495,7 @@ contract WriteJsonTest is DSTest {
     function test_writeJson_createKeys() public {
         string memory path = "fixtures/Json/write_test.json";
         string memory json = vm.readFile(path);
-        
+
         bool exists = vm.keyExistsJson(json, ".parent");
         assertTrue(!exists);
         exists = vm.keyExistsJson(json, ".parent.child");
