@@ -44,6 +44,10 @@ use revm::{
 };
 use std::{
     borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -1107,5 +1111,36 @@ impl FuzzTestTimer {
     /// Whether the current fuzz test timed out and should be stopped.
     pub fn is_timed_out(&self) -> bool {
         self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)
+    }
+}
+
+/// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
+#[derive(Clone)]
+pub struct FailFast {
+    /// Shared atomic flag set to `true` when a failure occurs.
+    /// None if fail-fast is disabled.
+    inner: Option<Arc<AtomicBool>>,
+}
+
+impl FailFast {
+    pub fn new(fail_fast: bool) -> Self {
+        Self { inner: fail_fast.then_some(Arc::new(AtomicBool::new(false))) }
+    }
+
+    /// Returns `true` if fail-fast is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    /// Sets the failure flag. Used by other tests to stop early.
+    pub fn record_fail(&self) {
+        if let Some(fail_fast) = &self.inner {
+            fail_fast.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether a failure has been recorded and test should stop.
+    pub fn should_stop(&self) -> bool {
+        self.inner.as_ref().map(|flag| flag.load(Ordering::Relaxed)).unwrap_or(false)
     }
 }

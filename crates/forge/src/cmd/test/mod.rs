@@ -186,6 +186,10 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
+    /// Disables the labels in the traces.
+    #[arg(long, help_heading = "Display options")]
+    pub disable_labels: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -355,6 +359,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
@@ -526,6 +531,7 @@ impl TestArgs {
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
+            .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {

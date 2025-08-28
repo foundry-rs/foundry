@@ -33,7 +33,7 @@ const OTHER_CONTRACT: &str = r#"
     import { ContractWithLints } from "./ContractWithLints.sol";
 
     contract OtherContractWithLints {
-        uint256 VARIABLE_MIXED_CASE_INFO;
+        function functionMIXEDCaseInfo() public {}
     }
         "#;
 
@@ -48,6 +48,64 @@ const ONLY_IMPORTS: &str = r#"
     import "./ContractWithLints.sol";
         "#;
 
+const COUNTER_A: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    contract CounterA {
+        uint256 public CounterA_Fail_Lint;
+    }
+        "#;
+
+const COUNTER_B: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    contract CounterB {
+        uint256 public CounterB_Fail_Lint;
+    }
+        "#;
+
+const COUNTER_WITH_CONST: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+uint256 constant MAX = 1000000;
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+        "#;
+
+const COUNTER_TEST_WITH_CONST: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import { Counter, MAX } from "../src/Counter.sol";
+
+contract CounterTest {
+  Counter public counter;
+
+  function setUp() public {
+    counter = new Counter();
+  }
+
+  function testFuzz_setNumber(uint256[MAX] calldata numbers) public {
+    for (uint256 i = 0; i < numbers.length; ++i) {
+      counter.setNumber(numbers[i]);
+    }
+  }
+}
+        "#;
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
@@ -60,6 +118,7 @@ forgetest!(can_use_config, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
@@ -87,16 +146,17 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:9:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-9 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -108,6 +168,25 @@ note[mixed-case-variable]: mutable variables should use mixedCase
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into(), "src/OtherContract.sol".into()],
             lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+});
+
+forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+
+    // Check config for `ignore`
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/ContractWithLints.sol".into()],
+            lint_on_build: true,
+            mixed_case_exceptions: vec!["MIXED".to_string()],
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -125,16 +204,17 @@ forgetest!(can_override_config_severity, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:9:17
+note[mixed-case-function]: function names should use mixedCase
+ [FILE]:9:18
   |
-9 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |                 ------------------------
+9 |         function functionMIXEDCaseInfo() public {}
+  |                  ---------------------
   |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
 
 "#]]);
@@ -152,6 +232,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
@@ -179,6 +260,7 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
@@ -207,6 +289,7 @@ forgetest!(build_runs_linter_by_default, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -270,6 +353,7 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -288,6 +372,7 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: true,
+            ..Default::default()
         };
     });
 
@@ -316,6 +401,7 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec![],
             lint_on_build: false,
+            ..Default::default()
         };
     });
 
@@ -384,6 +470,62 @@ note[unused-import]: unused imports should be removed
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11234>
+forgetest!(can_lint_only_built_files, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
+    prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
+
+    // Both contracts should be linted on build. Redact contract as order is not guaranteed.
+    cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public Counter[..]_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public Counter[..]_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+
+"#]]);
+    // Only contract CounterBWithLints that we build should be linted.
+    cmd.forge_fuse().args(["build", "src/CounterBWithLints.sol"]).assert_success().stderr_eq(str![
+        [r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:24
+  |
+6 |         uint256 public CounterB_Fail_Lint;
+  |                        ------------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+
+"#]
+    ]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11392>
+forgetest!(can_lint_param_constants, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("Counter", COUNTER_WITH_CONST).unwrap();
+    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST).unwrap();
+
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
 "#]]);
 });

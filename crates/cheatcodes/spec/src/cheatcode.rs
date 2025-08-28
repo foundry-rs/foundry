@@ -86,12 +86,6 @@ pub enum Group {
     ///
     /// Safety: safe.
     Scripting,
-    /// Cheatcodes that interact with the program's forking configuration.
-    ///
-    /// Examples: `forkChains`, `forkChainRpcUrl`, `forkUint`.
-    ///
-    /// Safety: safe.
-    Forking,
     /// Cheatcodes that interact with the OS or filesystem.
     ///
     /// Examples: `ffi`, `projectRoot`, `writeFile`.
@@ -141,12 +135,10 @@ impl Group {
     ///
     /// Some groups are inherently safe or unsafe, while others are ambiguous and will return
     /// `None`.
-    #[inline]
     pub const fn safety(self) -> Option<Safety> {
         match self {
             Self::Evm | Self::Testing => None,
             Self::Scripting
-            | Self::Forking
             | Self::Filesystem
             | Self::Environment
             | Self::String
@@ -158,13 +150,11 @@ impl Group {
     }
 
     /// Returns this value as a string.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Evm => "evm",
             Self::Testing => "testing",
             Self::Scripting => "scripting",
-            Self::Forking => "forking",
             Self::Filesystem => "filesystem",
             Self::Environment => "environment",
             Self::String => "string",
@@ -192,7 +182,6 @@ pub enum Safety {
 
 impl Safety {
     /// Returns this value as a string.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -201,7 +190,6 @@ impl Safety {
     }
 
     /// Returns whether this value is safe.
-    #[inline]
     pub const fn is_safe(self) -> bool {
         matches!(self, Self::Safe)
     }

@@ -7,10 +7,14 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
+use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{read_json_file, write_json_file};
+use foundry_common::{
+    fs::{read_json_file, write_json_file},
+    slot_identifier::{SlotIdentifier, SlotInfo},
+};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -33,6 +37,7 @@ use std::{
 };
 
 mod record_debug_step;
+use foundry_common::fmt::format_token_raw;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -103,6 +108,11 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
+    /// Storage layout metadata (variable name, type, offset).
+    /// Only present when contract has storage layout output.
+    /// This includes decoded values when available.
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    slot_info: Option<SlotInfo>,
 }
 
 /// Balance diff info.
@@ -170,11 +180,40 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                writeln!(
-                    f,
-                    "@ {slot}: {} → {}",
-                    slot_changes.previous_value, slot_changes.new_value
-                )?;
+                match &slot_changes.slot_info {
+                    Some(slot_info) => {
+                        if slot_info.decoded.is_some() {
+                            // Have slot info with decoded values - show decoded values
+                            let decoded = slot_info.decoded.as_ref().unwrap();
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                format_token_raw(&decoded.previous_value),
+                                format_token_raw(&decoded.new_value)
+                            )?;
+                        } else {
+                            // Have slot info but no decoded values - show raw hex values
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                slot_changes.previous_value,
+                                slot_changes.new_value
+                            )?;
+                        }
+                    }
+                    None => {
+                        // No slot info - show raw hex values
+                        writeln!(
+                            f,
+                            "@ {slot}: {} → {}",
+                            slot_changes.previous_value, slot_changes.new_value
+                        )?;
+                    }
+                }
             }
         }
 
@@ -386,6 +425,13 @@ impl Cheatcode for lastCallGasCall {
     }
 }
 
+impl Cheatcode for getChainIdCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self {} = self;
+        Ok(U256::from(ccx.ecx.cfg.chain_id).abi_encode())
+    }
+}
+
 impl Cheatcode for chainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newChainId } = self;
@@ -460,6 +506,8 @@ impl Cheatcode for blobhashesCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         ccx.ecx.tx.blob_hashes.clone_from(hashes);
+        // force this as 4844 txtype
+        ccx.ecx.tx.tx_type = EIP4844_TX_TYPE_ID;
         Ok(Default::default())
     }
 }
@@ -825,6 +873,8 @@ impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
+        // Enable mapping recording to track mapping slot accesses
+        state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
     }
 }
@@ -1257,11 +1307,19 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
     }
 
-    // Look up contract names for all addresses
+    // Look up contract names and storage layouts for all addresses
     let mut contract_names = HashMap::new();
+    let mut storage_layouts = HashMap::new();
     for address in addresses_to_lookup {
-        if let Some(name) = get_contract_name(ccx, address) {
-            contract_names.insert(address, name);
+        if let Some((artifact_id, _)) = get_contract_data(ccx, address) {
+            contract_names.insert(address, artifact_id.identifier());
+        }
+
+        // Also get storage layout if available
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
+            && let Some(storage_layout) = &contract_data.storage_layout
+        {
+            storage_layouts.insert(address, storage_layout.clone());
         }
     }
 
@@ -1328,16 +1386,48 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
                             });
+                        let layout = storage_layouts.get(&storage_access.account);
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
+                                // Get storage layout info for this slot
+                                // Include mapping slots if available for the account
+                                let mapping_slots = ccx
+                                    .state
+                                    .mapping_slots
+                                    .as_ref()
+                                    .and_then(|slots| slots.get(&storage_access.account));
+
+                                let mut slot_info = layout.and_then(|layout| {
+                                    let decoder = SlotIdentifier::new(layout.clone());
+                                    decoder.identify(&storage_access.slot, mapping_slots)
+                                });
+
+                                // Decode values if we have slot info
+                                if let Some(ref mut info) = slot_info {
+                                    info.decode_values(
+                                        storage_access.previousValue,
+                                        storage_access.newValue,
+                                    );
+                                }
+
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
+                                    slot_info,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
-                                slot_state_diff.get_mut().new_value = storage_access.newValue;
+                                let entry = slot_state_diff.get_mut();
+                                entry.new_value = storage_access.newValue;
+
+                                // Update decoded values if we have slot info
+                                if let Some(ref mut slot_info) = entry.slot_info {
+                                    slot_info.decode_values(
+                                        entry.previous_value,
+                                        storage_access.newValue,
+                                    );
+                                }
                             }
                         }
                     }
@@ -1347,8 +1437,18 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
     state_diffs
 }
 
-/// Helper function to get the contract name from the deployed code.
-fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
+/// EIP-1967 implementation storage slot
+const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+/// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
+const EIP1822_PROXIABLE_SLOT: &str =
+    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+
+/// Helper function to get the contract data from the deployed code at an address.
+fn get_contract_data<'a>(
+    ccx: &'a mut CheatsCtxt,
+    address: Address,
+) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
     // Check if we have available artifacts to match against
     let artifacts = ccx.state.config.available_artifacts.as_ref()?;
 
@@ -1363,16 +1463,28 @@ fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
 
     // Try to find the artifact by deployed code
     let code_bytes = code.original_bytes();
-    if let Some((artifact_id, _)) = artifacts.find_by_deployed_code_exact(&code_bytes) {
-        return Some(artifact_id.identifier());
+    // First check for proxy patterns
+    let hex_str = hex::encode(&code_bytes);
+    let find_by_suffix =
+        |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
+    // Simple proxy detection based on storage slot patterns
+    if hex_str.contains(EIP1967_IMPL_SLOT)
+        && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
+    {
+        return Some(result);
+    } else if hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && let Some(result) = find_by_suffix(":UUPSUpgradeable")
+    {
+        return Some(result);
+    }
+
+    // Try exact match
+    if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+        return Some(result);
     }
 
     // Fallback to fuzzy matching if exact match fails
-    if let Some((artifact_id, _)) = artifacts.find_by_deployed_code(&code_bytes) {
-        return Some(artifact_id.identifier());
-    }
-
-    None
+    artifacts.find_by_deployed_code(&code_bytes)
 }
 
 /// Helper function to set / unset cold storage slot of the target address.

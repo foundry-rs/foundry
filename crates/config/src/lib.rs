@@ -36,7 +36,7 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
 };
 use regex::Regex;
@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -66,7 +66,7 @@ use etherscan::{
     EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
 };
 
-mod resolve;
+pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
@@ -129,6 +129,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
+
+pub use semver;
 
 /// Foundry configuration
 ///
@@ -446,8 +448,6 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
-    /// Fork configuration
-    pub forks: HashMap<String, ForkConfig>,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -563,18 +563,6 @@ pub struct Config {
     pub _non_exhaustive: (),
 }
 
-/// Fork-scoped config for tests and scripts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ForkConfig {
-    // Optional RPC endpoint for the fork.
-    //
-    // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
-    // for the name of the forked chain.
-    pub rpc_endpoint: Option<RpcEndpoint>,
-    // Any arbitrary key-value pair of variables.
-    pub vars: HashMap<String, toml::Value>,
-}
-
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
 pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz")];
 
@@ -607,7 +595,6 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
-        "forks",
     ];
 
     /// File name of config toml file
@@ -998,7 +985,7 @@ impl Config {
             return Ok(BTreeMap::new());
         }
 
-        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let graph = Graph::<MultiCompilerParser>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
 
         for res in &self.compilation_restrictions {
@@ -1140,7 +1127,6 @@ impl Config {
     }
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
-    #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
         evm_spec_id(self.evm_version, self.odyssey)
     }
@@ -2480,7 +2466,6 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
-            forks: Default::default(),
         }
     }
 }
@@ -2640,7 +2625,6 @@ mod tests {
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
-    use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{fs::File, io::Write};
@@ -5154,61 +5138,6 @@ mod tests {
             let unknown_chain = Chain::from_id(1);
             let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
             assert!(result.is_ok());
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_get_script_config() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                    [forks]
-
-                    [forks.mainnet]
-                    rpc_endpoint = "mainnet-rpc"
-
-                    [forks.mainnet.vars]
-                    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-                    usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-                    pool_name = "USDC-ETH"
-                    pool_fee = 3000
-                    max_slippage = 500
-                "#,
-            )?;
-            let config = Config::load().unwrap();
-
-            let expected: HashMap<String, ForkConfig> = vec![(
-                "mainnet".to_string(),
-                ForkConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        "mainnet-rpc".to_string(),
-                    ))),
-                    vars: vec![
-                        ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
-                        ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
-                        ("pool_name".into(), "USDC-ETH".into()),
-                        ("pool_fee".into(), 3000.into()),
-                        ("max_slippage".into(), 500.into()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                },
-            )]
-            .into_iter()
-            .collect();
-            assert_eq!(
-                expected.keys().sorted().collect::<Vec<_>>(),
-                config.forks.keys().sorted().collect::<Vec<_>>()
-            );
-
-            let expected_mainnet = expected.get("mainnet").unwrap();
-            let mainnet = config.forks.get("mainnet").unwrap();
-            assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
-            for (k, v) in &expected_mainnet.vars {
-                assert_eq!(v, mainnet.vars.get(k).unwrap());
-            }
             Ok(())
         });
     }

@@ -26,6 +26,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
 };
 
 // tests all config values that are in use
@@ -175,7 +176,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
-        forks: Default::default(),
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -1088,6 +1088,7 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
+mixed_case_exceptions = ["ERC"]
 
 [doc]
 out = "docs"
@@ -1142,8 +1143,6 @@ show_solidity = false
 out = "utils/JsonBindings.sol"
 include = []
 exclude = []
-
-[forks]
 
 
 "#]]);
@@ -1287,7 +1286,6 @@ exclude = []
   },
   "no_storage_caching": false,
   "no_rpc_rate_limit": false,
-  "forks": {},
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
   "cbor_metadata": true,
@@ -1316,7 +1314,10 @@ exclude = []
     "severity": [],
     "exclude_lints": [],
     "ignore": [],
-    "lint_on_build": true
+    "lint_on_build": true,
+    "mixed_case_exceptions": [
+      "ERC"
+    ]
   },
   "doc": {
     "out": "docs",
@@ -1877,4 +1878,36 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
         ]
     });
     cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6529>
+forgetest_init!(test_fail_fast_config, |prj, cmd| {
+    // Skip if we don't have at least 2 CPUs to run both tests in parallel.
+    if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
+        config.fuzz.timeout = Some(3600);
+    });
+    prj.add_test(
+        "AnotherCounterTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AnotherCounterTest is Test {
+    // This failure should stop all other tests.
+    function test_Failure() public pure {
+        require(false);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+    }
+}
+"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--fail-fast"]).assert_failure();
 });
