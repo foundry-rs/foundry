@@ -513,7 +513,7 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
           "code": "0x",
           "storage": {}
         },
-        "0x4e59b44847b379578588920ca78fbf26c0b4956c": {
+        "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed": {
           "nonce": 0,
           "balance": "0x0",
           "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3",

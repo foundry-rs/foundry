@@ -1010,7 +1010,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
-    let addr = address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
+    let addr = address!("0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed");
     let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
     api.anvil_set_code(addr, code).await.unwrap();
 
@@ -2099,7 +2099,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: missing CREATE2 deployer: 0x4e59b44847b379578588920cA78FbF26c0B4956C
+Error: script failed: missing CREATE2 deployer: 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed
 
 "#]]);
 });
@@ -2281,7 +2281,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 
     assert!(
-        !api.get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+        !api.get_code(address!("0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed"), Default::default())
             .await
             .unwrap()
             .is_empty()

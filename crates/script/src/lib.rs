@@ -701,7 +701,7 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--sender",
-            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
             "--unlocked",
         ]);
         assert!(args.unlocked);
@@ -711,7 +711,7 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--sender",
-            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
             "--unlocked",
             "--private-key",
             key.to_string().as_str(),
