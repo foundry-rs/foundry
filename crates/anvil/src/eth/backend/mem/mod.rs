@@ -92,7 +92,7 @@ use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
-    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    constants::DEFAULT_CREATE2_DEPLOYER_BYTECODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::{CallTraceDecoder, TracingInspectorConfig},
@@ -392,7 +392,7 @@ impl Backend {
 
     /// Writes the CREATE2 deployer code directly to the database at the address provided.
     pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
-        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
+        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_BYTECODE)).await?;
 
         Ok(())
     }

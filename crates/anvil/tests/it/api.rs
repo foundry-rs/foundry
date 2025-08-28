@@ -460,9 +460,9 @@ async fn can_get_code_by_hash() {
     let (api, _) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
 
-    // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
+    // The code hash for DEFAULT_CREATE2_DEPLOYER_BYTECODE
     let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
 
     let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
-    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
+    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_BYTECODE);
 }

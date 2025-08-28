@@ -870,7 +870,7 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER,
-        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_BYTECODE),
     )
     .await
     .unwrap();
@@ -896,7 +896,7 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         create2,
-        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_BYTECODE),
     )
     .await
     .unwrap();
