@@ -419,6 +419,7 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
+
         if num_filtered == 0 {
             let mut total_tests = num_filtered;
             if !filter.is_empty() {
@@ -426,10 +427,8 @@ impl TestArgs {
             }
             if total_tests == 0 {
                 sh_println!(
-                    "No tests found in project! \
-                     Forge looks for functions that start with `test`"
+                    "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
-                return Ok(TestOutcome::empty(false));
             } else {
                 let mut msg = format!("no tests match the provided pattern:\n{filter}");
                 // Try to suggest a test when there's no match.
@@ -441,9 +440,12 @@ impl TestArgs {
                         write!(msg, "\nDid you mean `{suggestion}`?")?;
                     }
                 }
-                eyre::bail!("{msg}");
+                sh_warn!("{msg}")?;
             }
-        } else if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+            return Ok(TestOutcome::empty(false));
+        }
+
+        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {

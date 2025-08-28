@@ -68,7 +68,7 @@ No tests found in project! Forge looks for functions that start with `test`
 "#]]);
 });
 
-// tests that we fail if there are tests but none match a non-empty filter
+// tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
     prj.add_source(
         "TestE.t.sol",
@@ -82,8 +82,8 @@ contract TestC {
     .unwrap();
 
     dummy_test_filter(&mut cmd);
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: no tests match the provided pattern:
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
 	match-contract: `TestC.*`
