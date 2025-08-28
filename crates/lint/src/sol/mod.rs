@@ -265,31 +265,26 @@ impl<'a> Linter for SolidityLinter<'a> {
         });
 
         // Handle diagnostics and fail if necessary.
-        let s = |count| if count == 1 { "" } else { "s" };
+        const MSG: &str = "aborting due to ";
         match (fail_on, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
             // Fail on warnings.
-            (FailOn::Warning, w, n) if w > 0 => Err(eyre::eyre!(
-                "aborting due to {w} linter warning{ws}{notes}\n",
-                ws = s(w),
-                notes = if n > 0 {
-                    format!("; {n} note{ns} were also emitted", ns = s(n))
+            (FailOn::Warning, w, n) if w > 0 => {
+                if n > 0 {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
                 } else {
-                    String::new()
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s)\n"))
                 }
-            )),
+            }
 
             // Fail on any diagnostic.
-            (FailOn::Note, w, n) if w > 0 || n > 0 => {
-                let message = match (w, n) {
-                    (w, n) if w > 0 && n > 0 => {
-                        format!("{w} linter warning{ws} and {n} note{ns}", ws = s(w), ns = s(n))
-                    }
-                    (w, 0) => format!("{w} linter warning{ws}", ws = s(w)),
-                    (0, n) => format!("{n} linter note{ns}", ns = s(n)),
-                    _ => unreachable!(),
-                };
-                Err(eyre::eyre!("aborting due to {message}\n"))
-            }
+            (FailOn::Note, w, n) if w > 0 || n > 0 => match (w, n) {
+                (w, n) if w > 0 && n > 0 => {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
+                }
+                (w, 0) => Err(eyre::eyre!("{MSG}{w} linter warning(s)\n")),
+                (0, n) => Err(eyre::eyre!("{MSG}{n} linter note(s)\n")),
+                _ => unreachable!(),
+            },
 
             // Otherwise, succeed.
             _ => Ok(()),

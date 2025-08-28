@@ -535,48 +535,38 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
 
-    // [OUTPUT: WARN + NOTE]
-    prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Note;
-        config.lint.severity = Default::default();
-    });
+    // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
 
-    cmd.forge_fuse().arg("lint").assert_failure();
+    cmd.forge_fuse().arg("lint").assert_success(); // FailOn::Never (default)
 
-    // [OUTPUT: WARN + NOTE]
     prj.update_config(|config| {
         config.lint.fail_on = foundry_config::lint::FailOn::Warning;
-        config.lint.severity = Default::default();
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 
-    // [OUTPUT: WARN + NOTE]
-    prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Never;
-        config.lint.severity = Default::default();
-    });
-    cmd.forge_fuse().arg("lint").assert_success();
-
-    // [OUTPUT: NOTE]
     prj.update_config(|config| {
         config.lint.fail_on = foundry_config::lint::FailOn::Note;
-        config.lint.severity = vec![LintSeverity::Info];
     });
+
     cmd.forge_fuse().arg("lint").assert_failure();
 
-    // [OUTPUT: NOTE]
+    // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
+
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
-        config.lint.severity = vec![LintSeverity::Info];
+        config.lint.fail_on = foundry_config::lint::FailOn::Never;
+        config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
     });
     cmd.forge_fuse().arg("lint").assert_success();
 
-    // [OUTPUT: NOTE]
     prj.update_config(|config| {
-        config.lint.fail_on = foundry_config::lint::FailOn::Never;
-        config.lint.severity = vec![LintSeverity::Info];
+        config.lint.fail_on = foundry_config::lint::FailOn::Warning;
     });
     cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| {
+        config.lint.fail_on = foundry_config::lint::FailOn::Note;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
 });
 
 // ------------------------------------------------------------------------------------------------
