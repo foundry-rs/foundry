@@ -1,25 +1,19 @@
 use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{
-    opts::{BuildOpts, configure_pcx},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_common::compile::ProjectCompiler;
 use serde::Serialize;
-use solar::{
-    parse::interface::Session,
-    sema::{
-        Gcx, Hir,
-        hir::StructId,
-        ty::{Ty, TyKind},
-    },
+use solar::sema::{
+    Gcx, Hir,
+    hir::StructId,
+    ty::{Ty, TyKind},
 };
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Result as FmtResult, Write},
     ops::ControlFlow,
     path::{Path, PathBuf},
-    slice,
 };
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
@@ -58,18 +52,10 @@ impl Display for Eip712Output {
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
         let config = self.build.load_config()?;
-
-        let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-        let mut compiler = solar::sema::Compiler::new(sess);
-
+        let project = config.solar_project()?;
+        let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
         compiler.enter_mut(|compiler| -> Result<()> {
-            // Set up the parsing context with the project paths and sources.
-            let mut pcx = compiler.parse();
-            configure_pcx(&mut pcx, &config, None, Some(slice::from_ref(&self.target_path)))?;
-
-            // Parse and resolve
-            pcx.parse();
             let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
             let gcx = compiler.gcx();
             let resolver = Resolver::new(gcx);
@@ -97,7 +83,13 @@ impl Eip712Args {
             Ok(())
         })?;
 
-        eyre::ensure!(compiler.sess().dcx.has_errors().is_ok(), "errors occurred");
+        // `compiler.sess()` inside of `ProjectCompileOutput` is built with `with_buffer_emitter`.
+        let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
+        if compiler.sess().dcx.has_errors().is_err() {
+            eyre::bail!("{diags}");
+        } else {
+            let _ = sh_print!("{diags}");
+        }
 
         Ok(())
     }
