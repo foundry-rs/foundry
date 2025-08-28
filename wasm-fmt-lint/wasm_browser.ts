@@ -16,6 +16,13 @@ const imports = {
 const { instance } = await WebAssembly.instantiateStreaming(fetch(url), imports)
 console.info('instance', instance)
 wbg.__wbg_set_wasm(instance.exports)
+
+// Initialize the externref table
+if (wbg.__wbindgen_init_externref_table) {
+  wbg.__wbindgen_init_externref_table()
+}
+
+// Call wbindgen start if it exists
 if (instance.exports.__wbindgen_start) {
   (instance.exports.__wbindgen_start as () => void)()
 }
