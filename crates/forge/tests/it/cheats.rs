@@ -17,7 +17,7 @@ use foundry_test_utils::{Filter, init_tracing};
 async fn test_cheats_local(test_data: &ForgeTestData) {
     let mut filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
         .exclude_paths("Fork")
-        .exclude_contracts("(Isolated|WithSeed|StateDiffStorageLayoutTest)");
+        .exclude_contracts("(Isolated|WithSeed|StateDiff)");
 
     // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file paths
     if cfg!(windows) {
@@ -38,7 +38,7 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
 /// Executes subset of all cheat code tests in isolation mode.
 async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
     let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
-        .exclude_contracts("StateDiffStorageLayoutTest");
+        .exclude_contracts("StateDiff");
 
     let runner = test_data.runner_with(|config| {
         config.isolate = true;
@@ -76,8 +76,7 @@ async fn test_state_diff_storage_layout() {
         let output = get_compiled(&mut project);
         ForgeTestData { project, output, config: config.into(), profile }
     };
-    let filter =
-        Filter::new(".*", "StateDiffStorageLayoutTest", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+    let filter = Filter::new(".*", "StateDiff", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
 
     let runner = test_data.runner_with(|config| {
         config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
