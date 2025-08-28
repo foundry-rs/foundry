@@ -241,7 +241,7 @@ impl TestArgs {
             .filter(|(id, abi)| {
                 !is_test_contract(abi.functions()) || matches_artifact(test_filter, id, abi)
             })
-            .map(|(id, _)| id.source.clone())
+            .map(|(id, _)| id.source)
             .collect::<BTreeSet<_>>();
         Ok(Some(sources))
     }
