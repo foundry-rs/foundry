@@ -46,7 +46,7 @@ jobs:
             arch: arm64
           - os: win32
             arch: amd64
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # if: ${{ github.event.workflow_run.conclusion == 'success' }}
     outputs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     env:
@@ -60,7 +60,7 @@ jobs:
           pattern: "foundry_*"
           repository: foundry-rs/foundry
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          # run-id: ${{ github.event.workflow_run.id }}
           path: foundry_artifacts
 
       - name: Setup Bun
@@ -130,7 +130,7 @@ jobs:
   publish-meta:
     needs: publish-arch
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # if: ${{ github.event.workflow_run.conclusion == 'success' }}
     env:
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
