@@ -105,7 +105,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
         if self.with_json_emitter {
             diag = diag.help(lint.help());
         } else {
-            diag = diag.help(self.hyperlink(lint.help()));
+            diag = diag.help(hyperlink(lint.help()));
         }
 
         diag.emit();
@@ -152,7 +152,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
                 .note(snippet.to_note(self).iter().map(|l| l.0.as_str()).collect::<String>())
                 .help(lint.help());
         } else {
-            diag = diag.highlighted_note(snippet.to_note(self)).help(self.hyperlink(lint.help()));
+            diag = diag.highlighted_note(snippet.to_note(self)).help(hyperlink(lint.help()));
         }
 
         diag.emit();
@@ -178,11 +178,6 @@ impl<'s, 'c> LintContext<'s, 'c> {
         }
 
         0
-    }
-
-    /// Creates a hyperlink of the input url.
-    fn hyperlink<'a>(&self, url: &'static str) -> String {
-        format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", url, url)
     }
 }
 
@@ -272,4 +267,9 @@ impl Snippet {
 
         &s[byte_offset..]
     }
+}
+
+/// Creates a hyperlink of the input url.
+fn hyperlink(url: &'static str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
 }
