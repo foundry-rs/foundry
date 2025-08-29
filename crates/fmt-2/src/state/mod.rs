@@ -244,6 +244,22 @@ impl State<'_, '_> {
         self.print_comments(ident.span.lo(), CommentConfig::skip_ws());
         self.word(ident.to_string());
     }
+
+    fn estimate_size(&self, span: Span) -> usize {
+        if let Ok(snip) = self.sm.span_to_snippet(span) {
+            let mut size = 0;
+            for line in snip.lines() {
+                size += line.trim().len();
+            }
+            return size;
+        }
+
+        span.to_range().len()
+    }
+
+    fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
+        self.sm.lookup_char_pos(a).line == self.sm.lookup_char_pos(b).line
+    }
 }
 
 /// Comment-related methods.

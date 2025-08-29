@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 
-use super::{CommentConfig, Separator};
 use crate::pp::SIZE_INFINITY;
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
@@ -10,7 +9,10 @@ use solar_parse::{
 };
 use std::{collections::HashMap, fmt::Debug};
 
-use super::{State, common::*};
+use super::{
+    CommentConfig, Separator, State,
+    common::{BlockFormat, ListFormat},
+};
 
 #[rustfmt::skip]
 macro_rules! get_span {
@@ -601,6 +603,51 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
             self.print_trailing_comment(body_span.hi(), None);
+        }
+    }
+
+    fn print_fn_attribute(
+        &mut self,
+        span: Span,
+        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
+        print_fn: &mut dyn FnMut(&mut Self),
+    ) {
+        match map.remove(&span.lo()) {
+            Some((pre_comments, post_comments)) => {
+                for cmnt in pre_comments {
+                    let Some(cmnt) = self.handle_comment(cmnt) else {
+                        continue;
+                    };
+                    self.print_comment(cmnt, CommentConfig::default());
+                }
+                let mut enabled = false;
+                if !self.handle_span(span, false) {
+                    if !self.is_bol_or_only_ind() {
+                        self.space();
+                    }
+                    self.ibox(0);
+                    print_fn(self);
+                    self.cursor.advance_to(span.hi(), true);
+                    enabled = true;
+                }
+                for cmnt in post_comments {
+                    let Some(cmnt) = self.handle_comment(cmnt) else {
+                        continue;
+                    };
+                    self.print_comment(cmnt, CommentConfig::default().mixed_prev_space());
+                }
+                if enabled {
+                    self.end();
+                }
+            }
+            // Fallback for attributes not in the map (should never happen)
+            None => {
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
+                print_fn(self);
+                self.cursor.advance_to(span.hi(), true);
+            }
         }
     }
 
@@ -1424,7 +1471,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_sep(Separator::Nbsp);
                     }
                 }
-                self.print_yul_block(block, block.span, false);
+                self.print_yul_block(block, block.span, false, false);
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
             ast::StmtKind::DeclMulti(vars, expr) => {
@@ -1744,51 +1791,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_call_args(args);
     }
 
-    fn print_fn_attribute(
-        &mut self,
-        span: Span,
-        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
-        print_fn: &mut dyn FnMut(&mut Self),
-    ) {
-        match map.remove(&span.lo()) {
-            Some((pre_comments, post_comments)) => {
-                for cmnt in pre_comments {
-                    let Some(cmnt) = self.handle_comment(cmnt) else {
-                        continue;
-                    };
-                    self.print_comment(cmnt, CommentConfig::default());
-                }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
-                    if !self.is_bol_or_only_ind() {
-                        self.space();
-                    }
-                    self.ibox(0);
-                    print_fn(self);
-                    self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
-                for cmnt in post_comments {
-                    let Some(cmnt) = self.handle_comment(cmnt) else {
-                        continue;
-                    };
-                    self.print_comment(cmnt, CommentConfig::default().mixed_prev_space());
-                }
-                if enabled {
-                    self.end();
-                }
-            }
-            // Fallback for attributes not in the map (should never happen)
-            None => {
-                if !self.is_bol_or_only_ind() {
-                    self.space();
-                }
-                print_fn(self);
-                self.cursor.advance_to(span.hi(), true);
-            }
-        }
-    }
-
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
         self.print_block_inner(
             block,
@@ -2044,22 +2046,6 @@ impl<'ast> State<'_, 'ast> {
 
     fn can_header_params_fit_in_one_line(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
         self.estimate_header_params_size(header) <= self.space_left()
-    }
-
-    fn estimate_size(&self, span: Span) -> usize {
-        if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let mut size = 0;
-            for line in snip.lines() {
-                size += line.trim().len();
-            }
-            return size;
-        }
-
-        span.to_range().len()
-    }
-
-    fn same_source_line(&self, a: BytePos, b: BytePos) -> bool {
-        self.sm.lookup_char_pos(a).line == self.sm.lookup_char_pos(b).line
     }
 }
 

@@ -23,12 +23,8 @@ contract Yul {
             returndatacopy(0, 0, returndatasize())
 
             switch result
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
 
         // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
@@ -148,18 +144,9 @@ contract Yul {
         assembly "evmasm" ("memory-safe") {}
 
         assembly {
-            for {
-                let i := 0
-            } lt(i, 10) {
-                i := add(i, 1)
-            } {
-                mstore(i, 7)
-            }
+            for { let i := 0 } lt(i, 10) { i := add(i, 1) } { mstore(i, 7) }
 
-            function sample(
-                x,
-                y
-            ) ->
+            function sample(x, y) ->
                 someVeryLongVariableName,
                 anotherVeryLongVariableNameToTriggerNewline
             {

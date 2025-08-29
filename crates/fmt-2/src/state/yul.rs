@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use super::{CommentConfig, State, common::*};
+use super::{
+    CommentConfig, State,
+    common::{BlockFormat, ListFormat},
+};
 use solar_parse::ast::{Span, yul};
 
 #[rustfmt::skip]
@@ -19,7 +22,9 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
+            yul::StmtKind::Block(stmts) => {
+                self.print_yul_block(stmts, span, self.is_inline_yul_block(stmts), false)
+            }
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
@@ -48,22 +53,22 @@ impl<'ast> State<'_, 'ast> {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
-                self.print_yul_block(stmts, span, false);
+                self.print_yul_block(stmts, span, self.is_inline_yul_block(stmts), false);
             }
             yul::StmtKind::For { init, cond, step, body } => {
                 self.ibox(0);
 
                 self.word("for ");
-                self.print_yul_block(init, span, false);
+                self.print_yul_block(init, span, self.is_inline_yul_block(init), false);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, span, false);
+                self.print_yul_block(step, span, self.is_inline_yul_block(step), false);
 
                 self.space();
-                self.print_yul_block(body, span, false);
+                self.print_yul_block(body, span, self.is_inline_yul_block(body), false);
 
                 self.end();
             }
@@ -78,7 +83,7 @@ impl<'ast> State<'_, 'ast> {
                     self.word("case ");
                     self.print_lit(constant);
                     self.nbsp();
-                    self.print_yul_block(body, span, false);
+                    self.print_yul_block(body, span, self.is_inline_yul_block(body), false);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
@@ -86,7 +91,12 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(default_case) = default_case {
                     self.hardbreak_if_not_bol();
                     self.word("default ");
-                    self.print_yul_block(default_case, span, false);
+                    self.print_yul_block(
+                        default_case,
+                        span,
+                        self.is_inline_yul_block(default_case),
+                        false,
+                    );
                 }
             }
             yul::StmtKind::Leave => self.word("leave"),
@@ -121,7 +131,12 @@ impl<'ast> State<'_, 'ast> {
                     );
                 }
                 self.end();
-                self.print_yul_block(body, span, skip_opening_brace);
+                self.print_yul_block(
+                    body,
+                    span,
+                    self.is_inline_yul_block(body),
+                    skip_opening_brace,
+                );
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
@@ -177,6 +192,7 @@ impl<'ast> State<'_, 'ast> {
         &mut self,
         block: &'ast [yul::Stmt<'ast>],
         span: Span,
+        inline: bool,
         skip_opening_brace: bool,
     ) {
         if self.handle_span(span, false) {
@@ -187,22 +203,72 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        let mut i = if block.is_empty() { 0 } else { block.len() - 1 };
-        self.print_block_inner(
-            block,
-            BlockFormat::NoBraces(Some(self.ind)),
-            |s, stmt| {
-                s.print_yul_stmt(stmt);
-                s.print_comments(stmt.span.hi(), CommentConfig::default());
-                s.print_trailing_comment(stmt.span.hi(), None);
-                if i != 0 {
-                    s.hardbreak_if_not_bol();
-                    i -= 1;
-                }
-            },
-            |b| b.span,
-            span.hi(),
-        );
+        if inline {
+            self.neverbreak();
+            self.print_block_inner(
+                block,
+                BlockFormat::NoBraces(None),
+                |s, stmt| {
+                    s.nbsp();
+                    s.print_yul_stmt(stmt);
+                    if s.peek_comment_before(stmt.span.hi()).is_none()
+                        && s.peek_trailing_comment(stmt.span.hi(), None).is_none()
+                    {
+                        s.nbsp();
+                    }
+                    s.print_comments(
+                        stmt.span.hi(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                    );
+                    s.print_trailing_comment(stmt.span.hi(), None);
+                },
+                |b| b.span,
+                span.hi(),
+            );
+        } else {
+            let mut i = if block.is_empty() { 0 } else { block.len() - 1 };
+            self.print_block_inner(
+                block,
+                BlockFormat::NoBraces(Some(self.ind)),
+                |s, stmt| {
+                    s.print_yul_stmt(stmt);
+                    s.print_comments(stmt.span.hi(), CommentConfig::default());
+                    s.print_trailing_comment(stmt.span.hi(), None);
+                    if i != 0 {
+                        s.hardbreak_if_not_bol();
+                        i -= 1;
+                    }
+                },
+                |b| b.span,
+                span.hi(),
+            );
+        }
         self.print_word("}");
+    }
+
+    fn is_inline_yul_block(&self, block: &'ast yul::Block<'ast>) -> bool {
+        if block.len() > 1 || self.is_multiline_yul_block(block) {
+            false
+        } else {
+            self.estimate_size(block.span) <= self.space_left()
+        }
+    }
+
+    /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    fn is_multiline_yul_block(&self, block: &'ast yul::Block<'ast>) -> bool {
+        if block.stmts.is_empty() {
+            return false;
+        }
+        if self.sm.is_multiline(block.span)
+            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        {
+            let code_lines = snip.lines().filter(|line| {
+                let trimmed = line.trim();
+                // Ignore empty lines and lines with only '{' or '}'
+                !trimmed.is_empty()
+            });
+            return code_lines.count() > 1;
+        }
+        false
     }
 }
