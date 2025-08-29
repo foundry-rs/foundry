@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
-    rpc, str,
+    TestCommand, rpc, str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
@@ -36,54 +36,39 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     assert_eq!(config.coverage_pattern_inverse, None);
 });
 
-// tests that warning is displayed when there are no tests in project
-forgetest!(warn_no_tests, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    );
-    // set up command
-    cmd.args(["test"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests found in project! Forge looks for functions that starts with `test`.
-
-"#]]);
-});
-
-// tests that warning is displayed with pattern when no tests match
-forgetest!(warn_no_tests_match, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    );
-
-    // set up command
+fn dummy_test_filter(cmd: &mut TestCommand) {
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+}
 
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
-	match-test: `testA.*`
-	no-match-test: `testB.*`
-	match-contract: `TestC.*`
-	no-match-contract: `TestD.*`
-	match-path: `*TestE*`
-	no-match-path: `*TestF*`
+// tests that a warning is displayed when there are no tests in project, regardless of filters
+forgetest!(warn_no_tests, |prj, cmd| {
+    // Must add at least one source to not fail earlier.
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {}
+",
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    cmd.forge_fuse();
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 });
 
-// tests that suggestion is provided with pattern when no tests match
+// tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
-    // set up project
     prj.add_source(
         "TestE.t.sol",
         r"
@@ -94,14 +79,9 @@ contract TestC {
    ",
     );
 
-    // set up command
-    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
-    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
-    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
 	match-contract: `TestC.*`
@@ -509,10 +489,8 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("failing_test", FAILING_TEST);
 
-    // set up command
     cmd.args(["test", "--fail-fast"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
@@ -520,10 +498,8 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_source("failing_test", FAILING_TEST);
-    // set up command
     cmd.args(["test", "--fail-fast", "--json"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
