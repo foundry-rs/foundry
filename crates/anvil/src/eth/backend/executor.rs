@@ -356,7 +356,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             if cheats.has_recover_overrides() {
                 let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
                 evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
-                    Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+                    Some(DynPrecompile::new_stateful(
+                        cheat_ecrecover.precompile_id().clone(),
+                        move |input| cheat_ecrecover.call(input),
+                    ))
                 });
             }
 
