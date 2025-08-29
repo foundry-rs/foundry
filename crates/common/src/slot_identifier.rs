@@ -114,7 +114,7 @@ impl SlotInfo {
                     let length: U256 = U256::from_be_bytes(value.0) >> 1;
 
                     if matches!(actual_type, DynSolType::String) {
-                        Some(DynSolValue::String(format!("<long string, {} bytes>", length)))
+                        Some(DynSolValue::String(format!("<long string, {length} bytes>")))
                     } else {
                         Some(DynSolValue::Bytes(vec![0; 32.min(length.to::<usize>())]))
                     }
