@@ -185,6 +185,7 @@ fmt_tests! {
     MappingType,
     ModifierDefinition,
     NamedFunctionCallExpression,
+    NonKeywords,
     NumberLiteralUnderscore,
     OperatorExpressions,
     PragmaDirective,

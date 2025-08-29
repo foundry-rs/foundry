@@ -60,8 +60,7 @@ contract HelloWorld {
     function docLineOverflow() external {}
 
     function docLinePostfixOverflow()
-        external
-    {}
+        external {}
 
     /// A long doc line comment that will be
     /// wrapped
@@ -92,8 +91,7 @@ contract HelloWorld {
      * }
      */
     function multilineMalformedIndent()
-        external
-    {}
+        external {}
 
     /**
      * contract A {
@@ -105,8 +103,7 @@ contract HelloWorld {
      * }
      */
     function malformedIndentOverflow()
-        external
-    {}
+        external {}
 }
 
 /**

@@ -38,7 +38,7 @@ contract NamedFunctionCallExpression {
         SimpleStruct memory simple3 = SimpleStruct({ /* comment4 */
             // comment5
             val: // comment6
-                0 // comment7
+            0 // comment7
             // comment8
         });
     }

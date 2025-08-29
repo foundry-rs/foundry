@@ -1,8 +1,7 @@
 contract ThisExpression {
     function someFunc() public {}
     function someVeryVeryVeryLongVariableNameThatWillBeAccessedByThisKeyword()
-        public
-    {}
+        public {}
 
     function test() external {
         this.someFunc();
