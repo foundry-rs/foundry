@@ -83,7 +83,7 @@ impl SlotInfo {
                 // The last byte contains the length * 2 for short strings/bytes
                 // or length * 2 + 1 for long strings/bytes
                 let length_byte = value.0[31];
-                
+
                 if length_byte & 1 == 0 {
                     // Short string/bytes (less than 32 bytes)
                     let length = (length_byte >> 1) as usize;
@@ -94,14 +94,13 @@ impl SlotInfo {
                             DynSolValue::Bytes(Vec::new())
                         });
                     }
-                    
+
                     // Data is stored in the same slot, left-aligned
                     let data = &value.0[0..length];
-                    
+
                     if matches!(actual_type, DynSolType::String) {
                         // For strings, convert bytes to UTF-8
-                        String::from_utf8(data.to_vec()).ok()
-                            .map(DynSolValue::String)
+                        String::from_utf8(data.to_vec()).ok().map(DynSolValue::String)
                     } else {
                         // For bytes, return raw bytes
                         Some(DynSolValue::Bytes(data.to_vec()))
@@ -113,7 +112,7 @@ impl SlotInfo {
                     // We can't decode without access to the data slots
                     // Return a placeholder indicating it's a long value
                     let length: U256 = U256::from_be_bytes(value.0) >> 1;
-                    
+
                     if matches!(actual_type, DynSolType::String) {
                         Some(DynSolValue::String(format!("<long string, {} bytes>", length)))
                     } else {
@@ -321,12 +320,9 @@ impl SlotIdentifier {
                 return Some(slot_info);
             } else if storage_type.encoding == ENCODING_BYTES {
                 // Handle bytes/string types
-                if let Some(slot_info) = self.handle_bytes_string(
-                    storage,
-                    storage_type,
-                    slot_u256,
-                    &slot_str,
-                ) {
+                if let Some(slot_info) =
+                    self.handle_bytes_string(storage, storage_type, slot_u256, &slot_str)
+                {
                     return Some(slot_info);
                 }
             }
@@ -690,7 +686,7 @@ impl SlotIdentifier {
     ) -> Option<SlotInfo> {
         // For bytes/string, we need to check if this is the main slot or a data slot
         let base_slot = U256::from_str(&storage.slot).ok()?;
-        
+
         // Parse the type to get the correct DynSolType
         let dyn_type = if storage_type.label == "string" {
             DynSolType::String
@@ -723,8 +719,9 @@ impl SlotIdentifier {
         } else {
             // Check if this could be a data slot for a long bytes/string
             // Data slots are at keccak256(base_slot) and subsequent slots
-            let data_start_slot = U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
-            
+            let data_start_slot =
+                U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
+
             // We don't have the length here, so we just check if it could be a data slot
             // In practice, this would need the actual length from the base slot to determine
             // the exact range of data slots
@@ -732,7 +729,7 @@ impl SlotIdentifier {
                 // This could be a data slot for long bytes/string
                 // Calculate which data slot index this is
                 let slot_index = (slot - data_start_slot).to::<usize>();
-                
+
                 return Some(SlotInfo {
                     label: format!("{}.data[{}]", storage.label, slot_index),
                     slot_type: StorageTypeInfo {
@@ -747,7 +744,7 @@ impl SlotIdentifier {
                 });
             }
         }
-        
+
         None
     }
 
