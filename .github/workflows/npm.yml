@@ -2,9 +2,12 @@ name: Publish NPM
 
 on:
   workflow_dispatch:
-  workflow_run:
-    types: [completed]
-    workflows: [release]
+  #
+  # Temporarily disabled 
+  #
+  # workflow_run:
+  #   types: [completed]
+  #   workflows: [release]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
