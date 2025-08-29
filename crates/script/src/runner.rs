@@ -358,7 +358,7 @@ impl ScriptRunner {
         calldata: &Bytes,
         value: U256,
     ) -> Result<u64> {
-        let mut gas_used = res.gas_used;
+        let mut gas_used = res.gas_used + res.gas_refunded + res.stipend;
         if matches!(res.exit_reason, Some(return_ok!())) {
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.env().tx.gas_limit;
