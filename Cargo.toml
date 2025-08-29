@@ -23,6 +23,7 @@ members = [
     "crates/forge/",
     "crates/script-sequence/",
     "crates/macros/",
+    "crates/enscribe/",
     "crates/test-utils/",
     "crates/lint/",
 ]
@@ -201,6 +202,8 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
+
+enscribe = { path = "crates/enscribe" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.21.0", default-features = false }
