@@ -551,8 +551,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
             function doSomething() public onlyOwner {}
         }
             "#,
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.lint = LinterConfig {
