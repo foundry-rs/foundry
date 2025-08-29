@@ -74,6 +74,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -1995,6 +1998,41 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--md",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+
+
+"#]]);
+});
+
 casttest!(storage_layout_complex_proxy, |_prj, cmd| {
     cmd.args([
         "storage",
@@ -2528,8 +2566,7 @@ contract LocalProjectContract {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "LocalProjectScript",
         r#"
@@ -2544,8 +2581,7 @@ contract LocalProjectScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2696,8 +2732,7 @@ library ExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "CounterInExternalLib",
         r#"
@@ -2712,8 +2747,7 @@ contract CounterInExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "CounterInExternalLibScript",
         r#"
@@ -2727,8 +2761,7 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2805,8 +2838,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -2907,8 +2939,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -3327,8 +3358,7 @@ contract SimpleStorage {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "SimpleStorageScript",
         r#"
@@ -3342,8 +3372,7 @@ contract SimpleStorageScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -3464,8 +3493,7 @@ contract ConstructorContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3540,8 +3568,7 @@ contract EstimateContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3590,8 +3617,7 @@ contract SimpleContract {
     uint256 public constant VALUE = 42;
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3649,8 +3675,7 @@ contract ComplexContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
