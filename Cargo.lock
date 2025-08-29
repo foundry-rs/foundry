@@ -222,13 +222,13 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.19.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce2c723dd19c7b7e6dac0f52dae208beae40ce093c176cf82e2e4d3ead756d3"
+checksum = "0dbe7c66c859b658d879b22e8aaa19546dab726b0639f4649a424ada3d99349e"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-sol-types",
@@ -258,6 +258,19 @@ name = "alloy-hardforks"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3165210652f71dfc094b051602bafd691f506c54050a174b1cba18fb5ef706a3"
+dependencies = [
+ "alloy-chains",
+ "alloy-eip2124",
+ "alloy-primitives",
+ "auto_impl",
+ "dyn-clone",
+]
+
+[[package]]
+name = "alloy-hardforks"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a20b180071d4f22db71702329101685ccff2e2a8f400d30a68ba907700163bf5"
 dependencies = [
  "alloy-chains",
  "alloy-eip2124",
@@ -334,9 +347,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-evm"
-version = "0.19.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93e9a39a883b63c7fe816627377baf25de35564d1b3c480a4fbcabeec2d22279"
+checksum = "ed9b726869a13d5d958f2f78fbef7ce522689c4d40d613c16239f5e286fbeb1a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -351,12 +364,12 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-hardforks"
-version = "0.2.13"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3417f4187eaf7f7fb0d7556f0197bca26f0b23c4bb3aca0c9d566dc1c5d727a2"
+checksum = "9b6e8ab92a4b6cf57d84cec62868b7161f40de36b01ffda62455deb3907c9001"
 dependencies = [
  "alloy-chains",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "auto_impl",
 ]
 
@@ -1042,7 +1055,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "alloy-network",
  "alloy-op-evm",
  "alloy-op-hardforks",
@@ -2522,7 +2535,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-ens",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -4005,7 +4018,7 @@ version = "1.3.2"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
@@ -4694,7 +4707,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.0",
  "alloy-json-abi",
  "alloy-network",
  "alloy-op-evm",
@@ -4799,7 +4812,7 @@ checksum = "f393054b70525583a48b137776f62c9fe68f1f432f2c5ee143c224b1491cdab3"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
- "alloy-hardforks",
+ "alloy-hardforks 0.2.13",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
