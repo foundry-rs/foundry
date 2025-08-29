@@ -99,7 +99,7 @@ impl AsRef<Path> for FsPathError {
             Self::Write { path, .. }
             | Self::Read { path, .. }
             | Self::ReadLink { path, .. }
-            | Self::Copy { from: path, .. }
+            | Self::Copy { to: path, .. }
             | Self::CreateDir { path, .. }
             | Self::RemoveDir { path, .. }
             | Self::CreateFile { path, .. }
