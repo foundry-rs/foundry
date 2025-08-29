@@ -957,9 +957,11 @@ impl Config {
         self.create_project(false, true)
     }
 
-    /// Same as [`Self::ephemeral_project()`] but configures the project to not emit any artifacts.
+    /// A cached, in-memory project that does not request any artifacts.
+    ///
+    /// Use this when you just want the source graph or the Solar compiler context.
     pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
-        let mut project = self.ephemeral_project()?;
+        let mut project = self.project()?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection([]);
         });
