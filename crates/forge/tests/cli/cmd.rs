@@ -54,7 +54,7 @@ Display options:
           Format log messages as JSON
 
       --md
-          Format log messages tables as Markdown
+          Format log messages as Markdown
 
   -q, --quiet
           Do not print log messages

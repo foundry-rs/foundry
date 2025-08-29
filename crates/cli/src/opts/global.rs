@@ -30,12 +30,12 @@ pub struct GlobalArgs {
     #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
     json: bool,
 
-    /// Format log messages tables as Markdown.
+    /// Format log messages as Markdown.
     #[arg(
         help_heading = "Display options",
         global = true,
         long,
-        alias = "markdown-tables",
+        alias = "markdown",
         conflicts_with = "json"
     )]
     md: bool,
