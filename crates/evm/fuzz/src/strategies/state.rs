@@ -342,7 +342,7 @@ impl FuzzDictionary {
         if let Some(slot_identifier) =
             layout.map(|l| SlotIdentifier::new(l.clone().into()))
             // Identify Slot Type
-            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
+            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
         {
             self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
