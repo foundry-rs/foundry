@@ -4277,7 +4277,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/block-explorers.git?rev=80ff600#80ff600a591dc61bb8d3b15c0de076c5134c5cfe"
+source = "git+https://github.com/foundry-rs/block-explorers.git?rev=7fc6e27#7fc6e278f28b979cb2a2bb37be13beac392398ba"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",

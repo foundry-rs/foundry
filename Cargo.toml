@@ -407,7 +407,7 @@ idna_adapter = "=1.1.0"
 # revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "74e215d" }
 
 ## foundry
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "80ff600" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "7fc6e27" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 

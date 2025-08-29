@@ -285,7 +285,7 @@ impl EtherscanVerificationProvider {
             } else {
                 base_url.unwrap_or(api_url)
             };
-            builder.with_chain_id(chain).with_api_url(api_url)?.with_url(base_url)?
+            builder.with_api_url(api_url)?.with_url(base_url)?
         } else {
             builder.chain(chain)?
         };
