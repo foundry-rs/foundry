@@ -498,30 +498,71 @@ impl TestArgs {
             for path in mutate_paths {
                 sh_println!("Running mutation tests for {}", path.display()).unwrap();
 
-                let mut handler = MutationHandler::new(path, config.clone());
+                // Check if this file has already been tested and if the compilation hash is the
+                // same - if so, just add the mutants to the summary
+                let mut handler = MutationHandler::new(path.clone(), config.clone());
 
                 handler.read_source_contract()?;
-                handler.generate_ast().await;
+                // Get the current build id directly from the compile output
+                let build_id = output
+                    .artifact_ids()
+                    .find_map(
+                        |(id, _)| if id.source == path { Some(id.build_id.clone()) } else { None },
+                    )
+                    .unwrap_or_default();
 
-                for (i, mutant) in handler.mutations.iter().enumerate() {
-                    sh_println!("Testing mutant {} out of {}", i + 1, handler.mutations.len())
-                        .unwrap();
+                // If we have cached results for this build, use them and skip running tests
+                // @todo this might be optimized/cached too?
+                if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
+                    for (mutant, status) in prior {
+                        match status {
+                            crate::mutation::mutant::MutationResult::Dead => {
+                                mutation_summary.add_dead_mutant(mutant)
+                            }
+                            crate::mutation::mutant::MutationResult::Alive => {
+                                mutation_summary.add_survived_mutant(mutant)
+                            }
+                            crate::mutation::mutant::MutationResult::Invalid => {
+                                mutation_summary.update_invalid_mutant(mutant)
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // Try cached mutants first
+                let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
+                    ms
+                } else {
+                    // No cache match: generate fresh mutants
+                    handler.generate_ast().await;
+                    handler.mutations.clone()
+                };
+
+                // Accumulate per-mutant results for persistence
+                let mut results_vec: Vec<(
+                    crate::mutation::mutant::Mutant,
+                    crate::mutation::mutant::MutationResult,
+                )> = Vec::with_capacity(mutants.len());
+
+                for (i, mutant) in mutants.iter().enumerate() {
+                    sh_println!("Testing mutant {} out of {}", i + 1, mutants.len()).unwrap();
 
                     handler.generate_mutated_solidity(&mutant);
-                    dbg!(&mutant);
-                    dbg!("gen");
                     let new_filter = self.filter(&config).unwrap();
-
                     let compiler = ProjectCompiler::new()
                         .dynamic_test_linking(config.dynamic_test_linking)
-                        // .quiet(true);
-                        .quiet(shell::is_json() || self.junit);
+                        .quiet(true);
+                    // .quiet(shell::is_json() || self.junit);
 
                     let compile_output = compiler.compile(&project);
-                    dbg!("compile");
 
                     if compile_output.is_err() {
                         mutation_summary.update_invalid_mutant(mutant.clone());
+                        results_vec.push((
+                            mutant.clone(),
+                            crate::mutation::mutant::MutationResult::Invalid,
+                        ));
                     } else {
                         let mut runner = MultiContractRunnerBuilder::new(config.clone())
                             .set_debug(false)
@@ -536,15 +577,33 @@ impl TestArgs {
                                 evm_opts.clone(),
                             )?;
 
-                        let results = runner.test_collect(&new_filter)?;
-                        dbg!("test");
+                        let results: BTreeMap<String, SuiteResult> =
+                            runner.test_collect(&new_filter)?;
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
-                        mutation_summary.update_valid_mutant(&outcome, mutant.clone());
+                        if outcome.failures().count() > 0 {
+                            mutation_summary.add_dead_mutant(mutant.clone());
+                            results_vec.push((
+                                mutant.clone(),
+                                crate::mutation::mutant::MutationResult::Dead,
+                            ));
+                        } else {
+                            mutation_summary.add_survived_mutant(mutant.clone());
+                            results_vec.push((
+                                mutant.clone(),
+                                crate::mutation::mutant::MutationResult::Alive,
+                            ));
+                        }
                     }
                 }
 
                 handler.restore_original_source();
+
+                // If we generated fresh mutants, persist them for this build hash
+                if handler.mutations.len() > 0 && !build_id.is_empty() {
+                    let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
+                    let _ = handler.persist_cached_results(&build_id, &results_vec);
+                }
             }
 
             MutationReporter::new().report(&mutation_summary);
