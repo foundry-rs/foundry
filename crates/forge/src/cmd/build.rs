@@ -176,7 +176,7 @@ impl BuildArgs {
                     let _ = compiler.lower_asts();
                     Ok(())
                 })?;
-                linter.lint(&input_files, &mut compiler);
+                linter.lint(&input_files, config.get_deny_level(), &mut compiler)?;
             }
         }
 
