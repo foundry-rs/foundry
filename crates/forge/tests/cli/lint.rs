@@ -530,6 +530,94 @@ Compiler run successful!
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11460>
+forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "UnwrappedModifierTest",
+        r#"
+        // SPDX-License-Identifier: MIT
+        pragma solidity ^0.8.0;
+
+        contract UnwrappedModifierTest {
+            mapping(address => bool) isOwner;
+
+            modifier onlyOwner() {
+                require(isOwner[msg.sender], "Not owner");
+                require(msg.sender != address(0), "Zero address");
+                _;
+            }
+
+            function doSomething() public onlyOwner {}
+        }
+            "#,
+    );
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::CodeSize],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
+    cmd.arg("lint").arg("--json").assert_json_stderr(true,
+        str![[r#"
+            {
+              "$message_type": "diag",
+              "message": "wrap modifier logic to reduce code size",
+              "code": {
+                "code": "unwrapped-modifier-logic",
+                "explanation": null
+              },
+              "level": "note",
+              "spans": [
+                {
+                  "file_name": "[..]",
+                  "byte_start": 183,
+                  "byte_end": 192,
+                  "line_start": 8,
+                  "line_end": 8,
+                  "column_start": 22,
+                  "column_end": 31,
+                  "is_primary": true,
+                  "text": [
+                    {
+                      "text": "            modifier onlyOwner() {",
+                      "highlight_start": 22,
+                      "highlight_end": 31
+                    }
+                  ],
+                  "label": null
+                }
+              ],
+              "children": [
+                {
+                  "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
+                  "code": null,
+                  "level": "note",
+                  "spans": [],
+                  "children": [],
+                  "rendered": null
+                },
+                {
+                  "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+                  "code": null,
+                  "level": "help",
+                  "spans": [],
+                  "children": [],
+                  "rendered": null
+                }
+              ],
+              "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |                      ---------\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n"
+            }
+"#]],
+);
+});
+
 // ------------------------------------------------------------------------------------------------
 
 #[tokio::test]

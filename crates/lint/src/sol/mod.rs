@@ -153,7 +153,13 @@ impl<'a> SolidityLinter<'a> {
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
-        let ctx = LintContext::new(sess, self.with_description, self.config(inline_config), lints);
+        let ctx = LintContext::new(
+            sess,
+            self.with_description,
+            self.with_json_emitter,
+            self.config(inline_config),
+            lints,
+        );
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
         early_visitor.post_source_unit(ast);
@@ -207,8 +213,13 @@ impl<'a> SolidityLinter<'a> {
         );
 
         // Run late lint visitor
-        let ctx =
-            LintContext::new(gcx.sess, self.with_description, self.config(inline_config), lints);
+        let ctx = LintContext::new(
+            gcx.sess,
+            self.with_description,
+            self.with_json_emitter,
+            self.config(inline_config),
+            lints,
+        );
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source
