@@ -723,8 +723,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -752,8 +751,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
@@ -804,8 +802,7 @@ contract BalanceAssumeTest is Test {
     function invariant_balance() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -836,8 +833,7 @@ contract NoSelectorTest is Test {
     function invariant_panic() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -893,8 +889,7 @@ contract AnotherCounterHandler is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -966,8 +961,7 @@ contract TimeoutTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1031,8 +1025,7 @@ contract HandlerTwo {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "InvariantSelectorsWeightTest.t.sol",
@@ -1060,8 +1053,7 @@ contract InvariantSelectorsWeightTest is Test {
     function invariant_selectors_weight() public view {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
 });
@@ -1092,8 +1084,7 @@ contract InvariantSequenceLenTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1192,8 +1183,7 @@ contract Ownable {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_test(
         "OwnableTest.t.sol",
         r#"
@@ -1212,8 +1202,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1251,8 +1240,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
 Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
@@ -1290,8 +1278,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1319,8 +1306,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
         str![[r#"
@@ -1391,8 +1377,7 @@ contract InvariantTargetTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "InvariantTargetTest", "--mt", "invariant"])
         .assert_success()
@@ -1516,8 +1501,7 @@ contract InvariantTargetExcludeTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]

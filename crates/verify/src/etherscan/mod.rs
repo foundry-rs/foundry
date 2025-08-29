@@ -646,8 +646,8 @@ mod tests {
     }
 
     forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
-        prj.add_source("Counter1", "contract Counter {}").unwrap();
-        prj.add_source("Counter2", "contract Counter {}").unwrap();
+        prj.add_source("Counter1", "contract Counter {}");
+        prj.add_source("Counter2", "contract Counter {}");
 
         cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
