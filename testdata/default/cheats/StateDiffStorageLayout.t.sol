@@ -3,7 +3,6 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
-import "./StateDiffTestUtils.sol";
 
 contract SimpleStorage {
     uint256 public value; // Slot 0
@@ -98,7 +97,7 @@ contract TwoDArrayStorage {
     }
 }
 
-contract StateDiffStorageLayoutTest is StateDiffTestUtils {
+contract StateDiffStorageLayoutTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     SimpleStorage simpleStorage;
     VariousArrays variousArrays;
