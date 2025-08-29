@@ -113,6 +113,7 @@ solar-ast.opt-level = 3
 solar-data-structures.opt-level = 3
 solar-interface.opt-level = 3
 solar-parse.opt-level = 3
+solar-sema.opt-level = 3
 
 # EVM.
 alloy-dyn-abi.opt-level = 3
@@ -204,7 +205,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.21.0", default-features = false }
-foundry-compilers = { version = "0.19.0", default-features = false }
+foundry-compilers = { version = "0.19.1", default-features = false }
 foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.6", default-features = false }
