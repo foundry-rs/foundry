@@ -5,6 +5,7 @@ import * as W from './wasm_browser.ts'
 import * as monaco from 'monaco-editor-core'
 import { shikiToMonaco } from '@shikijs/monaco'
 import { createHighlighterCore } from 'shiki/core'
+import { handleFormatError } from './format-error-handler.ts'
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 
 function debounce<T extends (...args: Array<any>) => any>(
@@ -24,18 +25,18 @@ const highlighter = await createHighlighterCore({
     import('shiki/themes/github-light-default'),
   ],
   langs: [
-    // () => import('shiki/langs/json'),
     () => import('shiki/langs/solidity'),
   ],
   engine: createOnigurumaEngine(import('shiki/wasm')),
 })
 
-monaco.languages.register({ id: 'json' })
 monaco.languages.register({ id: 'solidity' })
 
 const resultElement = document.querySelector('div#result')
 const formatButtonElement = document.querySelector('button#format')
-const diagnosticsElement = document.querySelector('pre#diagnostics')
+const diagnosticsElement = document.querySelector(
+  'div#diagnostics',
+) as HTMLDivElement
 const onInputElement = document.querySelector('input#format-on-input')
 
 // const getDefaultConfiguration = () => W.fmt_config_default() ?? ({})
@@ -53,7 +54,7 @@ function runFormat(params: {
   source: string
 }) {
   if (!diagnosticsElement) throw new Error('diagnosticsElement not found')
-  diagnosticsElement.textContent = ''
+  diagnosticsElement.innerHTML = ''
 
   try {
     const { formatted: output } = W.fmt_with_config(
@@ -72,11 +73,11 @@ function runFormat(params: {
     editor.setValue(output)
   } catch (error) {
     console.error(error)
-    const err = error as { error?: string } | string
     if (!diagnosticsElement) throw new Error('diagnosticsElement not found')
-    diagnosticsElement.textContent = typeof err === 'string'
-      ? err
-      : (err?.error ?? String(err))
+
+    // Use the error handler with ANSI colors preserved by default
+    const errorResult = handleFormatError(error)
+    diagnosticsElement.innerHTML = errorResult.ansiHtml
   }
 }
 
@@ -113,7 +114,6 @@ const editor = monaco.editor.create(editorElement, {
   },
   folding: false,
   lineNumbersMinChars: 3,
-  // fontWeight: '300',
 })
 
 const splitPanel = document.querySelector('sl-split-panel')

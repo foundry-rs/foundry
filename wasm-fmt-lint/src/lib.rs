@@ -12,6 +12,9 @@ pub fn start() {
     // No-op: allows generated wrappers to call __wbindgen_start safely.
 }
 
+///
+/// Format
+
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct FormatResult {
     pub formatted: String,
@@ -65,27 +68,4 @@ pub fn fmt_with_config(source: &str, config: JsValue) -> Result<JsValue, JsValue
 pub fn fmt_config_default() -> JsValue {
     let cfg = forge_fmt::FormatterConfig::default();
     serde_wasm_bindgen::to_value(&cfg).unwrap()
-}
-
-// Placeholder Lint API (to be implemented once browser threading and deps are aligned)
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct LintOptions {
-    /// Future: severity filters, include/exclude, mixed_case_exceptions, etc.
-    #[serde(default)]
-    pub severity: Vec<String>,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct LintResult {
-    pub diagnostics: Vec<serde_json::Value>,
-    pub note: Option<String>,
-}
-
-#[wasm_bindgen]
-pub fn lint(_source: &str, _options: JsValue) -> Result<JsValue, JsValue> {
-    let res = LintResult {
-        diagnostics: vec![],
-        note: Some("lint is not yet available in the wasm build. This stub exists to keep the API stable while we upstream wasm support in forge-lint.".to_string()),
-    };
-    Ok(serde_wasm_bindgen::to_value(&res).unwrap())
 }

@@ -1,7 +1,7 @@
 import { dedent } from 'ts-dedent'
 import { expect } from 'jsr:@std/expect'
 
-import * as W from '../build/wasm_fmt_lint.js'
+import { fmt_config_default, fmt_with_config } from '../pkg/wasm_fmt_lint.js'
 
 Deno.test('Format with default config', async () => {
   const codePreFormat = dedent /* sol */`
@@ -24,8 +24,8 @@ Deno.test('Format with default config', async () => {
   console.info(solCode)
   expect(codePreFormat).toBe(solCode)
 
-  const cfg = W.fmt_config_default()
-  const { formatted } = W.fmt_with_config(codePreFormat, cfg) as {
+  const cfg = fmt_config_default()
+  const { formatted } = fmt_with_config(codePreFormat, cfg) as {
     formatted: string
   }
   console.info(formatted)

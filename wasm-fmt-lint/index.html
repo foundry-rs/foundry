@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html class="bg-[#101010] text-white m-0 overflow-hidden">
   <head>
-    <title>Foundry Linter Playground</title>
+    <title>Foundry Formatter Playground</title>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
     <link
       href="https://esm.sh/firacode/distr/fira_code.css"
       rel="stylesheet"
@@ -25,8 +27,43 @@
       import 'https://esm.sh/@shoelace-style/shoelace/cdn/components/split-panel/split-panel.js'
     </script>
     <style>
+      @import 'tailwindcss';
+
       body {
         font-family: 'Fira Code', monospace;
+      }
+
+      .error-snippet {
+        border-radius: 3px;
+        padding: 8px;
+        margin-top: 8px;
+        font-size: 0.875rem;
+      }
+
+      .error-snippet pre {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .error-pointer {
+        color: #ff6b6b;
+        font-weight: bold;
+      }
+
+      .ansi-output {
+        color: #d4d4d4;
+        padding: 12px;
+        border-radius: 4px;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        margin: 4px 0;
+      }
+
+      #diagnostics pre {
+        margin: 0;
+        font-family: 'Fira Code', monospace;
+        color: rgba(255, 255, 255, 0.8);
       }
       @supports (font-variation-settings: normal) {
         body,
@@ -50,7 +87,6 @@
   </head>
   <body
     class="h-screen flex flex-col"
-    data-id="wasm-fmt-lint-playground"
   >
     <section
       class="flex-1 bg-[rgb(20,20,20)] border-b-[1.5px] border-[#FFC799]/20 overflow-hidden"
@@ -87,13 +123,20 @@
       </sl-split-panel>
     </section>
 
-    <section
+    <!-- DIAGNOSTICS -->
+
+    <div
       id="diagnostics-container"
-      class="hidden invisible h-0 w-0"
       data-action="diagnostics-container"
+      class="h-[200px] max-w-full overflow-y-auto p-2 border-b-[1.5px] border-[#FFC799]/20"
     >
-      <pre id="diagnostics" data-action="diagnostics"></pre>
-    </section>
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-md text-white/50">diagnostics</p>
+      </div>
+      <div id="diagnostics" data-action="diagnostics"></div>
+    </div>
+
+    <!-- END OF DIAGNOSTICS -->
 
     <footer
       class="w-full text-right pr-2.5 text-sm bg-[#101010] flex-shrink-0"
@@ -109,15 +152,6 @@
             class="text-white pr-3 pl-1 py-2 border-r-[1px] border-[#FFC799]/20 uppercase"
           >
             Format
-          </button>
-          <!-- TODO: unhide this button when linting is implemented -->
-          <button
-            id="lint"
-            data-action="lint"
-            title="Lint the code"
-            class="bg-zinc-800 text-white px-3 sm:px-4 py-2 hidden"
-          >
-            Lint
           </button>
           <label class="text-left ml-2 text-[10px] sm:text-xs">
             <input
