@@ -29,6 +29,7 @@ fn enable_tracing() {
 }
 
 fn tests_dir() -> PathBuf {
+    // TODO: re-enable once `fmt-2` becomes `fmt`
     // Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fmt/testdata")
 }
@@ -151,67 +152,60 @@ macro_rules! fmt_tests {
     };
 }
 
-// TODO (config):
-// * style = tab
-// * all fn styles
-//
-// TODO (isolation):
-// * when are functions isolated?
-// * when are structs isolated?
-
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions, // OK (data loc keyword won't have a span in solar)
-    BlockComments, // OK
-    BlockCommentsFunction, // OK
-    ConditionalOperatorExpression, //OK
-    ConstructorDefinition, // OK
-    ConstructorModifierStyle, // OK
-    ContractDefinition, // OK
-    DocComments, // OK
-    DoWhileStatement, // OK
-    EmitStatement, // OK
-    EnumDefinition, // OK
-    EnumVariants, // OK
-    ErrorDefinition, // OK
-    EventDefinition, // OK
-    ForStatement, // OK
-    FunctionCall, // OK
-    FunctionCallArgsStatement, // OK
-    FunctionDefinition, // OK?
-    FunctionDefinitionWithFunctionReturns, // OK
-    FunctionType, // OK
-    HexUnderscore, // OK
-    IfStatement, // Ok
-    IfStatement2, // OK
-    ImportDirective, // OK
-    InlineDisable, // OK
-    IntTypes, // OK
-    LiteralExpression, // OK
-    MappingType, // OK
-    ModifierDefinition, // OK
-    NamedFunctionCallExpression, // OK
-    NumberLiteralUnderscore, // OK
-    OperatorExpressions, // OK
-    PragmaDirective, // OK
-    Repros, // OK
-    ReturnStatement, // OK (inline block logic is inconsistent with 'if stmt' unit test)
-    RevertNamedArgsStatement, // OK (properly break long calls?)
-    RevertStatement, // OK
-    SimpleComments, // OK
-    SortedImports, // OK
-    StatementBlock, // OK
-    StructDefinition, // OK
-    ThisExpression, // OK
-    TrailingComma, // OK (solar error)
-    TryStatement, // OK
-    TypeDefinition, // OK
-    UnitExpression, // OK (subdenom word won't have a span in solar)
-    UsingDirective, // OK
-    VariableAssignment, // OK
-    VariableDefinition, // OK (solar forces constants to be initialized)
-    WhileStatement,  // OK
-    Yul, // OK
-    YulStrings, // OK
+    ArrayExpressions,
+    BlockComments,
+    BlockCommentsFunction,
+    ConditionalOperatorExpression,
+    ConstructorDefinition,
+    ConstructorModifierStyle,
+    ContractDefinition,
+    DocComments,
+    DoWhileStatement,
+    EmitStatement,
+    EnumDefinition,
+    EnumVariants,
+    ErrorDefinition,
+    EventDefinition,
+    ForStatement,
+    FunctionCall,
+    FunctionCallArgsStatement,
+    FunctionDefinition,
+    FunctionDefinitionWithFunctionReturns,
+    FunctionType,
+    HexUnderscore,
+    IfStatement,
+    IfStatement2,
+    ImportDirective,
+    InlineDisable,
+    IntTypes,
+    LiteralExpression,
+    MappingType,
+    ModifierDefinition,
+    NamedFunctionCallExpression,
+    NumberLiteralUnderscore,
+    OperatorExpressions,
+    PragmaDirective,
+    Repros,
+    ReturnStatement,
+    RevertNamedArgsStatement,
+    RevertStatement,
+    SimpleComments,
+    SortedImports,
+    StatementBlock,
+    StructDefinition,
+    ThisExpression,
+    #[ignore = "Solar errors when parsing inputs with trailing commas"]
+    TrailingComma,
+    TryStatement,
+    TypeDefinition,
+    UnitExpression,
+    UsingDirective,
+    VariableAssignment,
+    VariableDefinition,
+    WhileStatement,
+    Yul,
+    YulStrings,
 }
