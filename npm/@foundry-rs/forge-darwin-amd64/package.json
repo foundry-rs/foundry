@@ -31,5 +31,8 @@
     "solidity",
     "blockchain",
     "smart-contracts"
-  ]
+  ],
+  "publishConfig": {
+    "provenance": true
+  }
 }

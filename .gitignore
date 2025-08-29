@@ -14,3 +14,8 @@ bin
 _
 *.tgz
 .zed
+.vercel
+.vite
+.wrangler
+build
+*.zip

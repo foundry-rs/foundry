@@ -210,6 +210,13 @@ jobs:
           fi
           echo "foundry_attestation=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: ${{ steps.artifacts.outputs.file_name }}
+          path: ${{ steps.artifacts.outputs.file_name }}
+
       - name: Build man page
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -271,82 +278,6 @@ jobs:
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
-
-      - name: Setup Bun (npm)
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
-        with:
-          bun-version: "latest"
-          scope: "@foundry-rs"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Setup Node (auth for npm publish)
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install dependencies
-        working-directory: ./npm
-        run: bun install --frozen-lockfile
-
-      - name: Publish @foundry-rs/forge-${{ matrix.platform }}-${{ matrix.arch }} (npm)
-        if: matrix.platform != 'alpine'
-        shell: bash
-        working-directory: ./npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_REGISTRY_URL: "https://registry.npmjs.org"
-          PROVENANCE: true
-          ARCH: ${{ matrix.arch }}
-          TARGET: ${{ matrix.target }}
-          PLATFORM_NAME: ${{ matrix.platform }}
-          OUT_DIR: ${{ github.workspace }}/target/${{ matrix.target }}/${{ env.PROFILE }}
-          VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
-        run: |-
-          set -eo pipefail
-          # Provide explicit path to the compiled forge binary for this platform
-          if [[ "$TARGET" == *windows* ]]; then
-            export FORGE_BIN_PATH="$OUT_DIR/forge.exe"
-          else
-            export FORGE_BIN_PATH="$OUT_DIR/forge"
-          fi
-          echo "Using FORGE_BIN_PATH=$FORGE_BIN_PATH"
-          bun ./scripts/prepublish.ts
-          bun run ./scripts/publish.ts ./@foundry-rs/forge-${PLATFORM_NAME}-${ARCH}
-
-  publish-npm:
-    name: Publish @foundry-rs/forge
-    runs-on: ubuntu-latest
-    needs: release
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
-        with:
-          bun-version: "latest"
-          scope: "@foundry-rs"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Setup Node (auth for npm publish)
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install dependencies
-        working-directory: ./npm
-        run: bun install --frozen-lockfile
-
-      - name: Publish @foundry-rs/forge
-        shell: bash
-        working-directory: ./npm
-        env:
-          PROVENANCE: true
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_REGISTRY_URL: "https://registry.npmjs.org"
-        run: |-
-          # Build wrappers for the meta package
-          npm run build
-          bun run ./scripts/publish.ts ./@foundry-rs/forge
 
   cleanup:
     name: Release cleanup

@@ -1,0 +1,144 @@
+name: Publish to npm & gpr
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    types: [completed]
+    workflows: [release]
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ACTIONS_RUNNER_DEBUG: true
+  NPM_CONFIG_PROVENANCE: true
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    env:
+      # Only publish packages we actually ship in npm/@foundry-rs
+      # (alpine/musl builds are not separate npm packages)
+      binaries: "linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,win32-amd64"
+    steps:
+      - name: Download Release Assets
+        uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+          # Download all foundry artifacts from the triggering release run
+          pattern: "foundry_*"
+          repository: foundry-rs/foundry
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: foundry_artifacts
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@main
+        with:
+          bun-version: latest
+          registries: |
+            https://registry.npmjs.org
+
+      - name: Setup Node (for npm publish auth)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts
+          registry-url: https://registry.npmjs.org
+
+      - name: Install Dependencies
+        working-directory: npm
+        run: bun install --frozen-lockfile
+
+      - name: Publish Binaries
+        working-directory: npm
+        env:
+          PROVENANCE: true
+          # Required by our publish script and by npm itself
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_REGISTRY_URL: "https://registry.npmjs.org"
+        run: |
+          set -euo pipefail
+
+          echo "Artifacts in foundry_artifacts:"
+          ls -la ../foundry_artifacts || true
+
+          # Derive VERSION_NAME from any foundry artifact we downloaded
+          # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
+          first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
+          if [[ -z "${first_file}" ]]; then
+            echo "No foundry artifacts found to publish" >&2
+            exit 1
+          fi
+          ver_part=$(basename "$first_file")
+          ver_part=${ver_part#foundry_}
+          export VERSION_NAME=${ver_part%%_*}
+          echo "Detected VERSION_NAME=$VERSION_NAME"
+
+          mkdir -p ../extracted
+
+          OLD_IFS="$IFS"
+          IFS=','
+          for pair in ${{ env.binaries }}; do
+            platform="${pair%-*}"
+            arch="${pair#*-}"
+            echo "\n=== Publishing ${platform}-${arch} ==="
+
+            # Find matching artifact file (tar.gz on unix, zip on windows)
+            artifact=$(ls ../foundry_artifacts/foundry_${VERSION_NAME}_${platform}_${arch}.* 2>/dev/null | head -n1 || true)
+            if [[ -z "${artifact}" ]]; then
+              echo "No artifact found for ${platform}-${arch}, skipping"
+              continue
+            fi
+
+            dest="../extracted/${platform}_${arch}"
+            rm -rf "$dest" && mkdir -p "$dest"
+
+            if [[ "$artifact" == *.zip ]]; then
+              echo "Unzipping $artifact -> $dest"
+              unzip -q "$artifact" -d "$dest"
+              forge_bin_path="$dest/forge.exe"
+            else
+              echo "Extracting $artifact -> $dest"
+              tar -xzf "$artifact" -C "$dest"
+              forge_bin_path="$dest/forge"
+            fi
+
+            if [[ ! -f "$forge_bin_path" ]]; then
+              echo "Forge binary not found at $forge_bin_path" >&2
+              exit 1
+            fi
+
+            echo "Staging binary for @foundry-rs/forge-${platform}-${arch}"
+            PLATFORM_NAME="$platform" ARCH="$arch" FORGE_BIN_PATH="$forge_bin_path" \
+              bun ./scripts/prepublish.ts
+
+            pkg_path="./@foundry-rs/forge-${platform}-${arch}"
+            if [[ ! -d "$pkg_path" ]]; then
+              echo "Package directory $pkg_path not found; check naming. Skipping."
+              continue
+            fi
+
+            bun ./scripts/publish.ts "$pkg_path"
+            echo "Published @foundry-rs/forge-${platform}-${arch}"
+          done
+          IFS="$OLD_IFS"
+
+      - name: Publish @foundry-rs/foundry
+        working-directory: npm
+        env:
+          PROVENANCE: true
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_REGISTRY_URL: "https://registry.npmjs.org"
+        run: |
+          # Build the meta package
+          bun run build
+
+          bun run ./scripts/publish.ts ./@foundry-rs/foundry

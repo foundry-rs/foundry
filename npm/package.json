@@ -6,9 +6,9 @@
     "clean": "rm -rf bin dist && rm -rf ./@foundry-rs/forge*/bin ./@foundry-rs/forge*/dist ./@foundry-rs/forge*/*.tgz"
   },
   "dependencies": {
-    "tsdown": "^0.14.1",
+    "tsdown": "^0.14.2",
     "typescript": "^5.9.2",
-    "@types/bun": "^1.2.20",
+    "@types/bun": "^1.2.21",
     "@types/node": "^24.3.0"
   },
   "license": "MIT OR Apache-2.0",

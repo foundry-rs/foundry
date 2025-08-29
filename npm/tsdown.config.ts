@@ -21,12 +21,12 @@ const config = {
 
       NodeFS.readdirSync(packagePath, { withFileTypes: true })
         .filter(item => !['package.json', 'README.md'].includes(item.name))
-        .forEach(item =>
+        .forEach(item => {
           NodeFS.rmSync(NodePath.join(packagePath, item.name), {
             recursive: true,
             force: true
           })
-        )
+        })
     },
     'build:done': ({ options }) => {
       // prepend shebang to the file
