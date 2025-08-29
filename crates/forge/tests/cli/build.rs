@@ -99,6 +99,16 @@ Compiler run successful!
         .is_json(),
     );
 
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|---------------|------------------|-------------------|--------------------|---------------------|
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+
+
+"#]]);
+
     // Ignore EIP-3860
 
     cmd.forge_fuse().args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(
@@ -131,6 +141,19 @@ No files changed, compilation skipped
 "#]]
             .is_json(),
         );
+
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--ignore-eip-3860", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|---------------|------------------|-------------------|--------------------|---------------------|
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+
+
+"#]]);
 });
 
 // tests build output is as expected
@@ -174,6 +197,16 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 "#]]
         .is_json(),
     );
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  | 481              | 509               | 24,095             | 48,643              |
+
+
+"#]]);
 });
 
 // tests build output --sizes handles multiple contracts with the same name
@@ -224,6 +257,19 @@ contract Counter {
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
 | Foo                         | 62               | 88                | 24,514             | 49,064              |
 ╰-----------------------------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+
+| Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|-----------------------------|------------------|-------------------|--------------------|---------------------|
+| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
+| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
+| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
+| Foo                         | 62               | 88                | 24,514             | 49,064              |
 
 
 "#]]);

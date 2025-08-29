@@ -3445,6 +3445,85 @@ Listing selectors for contracts in the project...
 "#]]);
 });
 
+forgetest_init!(selectors_list_cmd_md, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+    event Incremented(uint256 newNumber);
+    error IncrementError();
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    prj.add_source(
+        "CounterV2.sol",
+        r"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+Counter
+
+| Type     | Signature            | Selector                                                           |
+|----------|----------------------|--------------------------------------------------------------------|
+| Function | increment()          | 0xd09de08a                                                         |
+| Function | number()             | 0x8381f58a                                                         |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+| Error    | IncrementError()     | 0x46544c04                                                         |
+
+CounterV2
+
+| Type     | Signature            | Selector   |
+|----------|----------------------|------------|
+| Function | incrementV2()        | 0x49365a69 |
+| Function | number()             | 0x8381f58a |
+| Function | setNumberV2(uint256) | 0xb525b68c |
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["selectors", "list", "--no-group", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+
+| Type     | Signature            | Selector                                                           | Contract  |
+|----------|----------------------|--------------------------------------------------------------------|-----------|
+| Function | increment()          | 0xd09de08a                                                         | Counter   |
+| Function | number()             | 0x8381f58a                                                         | Counter   |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         | Counter   |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 | Counter   |
+| Error    | IncrementError()     | 0x46544c04                                                         | Counter   |
+| Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
+| Function | number()             | 0x8381f58a                                                         | CounterV2 |
+| Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+
+"#]]);
+});
+
 // tests `interceptInitcode` function
 forgetest_init!(intercept_initcode, |prj, cmd| {
     prj.wipe_contracts();

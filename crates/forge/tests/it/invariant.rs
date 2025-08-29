@@ -1546,6 +1546,46 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]
     ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_include", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_exclude", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11453>
