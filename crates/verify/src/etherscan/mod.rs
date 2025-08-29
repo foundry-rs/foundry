@@ -474,7 +474,6 @@ mod tests {
     use super::*;
     use crate::provider::VerificationProviderType;
     use clap::Parser;
-    use foundry_block_explorers::ETHERSCAN_V2_API_BASE_URL;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
@@ -508,7 +507,7 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), ETHERSCAN_V2_API_BASE_URL);
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -565,7 +564,7 @@ mod tests {
 
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
 
-        assert_eq!(client.etherscan_api_url().as_str(), ETHERSCAN_V2_API_BASE_URL);
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([

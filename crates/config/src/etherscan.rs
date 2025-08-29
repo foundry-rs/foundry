@@ -413,7 +413,6 @@ fn into_url(url: impl reqwest::IntoUrl) -> std::result::Result<reqwest::Url, req
 mod tests {
     use super::*;
     use NamedChain::Mainnet;
-    use foundry_block_explorers::ETHERSCAN_V2_API_BASE_URL;
 
     #[test]
     fn can_create_client_via_chain() {
@@ -431,7 +430,10 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap().unwrap();
 
         let client = config.into_client().unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), ETHERSCAN_V2_API_BASE_URL);
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=1"
+        );
     }
 
     #[test]
@@ -476,7 +478,10 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
         let client = config.into_client().unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), ETHERSCAN_V2_API_BASE_URL);
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=1"
+        );
 
         unsafe {
             std::env::remove_var(env);
