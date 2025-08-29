@@ -29,7 +29,7 @@ fn test_verify_bytecode(
         .get_output()
         .stdout_lossy();
 
-    prj.add_source(contract_name, &source_code).unwrap();
+    prj.add_source(contract_name, &source_code);
     prj.write_config(config);
 
     let etherscan_key = next_etherscan_api_key();
@@ -96,7 +96,7 @@ fn test_verify_bytecode_with_ignore(
         .get_output()
         .stdout_lossy();
 
-    prj.add_source(contract_name, &source_code).unwrap();
+    prj.add_source(contract_name, &source_code);
     prj.write_config(config);
 
     let output = cmd
