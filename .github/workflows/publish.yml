@@ -1,10 +1,14 @@
-name: Publish to npm & gpr
+name: Publish NPM
 
 on:
   workflow_dispatch:
   workflow_run:
     types: [completed]
     workflows: [release]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -15,17 +19,35 @@ env:
   NPM_CONFIG_PROVENANCE: true
 
 jobs:
-  npm:
-    runs-on: ubuntu-latest
+  publish-arch:
     permissions:
       actions: read
       contents: read
       id-token: write
+    name: ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 3
+      fail-fast: false
+      matrix:
+        # we don't need a specific runner for any of these
+        # because they've all been built already. We're just publishing
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: win32
+            arch: amd64
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     env:
-      # Only publish packages we actually ship in npm/@foundry-rs
-      # (alpine/musl builds are not separate npm packages)
-      binaries: "linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,win32-amd64"
+      NPM_REGISTRY_URL: "https://registry.npmjs.org"
     steps:
       - name: Download Release Assets
         uses: actions/download-artifact@v5
@@ -49,86 +71,85 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts
-          registry-url: https://registry.npmjs.org
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install Dependencies
         working-directory: npm
         run: bun install --frozen-lockfile
 
+      - name: Derive RELEASE_VERSION
+        id: release-version
+        run: |
+          set -euo pipefail
+
+          # Derive RELEASE_VERSION from any foundry artifact we downloaded
+          # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
+
+          first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
+          if [[ -z "${first_file}" ]]; then
+            echo "No foundry artifacts found to publish" >&2
+            exit 1
+          fi
+
+          version_part=$(basename "$first_file")
+          version_part=${version_part#foundry_}
+
+          export RELEASE_VERSION=${version_part%%_*}
+
+          echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Publish Binaries
         working-directory: npm
         env:
           PROVENANCE: true
-          # Required by our publish script and by npm itself
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_REGISTRY_URL: "https://registry.npmjs.org"
+          NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
         run: |
           set -euo pipefail
 
           echo "Artifacts in foundry_artifacts:"
           ls -la ../foundry_artifacts || true
 
-          # Derive VERSION_NAME from any foundry artifact we downloaded
+          # Derive RELEASE_VERSION from any foundry artifact we downloaded
           # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
           first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
           if [[ -z "${first_file}" ]]; then
             echo "No foundry artifacts found to publish" >&2
             exit 1
           fi
-          ver_part=$(basename "$first_file")
-          ver_part=${ver_part#foundry_}
-          export VERSION_NAME=${ver_part%%_*}
-          echo "Detected VERSION_NAME=$VERSION_NAME"
+          version_part=$(basename "$first_file")
+          version_part=${version_part#foundry_}
+          export RELEASE_VERSION=${version_part%%_*}
+          echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
 
-          mkdir -p ../extracted
+  publish-meta:
+    needs: publish-arch
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    env:
+      RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
 
-          OLD_IFS="$IFS"
-          IFS=','
-          for pair in ${{ env.binaries }}; do
-            platform="${pair%-*}"
-            arch="${pair#*-}"
-            echo "\n=== Publishing ${platform}-${arch} ==="
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@main
+        with:
+          bun-version: latest
+          registries: |
+            https://registry.npmjs.org
 
-            # Find matching artifact file (tar.gz on unix, zip on windows)
-            artifact=$(ls ../foundry_artifacts/foundry_${VERSION_NAME}_${platform}_${arch}.* 2>/dev/null | head -n1 || true)
-            if [[ -z "${artifact}" ]]; then
-              echo "No artifact found for ${platform}-${arch}, skipping"
-              continue
-            fi
+      - name: Setup Node (for npm publish auth)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts
+          registry-url: "https://registry.npmjs.org"
 
-            dest="../extracted/${platform}_${arch}"
-            rm -rf "$dest" && mkdir -p "$dest"
-
-            if [[ "$artifact" == *.zip ]]; then
-              echo "Unzipping $artifact -> $dest"
-              unzip -q "$artifact" -d "$dest"
-              forge_bin_path="$dest/forge.exe"
-            else
-              echo "Extracting $artifact -> $dest"
-              tar -xzf "$artifact" -C "$dest"
-              forge_bin_path="$dest/forge"
-            fi
-
-            if [[ ! -f "$forge_bin_path" ]]; then
-              echo "Forge binary not found at $forge_bin_path" >&2
-              exit 1
-            fi
-
-            echo "Staging binary for @foundry-rs/forge-${platform}-${arch}"
-            PLATFORM_NAME="$platform" ARCH="$arch" FORGE_BIN_PATH="$forge_bin_path" \
-              bun ./scripts/prepublish.ts
-
-            pkg_path="./@foundry-rs/forge-${platform}-${arch}"
-            if [[ ! -d "$pkg_path" ]]; then
-              echo "Package directory $pkg_path not found; check naming. Skipping."
-              continue
-            fi
-
-            bun ./scripts/publish.ts "$pkg_path"
-            echo "Published @foundry-rs/forge-${platform}-${arch}"
-          done
-          IFS="$OLD_IFS"
+      - name: Install Dependencies
+        working-directory: npm
+        run: bun install --frozen-lockfile
 
       - name: Publish @foundry-rs/foundry
         working-directory: npm
@@ -136,9 +157,8 @@ jobs:
           PROVENANCE: true
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_REGISTRY_URL: "https://registry.npmjs.org"
         run: |
-          # Build the meta package
-          bun run build
+          set -euo pipefail
 
-          bun run ./scripts/publish.ts ./@foundry-rs/foundry
+          bun ./scripts/publish.ts ./@foundry-rs/foundry
+          echo "Published @foundry-rs/foundry"
