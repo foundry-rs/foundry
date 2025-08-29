@@ -108,8 +108,8 @@ contract CounterTest {
 
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Check config for `severity` and `exclude`
     prj.update_config(|config| {
@@ -136,8 +136,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 forgetest!(can_use_config_ignore, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContract", OTHER_CONTRACT);
 
     // Check config for `ignore`
     prj.update_config(|config| {
@@ -176,8 +176,8 @@ note[mixed-case-function]: function names should use mixedCase
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContract", OTHER_CONTRACT);
 
     // Check config for `ignore`
     prj.update_config(|config| {
@@ -194,8 +194,8 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
 
 forgetest!(can_override_config_severity, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override severity
     prj.update_config(|config| {
@@ -222,8 +222,8 @@ note[mixed-case-function]: function names should use mixedCase
 
 forgetest!(can_override_config_path, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override excluded files
     prj.update_config(|config| {
@@ -250,8 +250,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 forgetest!(can_override_config_lint, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override excluded lints
     prj.update_config(|config| {
@@ -280,7 +280,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
     prj.update_config(|config| {
@@ -344,7 +344,7 @@ Warning (2018): Function state mutability can be restricted to pure
 
 forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
@@ -363,7 +363,7 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
 
 forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
@@ -392,7 +392,7 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
 
 forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
     prj.update_config(|config| {
@@ -446,21 +446,21 @@ Warning (2018): Function state mutability can be restricted to pure
 
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     cmd.arg("lint").assert_success();
 
     prj.wipe_contracts();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
+    prj.add_source("ContractWithLints", CONTRACT);
     cmd.arg("lint").assert_success();
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11080>
 forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OnlyImports", ONLY_IMPORTS).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
 note[unused-import]: unused imports should be removed
  [FILE]:8:14
@@ -477,8 +477,8 @@ note[unused-import]: unused imports should be removed
 // <https://github.com/foundry-rs/foundry/issues/11234>
 forgetest!(can_lint_only_built_files, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
-    prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
+    prj.add_source("CounterAWithLints", COUNTER_A);
+    prj.add_source("CounterBWithLints", COUNTER_B);
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
@@ -519,8 +519,8 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 // <https://github.com/foundry-rs/foundry/issues/11392>
 forgetest!(can_lint_param_constants, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("Counter", COUNTER_WITH_CONST).unwrap();
-    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST).unwrap();
+    prj.add_source("Counter", COUNTER_WITH_CONST);
+    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
     cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -528,6 +528,94 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11460>
+forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "UnwrappedModifierTest",
+        r#"
+        // SPDX-License-Identifier: MIT
+        pragma solidity ^0.8.0;
+
+        contract UnwrappedModifierTest {
+            mapping(address => bool) isOwner;
+
+            modifier onlyOwner() {
+                require(isOwner[msg.sender], "Not owner");
+                require(msg.sender != address(0), "Zero address");
+                _;
+            }
+
+            function doSomething() public onlyOwner {}
+        }
+            "#,
+    );
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::CodeSize],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
+    cmd.arg("lint").arg("--json").assert_json_stderr(true,
+        str![[r#"
+            {
+              "$message_type": "diag",
+              "message": "wrap modifier logic to reduce code size",
+              "code": {
+                "code": "unwrapped-modifier-logic",
+                "explanation": null
+              },
+              "level": "note",
+              "spans": [
+                {
+                  "file_name": "[..]",
+                  "byte_start": 183,
+                  "byte_end": 192,
+                  "line_start": 8,
+                  "line_end": 8,
+                  "column_start": 22,
+                  "column_end": 31,
+                  "is_primary": true,
+                  "text": [
+                    {
+                      "text": "            modifier onlyOwner() {",
+                      "highlight_start": 22,
+                      "highlight_end": 31
+                    }
+                  ],
+                  "label": null
+                }
+              ],
+              "children": [
+                {
+                  "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
+                  "code": null,
+                  "level": "note",
+                  "spans": [],
+                  "children": [],
+                  "rendered": null
+                },
+                {
+                  "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+                  "code": null,
+                  "level": "help",
+                  "spans": [],
+                  "children": [],
+                  "rendered": null
+                }
+              ],
+              "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |                      ---------\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n"
+            }
+"#]],
+);
 });
 
 // ------------------------------------------------------------------------------------------------

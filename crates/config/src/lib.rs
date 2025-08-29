@@ -960,6 +960,15 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// Same as [`Self::ephemeral_project()`] but configures the project to not emit any artifacts.
+    pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+        let mut project = self.ephemeral_project()?;
+        project.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection([]);
+        });
+        Ok(project)
+    }
+
     /// Builds mapping with additional settings profiles.
     fn additional_settings(
         &self,
