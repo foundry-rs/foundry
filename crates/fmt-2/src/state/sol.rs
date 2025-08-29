@@ -448,7 +448,7 @@ impl<'ast> State<'_, 'ast> {
                 ListFormat::AlwaysBreak { break_single: true, with_space: false }
             }
             MultilineFuncHeaderStyle::AllParams
-                if !header.parameters.is_empty() && !self.can_header_fit_in_one_line(header) =>
+                if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
                 ListFormat::AlwaysBreak { break_single: true, with_space: false }
             }
@@ -495,7 +495,7 @@ impl<'ast> State<'_, 'ast> {
 
         let attrib_box = self.config.multiline_func_header.params_first()
             || (self.config.multiline_func_header.attrib_first()
-                && !self.can_header_params_fit_in_one_line(header));
+                && !self.can_header_params_be_inlined(header));
         if attrib_box {
             self.s.cbox(0);
         }
@@ -1882,7 +1882,7 @@ impl<'ast> State<'_, 'ast> {
 
         // If no decision was made, estimate the length to be formatted.
         // NOTE: conservative check -> worst-case scenario is formatting as multi-line block.
-        if !self.can_stmts_fit_in_one_line(cond, then, els_opt) {
+        if !self.can_stmts_be_inlined(cond, then, els_opt) {
             return Decision { outcome: false, is_cached: false };
         }
 
@@ -1984,7 +1984,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Performs a size estimation to see if the if/else can fit on one line.
-    fn can_stmts_fit_in_one_line(
+    fn can_stmts_be_inlined(
         &mut self,
         cond: &'ast ast::Expr<'ast>,
         then: &'ast ast::Stmt<'ast>,
@@ -2004,7 +2004,7 @@ impl<'ast> State<'_, 'ast> {
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_fit_in_one_line(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+    fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
@@ -2031,8 +2031,6 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn estimate_header_params_size(&mut self, header: &ast::FunctionHeader<'_>) -> usize {
-        // ' ' + name
-        let name = header.name.map_or(0, |name| self.estimate_size(name.span) + 1);
         // '(' + param + (', ' + param) + ')'
         let params = header
             .parameters
@@ -2040,11 +2038,11 @@ impl<'ast> State<'_, 'ast> {
             .iter()
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
-        // `function` takes 8 chars
-        8 + name + params
+        // 'function ' + name + ' ' + params
+        9 + header.name.map_or(0, |name| self.estimate_size(name.span) + 1) + params
     }
 
-    fn can_header_params_fit_in_one_line(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+    fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
         self.estimate_header_params_size(header) <= self.space_left()
     }
 }
