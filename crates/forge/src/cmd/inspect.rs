@@ -636,43 +636,39 @@ fn parse_storage_buckets_value(raw_metadata: Option<&String>) -> Option<Vec<(Str
     let parse_bucket_pairs = |s: &str| {
         BUCKET_PAIR_RE
             .captures_iter(s)
-            .filter_map(|cap| {
-                let name = cap.get(1)?.as_str().to_string();
-                let hex = cap.get(2)?.as_str().to_string();
-                // strip 0x and check decoded length
-                if let Ok(bytes) = hex::decode(hex.trim_start_matches("0x"))
-                    && bytes.len() == 32
-                {
-                    return Some((name, hex));
-                }
-                None
-            })
-            .collect::<Vec<(String, String)>>()
-    };
+            .filter_map(|caps| {
+                let name = caps.get(1)?.as_str();
+                let hex_str = caps.get(2)?.as_str();
 
+                hex::decode(hex_str.trim_start_matches("0x"))
+                    .ok()
+                    .filter(|bytes| bytes.len() == 32)
+                    .map(|_| (name.to_owned(), hex_str.to_owned()))
+            })
+            .collect::<Vec<_>>()
+    };
     let raw = raw_metadata?;
     let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let val = v
-        .get("output")
+    v.get("output")
         .and_then(|o| o.get("devdoc"))
         .and_then(|d| d.get("methods"))
         .and_then(|m| m.get("constructor"))
         .and_then(|c| c.as_object())
-        .and_then(|obj| obj.get("custom:storage-bucket"))?;
-
-    Some(
-        val.as_str()
-            .into_iter() // Option<&str> → Iterator<Item=&str>
-            .flat_map(parse_bucket_pairs)
-            .filter_map(|(name, hex): (String, String)| {
-                let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
-                let slot = U256::from_str_radix(hex_str, 16).ok()?;
-                let slot_hex =
-                    short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<32>()));
-                Some((name, slot_hex))
-            })
-            .collect(),
-    )
+        .and_then(|obj| obj.get("custom:storage-bucket"))
+        .map(|val| {
+            val.as_str()
+                .into_iter() // Option<&str> → Iterator<Item=&str>
+                .flat_map(parse_bucket_pairs)
+                .filter_map(|(name, hex): (String, String)| {
+                    let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
+                    let slot = U256::from_str_radix(hex_str, 16).ok()?;
+                    let slot_hex = short_hex(&alloy_primitives::hex::encode_prefixed(
+                        slot.to_be_bytes::<32>(),
+                    ));
+                    Some((name, slot_hex))
+                })
+                .collect()
+        })
 }
 
 fn short_hex(h: &str) -> String {
