@@ -437,7 +437,10 @@ impl MutationHandler {
                                             ">=" => solar_parse::ast::BinOpKind::Ge,
                                             "<" => solar_parse::ast::BinOpKind::Lt,
                                             "<=" => solar_parse::ast::BinOpKind::Le,
-                                            _ => solar_parse::ast::BinOpKind::Add,
+                                            other => panic!(
+                                                "Unknown binary operator token in cache: {}",
+                                                other
+                                            ),
                                         };
                                         crate::mutation::mutant::MutationType::BinaryOp(kind)
                                     }
@@ -467,7 +470,10 @@ impl MutationHandler {
                                             "PostDec" => solar_parse::ast::UnOpKind::PostDec,
                                             "Not" => solar_parse::ast::UnOpKind::Not,
                                             "BitNot" => solar_parse::ast::UnOpKind::BitNot,
-                                            _ => solar_parse::ast::UnOpKind::Not,
+                                            other => panic!(
+                                                "Unknown unary operator token in cache: {}",
+                                                other
+                                            ),
                                         };
                                         crate::mutation::mutant::MutationType::UnaryOperator(
                                             crate::mutation::mutant::UnaryOpMutated::new(

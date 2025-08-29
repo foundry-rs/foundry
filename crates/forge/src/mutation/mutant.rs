@@ -153,8 +153,6 @@ pub enum MutationResult {
 /// A given mutation
 #[derive(Debug, Clone)]
 pub struct Mutant {
-    /// TODO: initialize the path (from the context, cf registry)
-
     /// The path to the project root where this mutant (tries to) live
     pub path: PathBuf,
     pub span: Span,

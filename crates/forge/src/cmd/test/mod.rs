@@ -498,12 +498,12 @@ impl TestArgs {
             for path in mutate_paths {
                 sh_println!("Running mutation tests for {}", path.display()).unwrap();
 
-                // Check if this file has already been tested and if the compilation hash is the
+                // Check if this file has already been tested and if the build id is the
                 // same - if so, just add the mutants to the summary
                 let mut handler = MutationHandler::new(path.clone(), config.clone());
 
                 handler.read_source_contract()?;
-                // Get the current build id directly from the compile output
+
                 let build_id = output
                     .artifact_ids()
                     .find_map(
@@ -511,8 +511,8 @@ impl TestArgs {
                     )
                     .unwrap_or_default();
 
-                // If we have cached results for this build, use them and skip running tests
-                // @todo this might be optimized/cached too?
+                // If we have cached results for these mutations and build id, use them and skip
+                // running tests
                 if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id) {
                     for (mutant, status) in prior {
                         match status {
@@ -553,7 +553,6 @@ impl TestArgs {
                     let compiler = ProjectCompiler::new()
                         .dynamic_test_linking(config.dynamic_test_linking)
                         .quiet(true);
-                    // .quiet(shell::is_json() || self.junit);
 
                     let compile_output = compiler.compile(&project);
 
@@ -599,7 +598,7 @@ impl TestArgs {
 
                 handler.restore_original_source();
 
-                // If we generated fresh mutants, persist them for this build hash
+                // If we generated fresh mutants, persist them for this build id
                 if handler.mutations.len() > 0 && !build_id.is_empty() {
                     let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
                     let _ = handler.persist_cached_results(&build_id, &results_vec);
