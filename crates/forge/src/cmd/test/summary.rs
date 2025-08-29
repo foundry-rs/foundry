@@ -1,6 +1,11 @@
 use crate::cmd::test::TestOutcome;
-use comfy_table::{Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS};
-use foundry_common::reports::{ReportKind, report_kind};
+use comfy_table::{
+    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+};
+use foundry_common::{
+    reports::{ReportKind, report_kind},
+    shell,
+};
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
 use serde_json::json;
@@ -26,10 +31,21 @@ impl Display for TestSummaryReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Text => {
-                writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
+                writeln!(
+                    f,
+                    "\n{}",
+                    &self.format_table_output(&self.is_detailed, &self.outcome, false)
+                )?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
+            }
+            ReportKind::Markdown => {
+                writeln!(
+                    f,
+                    "\n{}",
+                    &self.format_table_output(&self.is_detailed, &self.outcome, true)
+                )?;
             }
         }
 
@@ -65,9 +81,13 @@ impl TestSummaryReport {
         serde_json::to_string_pretty(&output).unwrap()
     }
 
-    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
+    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome, md: bool) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if md {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         let mut row = Row::from(vec![
             Cell::new("Test Suite"),
@@ -141,7 +161,11 @@ pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
 ) -> Table {
     let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
 
     table.set_header(vec![
         Cell::new("Contract"),
