@@ -1598,8 +1598,7 @@ contract Counter2Test is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
