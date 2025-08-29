@@ -3,7 +3,7 @@
 use crate::{
     MultiContractRunner, TestFilter,
     fuzz::BaseCounterExample,
-    multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
+    multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{SuiteResult, TestResult, TestSetup},
 };
@@ -369,7 +369,7 @@ impl<'a> ContractRunner<'a> {
             .contract
             .abi
             .functions()
-            .filter(|func| is_matching_test(func, filter))
+            .filter(|func| filter.matches_test_function(func))
             .collect::<Vec<_>>();
         debug!(
             "Found {} test functions out of {} in {:?}",
