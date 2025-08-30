@@ -91,12 +91,15 @@ pub fn subscriber() {
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Hyper
+        // Low level networking
         "hyper=off",
         "hyper_util=off",
         "h2=off",
+        "rustls=off",
         // Tokio
         "mio=off",
+        // Too verbose
+        "jsonpath_lib=off",
     ];
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
@@ -318,12 +321,10 @@ pub struct Git<'a> {
 }
 
 impl<'a> Git<'a> {
-    #[inline]
     pub fn new(root: &'a Path) -> Self {
         Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
-    #[inline]
     pub fn from_config(config: &'a Config) -> Self {
         Self::new(config.root.as_path())
     }
@@ -388,18 +389,15 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    #[inline]
     pub fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    #[inline]
     pub fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
@@ -411,6 +409,11 @@ impl<'a> Git<'a> {
             .arg(tag)
             .exec()
             .map(drop)
+    }
+
+    /// Returns the current HEAD commit hash of the current branch.
+    pub fn head(self) -> Result<String> {
+        self.cmd().args(["rev-parse", "HEAD"]).get_stdout_lossy()
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
@@ -487,6 +490,10 @@ impl<'a> Git<'a> {
 
     pub fn is_in_repo(self) -> std::io::Result<bool> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
+    }
+
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

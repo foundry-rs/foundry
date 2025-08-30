@@ -7,8 +7,8 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
+    SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -26,6 +26,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
 };
 
 // tests all config values that are in use
@@ -36,6 +37,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         // `profiles` is not serialized.
         profiles: vec![],
         root: ".".into(),
+        extends: None,
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -84,14 +86,16 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            failure_persist_file: Some("failures".to_string()),
             show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            corpus_dir: Some("cache/invariant/corpus".into()),
+            corpus: FuzzCorpusConfig {
+                corpus_dir: Some("cache/invariant/corpus".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ffi: true,
@@ -372,8 +376,7 @@ forgetest!(can_set_solc_explicitly, |prj, cmd| {
 pragma solidity *;
 contract Greeter {}
    ",
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
@@ -395,8 +398,7 @@ forgetest!(can_use_solc, |prj, cmd| {
 pragma solidity *;
 contract Foo {}
    ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -452,8 +454,7 @@ contract Foo {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
@@ -914,8 +915,7 @@ import "forge-std/Script.sol";
 contract BaseScript is Script {
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "MyScript.sol",
         r#"
@@ -924,8 +924,7 @@ import "script/BaseScript.sol";
 contract MyScript is BaseScript {
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let nested = prj.paths().libraries[0].join("another-dep");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -964,8 +963,7 @@ import "contracts/Counter.sol";
 contract CounterTest {
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
@@ -1084,6 +1082,7 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
+mixed_case_exceptions = ["ERC"]
 
 [doc]
 out = "docs"
@@ -1102,8 +1101,11 @@ include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/fuzz"
-failure_persist_file = "failures"
 show_logs = false
 
 [invariant]
@@ -1122,10 +1124,10 @@ gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
-show_edge_coverage = false
 
 [labels]
 
@@ -1214,8 +1216,12 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/fuzz",
-    "failure_persist_file": "failures",
     "show_logs": false,
     "timeout": null
   },
@@ -1236,11 +1242,11 @@ exclude = []
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false,
-    "show_edge_coverage": false
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1302,7 +1308,10 @@ exclude = []
     "severity": [],
     "exclude_lints": [],
     "ignore": [],
-    "lint_on_build": true
+    "lint_on_build": true,
+    "mixed_case_exceptions": [
+      "ERC"
+    ]
   },
   "doc": {
     "out": "docs",
@@ -1440,8 +1449,7 @@ contract Flare {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let test_contract = |n: u32| {
         format!(
@@ -1474,7 +1482,7 @@ contract GasSnapshotCheckTest is DSTest {{
     };
 
     // Assert that gas_snapshot_check is disabled by default.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1));
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
@@ -1493,7 +1501,7 @@ gas_snapshot_check = true
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas snapshot check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1525,7 +1533,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas_snapshot_check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1550,7 +1558,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
     // Assert that this will override the config file value.
     prj.update_config(|config| config.gas_snapshot_check = false);
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4));
     cmd.forge_fuse();
     cmd.env("FORGE_SNAPSHOT_CHECK", "true");
     cmd.args(["test"]).assert_failure().stderr_eq(str![[r#"
@@ -1618,8 +1626,7 @@ contract GasSnapshotEmitTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert that gas_snapshot_emit is enabled by default.
     cmd.forge_fuse().args(["test"]).assert_success();
@@ -1698,8 +1705,7 @@ forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v2/Counter.sol",
@@ -1707,8 +1713,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v3/Counter.sol",
@@ -1716,8 +1721,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Additional profiles are defined with optimizer runs but without explicitly enabling
     // optimizer
@@ -1846,4 +1850,52 @@ contract Counter {
     assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("800", runs.unwrap().to_string());
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11227>
+forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+    prj.update_config(|config| {
+        config.lint.exclude_lints = vec![
+            "asm-keccak256".to_string(),
+            "incorrect-shift".to_string(),
+            "divide-before-multiply".to_string(),
+            "mixed-case-variable".to_string(),
+            "mixed-case-function".to_string(),
+            "screaming-snake-case-const".to_string(),
+            "screaming-snake-case-immutable".to_string(),
+            "unwrapped-modifier-logic".to_string(),
+        ]
+    });
+    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6529>
+forgetest_init!(test_fail_fast_config, |prj, cmd| {
+    // Skip if we don't have at least 2 CPUs to run both tests in parallel.
+    if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
+        config.fuzz.timeout = Some(3600);
+    });
+    prj.add_test(
+        "AnotherCounterTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AnotherCounterTest is Test {
+    // This failure should stop all other tests.
+    function test_Failure() public pure {
+        require(false);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--fail-fast"]).assert_failure();
 });

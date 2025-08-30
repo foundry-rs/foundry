@@ -14,7 +14,7 @@ use rustyline::{
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
 };
-use solar_parse::{
+use solar::parse::{
     Lexer,
     interface::Session,
     token::{Token, TokenKind},
@@ -173,7 +173,7 @@ impl SolidityHelper {
 
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
-        self.sess.enter(|| f(&self.sess));
+        self.sess.enter_sequential(|| f(&self.sess));
     }
 }
 
@@ -238,7 +238,7 @@ impl Helper for SolidityHelper {}
 #[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
-    use solar_parse::{
+    use solar::parse::{
         interface::kw::*,
         token::{TokenKind::*, TokenLitKind::*},
     };

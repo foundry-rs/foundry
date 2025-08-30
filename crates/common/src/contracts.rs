@@ -8,8 +8,9 @@ use eyre::{OptionExt, Result};
 use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-        ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
+        BytecodeObject, CompactBytecode, CompactContractBytecode, CompactContractBytecodeCow,
+        CompactDeployedBytecode, ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
+        StorageLayout,
     },
     utils::canonicalized,
 };
@@ -75,6 +76,8 @@ pub struct ContractData {
     pub bytecode: Option<BytecodeData>,
     /// Contract runtime code.
     pub deployed_bytecode: Option<BytecodeData>,
+    /// Contract storage layout, if available.
+    pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl ContractData {
@@ -99,6 +102,58 @@ impl ContractData {
     }
 }
 
+/// Builder for creating a `ContractsByArtifact` instance, optionally including storage layouts
+/// from project compile output.
+pub struct ContractsByArtifactBuilder<'a> {
+    /// All compiled artifact bytecodes (borrowed).
+    artifacts: BTreeMap<ArtifactId, CompactContractBytecodeCow<'a>>,
+    /// Optionally collected storage layouts for matching artifact IDs.
+    storage_layouts: BTreeMap<ArtifactId, StorageLayout>,
+}
+
+impl<'a> ContractsByArtifactBuilder<'a> {
+    /// Creates a new builder from artifacts with present bytecode iterator.
+    pub fn new(
+        artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecodeCow<'a>)>,
+    ) -> Self {
+        Self { artifacts: artifacts.into_iter().collect(), storage_layouts: BTreeMap::new() }
+    }
+
+    /// Adds storage layouts from `ProjectCompileOutput` to known artifacts.
+    pub fn with_storage_layouts(mut self, output: ProjectCompileOutput) -> Self {
+        self.storage_layouts = output
+            .into_artifacts()
+            .filter_map(|(id, artifact)| artifact.storage_layout.map(|layout| (id, layout)))
+            .collect();
+        self
+    }
+
+    /// Builds `ContractsByArtifact`.
+    pub fn build(self) -> ContractsByArtifact {
+        let map = self
+            .artifacts
+            .into_iter()
+            .filter_map(|(id, artifact)| {
+                let name = id.name.clone();
+                let CompactContractBytecodeCow { abi, bytecode, deployed_bytecode } = artifact;
+
+                Some((
+                    id.clone(),
+                    ContractData {
+                        name,
+                        abi: abi?.into_owned(),
+                        bytecode: bytecode.map(|b| b.into_owned().into()),
+                        deployed_bytecode: deployed_bytecode.map(|b| b.into_owned().into()),
+                        storage_layout: self.storage_layouts.get(&id).map(|l| Arc::new(l.clone())),
+                    },
+                ))
+            })
+            .collect();
+
+        ContractsByArtifact(Arc::new(map))
+    }
+}
+
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
@@ -120,6 +175,7 @@ impl ContractsByArtifact {
                         abi: abi?,
                         bytecode: bytecode.map(Into::into),
                         deployed_bytecode: deployed_bytecode.map(Into::into),
+                        storage_layout: None,
                     },
                 ))
             })
@@ -308,7 +364,7 @@ impl ContractsByArtifact {
     pub fn find_abi_by_name_or_src_path(&self, name_or_path: &str) -> Option<(JsonAbi, String)> {
         self.iter()
             .find(|(artifact, _)| {
-                artifact.name == name_or_path || artifact.source == PathBuf::from(name_or_path)
+                artifact.name == name_or_path || artifact.source == Path::new(name_or_path)
             })
             .map(|(_, contract)| (contract.abi.clone(), contract.name.clone()))
     }
@@ -541,6 +597,7 @@ pub fn find_matching_contract_artifact(
         Ok(artifact.clone())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

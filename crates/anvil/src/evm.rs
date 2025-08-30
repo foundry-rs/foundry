@@ -1,13 +1,13 @@
-use std::fmt::Debug;
-
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
+
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
-use revm::{Inspector, precompile::PrecompileWithAddress};
+use revm::{Inspector, precompile::Precompile};
+use std::fmt::Debug;
 
 pub mod celo_precompile;
 
@@ -15,18 +15,20 @@ pub mod celo_precompile;
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)>;
+    fn precompiles(&self) -> Vec<(Precompile, u64)>;
 }
 
 /// Inject precompiles into the EVM dynamically.
 pub fn inject_precompiles<DB, I>(
     evm: &mut EitherEvm<DB, I, PrecompilesMap>,
-    precompiles: Vec<(PrecompileWithAddress, u64)>,
+    precompiles: Vec<(Precompile, u64)>,
 ) where
     DB: Database,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    for (PrecompileWithAddress(addr, func), gas) in precompiles {
+    for (precompile, gas) in precompiles {
+        let addr = *precompile.address();
+        let func = *precompile.precompile();
         evm.precompiles_mut().apply_precompile(&addr, move |_| {
             Some(DynPrecompile::from(move |input: PrecompileInput<'_>| func(input.data, gas)))
         });
@@ -35,7 +37,7 @@ pub fn inject_precompiles<DB, I>(
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
+    use std::{borrow::Cow, convert::Infallible};
 
     use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
@@ -51,7 +53,7 @@ mod tests {
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
         precompile::{
-            PrecompileOutput, PrecompileResult, PrecompileSpecId, PrecompileWithAddress,
+            Precompile, PrecompileId, PrecompileOutput, PrecompileResult, PrecompileSpecId,
             Precompiles,
         },
         primitives::hardfork::SpecId,
@@ -73,9 +75,10 @@ mod tests {
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)> {
+        fn precompiles(&self) -> Vec<(Precompile, u64)> {
             vec![(
-                PrecompileWithAddress::from((
+                Precompile::from((
+                    PrecompileId::Custom(Cow::Borrowed("custom_echo")),
                     PRECOMPILE_ADDR,
                     custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
                 )),

@@ -96,7 +96,7 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[arg(long, short, default_value = "run()")]
+    #[arg(long, short, default_value = "run")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.
@@ -181,6 +181,10 @@ pub struct ScriptArgs {
     /// Disables the contract size limit during script execution.
     #[arg(long)]
     pub disable_code_size_limit: bool,
+
+    /// Disables the labels in the traces.
+    #[arg(long)]
+    pub disable_labels: bool,
 
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]

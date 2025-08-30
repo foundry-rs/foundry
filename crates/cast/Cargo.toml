@@ -72,7 +72,7 @@ serde.workspace = true
 foundry-cli.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
+clap_complete.workspace = true
 clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true
@@ -87,9 +87,10 @@ yansi.workspace = true
 evmole.workspace = true
 
 [dev-dependencies]
+alloy-hardforks.workspace = true
+dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
-alloy-hardforks.workspace = true
 
 [features]
 default = ["jemalloc"]

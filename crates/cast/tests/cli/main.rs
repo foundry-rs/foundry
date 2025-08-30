@@ -74,6 +74,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -253,6 +256,35 @@ casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
 Created new encrypted keystore file: [..]
 [ADDRESS]
 [PUBLIC_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with default keystore location
+casttest!(new_wallet_default_keystore, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
+        r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#
+    ]]);
+
+    // Verify the default keystore directory was created
+    let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
+    assert!(keystore_path.exists());
+    assert!(keystore_path.is_dir());
+});
+
+// tests that we can outputting multiple keys without a keystore path
+casttest!(new_wallet_multiple_keys, |_prj, cmd| {
+    cmd.args(["wallet", "new", "-n", "2"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
 
 "#]]);
 });
@@ -1966,6 +1998,41 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--md",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+
+
+"#]]);
+});
+
 casttest!(storage_layout_complex_proxy, |_prj, cmd| {
     cmd.args([
         "storage",
@@ -2499,8 +2566,7 @@ contract LocalProjectContract {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "LocalProjectScript",
         r#"
@@ -2515,8 +2581,7 @@ contract LocalProjectScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2667,8 +2732,7 @@ library ExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "CounterInExternalLib",
         r#"
@@ -2683,8 +2747,7 @@ contract CounterInExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "CounterInExternalLibScript",
         r#"
@@ -2698,8 +2761,7 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2776,8 +2838,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -2878,8 +2939,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -3146,35 +3206,23 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(fetch_src_blockscout, |_prj, cmd| {
-    let url = "https://eth.blockscout.com/api";
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_blockscout,
+    |_prj, cmd| {
+        let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-    cmd.args([
-        "source",
-        &weth.to_string(),
-        "--chain-id",
-        "1",
-        "--explorer-api-url",
-        url,
-        "--flatten",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-contract WETH9 {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
-    uint8  public decimals = 18;
-..."#]]);
-});
-
-casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_etherscan_api_key();
-
-    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--chain-id",
+            "1",
+            "--explorer-api-url",
+            url,
+            "--flatten",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3183,7 +3231,33 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+    }
+);
+
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_default,
+    |_prj, cmd| {
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let etherscan_api_key = next_etherscan_api_key();
+
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--flatten",
+            "--etherscan-api-key",
+            &etherscan_api_key,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
@@ -3284,8 +3358,7 @@ contract SimpleStorage {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "SimpleStorageScript",
         r#"
@@ -3299,8 +3372,7 @@ contract SimpleStorageScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -3421,8 +3493,7 @@ contract ConstructorContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3497,8 +3568,7 @@ contract EstimateContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3547,8 +3617,7 @@ contract SimpleContract {
     uint256 public constant VALUE = 42;
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3606,8 +3675,7 @@ contract ComplexContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3740,4 +3808,120 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+// Tests for negative number argument parsing
+// Ensures that negative numbers in function arguments are properly parsed
+// instead of being treated as command flags
+
+// Test that cast call accepts negative numbers as function arguments
+casttest!(cast_call_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    // Test with negative int parameter - should not treat -456789 as a flag
+    cmd.args([
+        "call",
+        "0xAbCdEf1234567890aBcDeF1234567890aBcDeF12",
+        "processValue(int128)",
+        "-456789",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+// Test negative numbers with multiple parameters
+casttest!(cast_call_multiple_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--rpc-url",
+        rpc.as_str(),
+        "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+        "calculateDelta(int64,int32,uint16)",
+        "-987654321",
+        "-42",
+        "65535",
+    ])
+    .assert_success();
+});
+
+// Test negative numbers mixed with flags
+casttest!(cast_call_negative_with_flags, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--trace", // flag before
+        "0x9876543210FeDcBa9876543210FeDcBa98765432",
+        "updateBalance(int256)",
+        "-777888",
+        "--rpc-url",
+        rpc.as_str(), // flag after
+    ])
+    .assert_success();
+});
+
+// Test that actual invalid flags are still caught
+casttest!(cast_call_invalid_flag_still_caught, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "--invalid-flag", // This should be caught as invalid
+        "0x5555555555555555555555555555555555555555",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: unexpected argument '--invalid-flag' found
+
+  tip: to pass '--invalid-flag' as a value, use '-- --invalid-flag'
+
+Usage: cast[..] call [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+// Test cast estimate with negative numbers
+casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "estimate",
+        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "rebalance(int64)",
+        "-8888",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+// Test cast mktx with negative numbers
+casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "mktx",
+        "0x1111111111111111111111111111111111111111",
+        "settleDebt(int256)",
+        "-15000",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // anvil wallet #0
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit",
+        "100000",
+    ])
+    .assert_success();
+});
+
+// Test cast access-list with negative numbers
+casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "access-list",
+        "0x9999999999999999999999999999999999999999",
+        "adjustPosition(int128)",
+        "-33333",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
 });

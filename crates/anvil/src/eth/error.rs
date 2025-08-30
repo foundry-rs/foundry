@@ -42,7 +42,7 @@ pub enum BlockchainError {
     FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
-    #[error("Prevrandao not in th EVM's environment after merge")]
+    #[error("Prevrandao not in the EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
@@ -105,7 +105,7 @@ pub enum BlockchainError {
         "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
     )]
     DepositTransactionUnsupported,
-    #[error("UnknownTransactionType not supported ")]
+    #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
@@ -178,21 +178,7 @@ where
 
 impl From<WalletError> for BlockchainError {
     fn from(value: WalletError) -> Self {
-        match value {
-            WalletError::ValueNotZero => Self::Message("tx value not zero".to_string()),
-            WalletError::FromSet => Self::Message("tx from field is set".to_string()),
-            WalletError::NonceSet => Self::Message("tx nonce is set".to_string()),
-            WalletError::InvalidAuthorization => {
-                Self::Message("invalid authorization address".to_string())
-            }
-            WalletError::IllegalDestination => Self::Message(
-                "the destination of the transaction is not a delegated account".to_string(),
-            ),
-            WalletError::InternalError => Self::Message("internal error".to_string()),
-            WalletError::InvalidTransactionRequest => {
-                Self::Message("invalid tx request".to_string())
-            }
-        }
+        Self::Message(value.to_string())
     }
 }
 
@@ -349,7 +335,7 @@ impl From<InvalidTransaction> for InvalidTransactionError {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
-                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+                Self::GasTooHigh(ErrDetail { detail: String::from("GasFloorMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
             InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,

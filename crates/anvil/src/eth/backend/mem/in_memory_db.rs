@@ -106,10 +106,6 @@ impl Db for MemDb {
 }
 
 impl MaybeFullDatabase for MemDb {
-    fn as_dyn(&self) -> &dyn DatabaseRef<Error = foundry_evm::backend::DatabaseError> {
-        self
-    }
-
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         Some(&self.inner.cache.accounts)
     }

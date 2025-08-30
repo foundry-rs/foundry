@@ -3,12 +3,14 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar_ast::{self as ast, Span};
-use solar_sema::hir::{self, Res};
+use solar::{
+    ast::{self as ast, Span},
+    sema::hir::{self, Res},
+};
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
-    Severity::Gas,
+    Severity::CodeSize,
     "unwrapped-modifier-logic",
     "wrap modifier logic to reduce code size"
 );
@@ -16,7 +18,7 @@ declare_forge_lint!(
 impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     fn check_function(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -62,30 +64,37 @@ impl UnwrappedModifierLogic {
 
     /// Checks if a block of statements is complex and should be wrapped in a helper function.
     ///
-    /// This is true if the block contains:
+    /// This always is 'false' the modifier contains assembly. We assume that if devs know how to
+    /// use assembly, they will also know how to reduce the codesize of their contracts and they
+    /// have a good reason to use it on their modifiers.
+    ///
+    /// This is 'true' if the block contains:
     /// 1. Any statement that is not a placeholder or a valid expression.
     /// 2. More than one simple call expression.
     fn stmts_require_wrapping(&self, hir: &hir::Hir<'_>, stmts: &[hir::Stmt<'_>]) -> bool {
-        let mut has_valid_stmt = false;
+        let (mut res, mut has_valid_stmt) = (false, false);
         for stmt in stmts {
             match &stmt.kind {
                 hir::StmtKind::Placeholder => continue,
                 hir::StmtKind::Expr(expr) => {
                     if !self.is_valid_expr(hir, expr) || has_valid_stmt {
-                        return true;
+                        res = true;
                     }
                     has_valid_stmt = true;
                 }
-                _ => return true,
+                // HIR doesn't support assembly yet:
+                // <https://github.com/paradigmxyz/solar/blob/d25bf38a5accd11409318e023f701313d98b9e1e/crates/sema/src/hir/mod.rs#L977-L982>
+                hir::StmtKind::Err(_) => return false,
+                _ => res = true,
             }
         }
 
-        false
+        res
     }
 
     fn get_snippet<'a>(
         &self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &hir::Hir<'_>,
         func: &hir::Function<'_>,
         before: &'a [hir::Stmt<'a>],

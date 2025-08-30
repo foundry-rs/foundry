@@ -669,11 +669,7 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
                   "gas_limit": 143385,
                   "status": "Return",
                   "steps": [],
-                  "decoded": {
-                    "label": null,
-                    "return_data": null,
-                    "call_data": null
-                  }
+                  "decoded": null
                 },
                 "logs": [],
                 "ordering": []
