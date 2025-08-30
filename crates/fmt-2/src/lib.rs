@@ -190,6 +190,8 @@ fn format_once(
 ) -> FormatterResult {
     let res = compiler.enter_mut(|c| -> solar::interface::Result<String> {
         let mut pcx = c.parse();
+        pcx.set_resolve_imports(false);
+
         let file = mk_file(c.sess())?;
         let file_path = file.name.as_real();
 

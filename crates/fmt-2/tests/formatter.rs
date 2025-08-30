@@ -15,7 +15,7 @@ fn format(source: &str, path: &Path, fmt_config: FormatterConfig) -> String {
 
     // NOTE(rusowsky) use `into_ok()` so that diagnostics error when unable to resolve imports don't
     // kill the test execution --> ask Dani if this is acceptable.
-    match forge_fmt_2::format_source(source, Some(&path), fmt_config, &mut compiler).into_ok() {
+    match forge_fmt_2::format_source(source, Some(&path), fmt_config, &mut compiler).into_result() {
         Ok(formatted) => formatted,
         Err(e) => panic!("failed to format {path:?}: {e}"),
     }
