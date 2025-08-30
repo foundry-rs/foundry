@@ -27,6 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
+    evm::celo_precompile,
     inject_precompiles,
     mem::{
         inspector::AnvilInspector,
@@ -837,6 +838,11 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns true if Celo features are active
+    pub fn is_celo(&self) -> bool {
+        self.env.read().is_celo
+    }
+
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
         let spec_id = self.env.read().evm_env.cfg_env.spec;
@@ -1177,6 +1183,13 @@ impl Backend {
             inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
         }
 
+        if self.is_celo() {
+            evm.precompiles_mut()
+                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                    Some(celo_precompile::precompile())
+                });
+        }
+
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1279,6 +1292,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -1369,6 +1383,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
                 };
@@ -2723,6 +2738,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
