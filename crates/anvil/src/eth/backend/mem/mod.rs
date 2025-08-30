@@ -8,7 +8,7 @@ use crate::{
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
-            db::{Db, MaybeFullDatabase, SerializableState},
+            db::{Db, MaybeFullDatabase, SerializableState, StateDb},
             env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
@@ -104,7 +104,7 @@ use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
     OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, TxEnv},
@@ -112,7 +112,7 @@ use revm::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
-    database::{CacheDB, WrapDatabaseRef},
+    database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
     precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
@@ -2440,19 +2440,23 @@ impl Backend {
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
                 .map(|block| (block.header.hash, block))
-                && let Some(state) = self.states.write().get(&block_hash)
             {
-                let block = BlockEnv {
-                    number: U256::from(block_number),
-                    beneficiary: block.header.beneficiary,
-                    timestamp: U256::from(block.header.timestamp),
-                    difficulty: block.header.difficulty,
-                    prevrandao: block.header.mix_hash,
-                    basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                    gas_limit: block.header.gas_limit,
-                    ..Default::default()
-                };
-                return Ok(f(Box::new(state), block));
+                let read_guard = self.states.upgradable_read();
+
+                if read_guard.has_state(&block_hash) {
+                    let state_db = read_guard.get_state(&block_hash);
+
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
+                } else {
+                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                    let state_db = write_guard.get_on_disk_state(&block_hash);
+
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
+                }
             }
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
@@ -2688,69 +2692,82 @@ impl Backend {
             })
             .collect();
 
-        let mut states = self.states.write();
-        let parent_state =
-            states.get(&block.header.parent_hash).ok_or(BlockchainError::BlockNotFound)?;
-        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
 
-        // configure the blockenv for the block of the transaction
-        let mut env = self.env.read().clone();
+            // configure the blockenv for the block of the transaction
+            let mut env = self.env.read().clone();
 
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(block.header.number),
-            beneficiary: block.header.beneficiary,
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            prevrandao: Some(block.header.mix_hash),
-            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.header.gas_limit,
-            ..Default::default()
+            env.evm_env.block_env = BlockEnv {
+                number: U256::from(block.header.number),
+                beneficiary: block.header.beneficiary,
+                timestamp: U256::from(block.header.timestamp),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                gas_limit: block.header.gas_limit,
+                ..Default::default()
+            };
+
+            let executor = TransactionExecutor {
+                db: &mut cache_db,
+                validator: self,
+                pending: pool_txs.into_iter(),
+                block_env: env.evm_env.block_env.clone(),
+                cfg_env: env.evm_env.cfg_env.clone(),
+                parent_hash: block.header.parent_hash,
+                gas_used: 0,
+                blob_gas_used: 0,
+                enable_steps_tracing: self.enable_steps_tracing,
+                print_logs: self.print_logs,
+                print_traces: self.print_traces,
+                call_trace_decoder: self.call_trace_decoder.clone(),
+                precompile_factory: self.precompile_factory.clone(),
+                odyssey: self.odyssey,
+                optimism: self.is_optimism(),
+                blob_params: self.blob_params(),
+                cheats: self.cheats().clone(),
+            };
+
+            let _ = executor.execute();
+
+            let target_tx = block.transactions[index].clone();
+            let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
+            let tx_env = target_tx.to_revm_tx_env();
+
+            let config = tracer_config.into_json();
+            let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+
+            let result = evm
+                .transact(tx_env.clone())
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+            let trace = inspector
+                .json_result(
+                    result,
+                    &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
+                    &env.evm_env.block_env,
+                    &cache_db,
+                )
+                .map_err(|e| BlockchainError::Message(e.to_string()))?;
+            Ok(GethTrace::JS(trace))
         };
 
-        let executor = TransactionExecutor {
-            db: &mut cache_db,
-            validator: self,
-            pending: pool_txs.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env.clone(),
-            parent_hash: block.header.parent_hash,
-            gas_used: 0,
-            blob_gas_used: 0,
-            enable_steps_tracing: self.enable_steps_tracing,
-            print_logs: self.print_logs,
-            print_traces: self.print_traces,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-            precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            blob_params: self.blob_params(),
-            cheats: self.cheats().clone(),
-        };
-
-        let _ = executor.execute();
-
-        let target_tx = block.transactions[index].clone();
-        let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-        let tx_env = target_tx.to_revm_tx_env();
-
-        let config = tracer_config.into_json();
-        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
-        let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
-
-        let result = evm
-            .transact(tx_env.clone())
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
-
-        let trace = inspector
-            .json_result(
-                result,
-                &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                &env.evm_env.block_env,
-                &cache_db,
-            )
-            .map_err(|e| BlockchainError::Message(e.to_string()))?;
-        Ok(GethTrace::JS(trace))
+        let read_guard = self.states.upgradable_read();
+        if read_guard.has_state(&block.header.parent_hash) {
+            let state = read_guard
+                .get_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     /// Returns code by its hash
@@ -3265,12 +3282,28 @@ impl Backend {
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
-            let mut state = self.states.write();
-            let state_db = state
-                .get(&common_block.header.hash_slow())
-                .ok_or(BlockchainError::DataUnavailable)?;
-            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            db_full.clone()
+            let return_state_or_throw_err = |db: Option<&StateDb>| -> Result<
+                HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>,
+                BlockchainError,
+            > {
+                let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
+                let db_full =
+                    state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                Ok(db_full.clone())
+            };
+
+            let hash = &common_block.header.hash_slow();
+            let read_guard = self.states.upgradable_read();
+            if read_guard.has_state(hash) {
+                let db = read_guard.get_state(hash);
+
+                return_state_or_throw_err(db).unwrap()
+            } else {
+                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                let db = write_guard.get_on_disk_state(hash);
+
+                return_state_or_throw_err(db).unwrap()
+            }
         };
 
         {
@@ -3303,6 +3336,23 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn get_block_env<F, T>(state: &StateDb, block_number: u64, block: AnyRpcBlock, f: F) -> T
+where
+    F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+{
+    let block = BlockEnv {
+        number: U256::from(block_number),
+        beneficiary: block.header.beneficiary,
+        timestamp: U256::from(block.header.timestamp),
+        difficulty: block.header.difficulty,
+        prevrandao: block.header.mix_hash,
+        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+        gas_limit: block.header.gas_limit,
+        ..Default::default()
+    };
+    f(Box::new(state), block)
 }
 
 /// Get max nonce from transaction pool by address.
