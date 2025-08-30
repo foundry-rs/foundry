@@ -163,6 +163,7 @@ impl VerifyBundle {
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
                     language: None,
+                    creation_transaction_hash: None,
                 };
 
                 return Some(verify);
