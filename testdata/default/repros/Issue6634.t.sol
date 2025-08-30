@@ -18,7 +18,7 @@ contract Issue6634Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_Create2FactoryCallRecordedInStandardTest() public {
-        address CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        address CREATE2_DEPLOYER = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
 
         vm.startStateDiffRecording();
         Box a = new Box{salt: 0}(1);
@@ -42,7 +42,7 @@ contract Issue6634Test is DSTest {
     }
 
     function test_Create2FactoryCallRecordedWhenPranking() public {
-        address CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        address CREATE2_DEPLOYER = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
         address accessor = address(0x5555);
 
         vm.startPrank(accessor);
@@ -68,7 +68,7 @@ contract Issue6634Test is DSTest {
     }
 
     function test_Create2FactoryCallRecordedWhenBroadcasting() public {
-        address CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+        address CREATE2_DEPLOYER = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
         address accessor = address(0x5555);
 
         vm.startBroadcast(accessor);

@@ -7,7 +7,7 @@ contract InvariantSenders {
     function checkSender() external {
         require(msg.sender != 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, "sender cannot be cheatcode address");
         require(msg.sender != 0x000000000000000000636F6e736F6c652e6c6f67, "sender cannot be console address");
-        require(msg.sender != 0x4e59b44847b379578588920cA78FbF26c0B4956C, "sender cannot be CREATE2 deployer");
+        require(msg.sender != 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed, "sender cannot be CREATE2 deployer");
     }
 }
 

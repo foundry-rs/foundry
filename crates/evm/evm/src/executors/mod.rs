@@ -24,7 +24,7 @@ use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_INITCODE,
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
@@ -230,7 +230,7 @@ impl Executor {
             self.set_balance(creator, U256::MAX)?;
 
             let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
+                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_INITCODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
