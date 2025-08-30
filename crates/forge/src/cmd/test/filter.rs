@@ -106,13 +106,13 @@ impl FileFilter for FilterArgs {
 }
 
 impl TestFilter for FilterArgs {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_signature: &str) -> bool {
         let mut ok = true;
         if let Some(re) = &self.test_pattern {
-            ok = ok && re.is_match(test_name);
+            ok = ok && re.is_match(test_signature);
         }
         if let Some(re) = &self.test_pattern_inverse {
-            ok = ok && !re.is_match(test_name);
+            ok = ok && !re.is_match(test_signature);
         }
         ok
     }
@@ -207,8 +207,8 @@ impl FileFilter for ProjectPathsAwareFilter {
 }
 
 impl TestFilter for ProjectPathsAwareFilter {
-    fn matches_test(&self, test_name: &str) -> bool {
-        self.args_filter.matches_test(test_name)
+    fn matches_test(&self, test_signature: &str) -> bool {
+        self.args_filter.matches_test(test_signature)
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {

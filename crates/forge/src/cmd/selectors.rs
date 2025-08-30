@@ -1,6 +1,6 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
@@ -9,6 +9,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler, compile_target},
     selectors::{SelectorImportData, import_selectors},
+    shell,
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::{collections::BTreeMap, fs::canonicalize};
@@ -215,7 +216,11 @@ impl SelectorsSubcommands {
                     sh_println!("No colliding method selectors between the two contracts.")?;
                 } else {
                     let mut table = Table::new();
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    if shell::is_markdown() {
+                        table.load_preset(ASCII_MARKDOWN);
+                    } else {
+                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                    }
                     table.set_header([
                         String::from("Selector"),
                         first_contract.name,
@@ -330,7 +335,11 @@ impl SelectorsSubcommands {
 
                 if no_group {
                     let mut table = Table::new();
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    if shell::is_markdown() {
+                        table.load_preset(ASCII_MARKDOWN);
+                    } else {
+                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                    }
                     table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
                     for (contract, contract_selectors) in selectors {
@@ -351,7 +360,11 @@ impl SelectorsSubcommands {
                     for (idx, (contract, contract_selectors)) in selectors.into_iter().enumerate() {
                         sh_println!("{}{contract}", if idx == 0 { "" } else { "\n" })?;
                         let mut table = Table::new();
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        if shell::is_markdown() {
+                            table.load_preset(ASCII_MARKDOWN);
+                        } else {
+                            table.apply_modifier(UTF8_ROUND_CORNERS);
+                        }
                         table.set_header(["Type", "Signature", "Selector"]);
 
                         for (selector_type, selectors) in contract_selectors {
@@ -388,7 +401,11 @@ impl SelectorsSubcommands {
                     .collect::<Vec<_>>();
 
                 let mut table = Table::new();
-                table.apply_modifier(UTF8_ROUND_CORNERS);
+                if shell::is_markdown() {
+                    table.load_preset(ASCII_MARKDOWN);
+                } else {
+                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                }
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);
 

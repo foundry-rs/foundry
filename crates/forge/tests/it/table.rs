@@ -60,8 +60,7 @@ contract CounterTableTest is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "CounterTable", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]

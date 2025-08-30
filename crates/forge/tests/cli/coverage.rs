@@ -204,8 +204,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -226,8 +225,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -239,6 +237,57 @@ contract AContractTest is DSTest {
 |-------------------+---------------+---------------+---------------+---------------|
 | Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 ╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(setup_md, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.arg("coverage").args(["--md"]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
 "#]]);
 });
@@ -260,8 +309,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -282,8 +330,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "BContract.sol",
@@ -300,8 +347,7 @@ contract BContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "BContractTest.sol",
@@ -322,8 +368,7 @@ contract BContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert AContract is not included in report.
     cmd.arg("coverage").arg("--no-match-coverage=AContract").assert_success().stdout_eq(str![[
@@ -353,8 +398,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -381,8 +425,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% statement coverage for assert failure (assert not considered a branch).
     cmd.arg("coverage").args(["--mt", "testAssertRevertBranch"]).assert_success().stdout_eq(str![
@@ -426,8 +469,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -453,8 +495,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% branch coverage if only revert tested.
     cmd.arg("coverage").args(["--mt", "testRequireRevert"]).assert_success().stdout_eq(str![[r#"
@@ -513,8 +554,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -529,8 +569,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // We want to make sure DA:8,1 is added only once so line hit is not doubled.
     assert_lcov(
@@ -649,8 +688,7 @@ contract Foo {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -765,8 +803,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert no coverage for single path branch. 2 branches (parent and child) not covered.
     cmd.arg("coverage")
@@ -856,8 +893,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -872,8 +908,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 100% coverage.
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -940,8 +975,7 @@ contract Bar {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -980,8 +1014,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert coverage not 100% for happy paths only.
     cmd.arg("coverage").args(["--mt", "happy"]).assert_success().stdout_eq(str![[r#"
@@ -1078,8 +1111,7 @@ contract Foo {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -1100,8 +1132,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1157,8 +1188,7 @@ contract D {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooTest.sol",
@@ -1193,8 +1223,7 @@ contract FooTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1228,8 +1257,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1249,8 +1277,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% coverage for true branches.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
@@ -1317,8 +1344,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1342,8 +1368,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 50% coverage for true branches.
     cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
@@ -1422,8 +1447,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1445,8 +1469,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1482,8 +1505,7 @@ contract BContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1498,8 +1520,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1531,8 +1552,7 @@ contract AContract {
     function increment() public {}
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1549,8 +1569,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     assert_lcov(
         cmd.arg("coverage"),
@@ -1603,8 +1622,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1620,8 +1638,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert both constructor and receive functions coverage reported and appear in LCOV.
     assert_lcov(
@@ -1681,8 +1698,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert coverage doesn't fail with `Error: Unknown key "inliner"`.
     cmd.arg("coverage").arg("--ir-minimum").assert_success().stdout_eq(str![[r#"
@@ -1715,8 +1731,7 @@ contract AContract {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "AContractTest.sol",
@@ -1737,8 +1752,7 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1790,8 +1804,7 @@ contract ArrayCondition {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "ArrayConditionTest.sol",
@@ -1834,8 +1847,7 @@ contract ArrayConditionTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
@@ -1871,8 +1883,7 @@ contract Counter {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "CounterTest.sol",
@@ -1887,8 +1898,7 @@ contract CounterTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert 100% coverage for linked libraries.
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -1925,8 +1935,7 @@ contract Counter {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Counter.t.sol",
@@ -1941,8 +1950,7 @@ contract CounterTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     assert_lcov(
         cmd.arg("coverage"),
@@ -1988,8 +1996,7 @@ contract Counter {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Counter.t.sol",
@@ -2008,8 +2015,7 @@ contract CounterTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     assert_lcov(
         cmd.arg("coverage"),

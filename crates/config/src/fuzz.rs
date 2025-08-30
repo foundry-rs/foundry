@@ -1,6 +1,7 @@
 //! Configuration for fuzz testing.
 
 use alloy_primitives::U256;
+use foundry_compilers::utils::canonicalized;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -112,9 +113,9 @@ pub struct FuzzCorpusConfig {
 }
 
 impl FuzzCorpusConfig {
-    pub fn with_test_name(&mut self, test_name: &String) {
+    pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
-            self.corpus_dir = Some(corpus_dir.join(test_name));
+            self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
         }
     }
 

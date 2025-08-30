@@ -7,9 +7,16 @@ pub enum ReportKind {
     #[default]
     Text,
     JSON,
+    Markdown,
 }
 
 /// Determine the kind of report to generate based on the current shell.
 pub fn report_kind() -> ReportKind {
-    if shell::is_json() { ReportKind::JSON } else { ReportKind::Text }
+    if shell::is_json() {
+        ReportKind::JSON
+    } else if shell::is_markdown() {
+        ReportKind::Markdown
+    } else {
+        ReportKind::Text
+    }
 }
