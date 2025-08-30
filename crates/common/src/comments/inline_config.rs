@@ -1,8 +1,8 @@
 use solar::{
+    interface::{SourceMap, Span},
     parse::ast::{self, Item, SourceUnit, visit::Visit as VisitAst},
     sema::hir::{self, Visit as VisitHir},
 };
-use solar_interface::{SourceMap, Span};
 use std::{collections::HashMap, hash::Hash, marker::PhantomData, ops::ControlFlow};
 
 /// A disabled formatting range. `loose` designates that the range includes any loc which

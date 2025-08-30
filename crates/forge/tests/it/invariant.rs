@@ -1546,6 +1546,126 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]
     ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_include", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_exclude", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11453>
+forgetest_init!(corpus_dir, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+
+        config.fuzz.runs = 10;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "CounterTests.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract Counter1Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+
+contract Counter2Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
+
+"#]]);
+
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter1Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter2Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter1Test").join("testFuzz_SetNumber").exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11453>

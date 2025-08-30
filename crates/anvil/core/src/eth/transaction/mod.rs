@@ -1034,14 +1034,14 @@ impl Decodable2718 for TypedTransaction {
             TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
             TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match TxEnvelope::fallback_decode(buf)? {
             TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 }
@@ -1411,14 +1411,14 @@ impl Decodable2718 for TypedReceipt {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
             ReceiptEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             ReceiptEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match ReceiptEnvelope::fallback_decode(buf)? {
             ReceiptEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 }
