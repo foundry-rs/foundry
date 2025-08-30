@@ -194,8 +194,7 @@ fn format_once(
         let file_path = file.name.as_real();
 
         if let Some(path) = file_path {
-            // Ignore missing imports, as we don't care about them when formatting.
-            _ = pcx.load_files(&[path.to_path_buf()]);
+            pcx.load_files(&[path.to_path_buf()])?;
         } else {
             // Fallback for non-file sources like stdin
             pcx.add_file(file.to_owned());
