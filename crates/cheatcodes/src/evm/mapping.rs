@@ -1,11 +1,7 @@
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_primitives::{Address, B256, U256, keccak256, map::AddressHashMap};
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use foundry_common::mapping_slots::MappingSlots;
-use revm::{
-    bytecode::opcode,
-    interpreter::{Interpreter, interpreter_types::Jumps},
-};
 
 impl Cheatcode for startMappingRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
@@ -73,30 +69,4 @@ fn slot_child<'a>(
     slot: &'a B256,
 ) -> Option<&'a Vec<B256>> {
     mapping_slot(state, target)?.children.get(slot)
-}
-
-#[cold]
-pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    match interpreter.bytecode.opcode() {
-        opcode::KECCAK256 => {
-            if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
-                let address = interpreter.input.target_address;
-                let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
-                let data = interpreter.memory.slice_len(offset, 0x40);
-                let low = B256::from_slice(&data[..0x20]);
-                let high = B256::from_slice(&data[0x20..]);
-                let result = keccak256(&*data);
-
-                mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
-            }
-        }
-        opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
-                && let Ok(slot) = interpreter.stack.peek(0)
-            {
-                mapping_slots.insert(slot.into());
-            }
-        }
-        _ => {}
-    }
 }

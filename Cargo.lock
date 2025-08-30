@@ -4458,6 +4458,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest",
+ "revm",
  "semver 1.0.26",
  "serde",
  "serde_json",

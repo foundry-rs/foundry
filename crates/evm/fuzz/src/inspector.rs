@@ -1,4 +1,5 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
+use foundry_common::mapping_slots::step as mapping_step;
 use revm::{
     Inspector,
     context::{ContextTr, Transaction},
@@ -26,6 +27,9 @@ where
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
+            if let Some(mapping_slots) = &mut self.fuzz_state.mapping_slots {
+                mapping_step(mapping_slots, interp);
+            }
         }
     }
 
