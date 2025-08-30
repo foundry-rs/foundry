@@ -21,10 +21,14 @@ mod state;
 
 mod pp;
 
-use solar_parse::{
-    ast::{SourceUnit, Span},
-    interface::{Session, diagnostics::EmittedDiagnostics, source_map::SourceFile},
+use solar::{
+    parse::{
+        ast::{SourceUnit, Span},
+        interface::{Session, diagnostics::EmittedDiagnostics, source_map::SourceFile},
+    },
+    sema::Compiler,
 };
+
 use std::{path::Path, sync::Arc};
 
 pub use foundry_config::fmt::*;
@@ -91,8 +95,12 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 }
 
-pub fn format_file(path: &Path, config: FormatterConfig) -> FormatterResult {
-    format_inner(config, &|sess| {
+pub fn format_file(
+    path: &Path,
+    config: FormatterConfig,
+    compiler: &mut Compiler,
+) -> FormatterResult {
+    format_inner(config, compiler, &|sess| {
         sess.source_map().load_file(path).map_err(|e| sess.dcx.err(e.to_string()).emit())
     })
 }
@@ -101,11 +109,12 @@ pub fn format_source(
     source: &str,
     path: Option<&Path>,
     config: FormatterConfig,
+    compiler: &mut Compiler,
 ) -> FormatterResult {
-    format_inner(config, &|sess| {
+    format_inner(config, compiler, &|sess| {
         let name = match path {
-            Some(path) => solar_parse::interface::source_map::FileName::Real(path.to_path_buf()),
-            None => solar_parse::interface::source_map::FileName::Stdin,
+            Some(path) => solar::parse::interface::source_map::FileName::Real(path.to_path_buf()),
+            None => solar::parse::interface::source_map::FileName::Stdin,
         };
         sess.source_map()
             .new_source_file(name, source)
@@ -115,10 +124,11 @@ pub fn format_source(
 
 fn format_inner(
     config: FormatterConfig,
-    mk_file: &dyn Fn(&Session) -> solar_parse::interface::Result<Arc<SourceFile>>,
+    compiler: &mut Compiler,
+    mk_file: &(dyn Fn(&Session) -> solar::parse::interface::Result<Arc<SourceFile>> + Sync + Send),
 ) -> FormatterResult {
     // First pass formatting
-    let first_result = format_once(config.clone(), mk_file);
+    let first_result = format_once(config.clone(), compiler, mk_file);
 
     // If first pass was not successful, return the result
     if first_result.is_err() {
@@ -127,10 +137,10 @@ fn format_inner(
     let Some(first_formatted) = first_result.ok_ref() else { return first_result };
 
     // Second pass formatting
-    let second_result = format_once(config, &|sess| {
+    let second_result = format_once(config, compiler, &|sess| {
         sess.source_map()
             .new_source_file(
-                solar_parse::interface::source_map::FileName::Custom("format-again".to_string()),
+                solar::parse::interface::source_map::FileName::Custom("format-again".to_string()),
                 first_formatted,
             )
             .map_err(|e| sess.dcx.err(e.to_string()).emit())
@@ -171,30 +181,55 @@ fn diff(first: &str, second: &str) -> impl std::fmt::Display {
 
 fn format_once(
     config: FormatterConfig,
-    mk_file: &dyn Fn(&Session) -> solar_parse::interface::Result<Arc<SourceFile>>,
+    compiler: &mut Compiler,
+    mk_file: &(
+         dyn Fn(&solar::interface::Session) -> solar::interface::Result<Arc<SourceFile>>
+             + Send
+             + Sync
+     ),
 ) -> FormatterResult {
-    let sess =
-        solar_parse::interface::Session::builder().with_buffer_emitter(Default::default()).build();
-    let res = sess.enter(|| -> solar_parse::interface::Result<_> {
-        let file = mk_file(&sess)?;
-        let arena = solar_parse::ast::Arena::new();
-        let mut parser = solar_parse::Parser::from_source_file(&sess, &arena, &file);
+    let res = compiler.enter_mut(|c| -> solar::interface::Result<String> {
+        let mut pcx = c.parse();
+        pcx.set_resolve_imports(false);
+
+        let file = mk_file(c.sess())?;
+        let file_path = file.name.as_real();
+
+        if let Some(path) = file_path {
+            pcx.load_files(&[path.to_path_buf()])?;
+        } else {
+            // Fallback for non-file sources like stdin
+            pcx.add_file(file.to_owned());
+        }
+        pcx.parse();
+
+        let gcx = c.gcx();
+        // Iterate over `gcx.sources` to find the correct `SourceUnit`
+        let source = if let Some(path) = file_path {
+            gcx.sources.iter().find(|su| su.file.name.as_real() == Some(path))
+        } else {
+            gcx.sources.first()
+        }
+        .ok_or_else(|| c.dcx().bug("no source file parsed").emit())?;
+
+        let ast = source.ast.as_ref().ok_or_else(|| c.dcx().err("unable to read AST").emit())?;
+
         let comments = Comments::new(
-            &file,
-            sess.source_map(),
+            &source.file,
+            c.sess().source_map(),
             true,
             config.wrap_comments,
             if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
         );
-        let ast = parser.parse_file().map_err(|e| e.emit())?;
-        let inline_config = parse_inline_config(&sess, &comments, &ast);
+        let inline_config = parse_inline_config(c.sess(), &comments, ast);
 
-        let mut state = state::State::new(sess.source_map(), config, inline_config, comments);
-        state.print_source_unit(&ast);
+        let mut state = state::State::new(c.sess().source_map(), config, inline_config, comments);
+        state.print_source_unit(ast);
         Ok(state.s.eof())
     });
-    let diagnostics = sess.emitted_diagnostics().unwrap();
-    match (res, sess.dcx.has_errors()) {
+
+    let diagnostics = compiler.sess().dcx.emitted_diagnostics().unwrap();
+    match (res, compiler.sess().dcx.has_errors()) {
         (Ok(s), Ok(())) if diagnostics.is_empty() => FormatterResult::Ok(s),
         (Ok(s), Ok(())) => FormatterResult::OkWithDiagnostics(s, diagnostics),
         (Ok(s), Err(_)) => FormatterResult::ErrRecovered(s, diagnostics),

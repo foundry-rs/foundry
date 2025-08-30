@@ -4,7 +4,7 @@ use super::{
     CommentConfig, State,
     common::{BlockFormat, ListFormat},
 };
-use solar_parse::ast::{Span, yul};
+use solar::parse::ast::{Span, yul};
 
 #[rustfmt::skip]
 macro_rules! get_span {

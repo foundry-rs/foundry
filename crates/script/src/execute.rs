@@ -332,6 +332,7 @@ impl ExecutedState {
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &self.script_config.config,
             )?)
+            .with_label_disabled(self.args.disable_labels)
             .build();
 
         let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_etherscan(

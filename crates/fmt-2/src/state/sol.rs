@@ -3,7 +3,7 @@
 use crate::pp::SIZE_INFINITY;
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
-use solar_parse::{
+use solar::parse::{
     ast::{self, Span},
     interface::BytePos,
 };

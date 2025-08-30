@@ -42,8 +42,6 @@ mod version;
 mod env;
 pub use env::set_execution_context;
 
-mod fork;
-
 mod evm;
 
 mod fs;
@@ -99,12 +97,10 @@ pub(crate) trait DynCheatcode: 'static + std::fmt::Debug {
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
-    #[inline]
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static> {
         Self::CHEATCODE
     }
 
-    #[inline]
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         self.apply_full(ccx, executor)
     }
@@ -157,12 +153,10 @@ impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_, '_> {
 }
 
 impl CheatsCtxt<'_, '_, '_, '_> {
-    #[inline]
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
     }
 
-    #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
         self.ecx.journaled_state.warm_addresses.precompiles().contains(address)
     }

@@ -2981,7 +2981,7 @@ impl EthApi {
                     if let Some(block_overrides) = overrides.block {
                         cache_db.apply_block_overrides(*block_overrides, &mut block);
                     }
-                    this.do_estimate_gas_with_state(request, &cache_db as &dyn DatabaseRef, block)
+                    this.do_estimate_gas_with_state(request, &cache_db, block)
                 })
                 .await?
         })

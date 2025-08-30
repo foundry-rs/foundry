@@ -4,10 +4,10 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{Git, LoadConfig},
+    utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_config::{Config, impl_figment_convert_basic};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use yansi::Paint;
 
 /// CLI arguments for `forge update`.
@@ -60,9 +60,23 @@ impl UpdateArgs {
                 let rel_path = dep_path
                     .strip_prefix(&root)
                     .wrap_err("Dependency path is not relative to the repository root")?;
-                if let Ok(dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
-                    let prev = foundry_lock.override_dep(rel_path, dep_id)?;
-                    prev_dep_ids.insert(rel_path.to_owned(), prev);
+
+                if let Ok(mut dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
+                    // Store the previous state before overriding
+                    let prev = foundry_lock.get(rel_path).cloned();
+
+                    // If it's a branch, mark it as overridden so it gets updated below
+                    if let DepIdentifier::Branch { .. } = dep_id {
+                        dep_id.mark_override();
+                    }
+
+                    // Update the lockfile
+                    foundry_lock.override_dep(rel_path, dep_id)?;
+
+                    // Only track as updated if there was a previous dependency
+                    if let Some(prev) = prev {
+                        prev_dep_ids.insert(rel_path.to_owned(), prev);
+                    }
                 } else {
                     sh_warn!(
                         "Could not r#override submodule at {} with tag {}, try using forge install",
@@ -94,54 +108,53 @@ impl UpdateArgs {
             }
         }
 
-        // Branches should get updated to their latest commit on `forge update`.
-        // i.e if previously submodule was tracking branch `main` at rev `1234567` and now the
-        // remote `main` branch is at `7654321`, then submodule should also be updated to `7654321`.
-        // This tracking is automatically handled by git, but we need to update the lockfile entry
-        // to reflect the latest commit.
-        if dep_overrides.is_empty() {
-            let branch_overrides = foundry_lock
-                .iter_mut()
-                .filter_map(|(path, dep_id)| {
-                    if dep_id.is_branch() && dep_id.overridden() {
-                        return Some((path, dep_id));
-                    }
-                    None
-                })
-                .collect::<Vec<_>>();
-
-            for (path, dep_id) in branch_overrides {
-                let (curr_rev, curr_branch) = git.current_rev_branch(&root.join(path))?;
-                let name = dep_id.name();
-                // This can occur when the submodule is manually checked out to a different branch.
-                if curr_branch != name {
-                    let warn_msg = format!(
-                        r#"Lockfile sync warning
-                        Lockfile is tracking branch {name} for submodule at {path:?}, but the submodule is currently on {curr_branch}.
-                        Checking out branch {name} for submodule at {path:?}."#,
-                    );
-                    let _ = sh_warn!("{}", warn_msg);
-                    git.checkout_at(name, &root.join(path)).wrap_err(format!(
-                        "Could not checkout branch {name} for submodule at {}",
-                        path.display()
-                    ))?;
+        // Update branches to their latest commit from origin
+        // This handles both explicit updates (forge update dep@branch) and
+        // general updates (forge update) for branch-tracked dependencies
+        let branch_overrides = foundry_lock
+            .iter_mut()
+            .filter_map(|(path, dep_id)| {
+                if dep_id.is_branch() && dep_id.overridden() {
+                    return Some((path, dep_id));
                 }
+                None
+            })
+            .collect::<Vec<_>>();
 
-                // Update the lockfile entry to reflect the latest commit
-                let prev = std::mem::replace(
-                    dep_id,
-                    DepIdentifier::Branch {
-                        name: name.to_string(),
-                        rev: curr_rev,
-                        r#override: true,
-                    },
-                );
+        for (path, dep_id) in branch_overrides {
+            let submodule_path = root.join(path);
+            let name = dep_id.name();
+
+            // Fetch and checkout the latest commit from the remote branch
+            Self::fetch_and_checkout_branch(&git, &submodule_path, name)?;
+
+            // Now get the updated revision after syncing with origin
+            let (updated_rev, _) = git.current_rev_branch(&submodule_path)?;
+
+            // Update the lockfile entry to reflect the latest commit
+            let prev = std::mem::replace(
+                dep_id,
+                DepIdentifier::Branch {
+                    name: name.to_string(),
+                    rev: updated_rev,
+                    r#override: true,
+                },
+            );
+
+            // Only insert if we don't already have a previous state for this path
+            // (e.g., from explicit overrides where we converted tag to branch)
+            if !prev_dep_ids.contains_key(path) {
                 prev_dep_ids.insert(path.to_owned(), prev);
             }
         }
 
         // checkout the submodules at the correct tags
+        // Skip branches that were already updated above to avoid reverting to local branch
         for (path, dep_id) in foundry_lock.iter() {
+            // Skip branches that were already updated
+            if dep_id.is_branch() && dep_id.overridden() {
+                continue;
+            }
             git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
         }
 
@@ -176,6 +189,29 @@ impl UpdateArgs {
                 None
             })
             .collect()
+    }
+
+    /// Fetches and checks out the latest version of a branch from origin
+    fn fetch_and_checkout_branch(git: &Git<'_>, path: &Path, branch: &str) -> Result<()> {
+        // Fetch the latest changes from origin for the branch
+        git.cmd_at(path).args(["fetch", "origin", branch]).exec().wrap_err(format!(
+            "Could not fetch latest changes for branch {} in submodule at {}",
+            branch,
+            path.display()
+        ))?;
+
+        // Checkout and track the remote branch to ensure we have the latest commit
+        // Using checkout -B ensures the local branch tracks origin/branch
+        git.cmd_at(path)
+            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
+            .exec()
+            .wrap_err(format!(
+                "Could not checkout and track origin/{} for submodule at {}",
+                branch,
+                path.display()
+            ))?;
+
+        Ok(())
     }
 }
 

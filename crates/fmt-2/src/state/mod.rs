@@ -8,7 +8,7 @@ use foundry_common::{
     iter::IterDelimited,
 };
 use foundry_config::fmt::IndentStyle;
-use solar_parse::{
+use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, SourceMap},
     token,
@@ -528,7 +528,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             CommentStyle::BlankLine => {
-                // Pre-requisit: ensure that blank links are printed at the beginning of new line.
+                // Pre-requisite: ensure that blank links are printed at the beginning of new line.
                 if !self.last_token_is_break() && !self.is_bol_or_only_ind() {
                     config.hardbreak(&mut self.s);
                     self.cursor.advance(1);
