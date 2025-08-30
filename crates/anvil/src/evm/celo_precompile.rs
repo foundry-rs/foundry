@@ -13,12 +13,17 @@
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256, address};
-use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
 
 pub const CELO_TRANSFER_ADDRESS: Address = address!("0x00000000000000000000000000000000000000fd");
 
 /// Gas cost for Celo transfer precompile
 const CELO_TRANSFER_GAS_COST: u64 = 9000;
+
+/// Returns the celo native transfer
+pub fn precompile() -> DynPrecompile {
+    DynPrecompile::new_stateful(PrecompileId::custom("celo transfer"), celo_transfer_precompile)
+}
 
 /// Celo transfer precompile implementation.
 ///
@@ -87,13 +92,4 @@ pub fn celo_transfer_precompile(input: PrecompileInput<'_>) -> PrecompileResult 
 
     // No output data for successful transfer
     Ok(PrecompileOutput::new(CELO_TRANSFER_GAS_COST, alloy_primitives::Bytes::new()))
-}
-
-/// Can be used as PrecompilesMap lookup function
-pub fn celo_precompile_lookup(address: &Address) -> Option<DynPrecompile> {
-    if *address == CELO_TRANSFER_ADDRESS {
-        Some(DynPrecompile::new_stateful(celo_transfer_precompile))
-    } else {
-        None
-    }
 }

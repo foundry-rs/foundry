@@ -27,6 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
+    evm::celo_precompile,
     inject_precompiles,
     mem::{
         inspector::AnvilInspector,
@@ -1180,6 +1181,13 @@ impl Backend {
 
         if self.odyssey {
             inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
+        }
+
+        if self.is_celo() {
+            evm.precompiles_mut()
+                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                    Some(celo_precompile::precompile())
+                });
         }
 
         if let Some(factory) = &self.precompile_factory {

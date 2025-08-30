@@ -11,7 +11,7 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    evm::celo_precompile::celo_precompile_lookup,
+    evm::celo_precompile,
     inject_precompiles,
     mem::inspector::AnvilInspector,
 };
@@ -351,7 +351,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             }
 
             if self.celo {
-                evm.precompiles_mut().set_precompile_lookup(celo_precompile_lookup);
+                evm.precompiles_mut()
+                    .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                        Some(celo_precompile::precompile())
+                    });
             }
 
             if let Some(factory) = &self.precompile_factory {
