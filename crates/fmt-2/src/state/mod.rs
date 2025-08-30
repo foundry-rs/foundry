@@ -528,7 +528,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             CommentStyle::BlankLine => {
-                // Pre-requisit: ensure that blank links are printed at the beginning of new line.
+                // Pre-requisite: ensure that blank links are printed at the beginning of new line.
                 if !self.last_token_is_break() && !self.is_bol_or_only_ind() {
                     config.hardbreak(&mut self.s);
                     self.cursor.advance(1);
