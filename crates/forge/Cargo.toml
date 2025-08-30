@@ -45,6 +45,7 @@ chrono.workspace = true
 forge-doc.workspace = true
 forge-fmt.workspace = true
 forge-lint.workspace = true
+forge-lsp.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
@@ -88,6 +89,7 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+tower-lsp = "0.20"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
