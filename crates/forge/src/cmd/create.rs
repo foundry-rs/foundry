@@ -254,8 +254,12 @@ impl CreateArgs {
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
         let config = verify.load_config()?;
-        verify.etherscan.key =
-            config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
+        verify.etherscan.key = config
+            .get_etherscan_config_with_chain(
+                Some(chain.into()),
+                !self.verifier.verifier.is_etherscan(),
+            )?
+            .map(|c| c.key);
 
         let context = verify.resolve_context().await?;
 

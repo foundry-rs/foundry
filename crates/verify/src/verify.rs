@@ -233,7 +233,9 @@ impl VerifyArgs {
 
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
-        self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
+        self.etherscan.key = config
+            .get_etherscan_config_with_chain(Some(chain), !self.verifier.verifier.is_etherscan())?
+            .map(|c| c.key);
 
         if self.show_standard_json_input {
             let args = EtherscanVerificationProvider::default()

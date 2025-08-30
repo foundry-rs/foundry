@@ -1405,7 +1405,7 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        self.get_etherscan_config_with_chain(None).transpose()
+        self.get_etherscan_config_with_chain(None, false).transpose()
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
@@ -1414,9 +1414,13 @@ impl Config {
     /// If not matching alias was found, then this will try to find the first entry in the table
     /// with a matching chain id. If an etherscan_api_key is already set it will take precedence
     /// over the chain's entry in the table.
+    ///
+    /// Throws if the verifier is etherscan and configs for chain cannot be resolved by using the
+    /// API key.
     pub fn get_etherscan_config_with_chain(
         &self,
         chain: Option<Chain>,
+        is_custom: bool,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let default_api_version = self.etherscan_api_version.unwrap_or_default();
 
@@ -1452,19 +1456,21 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            match ResolvedEtherscanConfig::create(
+            let config = ResolvedEtherscanConfig::create(
                 key,
                 chain.or(self.chain).unwrap_or_default(),
                 default_api_version,
-            ) {
-                Some(config) => return Ok(Some(config)),
-                None => {
-                    return Err(EtherscanConfigError::UnknownChain(
-                        String::new(),
-                        chain.unwrap_or_default(),
-                    ));
-                }
+            );
+
+            if is_custom || config.is_some() {
+                return Ok(config);
             }
+
+            // Throw error only if verifier is etherscan and chain not known.
+            return Err(EtherscanConfigError::UnknownChain(
+                String::new(),
+                chain.unwrap_or_default(),
+            ));
         }
         Ok(None)
     }
@@ -1475,14 +1481,14 @@ impl Config {
     ///
     /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
-        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
+        self.get_etherscan_config_with_chain(chain, false).ok().flatten().map(|c| c.key)
     }
 
     /// Helper function to get the API version.
     ///
     /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_version(&self, chain: Option<Chain>) -> EtherscanApiVersion {
-        self.get_etherscan_config_with_chain(chain)
+        self.get_etherscan_config_with_chain(chain, false)
             .ok()
             .flatten()
             .map(|c| c.api_version)
@@ -3074,7 +3080,10 @@ mod tests {
             let config = Config::load().unwrap();
             assert!(
                 config
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
+                    .get_etherscan_config_with_chain(
+                        Some(NamedChain::BinanceSmartChain.into()),
+                        false
+                    )
                     .is_err()
             );
 
@@ -3084,7 +3093,10 @@ mod tests {
 
             assert_eq!(
                 config
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
+                    .get_etherscan_config_with_chain(
+                        Some(NamedChain::BinanceSmartChain.into()),
+                        false
+                    )
                     .unwrap()
                     .unwrap()
                     .key,
@@ -3096,7 +3108,10 @@ mod tests {
 
             assert_eq!(
                 with_key
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
+                    .get_etherscan_config_with_chain(
+                        Some(NamedChain::BinanceSmartChain.into()),
+                        false
+                    )
                     .unwrap()
                     .unwrap()
                     .key,
@@ -3340,7 +3355,8 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
+            let config =
+                config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()), false);
             assert!(config.is_err());
             assert_eq!(
                 config.unwrap_err().to_string(),
@@ -3597,7 +3613,7 @@ mod tests {
             let config = Config::load().unwrap();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()), false)
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3622,7 +3638,7 @@ mod tests {
             let config = Config::load().unwrap();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()), false)
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3651,7 +3667,7 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
+            let mumbai = config.get_etherscan_config_with_chain(None, false).unwrap().unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
             let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
@@ -5124,12 +5140,42 @@ mod tests {
             )?;
             let config = Config::load().unwrap();
             let unknown_chain = Chain::from_id(3658348);
-            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain), false);
             assert!(result.is_err());
             let error_msg = result.unwrap_err().to_string();
             assert!(error_msg.contains("No known Etherscan API URL for chain `3658348`"));
             assert!(error_msg.contains("Specify a `url`"));
             assert!(error_msg.contains("Verify the chain `3658348` is correct"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_get_etherscan_config_with_unknown_chain_and_key_fallback() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("ETHERSCAN_API_KEY", "1234");
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(3658348);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain), false);
+            assert!(result.is_err());
+            let error_msg = result.unwrap_err().to_string();
+            assert!(error_msg.contains("No known Etherscan API URL for chain `3658348`"));
+            assert!(error_msg.contains("Specify a `url`"));
+            assert!(error_msg.contains("Verify the chain `3658348` is correct"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_get_custom_verifier_with_etherscan_unknown_chain_and_key_fallback() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("ETHERSCAN_API_KEY", "1234");
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(3658348);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain), true);
+            assert!(result.is_ok());
 
             Ok(())
         });
@@ -5147,7 +5193,7 @@ mod tests {
             )?;
             let config = Config::load().unwrap();
             let unknown_chain = Chain::from_id(1);
-            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain), false);
             assert!(result.is_ok());
             Ok(())
         });
