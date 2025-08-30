@@ -2,7 +2,6 @@ use crate::opts::ChainValueParser;
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
-use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
     Chain, Config, FigmentProviders,
     figment::{
@@ -132,16 +131,6 @@ pub struct EtherscanOpts {
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 
-    /// The Etherscan API version.
-    #[arg(
-        short,
-        long = "etherscan-api-version",
-        alias = "api-version",
-        env = "ETHERSCAN_API_VERSION"
-    )]
-    #[serde(rename = "etherscan_api_version", skip_serializing_if = "Option::is_none")]
-    pub api_version: Option<EtherscanApiVersion>,
-
     /// The chain name or EIP-155 chain ID.
     #[arg(
         short,
@@ -181,10 +170,6 @@ impl EtherscanOpts {
         let mut dict = Dict::new();
         if let Some(key) = self.key() {
             dict.insert("etherscan_api_key".into(), key.into());
-        }
-
-        if let Some(api_version) = &self.api_version {
-            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(chain) = self.chain {

@@ -2284,7 +2284,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().with_chain_id(chain);
+    let mut builder = Client::builder().chain(chain)?;
 
     let deduced = chain.etherscan_urls();
 

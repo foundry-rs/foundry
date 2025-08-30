@@ -16,7 +16,6 @@ use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
-use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
@@ -142,10 +141,6 @@ pub struct TestArgs {
     /// The Etherscan (or equivalent) API key.
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
-
-    /// The Etherscan API version.
-    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
-    etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
@@ -868,10 +863,6 @@ impl Provider for TestArgs {
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
-        }
-
-        if let Some(api_version) = &self.etherscan_api_version {
-            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
         }
 
         if self.show_progress {

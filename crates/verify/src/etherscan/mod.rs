@@ -10,7 +10,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionTrait;
 use eyre::{Context, OptionExt, Result, eyre};
 use foundry_block_explorers::{
-    Client, EtherscanApiVersion,
+    Client,
     errors::EtherscanError,
     utils::lookup_compiler_version,
     verify::{CodeFormat, VerifyContract},
@@ -264,23 +264,7 @@ impl EtherscanVerificationProvider {
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let api_version = verifier_args.verifier_api_version.unwrap_or_else(|| {
-            if is_etherscan {
-                etherscan_config.as_ref().map(|c| c.api_version).unwrap_or_default()
-            } else {
-                EtherscanApiVersion::V1
-            }
-        });
-
-        let etherscan_api_url = verifier_url
-            .or_else(|| {
-                if api_version == EtherscanApiVersion::V2 {
-                    None
-                } else {
-                    etherscan_config.as_ref().map(|c| c.api_url.as_str())
-                }
-            })
-            .map(str::to_owned);
+        let etherscan_api_url = verifier_url.or(None).map(str::to_owned);
 
         let api_url = etherscan_api_url.as_deref();
         let base_url = etherscan_config
@@ -290,7 +274,7 @@ impl EtherscanVerificationProvider {
         let etherscan_key =
             etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.clone()));
 
-        let mut builder = Client::builder().with_api_version(api_version);
+        let mut builder = Client::builder();
 
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
@@ -301,7 +285,7 @@ impl EtherscanVerificationProvider {
             } else {
                 base_url.unwrap_or(api_url)
             };
-            builder.with_chain_id(chain).with_api_url(api_url)?.with_url(base_url)?
+            builder.with_api_url(api_url)?.with_url(base_url)?
         } else {
             builder.chain(chain)?
         };
@@ -523,7 +507,7 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -580,7 +564,7 @@ mod tests {
 
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
 
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/v2/api");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([
@@ -604,7 +588,6 @@ mod tests {
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
         assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
-        assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
         assert!(format!("{client:?}").contains("dummykey"));
     }
 
