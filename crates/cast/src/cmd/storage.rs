@@ -69,6 +69,10 @@ pub struct StorageArgs {
 
     #[command(flatten)]
     build: BuildOpts,
+
+    /// Specify the solc version to compile with. Overrides detected version.
+    #[arg(long, value_parser = Version::parse)]
+    solc_version: Option<Version>,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -161,11 +165,19 @@ impl StorageArgs {
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
-        project.compiler = if auto_detect {
-            SolcCompiler::AutoDetect
+        // Override solc version if provided
+        if let Some(solc_req) = self.solc_version {
+            // Use user-specified version
+            let solc = Solc::find_or_install(&solc_req)?;
+            project.compiler = SolcCompiler::Specific(solc);
         } else {
-            SolcCompiler::Specific(Solc::find_or_install(&version)?)
-        };
+            // Auto-detect or use metadata version
+            project.compiler = if auto_detect {
+                SolcCompiler::AutoDetect
+            } else {
+                SolcCompiler::Specific(Solc::find_or_install(&version)?)
+            };
+        }
 
         // Compile
         let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
