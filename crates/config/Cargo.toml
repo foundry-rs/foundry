@@ -22,8 +22,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 
 revm.workspace = true
 
-solar-parse.workspace = true
-solar-interface.workspace = true
+solar.workspace = true
 
 dirs.workspace = true
 dunce.workspace = true
@@ -43,7 +42,7 @@ serde.workspace = true
 soldeer-core.workspace = true
 thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
-toml_edit = "0.23"
+toml_edit.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true

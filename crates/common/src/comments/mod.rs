@@ -1,15 +1,15 @@
+mod comment;
+pub use comment::{Comment, CommentStyle};
+
+pub mod inline_config;
+
 use crate::iter::IterDelimited;
-use solar_parse::{
+use solar::parse::{
     ast::{CommentKind, Span},
     interface::{BytePos, CharPos, SourceMap, source_map::SourceFile},
     lexer::token::RawTokenKind as TokenKind,
 };
 use std::fmt;
-
-mod comment;
-pub use comment::{Comment, CommentStyle};
-
-pub mod inline_config;
 
 pub const DISABLE_START: &str = "forgefmt: disable-start";
 pub const DISABLE_END: &str = "forgefmt: disable-end";
@@ -130,7 +130,7 @@ impl<'ast> CommentGatherer<'ast> {
 
     /// Consumes the gatherer and returns the collected comments.
     fn gather(mut self) -> Self {
-        for token in solar_parse::Cursor::new(&self.text[self.pos..]) {
+        for token in solar::parse::Cursor::new(&self.text[self.pos..]) {
             self.process_token(token);
         }
         self
@@ -176,7 +176,7 @@ impl<'ast> CommentGatherer<'ast> {
     }
 
     /// Processes a single token from the source.
-    fn process_token(&mut self, token: solar_parse::lexer::token::RawToken) {
+    fn process_token(&mut self, token: solar::parse::lexer::token::RawToken) {
         let token_range = self.pos..self.pos + token.len as usize;
         let span = self.make_span(token_range.clone());
         let token_text = &self.text[token_range];

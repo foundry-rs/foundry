@@ -16,7 +16,7 @@ workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 
-solar-parse.workspace = true
+solar.workspace = true
 
 # alloy-primitives.workspace = true
 itertools.workspace = true

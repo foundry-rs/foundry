@@ -1,12 +1,10 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_chains::Chain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
-use foundry_config::{ForkChainConfig, ForkConfigs, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -22,10 +20,9 @@ forgetest_init!(
     #[ignore]
     can_use_fork_cheat_codes_in_script,
     |prj, cmd| {
-        let script = prj
-            .add_source(
-                "Foo",
-                r#"
+        let script = prj.add_source(
+            "Foo",
+            r#"
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -37,8 +34,7 @@ contract ContractScript is Script {
     }
 }
    "#,
-            )
-            .unwrap();
+        );
 
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
@@ -48,10 +44,9 @@ contract ContractScript is Script {
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external {
@@ -59,8 +54,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -77,10 +71,9 @@ Script ran successfully.
 
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external {
@@ -88,8 +81,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[
         r#"
@@ -106,10 +98,9 @@ Script ran successfully.
 
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function myFunction() external {
@@ -117,8 +108,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
         str![[r#"
@@ -148,7 +138,7 @@ contract FailingScript is Script {
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
     // set up command
     cmd.arg("script").arg(script);
@@ -164,7 +154,7 @@ Error: script failed: failed
 // <https://github.com/foundry-rs/foundry/issues/2508>
 forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
     // set up command
     cmd.arg("script").arg(script).arg("--json");
@@ -179,10 +169,9 @@ Error: script failed: failed
 // Tests that the manually specified gas limit is used when using the --unlocked option
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let deploy_script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -198,8 +187,7 @@ contract DeployScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -280,10 +268,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Tests that the manually specified gas limit is used.
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let deploy_script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -299,8 +286,7 @@ contract DeployScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -385,10 +371,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -399,8 +384,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script")
         .arg(script)
@@ -427,10 +411,9 @@ Script ran successfully.
 // Tests that the run command can run functions with arguments without specifying the signature
 // <https://github.com/foundry-rs/foundry/issues/11240>
 forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -441,8 +424,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -461,10 +443,9 @@ Script ran successfully.
 
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -472,8 +453,7 @@ contract Demo {
         return (255, 3);
     }
 }"#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -495,10 +475,9 @@ result: uint256 255
 forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     // This example script would fail in on-chain simulation
-    let deploy_script = prj
-        .add_source(
-            "DeployScript",
-            r#"
+    let deploy_script = prj.add_source(
+        "DeployScript",
+        r#"
 import "forge-std/Script.sol";
 
 contract HashChecker {
@@ -523,8 +502,7 @@ contract DeployScript is Script {
         hashChecker = new HashChecker();
     }
 }"#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -608,7 +586,7 @@ contract RunScript is Script {
 }"#
     .replace("CONTRACT_ADDRESS", contract_address);
 
-    let run_script = prj.add_source("RunScript", &run_code).unwrap();
+    let run_script = prj.add_source("RunScript", &run_code);
     let run_contract = run_script.display().to_string() + ":RunScript";
 
     cmd.forge_fuse()
@@ -1168,8 +1146,7 @@ contract Script0 is Script {
   }
 }
    "#,
-            )
-            .unwrap();
+            );
 
     cmd
         .forge_fuse()
@@ -1257,10 +1234,9 @@ Warning: Target directory is not empty, but `--force` was specified
 "#]]);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-        .add_script(
-            "Counter.s.sol",
-            r#"
+    let script = prj.add_script(
+        "Counter.s.sol",
+        r#"
 import "forge-std/Script.sol";
 
 contract A {
@@ -1296,8 +1272,7 @@ contract Script0 is Script {
   }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd
         .forge_fuse()
@@ -1367,10 +1342,9 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // checks that skipping build
 forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -1378,8 +1352,7 @@ contract Demo {
         return (255, 3);
     }
 }"#,
-        )
-        .unwrap();
+    );
     cmd.arg("script")
         .arg(script)
         .args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT])
@@ -1430,10 +1403,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "ScriptTxOrigin.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptTxOrigin.s.sol",
+        r#"
 import { Script } from "forge-std/Script.sol";
 
 contract ScriptTxOrigin is Script {
@@ -1481,8 +1453,7 @@ contract ContractC {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse()
         .arg("script")
@@ -1518,10 +1489,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "ScriptTxOrigin.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptTxOrigin.s.sol",
+        r#"
 import {Script, console} from "forge-std/Script.sol";
 
 contract Contract {
@@ -1554,8 +1524,7 @@ contract NestedCreate is Script {
   }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse()
         .arg("script")
@@ -1580,18 +1549,16 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "ScriptWithInterface.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptWithInterface.s.sol",
+        r#"
 contract Script {
   function run() external {}
 }
 
 interface Interface {}
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1604,10 +1571,9 @@ Script ran successfully.
 });
 
 forgetest_async!(assert_can_detect_unlinked_target_with_libraries, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "ScriptWithExtLib.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptWithExtLib.s.sol",
+        r#"
 library Lib {
     function f() public {}
 }
@@ -1618,8 +1584,7 @@ contract Script {
     }
 }
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1659,8 +1624,7 @@ import "./B.sol";
 contract ScriptA {{}}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "B.sol",
@@ -1677,8 +1641,7 @@ contract ScriptB is Script {{
 }}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "C.sol",
@@ -1690,8 +1653,7 @@ import "./B.sol";
 contract ScriptC {{}}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
     tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
@@ -1721,18 +1683,16 @@ forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
 });
 
 forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "Script.s.sol",
-            r#"
+    let script = prj.add_script(
+        "Script.s.sol",
+        r#"
 contract Script {
     function run() external {}
 
     function run(address,uint256) external {}
 }
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
@@ -1758,10 +1718,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "CustomErrorScript.s.sol",
-            r#"
+    let script = prj.add_script(
+        "CustomErrorScript.s.sol",
+        r#"
 import { Script } from "forge-std/Script.sol";
 
 contract ContractWithCustomError {
@@ -1780,8 +1739,7 @@ contract CustomErrorScript is Script {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
@@ -1805,8 +1763,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let node_config = NodeConfig::test().with_base_fee(Some(0));
     let (_api, handle) = spawn(node_config).await;
@@ -1936,8 +1893,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -1971,8 +1927,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -2013,8 +1968,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -2088,8 +2042,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2131,8 +2084,7 @@ contract SimpleScript is Script {
 }
    "#
         .replace("<url>", &url),
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2236,8 +2188,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2291,24 +2242,22 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
-    function run() public {
+    function run() public view {
         address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }
 }"#,
-        )
-        .unwrap();
+    );
     cmd.arg("script")
         .arg(script)
         .args([
@@ -2351,8 +2300,7 @@ contract WalletScript is Script {
         }
     }
 }"#,
-        )
-        .unwrap();
+        );
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -2394,8 +2342,7 @@ contract SimpleScript is Script {
     }
 }
             "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
     cmd.assert_success().stdout_eq(str![[r#"
@@ -2457,8 +2404,7 @@ contract ContractScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.arg("script")
         .args([
             "ContractScript",
@@ -2493,8 +2439,7 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     let rpc_url = next_http_archive_rpc_url();
 
@@ -2547,8 +2492,7 @@ contract DryRunTest is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script")
         .args([
@@ -2698,8 +2642,7 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
 Error: script failed: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
@@ -2736,8 +2679,7 @@ forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2786,8 +2728,7 @@ contract EIP7702Script is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+        );
 
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -2920,8 +2861,7 @@ contract BatchCallDelegation {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_script(
             "BatchCallDelegationScript.s.sol",
@@ -2967,8 +2907,7 @@ contract BatchCallDelegationScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+        );
 
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (api, handle) = spawn(node_config).await;
@@ -3065,8 +3004,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "Factory.sol",
         r#"
@@ -3078,12 +3016,10 @@ contract Factory {
     }
 }
    "#,
-    )
-    .unwrap();
-    let deploy_script = prj
-        .add_script(
-            "Factory.s.sol",
-            r#"
+    );
+    let deploy_script = prj.add_script(
+        "Factory.s.sol",
+        r#"
 import "forge-std/Script.sol";
 import {Factory} from "../src/Factory.sol";
 import {Counter} from "../src/Counter.sol";
@@ -3104,8 +3040,7 @@ contract FactoryScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -3160,13 +3095,11 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
-    let deploy_script = prj
-        .add_script(
-            "Counter.s.sol",
-            &r#"
+    let deploy_script = prj.add_script(
+        "Counter.s.sol",
+        &r#"
 import "forge-std/Script.sol";
 import {Counter} from "../src/Counter.sol";
 
@@ -3186,9 +3119,8 @@ contract CounterScript is Script {
     }
 }
    "#
-            .replace("<url>", &endpoint),
-        )
-        .unwrap();
+        .replace("<url>", &endpoint),
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     cmd.args([
@@ -3235,509 +3167,5 @@ Traces:
 "#]])
     .stderr_eq(str![[r#"
 Error: script failed: call to non-contract address [..]
-"#]]);
-});
-
-// Tests that can access the fork config for each chain from `foundry.toml`
-forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
-    prj.insert_vm();
-    prj.insert_console();
-    prj.insert_ds_test();
-
-    prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![
-                (
-                    Chain::mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            "mainnet-rpc".to_string(),
-                        ))),
-                        vars: vec![
-                        ("i256".into(), "-1234".into()),
-                        ("u256".into(), 1234.into()),
-                        ("bool".into(), true.into()),
-                        (
-                            "b256".into(),
-                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
-                                .into(),
-                        ),
-                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
-                        ("bytes".into(), "0x00000000000f00".into()),
-                        ("str".into(), "bar".into()),
-                        // Array configurations for testing new array cheatcodes
-                        ("bool_array".into(), vec![true, false, true].into()),
-                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
-                        ("uint_array".into(), vec!["100", "200", "300"].into()),
-                        ("addr_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes32_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
-                        ("string_array".into(), vec!["hello", "world", "test"].into()),
-                    ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-                (
-                    Chain::optimism_mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: None,
-                        vars: vec![
-                        ("i256".into(), "-4321".into()),
-                        ("u256".into(), 4321.into()),
-                        ("bool".into(), "false".into()),
-                        (
-                            "b256".into(),
-                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
-                                .into(),
-                        ),
-                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
-                        ("bytes".into(), "0x00f00000000000".into()),
-                        ("str".into(), "bazz".into()),
-                        // Array configurations for testing new array cheatcodes
-                        ("bool_array".into(), vec![false, true, false].into()),
-                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
-                        ("uint_array".into(), vec!["400", "500", "600"].into()),
-                        ("addr_array".into(), vec![
-                            "0x3333333333333333333333333333333333333333",
-                            "0x4444444444444444444444444444444444444444"
-                        ].into()),
-                        ("bytes32_array".into(), vec![
-                            "0x3333333333333333333333333333333333333333333333333333333333333333",
-                            "0x4444444444444444444444444444444444444444444444444444444444444444"
-                        ].into()),
-                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
-                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
-                    ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        config.rpc_endpoints = RpcEndpoints::new(vec![(
-            "optimism",
-            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
-        )]);
-    });
-
-    prj.add_source(
-            "ForkScript.s.sol",
-            r#"
-import {Vm} from "./Vm.sol";
-import {DSTest} from "./test.sol";
-import {console} from "./console.sol";
-
-contract ForkScript is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
-    function run() public view {
-        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.readForkChainIds(), vm.readForkChains());
-
-        for (uint256 i = 0; i < chains.length; i++) {
-            assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
-            assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
-            console.log("chain:", chains[i]);
-            console.log("id:", chainIds[i]);
-
-            string memory rpc = vm.readForkChainRpcUrl(chainIds[i]);
-            int256 i256 = vm.readForkChainInt(chainIds[i], "i256");
-            uint256 u256 = vm.readForkChainUint(chainIds[i], "u256");
-            bool boolean = vm.readForkChainBool(chainIds[i], "bool");
-            address addr = vm.readForkChainAddress(chainIds[i], "addr");
-            bytes32 b256 = vm.readForkChainBytes32(chainIds[i], "b256");
-            bytes memory byytes = vm.readForkChainBytes(chainIds[i], "bytes");
-            string memory str = vm.readForkChainString(chainIds[i], "str");
-
-            console.log(" > rpc:", rpc);
-            console.log(" > vars:");
-            console.log("   > i256:", i256);
-            console.log("   > u256:", u256);
-            console.log("   > bool:", boolean);
-            console.log("   > addr:", addr);
-            console.log("   > string:", str);
-
-            assert(
-                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-                    || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-            );
-        }
-
-        // Test array cheatcodes in a separate function to avoid stack too deep
-        testArrayCheatcodes();
-    }
-
-    function testArrayCheatcodes() public view {
-        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-
-        for (uint256 i = 0; i < chains.length; i++) {
-            console.log("Testing arrays for chain:", chains[i]);
-
-            // Test bool array
-            bool[] memory boolArray = vm.readForkChainBoolArray(chainIds[i], "bool_array");
-            assert(boolArray.length == 3);
-            console.log("  > bool_array[0]:", boolArray[0]);
-
-            // Test int array
-            int256[] memory intArray = vm.readForkChainIntArray(chainIds[i], "int_array");
-            assert(intArray.length == 3);
-            console.log("  > int_array[0]:", intArray[0]);
-
-            // Test uint array
-            uint256[] memory uintArray = vm.readForkChainUintArray(chainIds[i], "uint_array");
-            assert(uintArray.length == 3);
-            console.log("  > uint_array[0]:", uintArray[0]);
-
-            // Test address array
-            address[] memory addrArray = vm.readForkChainAddressArray(chainIds[i], "addr_array");
-            assert(addrArray.length == 2);
-            console.log("  > addr_array[0]:", addrArray[0]);
-
-            // Test bytes32 array
-            bytes32[] memory bytes32Array = vm.readForkChainBytes32Array(chainIds[i], "bytes32_array");
-            assert(bytes32Array.length == 2);
-
-            // Test bytes array
-            bytes[] memory bytesArray = vm.readForkChainBytesArray(chainIds[i], "bytes_array");
-            assert(bytesArray.length == 3);
-
-            // Test string array
-            string[] memory stringArray = vm.readForkChainStringArray(chainIds[i], "string_array");
-            assert(stringArray.length == 3);
-            console.log("  > string_array[0]:", stringArray[0]);
-        }
-    }
-
-    function eqString(string memory s1, string memory s2) public pure returns(bool) {
-        return keccak256(bytes(s1)) == keccak256(bytes(s2));
-    }
-}
-        "#,
-        )
-        .unwrap();
-
-    cmd.arg("script").arg("ForkScript").assert_success().stdout_eq(str![[r#"
-...
-  chain: mainnet
-  id: 1
-   > rpc: mainnet-rpc
-   > vars:
-     > i256: -1234
-     > u256: 1234
-     > bool: true
-     > addr: 0xdEADBEeF00000000000000000000000000000000
-     > string: bar
-  chain: optimism
-  id: 10
-   > rpc: optimism-rpc
-   > vars:
-     > i256: -4321
-     > u256: 4321
-     > bool: false
-     > addr: 0x00000000000000000000000000000000DeaDBeef
-     > string: bazz
-  Testing arrays for chain: mainnet
-    > bool_array[0]: true
-    > int_array[0]: -100
-    > uint_array[0]: 100
-    > addr_array[0]: 0x1111111111111111111111111111111111111111
-    > string_array[0]: hello
-  Testing arrays for chain: optimism
-    > bool_array[0]: false
-    > int_array[0]: -400
-    > uint_array[0]: 400
-    > addr_array[0]: 0x3333333333333333333333333333333333333333
-    > string_array[0]: foo
-
-"#]]);
-});
-
-// Tests that can derive chain id of the active fork + get the config from `foundry.toml`
-forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
-    prj.insert_vm();
-    prj.insert_console();
-    prj.insert_ds_test();
-    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
-
-    prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![
-                (
-                    Chain::mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            mainnet_endpoint.clone(),
-                        ))),
-                        vars: vec![
-                        ("i256".into(), "-1234".into()),
-                        ("u256".into(), 1234.into()),
-                        ("bool".into(), true.into()),
-                        (
-                            "b256".into(),
-                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
-                                .into(),
-                        ),
-                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
-                        ("bytes".into(), "0x00000000000f00".into()),
-                        ("str".into(), "bar".into()),
-                        ("bool_array".into(), vec![true, false, true].into()),
-                        ("int_array".into(), vec!["-100", "200", "-300"].into()),
-                        ("uint_array".into(), vec!["100", "200", "300"].into()),
-                        ("addr_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes32_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
-                        ("string_array".into(), vec!["hello", "world", "test"].into()),
-                    ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-                (
-                    Chain::optimism_mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: None,
-                        vars: vec![
-                        ("i256".into(), "-4321".into()),
-                        ("u256".into(), 4321.into()),
-                        ("bool".into(), "false".into()),
-                        (
-                            "b256".into(),
-                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
-                                .into(),
-                        ),
-                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
-                        ("bytes".into(), "0x00f00000000000".into()),
-                        ("str".into(), "bazz".into()),
-                        ("bool_array".into(), vec![false, true, false].into()),
-                        ("int_array".into(), vec!["-400", "500", "-600"].into()),
-                        ("uint_array".into(), vec!["400", "500", "600"].into()),
-                        ("addr_array".into(), vec![
-                            "0x3333333333333333333333333333333333333333",
-                            "0x4444444444444444444444444444444444444444"
-                        ].into()),
-                        ("bytes32_array".into(), vec![
-                            "0x3333333333333333333333333333333333333333333333333333333333333333",
-                            "0x4444444444444444444444444444444444444444444444444444444444444444"
-                        ].into()),
-                        ("bytes_array".into(), vec!["0xdead", "0xbeef", "0xcafe"].into()),
-                        ("string_array".into(), vec!["foo", "bar", "baz"].into()),
-                    ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        config.rpc_endpoints = RpcEndpoints::new(vec![(
-            "optimism",
-            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
-        )]);
-    });
-
-    prj.add_source(
-        "ForkTest.t.sol",
-        &r#"
-import {Vm} from "./Vm.sol";
-import {DSTest} from "./test.sol";
-import {console} from "./console.sol";
-
-contract ForkTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
-    function test_forkVars() public {
-        vm.createSelectFork("<url>");
-
-        console.log("chain:", vm.readForkChain());
-        console.log("id:", vm.readForkChainId());
-        assert(eqString(vm.readForkRpcUrl(), "<url>"));
-
-        int256 i256 = vm.readForkInt("i256");
-        uint256 u256 = vm.readForkUint("u256");
-        bool boolean = vm.readForkBool("bool");
-        address addr = vm.readForkAddress("addr");
-        bytes32 b256 = vm.readForkBytes32("b256");
-        bytes memory byytes = vm.readForkBytes("bytes");
-        string memory str = vm.readForkString("str");
-
-        console.log(" > vars:");
-        console.log("   > i256:", i256);
-        console.log("   > u256:", u256);
-        console.log("   > bool:", boolean);
-        console.log("   > addr:", addr);
-        console.log("   > string:", str);
-
-        assert(
-            b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-        );
-
-        // Test array cheatcodes in a separate function to avoid stack too deep
-        testArrayCheatcodes();
-    }
-
-    function testArrayCheatcodes() private {
-        // Test array cheatcodes without specifying chain (uses active fork)
-        console.log("   > Arrays:");
-
-        // Test bool array
-        bool[] memory boolArray = vm.readForkBoolArray("bool_array");
-        assert(boolArray.length == 3);
-        assert(boolArray[0] == true);
-        console.log("     > bool_array[0]:", boolArray[0]);
-
-        // Test int array
-        int256[] memory intArray = vm.readForkIntArray("int_array");
-        assert(intArray.length == 3);
-        assert(intArray[0] == -100);
-        console.log("     > int_array[0]:", intArray[0]);
-
-        // Test uint array
-        uint256[] memory uintArray = vm.readForkUintArray("uint_array");
-        assert(uintArray.length == 3);
-        assert(uintArray[0] == 100);
-        console.log("     > uint_array[0]:", uintArray[0]);
-
-        // Test address array
-        address[] memory addrArray = vm.readForkAddressArray("addr_array");
-        assert(addrArray.length == 2);
-        assert(addrArray[0] == 0x1111111111111111111111111111111111111111);
-        console.log("     > addr_array[0]:", addrArray[0]);
-
-        // Test bytes32 array
-        bytes32[] memory bytes32Array = vm.readForkBytes32Array("bytes32_array");
-        assert(bytes32Array.length == 2);
-
-        // Test bytes array
-        bytes[] memory bytesArray = vm.readForkBytesArray("bytes_array");
-        assert(bytesArray.length == 3);
-
-        // Test string array
-        string[] memory stringArray = vm.readForkStringArray("string_array");
-        assert(stringArray.length == 3);
-        assert(eqString(stringArray[0], "hello"));
-        console.log("     > string_array[0]:", stringArray[0]);
-    }
-
-    function eqString(string memory s1, string memory s2) public pure returns(bool) {
-        return keccak256(bytes(s1)) == keccak256(bytes(s2));
-    }
-}
-       "#
-        .replace("<url>", &mainnet_endpoint),
-    )
-    .unwrap();
-
-    cmd.args(["test", "-vvv", "ForkTest"]).assert_success().stdout_eq(str![[r#"
-...
-[PASS] test_forkVars() ([GAS])
-Logs:
-  chain: mainnet
-  id: 1
-   > vars:
-     > i256: -1234
-     > u256: 1234
-     > bool: true
-     > addr: 0xdEADBEeF00000000000000000000000000000000
-     > string: bar
-     > Arrays:
-       > bool_array[0]: true
-       > int_array[0]: -100
-       > uint_array[0]: 100
-       > addr_array[0]: 0x1111111111111111111111111111111111111111
-       > string_array[0]: hello
-...
-"#]]);
-});
-
-// Tests that it will throw an error when reading an address that is not 20 bytes
-forgetest_init!(throws_error_when_reading_invalid_address, |prj, cmd| {
-    prj.insert_vm();
-    prj.insert_console();
-    prj.insert_ds_test();
-    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
-
-    prj.update_config(|config| {
-        config.forks = ForkConfigs(
-            vec![(
-                Chain::mainnet(),
-                ForkChainConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        mainnet_endpoint.clone(),
-                    ))),
-                    vars: vec![("owner".into(), "0xdeadbeef".into())].into_iter().collect(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-        );
-    });
-
-    prj.add_source(
-        "ForkTest.t.sol",
-        &r#"
-import {Vm} from "./Vm.sol";
-import {DSTest} from "./test.sol";
-import {console} from "./console.sol";
-
-contract ForkTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
-    function test_throwsErrorWithoutSelectedFork() public {
-        vm.readForkChain();
-    }
-
-    function test_throwsErrorWithUnknownVar() public {
-        vm.createSelectFork("<url>");
-        bool invalid = vm.readForkBool("invalid");
-    }
-
-    function test_throwsErrorWhenInvalidAddressLength() public {
-        vm.createSelectFork("<url>");
-        address owner = vm.readForkAddress("owner");
-    }
-
-    function test_throwsErrorWhenNotArray() public {
-        vm.createSelectFork("<url>");
-        string[] memory invalid = vm.readForkStringArray("owner");
-    }
-}
-       "#
-        .replace("<url>", &mainnet_endpoint),
-    )
-    .unwrap();
-
-    cmd.args(["test", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
-...
-Failing tests:
-Encountered 4 failing tests in src/ForkTest.t.sol:ForkTest
-[FAIL: vm.readForkAddress: failed to parse 'owner' in '[fork.<chain_id: 1>]': failed parsing "0xdeadbeef" as type `address`: parser error:
-0xdeadbeef
-^
-invalid string length] test_throwsErrorWhenInvalidAddressLength() ([GAS])
-[FAIL: vm.readForkStringArray: variable 'owner' in '[fork.<chain_id: 1>]' must be an array] test_throwsErrorWhenNotArray() ([GAS])
-[FAIL: vm.readForkBool: variable 'invalid' not found in '[fork.<chain_id: 1>]'] test_throwsErrorWithUnknownVar() ([GAS])
-[FAIL: vm.readForkChain: a fork must be selected] test_throwsErrorWithoutSelectedFork() ([GAS])
-
-Encountered a total of 4 failing tests, 0 tests succeeded
-...
 "#]]);
 });

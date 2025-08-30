@@ -8,7 +8,7 @@ use foundry_common::{
     iter::IterDelimited,
 };
 use foundry_config::fmt::IndentStyle;
-use solar_parse::{
+use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, SourceMap},
     token,

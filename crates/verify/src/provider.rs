@@ -10,8 +10,8 @@ use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     Graph, Project,
     artifacts::{Metadata, Source, output_selection::OutputSelection},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
-    multi::MultiCompilerSettings,
+    compilers::solc::SolcCompiler,
+    multi::{MultiCompilerParser, MultiCompilerSettings},
     solc::Solc,
 };
 use foundry_config::Config;
@@ -88,8 +88,7 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph =
-            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }

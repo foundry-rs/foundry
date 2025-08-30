@@ -1,5 +1,6 @@
 use forge_fmt_2::FormatterConfig;
 use snapbox::{Data, assert_data_eq};
+use solar::sema::Compiler;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -7,8 +8,14 @@ use std::{
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[track_caller]
-fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
-    match forge_fmt_2::format_source(source, Some(path), config).into_result() {
+fn format(source: &str, path: &Path, fmt_config: FormatterConfig) -> String {
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+
+    // NOTE(rusowsky) use `into_ok()` so that diagnostics error when unable to resolve imports don't
+    // kill the test execution --> ask Dani if this is acceptable.
+    match forge_fmt_2::format_source(source, Some(&path), fmt_config, &mut compiler).into_ok() {
         Ok(formatted) => formatted,
         Err(e) => panic!("failed to format {path:?}: {e}"),
     }

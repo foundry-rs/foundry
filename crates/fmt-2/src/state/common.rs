@@ -3,7 +3,7 @@ use crate::pp::{BreakToken, Printer, SIZE_INFINITY};
 use foundry_common::iter::IterDelimited;
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
-use solar_parse::{
+use solar::parse::{
     Cursor,
     ast::{self, Span},
     interface::BytePos,
@@ -12,7 +12,7 @@ use std::{borrow::Cow, fmt::Debug};
 
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
-    pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit) {
+    pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
         let ast::Lit { span, symbol, ref kind } = *lit;
         if self.handle_span(span, false) {
             return;
@@ -43,7 +43,8 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
-            ast::LitKind::Err(_) => self.word(symbol.to_string()),
+            // TODO(rusowsky): ask Dani why `123E456` errors now and before the merge it didn't.
+            ast::LitKind::Err(_) => self.word(symbol.to_string().to_lowercase()),
         }
     }
 
@@ -144,7 +145,7 @@ impl<'ast> State<'_, 'ast> {
             config::QuoteStyle::Preserve => self.char_at(quote_pos),
         };
         debug_assert!(matches!(quote, '\"' | '\''), "{quote:?}");
-        let s = solar_parse::interface::data_structures::fmt::from_fn(move |f| {
+        let s = solar::parse::interface::data_structures::fmt::from_fn(move |f| {
             if matches!(kind, ast::StrKind::Hex) {
                 match self.config.hex_underscore {
                     config::HexUnderscore::Preserve => {}

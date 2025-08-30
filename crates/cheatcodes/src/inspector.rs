@@ -4,8 +4,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess,
-        mapping::{self, MappingSlots},
+        DealRecord, GasRecord, RecordAccess, mapping,
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -33,7 +32,9 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints, mapping_slots::MappingSlots,
+};
 use foundry_evm_core::{
     InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
@@ -195,7 +196,6 @@ impl Clone for TestContext {
 
 impl TestContext {
     /// Clears the context.
-    #[inline]
     pub fn clear(&mut self) {
         self.opened_read_files.clear();
     }
@@ -1049,7 +1049,6 @@ impl Cheatcodes {
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
-    #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.

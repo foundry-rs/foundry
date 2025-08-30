@@ -44,9 +44,8 @@ alloy-transport.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
+solar.workspace = true
 solar-interface.workspace = true
-solar-parse.workspace = true
-solar-sema.workspace = true
 
 tower.workspace = true
 

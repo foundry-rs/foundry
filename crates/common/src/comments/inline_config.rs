@@ -1,6 +1,8 @@
+use solar::{
+    parse::ast::{self, Item, SourceUnit, visit::Visit as VisitAst},
+    sema::hir::{self, Visit as VisitHir},
+};
 use solar_interface::{SourceMap, Span};
-use solar_parse::ast::{Item, SourceUnit, visit::Visit as VisitAst};
-use solar_sema::hir::{self, Visit as VisitHir};
 use std::{collections::HashMap, hash::Hash, marker::PhantomData, ops::ControlFlow};
 
 /// A disabled formatting range. `loose` designates that the range includes any loc which
@@ -342,10 +344,7 @@ impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
         self.walk_item(item)
     }
 
-    fn visit_stmt(
-        &mut self,
-        stmt: &'ast solar_sema::ast::Stmt<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         // Check if this stmt starts after the offset.
         if stmt.span.lo().to_usize() > self.offset {
             return ControlFlow::Break(stmt.span);

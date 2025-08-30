@@ -3,8 +3,10 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit};
-use solar_interface::kw;
+use solar::{
+    ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
+    interface::kw,
+};
 use std::ops::ControlFlow;
 
 declare_forge_lint!(
@@ -26,7 +28,7 @@ declare_forge_lint!(
 /// WARN: can issue false positives. It does not check that the contract being called is an ERC20.
 /// TODO: re-implement using `LateLintPass` so that it can't issue false positives.
 impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
-    fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
+    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(body) = &func.body {
             let mut checker = UncheckedTransferERC20Checker { ctx };
             let _ = checker.visit_block(body);
@@ -40,7 +42,7 @@ impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
 /// When a transfer's return value is used (in require, assignment, etc.), it's part
 /// of a larger expression and won't be flagged.
 struct UncheckedTransferERC20Checker<'a, 's> {
-    ctx: &'a LintContext<'s>,
+    ctx: &'a LintContext<'s, 'a>,
 }
 
 impl<'ast> Visit<'ast> for UncheckedTransferERC20Checker<'_, '_> {
@@ -77,7 +79,7 @@ fn is_erc20_transfer_call(expr: &Expr<'_>) -> bool {
 // -- UNCKECKED LOW-LEVEL CALLS -------------------------------------------------------------------
 
 impl<'ast> EarlyLintPass<'ast> for UncheckedCall {
-    fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
+    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(body) = &func.body {
             let mut checker = UncheckedCallChecker { ctx };
             let _ = checker.visit_block(body);
@@ -91,7 +93,7 @@ impl<'ast> EarlyLintPass<'ast> for UncheckedCall {
 /// statements. When the success value is checked (in require, if, etc.), the call
 /// is part of a larger expression and won't be flagged.
 struct UncheckedCallChecker<'a, 's> {
-    ctx: &'a LintContext<'s>,
+    ctx: &'a LintContext<'s, 'a>,
 }
 
 impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {

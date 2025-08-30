@@ -4,6 +4,8 @@
 
 use std::{io::Read, path::PathBuf};
 
+use foundry_common::compile::ProjectCompiler;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -18,8 +20,18 @@ fn main() {
         let path = PathBuf::from(&args[1]);
         (std::fs::read_to_string(&path).unwrap(), Some(path))
     };
+
+    // Setup compiler
     let config = foundry_config::Config::load().unwrap();
-    let result = forge_fmt_2::format_source(&src, path.as_deref(), config.fmt);
+    let project = config.solar_project().unwrap();
+    let mut output = if let Some(ref path) = path {
+        ProjectCompiler::new().files([path.to_path_buf()]).compile(&project).unwrap()
+    } else {
+        ProjectCompiler::new().compile(&project).unwrap()
+    };
+    let compiler = output.parser_mut().solc_mut().compiler_mut();
+
+    let result = forge_fmt_2::format_source(&src, path.as_deref(), config.fmt, compiler);
     if let Some(formatted) = result.ok_ref() {
         print!("{formatted}");
     }
