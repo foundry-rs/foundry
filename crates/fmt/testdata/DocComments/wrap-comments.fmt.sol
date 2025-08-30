@@ -11,8 +11,7 @@ contract HelloWorld {
     }
 
     /**
-     * Here's a more double asterix
-     * comment
+     * Here's a more double asterix comment
      */
     Person public theDude;
 
@@ -30,21 +29,19 @@ contract HelloWorld {
      */
     function example() public {
         /**
-         * Does this add a whitespace
-         * error?
+         * Does this add a whitespace error?
          *
          * Let's find out.
          */
     }
 
     /**
-     * @dev Calculates a rectangle's
-     * surface and perimeter.
+     * @dev Calculates a rectangle's surface
+     * and perimeter.
      * @param w Width of the rectangle.
      * @param h Height of the rectangle.
      * @return s The calculated surface.
-     * @return p The calculated
-     * perimeter.
+     * @return p The calculated perimeter.
      */
     function rectangle(
         uint256 w,
@@ -58,18 +55,15 @@ contract HelloWorld {
         p = 2 * (w + h);
     }
 
-    /// A long doc line comment that
-    /// will be wrapped
-    function docLineOverflow()
-        external
-    {}
+    /// A long doc line comment that will be
+    /// wrapped
+    function docLineOverflow() external {}
 
     function docLinePostfixOverflow()
-        external
-    {}
+        external {}
 
-    /// A long doc line comment that
-    /// will be wrapped
+    /// A long doc line comment that will be
+    /// wrapped
 
     /**
      * @notice Here is my comment
@@ -78,9 +72,7 @@ contract HelloWorld {
      * Some equations:
      *     y = mx + b
      */
-    function anotherExample()
-        external
-    {}
+    function anotherExample() external {}
 
     /**
      * contract A {
@@ -89,9 +81,7 @@ contract HelloWorld {
      *     }
      * }
      */
-    function multilineIndent()
-        external
-    {}
+    function multilineIndent() external {}
 
     /**
      * contract A {
@@ -101,8 +91,7 @@ contract HelloWorld {
      * }
      */
     function multilineMalformedIndent()
-        external
-    {}
+        external {}
 
     /**
      * contract A {
@@ -114,8 +103,7 @@ contract HelloWorld {
      * }
      */
     function malformedIndentOverflow()
-        external
-    {}
+        external {}
 }
 
 /**

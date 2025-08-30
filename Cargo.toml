@@ -20,6 +20,7 @@ members = [
     "crates/evm/fuzz/",
     "crates/evm/traces/",
     "crates/fmt/",
+    "crates/fmt-2/",
     "crates/forge/",
     "crates/script-sequence/",
     "crates/macros/",
@@ -264,7 +265,6 @@ op-alloy-flz = "0.13.1"
 revm = { version = "29.0.0", default-features = false }
 revm-inspectors = { version = "0.29.0", features = ["serde"] }
 op-revm = { version = "10.0.0", default-features = false }
-
 ## alloy-evm
 alloy-evm = "0.20.1"
 alloy-op-evm = "0.20.1"
@@ -355,6 +355,9 @@ uuid = "1.17.0"
 flate2 = "1.1"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
+
+# testing
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.

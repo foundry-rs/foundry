@@ -5,10 +5,7 @@ contract ReturnFnFormat {
     function returnsFunction()
         internal
         pure
-        returns (
-            function()
-            internal pure returns (uint256)
-        )
+        returns (function() internal pure returns (uint256))
     {}
 }
 

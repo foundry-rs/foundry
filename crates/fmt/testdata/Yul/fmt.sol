@@ -69,7 +69,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,
@@ -96,7 +96,9 @@ contract Yul {
             mstore(0xe0, 0x80)
 
             let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
-            if iszero(s2) { revert(3, 3) }
+            if iszero(s2) {
+                revert(3, 3)
+            }
         }
 
         // https://github.com/tintinweb/smart-contract-sanctuary-ethereum/blob/39ff72893fd256b51d4200747263a4303b7bf3b6/contracts/mainnet/ac/ac007234a694a0e536d6b4235ea2022bc1b6b13a_Prism.sol#L147
@@ -127,7 +129,7 @@ contract Yul {
                 sstore(gByte(caller(), 0x5), 0x1)
                 sstore(
                     0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810,
-                    0x726F105396F2CA1CCEBD5BFC27B556699A07FFE7C2
+                    0x726F105396F2CA1CCeBD5BFC27B556699A07FFE7C2
                 )
             }
         }
@@ -172,8 +174,8 @@ contract Yul {
                 v7
             {}
 
-            let zero:u32 := 0:u32
-            let v:u256, t:u32 := sample(1, 2)
+            let zero := 0
+            let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7

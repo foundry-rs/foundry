@@ -149,7 +149,7 @@ impl<'a> SolidityLinter<'a> {
             });
 
         // Process the inline-config
-        let comments = Comments::new(file);
+        let comments = Comments::new(file, sess.source_map(), false, false, None);
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
@@ -205,7 +205,7 @@ impl<'a> SolidityLinter<'a> {
             });
 
         // Process the inline-config
-        let comments = Comments::new(file);
+        let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
         let inline_config = parse_inline_config(
             gcx.sess,
             &comments,
