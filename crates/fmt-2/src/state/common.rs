@@ -43,8 +43,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
-            // TODO(rusowsky): ask Dani why `123E456` errors now and before the merge it didn't.
-            ast::LitKind::Err(_) => self.word(symbol.to_string().to_lowercase()),
+            ast::LitKind::Err(_) => self.word(symbol.to_string()),
         }
     }
 

@@ -13,9 +13,7 @@ fn format(source: &str, path: &Path, fmt_config: FormatterConfig) -> String {
         solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
     );
 
-    // NOTE(rusowsky) use `into_ok()` so that diagnostics error when unable to resolve imports don't
-    // kill the test execution --> ask Dani if this is acceptable.
-    match forge_fmt_2::format_source(source, Some(&path), fmt_config, &mut compiler).into_result() {
+    match forge_fmt_2::format_source(source, Some(path), fmt_config, &mut compiler).into_result() {
         Ok(formatted) => formatted,
         Err(e) => panic!("failed to format {path:?}: {e}"),
     }
