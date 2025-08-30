@@ -210,6 +210,13 @@ jobs:
           fi
           echo "foundry_attestation=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: ${{ steps.artifacts.outputs.file_name }}
+          path: ${{ steps.artifacts.outputs.file_name }}
+
       - name: Build man page
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'

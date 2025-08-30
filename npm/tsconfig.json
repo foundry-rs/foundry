@@ -1,0 +1,58 @@
+{
+  "schema": "https://json.schemastore.org/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "lib": [
+      "ESNext"
+    ],
+    "target": "ESNext",
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "alwaysStrict": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "strictNullChecks": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "moduleResolution": "Bundler",
+    "useDefineForClassFields": true,
+    "noUncheckedIndexedAccess": true,
+    "resolvePackageJsonImports": true,
+    "resolvePackageJsonExports": true,
+    "useUnknownInCatchVariables": true,
+    "allowImportingTsExtensions": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "bun",
+      "node"
+    ],
+    "paths": {
+      "#*": [
+        "./src/*"
+      ],
+      "#package.json": [
+        "./package.json"
+      ]
+    }
+  },
+  "exclude": [
+    "dist",
+    "**/_/**",
+    "node_modules"
+  ],
+  "include": [
+    "./src/**/*",
+    "./scripts/**/*"
+  ],
+  "files": [
+    "env.d.ts",
+    "package.json",
+    "tsdown.config.ts"
+  ]
+}

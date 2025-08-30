@@ -1,0 +1,38 @@
+{
+  "name": "@foundry-rs/forge",
+  "version": "1.3.2",
+  "type": "module",
+  "homepage": "https://getfoundry.sh/forge",
+  "description": "Fast and flexible Ethereum testing framework",
+  "main": "./dist/index.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "forge": "./bin/forge.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "postinstall": "node ./dist/install.mjs"
+  },
+  "optionalDependencies": {
+    "@foundry-rs/forge-darwin-arm64": "1.3.2",
+    "@foundry-rs/forge-darwin-amd64": "1.3.2",
+    "@foundry-rs/forge-linux-arm64": "1.3.2",
+    "@foundry-rs/forge-linux-amd64": "1.3.2",
+    "@foundry-rs/forge-win32-amd64": "1.3.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "directory": "npm",
+    "url": "https://github.com/foundry-rs/foundry"
+  }
+}
