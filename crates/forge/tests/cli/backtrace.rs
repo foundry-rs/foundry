@@ -71,11 +71,11 @@ contract BacktraceTest is DSTest {
 forgetest!(test_backtrace_simple_revert, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source("BacktraceTest.t.sol", BACKTRACE_TEST_CONTRACT).unwrap();
-    
+
     cmd.args(["test", "--match-test", "testSimpleRevert", "-vvv"]);
     let output = cmd.assert_failure().get_output().stdout_lossy();
     println!("OUTPUT:\n{}", output);
-    
+
     // For now, just check that it failed - we'll add assertions later
     // to avoid compilation issues
 });

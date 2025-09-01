@@ -47,21 +47,14 @@ impl PcToSourceMapper {
         sources: Vec<(String, String)>, // (path, content) pairs
     ) -> Self {
         let pc_to_source = Self::build_pc_map(bytecode, source_map);
-        
+
         let mut source_files = HashMap::new();
         for (index, (path, content)) in sources.into_iter().enumerate() {
             let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile {
-                path,
-                content,
-                line_offsets,
-            });
+            source_files.insert(index, SourceFile { path, content, line_offsets });
         }
 
-        Self {
-            pc_to_source,
-            sources: source_files,
-        }
+        Self { pc_to_source, sources: source_files }
     }
 
     /// Builds a mapping from PC to source element.
@@ -70,7 +63,7 @@ impl PcToSourceMapper {
         let mut pc = 0;
         let mut source_index = 0;
 
-        for byte in bytecode.iter() {
+        for byte in bytecode {
             // Check if this PC has a source mapping
             if source_index < source_map.len() {
                 if let Some(element) = source_map.get(source_index) {
@@ -96,10 +89,10 @@ impl PcToSourceMapper {
         let element = self.pc_to_source.get(&pc)?;
         let file_index = element.index()?;
         let source_file = self.sources.get(&(file_index as usize))?;
-        
+
         let offset = element.offset();
         let length = element.length();
-        let (line, column) = self.offset_to_line_column(&source_file, offset as usize);
+        let (line, column) = self.offset_to_line_column(source_file, offset as usize);
 
         Some(SourceLocation {
             file: source_file.path.clone(),
@@ -113,10 +106,9 @@ impl PcToSourceMapper {
     /// Converts a byte offset to line and column numbers (1-indexed).
     fn offset_to_line_column(&self, source: &SourceFile, offset: usize) -> (usize, usize) {
         // Binary search to find the line
-        let line_index = source.line_offsets
-            .binary_search(&offset)
-            .unwrap_or_else(|i| i.saturating_sub(1));
-        
+        let line_index =
+            source.line_offsets.binary_search(&offset).unwrap_or_else(|i| i.saturating_sub(1));
+
         let line = line_index + 1; // Convert to 1-indexed
         let line_start = source.line_offsets[line_index];
         let column = offset - line_start + 1; // Convert to 1-indexed
@@ -143,7 +135,7 @@ impl PcToSourceMapper {
         sources: Vec<(String, String)>,
     ) -> Self {
         let mut pc_to_source = HashMap::new();
-        
+
         // Map instruction indices to source elements
         for (ic, element) in source_map.iter().enumerate() {
             if let Some(pc) = ic_pc_map.get(ic as u32) {
@@ -154,16 +146,9 @@ impl PcToSourceMapper {
         let mut source_files = HashMap::new();
         for (index, (path, content)) in sources.into_iter().enumerate() {
             let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile {
-                path,
-                content,
-                line_offsets,
-            });
+            source_files.insert(index, SourceFile { path, content, line_offsets });
         }
 
-        Self {
-            pc_to_source,
-            sources: source_files,
-        }
+        Self { pc_to_source, sources: source_files }
     }
 }
