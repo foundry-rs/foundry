@@ -613,9 +613,9 @@ impl FromStr for DenyLevel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "warnings" | "warning" | "w" | "true" | "t" => Ok(DenyLevel::Warnings),
-            "notes" | "note" | "n" => Ok(DenyLevel::Notes),
-            "never" | "false" | "f" => Ok(DenyLevel::Never),
+            "warnings" | "warning" | "w" | "true" | "t" => Ok(Self::Warnings),
+            "notes" | "note" | "n" => Ok(Self::Notes),
+            "never" | "false" | "f" => Ok(Self::Never),
             _ => Err(format!(
                 "unknown variant: found `{s}`, expected `one of `warnings`, `notes`, `never`"
             )),
@@ -625,7 +625,7 @@ impl FromStr for DenyLevel {
 
 impl From<bool> for DenyLevel {
     fn from(deny: bool) -> Self {
-        if deny { DenyLevel::Warnings } else { DenyLevel::Never }
+        if deny { Self::Warnings } else { Self::Never }
     }
 }
 
