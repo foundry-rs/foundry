@@ -52,6 +52,9 @@ jobs:
     env:
       NPM_REGISTRY_URL: "https://registry.npmjs.org"
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download Release Assets
         uses: actions/download-artifact@v5
         with:
@@ -62,9 +65,6 @@ jobs:
           # run-id: ${{ github.event.workflow_run.id }}
           run-id: 17369000041
           path: foundry_artifacts
-
-      - name: Checkout
-        uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@main
@@ -91,7 +91,7 @@ jobs:
           # Derive RELEASE_VERSION from any foundry artifact we downloaded
           # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
 
-          first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
+          first_file=$(ls ./foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
           if [[ -z "${first_file}" ]]; then
             echo "No foundry artifacts found to publish" >&2
             exit 1
@@ -105,7 +105,7 @@ jobs:
           echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
           echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Publish Binaries
+      - name: Publish Binaries and Meta
         working-directory: ./npm
         env:
           PROVENANCE: true
@@ -130,21 +130,15 @@ jobs:
           export RELEASE_VERSION=${version_part%%_*}
           echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
 
-  publish-meta:
-    needs: publish-arch
-    runs-on: ubuntu-latest
-    # if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    env:
-      RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
-    steps:
-      - name: Publish @foundry-rs/foundry
+      - name: Publish Meta
         working-directory: ./npm
         env:
+          RELEASE_VERSION: ${{ steps.publish-arch.outputs.RELEASE_VERSION }}
           PROVENANCE: true
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
-          bun ./scripts/publish.ts ./@foundry-rs/foundry
-          echo "Published @foundry-rs/foundry"
+          bun ./scripts/publish.ts ./@foundry-rs/forge
+          echo "Published @foundry-rs/forge"
