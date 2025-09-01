@@ -491,4 +491,28 @@ contract WriteJsonTest is DSTest {
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
     }
+
+    function test_writeJson_createKeys() public {
+        string memory path = "fixtures/Json/write_test.json";
+        string memory json = vm.readFile(path);
+
+        bool exists = vm.keyExistsJson(json, ".parent");
+        assertTrue(!exists);
+        exists = vm.keyExistsJson(json, ".parent.child");
+        assertTrue(!exists);
+        exists = vm.keyExistsJson(json, ".parent.child.value");
+        assertTrue(!exists);
+
+        // Write to nested path, creating intermediate keys
+        vm.writeJson(vm.toString(uint256(42)), path, ".parent.child.value");
+
+        // Verify the value was written and intermediate keys were created
+        json = vm.readFile(path);
+        uint256 value = abi.decode(vm.parseJson(json, ".parent.child.value"), (uint256));
+        assertEq(value, 42);
+
+        // Clean up the test file by removing the parent key we added
+        vm.removeFile(path);
+        vm.writeJson("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
+    }
 }
