@@ -140,5 +140,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          bun ./scripts/publish.ts ./@foundry-rs/forge
-          echo "Published @foundry-rs/forge"
+          ls -la ./@foundry-rs
+          bun ./scripts/publish.ts ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
