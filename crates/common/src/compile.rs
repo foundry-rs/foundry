@@ -1,11 +1,7 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt,
-    preprocessor::DynamicTestLinkingPreprocessor,
-    reports::{ReportKind, report_kind},
-    shell,
-    term::SpinnerReporter,
+    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
@@ -277,8 +273,7 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report =
-                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -348,8 +343,6 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
-    /// What kind of report to generate.
-    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -388,18 +381,11 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                writeln!(f, "\n{}", self.format_table_output(false))?;
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", self.format_json_output())?;
-            }
-            ReportKind::Markdown => {
-                writeln!(f, "\n{}", self.format_table_output(true))?;
-            }
+        if shell::is_json() {
+            writeln!(f, "{}", self.format_json_output())?;
+        } else {
+            writeln!(f, "\n{}", self.format_table_output())?;
         }
-
         Ok(())
     }
 }
@@ -426,9 +412,9 @@ impl SizeReport {
         serde_json::to_string(&contracts).unwrap()
     }
 
-    fn format_table_output(&self, md: bool) -> Table {
+    fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        if md {
+        if shell::is_markdown() {
             table.load_preset(ASCII_MARKDOWN);
         } else {
             table.apply_modifier(UTF8_ROUND_CORNERS);
