@@ -13,6 +13,7 @@ pub struct RemappingArgs {
     /// or the current working directory.
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
+
     /// Pretty-print the remappings, grouping each of them by context.
     #[arg(long)]
     pretty: bool,

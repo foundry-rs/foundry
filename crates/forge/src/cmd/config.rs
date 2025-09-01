@@ -1,15 +1,21 @@
-use super::build::BuildArgs;
-use clap::Parser;
+use std::path::PathBuf;
+
+use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{evm::EvmArgs, shell};
+use foundry_common::shell;
 use foundry_config::fix::fix_tomls;
-
-foundry_config::impl_figment_convert!(ConfigArgs, build, evm);
 
 /// CLI arguments for `forge config`.
 #[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    root: Option<PathBuf>,
+
     /// Print only a basic set of the currently set config values.
     #[arg(long)]
     basic: bool,
@@ -17,14 +23,8 @@ pub struct ConfigArgs {
     /// Attempt to fix any configuration warnings.
     #[arg(long)]
     fix: bool,
-
-    // support nested build arguments
-    #[command(flatten)]
-    build: BuildArgs,
-
-    #[command(flatten)]
-    evm: EvmArgs,
 }
+foundry_config::impl_figment_convert_basic!(ConfigArgs);
 
 impl ConfigArgs {
     pub fn run(self) -> Result<()> {
