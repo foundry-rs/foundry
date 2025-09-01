@@ -249,7 +249,7 @@ impl CreateArgs {
             guess_constructor_args: false,
             compilation_profile: Some(id.profile.to_string()),
             language: None,
-            creation_transaction_hash: Default::default(),
+            creation_transaction_hash: None,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no

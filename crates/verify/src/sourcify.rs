@@ -4,6 +4,7 @@ use crate::{
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
+use alloy_primitives::Address;
 use async_trait::async_trait;
 use eyre::{Context, Result, eyre};
 use foundry_common::retry::RetryError;
@@ -12,6 +13,7 @@ use foundry_compilers::{
     solc::SolcLanguage,
 };
 use futures::FutureExt;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -50,8 +52,8 @@ impl VerificationProvider for SourcifyVerificationProvider {
         trace!("submitting verification request {:?}", body);
 
         let client = reqwest::Client::new();
-        let base_url = args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL);
-        let url = format!("{}v2/verify/{}/{}", base_url, chain_id, args.address);
+        let url =
+            Self::get_verify_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
 
         let resp = args
             .retry
@@ -71,34 +73,38 @@ impl VerificationProvider for SourcifyVerificationProvider {
                         .await?;
 
                     let status = response.status();
-
-                    if status == 409 {
-                        sh_println!("Contract source code already fully verified")?;
-                        return Ok(None);
-                    }
-
-                    if status == 202 {
-                        let text = response.text().await?;
-                        let verify_response: SourcifyVerificationResponse =
-                            serde_json::from_str(&text)
-                                .wrap_err("Failed to parse Sourcify verification response")?;
-                        return Ok(Some(verify_response));
-                    }
-
-                    let error: serde_json::Value = response.json().await?;
-                    eyre::bail!(
-                        "Sourcify verification request for address ({}) \
+                    match status {
+                        StatusCode::CONFLICT => {
+                            sh_println!("Contract source code already fully verified")?;
+                            Ok(None)
+                        }
+                        StatusCode::ACCEPTED => {
+                            let text = response.text().await?;
+                            let verify_response: SourcifyVerificationResponse =
+                                serde_json::from_str(&text)
+                                    .wrap_err("Failed to parse Sourcify verification response")?;
+                            Ok(Some(verify_response))
+                        }
+                        _ => {
+                            let error: serde_json::Value = response.json().await?;
+                            eyre::bail!(
+                                "Sourcify verification request for address ({}) \
                             failed with status code {status}\n\
                             Details: {error:#}",
-                        args.address,
-                    );
+                                args.address,
+                            );
+                        }
+                    }
                 }
                 .boxed()
             })
             .await?;
 
         if let Some(resp) = resp {
-            let job_url = format!("{}v2/verify/{}", base_url, resp.verification_id);
+            let job_url = Self::get_job_status_url(
+                args.verifier.verifier_url.as_deref(),
+                resp.verification_id.clone(),
+            );
             sh_println!(
                 "Submitted contract for verification:\n\tVerification Job ID: `{}`\n\tURL: {}",
                 resp.verification_id,
@@ -120,8 +126,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let base_url = args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL);
-        let url = format!("{}v2/verify/{}", base_url, args.id);
+        let url = Self::get_job_status_url(args.verifier.verifier_url.as_deref(), args.id.clone());
 
         args.retry
             .into_retry()
@@ -131,7 +136,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     .wrap_err("Failed to request verification status")
                     .map_err(RetryError::Retry)?;
 
-                if response.status() == 404 {
+                if response.status() == StatusCode::NOT_FOUND {
                     return Err(RetryError::Break(eyre!(
                         "No verification job found for ID {}",
                         args.id
@@ -182,6 +187,33 @@ impl VerificationProvider for SourcifyVerificationProvider {
 }
 
 impl SourcifyVerificationProvider {
+    fn get_base_url(verifier_url: Option<&str>) -> &str {
+        verifier_url.unwrap_or(SOURCIFY_URL)
+    }
+
+    fn get_verify_url(
+        verifier_url: Option<&str>,
+        chain_id: u64,
+        contract_address: Address,
+    ) -> String {
+        let base_url = Self::get_base_url(verifier_url);
+        format!("{base_url}v2/verify/{chain_id}/{contract_address}")
+    }
+
+    fn get_job_status_url(verifier_url: Option<&str>, job_id: String) -> String {
+        let base_url = Self::get_base_url(verifier_url);
+        format!("{base_url}v2/verify/{job_id}")
+    }
+
+    fn get_lookup_url(
+        verifier_url: Option<&str>,
+        chain_id: u64,
+        contract_address: Address,
+    ) -> String {
+        let base_url = Self::get_base_url(verifier_url);
+        format!("{base_url}v2/contract/{chain_id}/{contract_address}")
+    }
+
     /// Configures the API request to the sourcify API using the given [`VerifyArgs`].
     async fn prepare_verify_request(
         &self,
@@ -189,8 +221,18 @@ impl SourcifyVerificationProvider {
         context: &VerificationContext,
     ) -> Result<SourcifyVerifyRequest> {
         let lang = args.detect_language(context);
+        let contract_identifier = format!(
+            "{}:{}",
+            context
+                .target_path
+                .strip_prefix(context.project.root())
+                .unwrap_or(context.target_path.as_path())
+                .display(),
+            context.target_name
+        );
+        let creation_transaction_hash = args.creation_transaction_hash.map(|h| h.to_string());
 
-        let std_json_input = match lang {
+        match lang {
             ContractLanguage::Solidity => {
                 let mut input: StandardJsonCompilerInput = context
                     .project
@@ -216,7 +258,17 @@ impl SourcifyVerificationProvider {
 
                 input.settings = settings;
 
-                serde_json::to_value(&input).wrap_err("Failed to serialize standard json input")?
+                let std_json_input = serde_json::to_value(&input)
+                    .wrap_err("Failed to serialize standard json input")?;
+                let compiler_version =
+                    ensure_solc_build_metadata(context.compiler_version.clone()).await?.to_string();
+
+                Ok(SourcifyVerifyRequest {
+                    std_json_input,
+                    compiler_version,
+                    contract_identifier,
+                    creation_transaction_hash,
+                })
             }
             ContractLanguage::Vyper => {
                 let path = Path::new(&context.target_path);
@@ -226,52 +278,29 @@ impl SourcifyVerificationProvider {
                     context.clone().compiler_settings.vyper,
                     &context.compiler_version,
                 );
+                let std_json_input = serde_json::to_value(&input)
+                    .wrap_err("Failed to serialize vyper json input")?;
 
-                serde_json::to_value(&input).wrap_err("Failed to serialize vyper json input")?
+                let compiler_version = context.compiler_version.to_string();
+
+                Ok(SourcifyVerifyRequest {
+                    std_json_input,
+                    compiler_version,
+                    contract_identifier,
+                    creation_transaction_hash,
+                })
             }
-        };
-
-        let contract_identifier = format!(
-            "{}:{}",
-            context
-                .target_path
-                .strip_prefix(context.project.root())
-                .unwrap_or(context.target_path.as_path())
-                .display(),
-            context.target_name
-        );
-
-        let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
-            context
-                .compiler_version
-                .clone()
-                .to_string()
-                .split('+')
-                .next()
-                .unwrap_or("0.0.0")
-                .to_string()
-        } else {
-            ensure_solc_build_metadata(context.compiler_version.clone()).await?.to_string()
-        };
-
-        let req = SourcifyVerifyRequest {
-            std_json_input,
-            compiler_version,
-            contract_identifier,
-            creation_transaction_hash: args.creation_transaction_hash.map(|h| h.to_string()),
-        };
-
-        Ok(req)
+        }
     }
 
     async fn is_contract_verified(&self, args: &VerifyArgs) -> Result<bool> {
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
-        let base_url = args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL);
-        let url = format!("{}v2/contract/{}/{}", base_url, chain_id, args.address);
+        let url =
+            Self::get_lookup_url(args.verifier.verifier_url.as_deref(), chain_id, args.address);
 
         match reqwest::get(&url).await {
             Ok(response) => {
-                if response.status() == 200 {
+                if response.status().is_success() {
                     let contract_response: SourcifyContractResponse =
                         response.json().await.wrap_err("Failed to parse contract response")?;
 
