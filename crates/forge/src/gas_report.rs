@@ -5,7 +5,7 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use foundry_common::{
     TestFunctionExt, calc,
     reports::{ReportKind, report_kind},
@@ -163,12 +163,23 @@ impl Display for GasReport {
                         continue;
                     }
 
-                    let table = self.format_table_output(contract, name);
+                    let table = self.format_table_output(contract, name, false);
                     writeln!(f, "\n{table}")?;
                 }
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", &self.format_json_output())?;
+            }
+            ReportKind::Markdown => {
+                for (name, contract) in &self.contracts {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        continue;
+                    }
+
+                    let table = self.format_table_output(contract, name, true);
+                    writeln!(f, "\n{table}")?;
+                }
             }
         }
 
@@ -213,9 +224,13 @@ impl GasReport {
         .unwrap()
     }
 
-    fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
+    fn format_table_output(&self, contract: &ContractInfo, name: &str, md: bool) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if md {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
 

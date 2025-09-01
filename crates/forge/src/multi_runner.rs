@@ -7,7 +7,10 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
+use foundry_common::{
+    ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
+    shell::verbosity,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
@@ -86,7 +89,7 @@ impl MultiContractRunner {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
-        self.contracts.iter().filter(|&(id, c)| matches_contract(id, &c.abi, filter))
+        self.contracts.iter().filter(|&(id, c)| matches_artifact(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -96,7 +99,7 @@ impl MultiContractRunner {
     ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter)
             .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| is_matching_test(func, filter))
+            .filter(|func| filter.matches_test_function(func))
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -120,7 +123,7 @@ impl MultiContractRunner {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| is_matching_test(func, filter))
+                    .filter(|func| filter.matches_test_function(func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -531,10 +534,10 @@ impl MultiContractRunnerBuilder {
             }
         }
 
-        // Create known contracts with storage layout information
-        let known_contracts = ContractsByArtifact::with_storage_layout(
-            output.clone().with_stripped_file_prefixes(root),
-        );
+        // Create known contracts from linked contracts and storage layout information (if any).
+        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
+            .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
+            .build();
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -563,12 +566,23 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
-    (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-        && abi.functions().any(|func| is_matching_test(func, filter))
+pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+    matches_contract(filter, &id.source, &id.name, abi.functions())
 }
 
-/// Returns `true` if the function is a test function that matches the given filter.
-pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
-    func.is_any_test() && filter.matches_test(&func.signature())
+pub(crate) fn matches_contract(
+    filter: &dyn TestFilter,
+    path: &Path,
+    contract_name: &str,
+    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
+) -> bool {
+    (filter.matches_path(path) && filter.matches_contract(contract_name))
+        && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+}
+
+/// Returns `true` if the given contract is a test contract.
+pub(crate) fn is_test_contract(
+    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
+) -> bool {
+    functions.into_iter().any(|func| func.borrow().is_any_test())
 }

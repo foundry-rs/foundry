@@ -180,7 +180,6 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use foundry_block_explorers::EtherscanApiVersion;
     use foundry_config::Chain;
 
     #[tokio::test]
@@ -223,33 +222,5 @@ mod tests {
         if !failed.is_empty() {
             panic!("failed keys: {failed:#?}");
         }
-    }
-
-    #[tokio::test]
-    #[ignore = "run manually"]
-    async fn test_etherscan_keys_compatibility() {
-        let address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
-        let etherscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
-        let client = foundry_block_explorers::Client::builder()
-            .with_api_key(etherscan_key)
-            .chain(Chain::optimism_mainnet())
-            .unwrap()
-            .build()
-            .unwrap();
-        if client.contract_abi(address).await.is_ok() {
-            panic!("v1 Optimism key should not work with v2 version")
-        }
-
-        let client = foundry_block_explorers::Client::builder()
-            .with_api_key(etherscan_key)
-            .with_api_version(EtherscanApiVersion::V1)
-            .chain(Chain::optimism_mainnet())
-            .unwrap()
-            .build()
-            .unwrap();
-        match client.contract_abi(address).await {
-            Ok(_) => {}
-            Err(_) => panic!("v1 Optimism key should work with v1 version"),
-        };
     }
 }
