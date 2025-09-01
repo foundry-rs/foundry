@@ -197,6 +197,7 @@ impl SlotIdentifier {
     ///
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+        trace!(?slot, "identifying slot");
         let slot_u256 = U256::from_be_bytes(slot.0);
         let slot_str = slot_u256.to_string();
 
@@ -629,7 +630,7 @@ impl SlotIdentifier {
 
         // Check if the value is another mapping (nested case)
         if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
-            if value_storage_type.encoding == "mapping" {
+            if value_storage_type.encoding == ENCODING_MAPPING {
                 // Recursively resolve the nested mapping
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
