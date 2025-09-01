@@ -375,8 +375,7 @@ forgetest!(can_set_solc_explicitly, |prj, cmd| {
 pragma solidity *;
 contract Greeter {}
    ",
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
@@ -398,8 +397,7 @@ forgetest!(can_use_solc, |prj, cmd| {
 pragma solidity *;
 contract Foo {}
    ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -455,8 +453,7 @@ contract Foo {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
@@ -917,8 +914,7 @@ import "forge-std/Script.sol";
 contract BaseScript is Script {
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "MyScript.sol",
         r#"
@@ -927,8 +923,7 @@ import "script/BaseScript.sol";
 contract MyScript is BaseScript {
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let nested = prj.paths().libraries[0].join("another-dep");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -967,8 +962,7 @@ import "contracts/Counter.sol";
 contract CounterTest {
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
@@ -1453,8 +1447,7 @@ contract Flare {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let test_contract = |n: u32| {
         format!(
@@ -1487,7 +1480,7 @@ contract GasSnapshotCheckTest is DSTest {{
     };
 
     // Assert that gas_snapshot_check is disabled by default.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1));
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
@@ -1506,7 +1499,7 @@ gas_snapshot_check = true
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas snapshot check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1538,7 +1531,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas_snapshot_check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1563,7 +1556,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
     // Assert that this will override the config file value.
     prj.update_config(|config| config.gas_snapshot_check = false);
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4));
     cmd.forge_fuse();
     cmd.env("FORGE_SNAPSHOT_CHECK", "true");
     cmd.args(["test"]).assert_failure().stderr_eq(str![[r#"
@@ -1631,8 +1624,7 @@ contract GasSnapshotEmitTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert that gas_snapshot_emit is enabled by default.
     cmd.forge_fuse().args(["test"]).assert_success();
@@ -1711,8 +1703,7 @@ forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v2/Counter.sol",
@@ -1720,8 +1711,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v3/Counter.sol",
@@ -1729,8 +1719,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Additional profiles are defined with optimizer runs but without explicitly enabling
     // optimizer
@@ -1905,7 +1894,6 @@ contract AnotherCounterTest is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "--fail-fast"]).assert_failure();
 });

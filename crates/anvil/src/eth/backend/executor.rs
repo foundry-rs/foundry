@@ -11,6 +11,7 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
+    evm::celo_precompile,
     inject_precompiles,
     mem::inspector::AnvilInspector,
 };
@@ -127,6 +128,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
     pub optimism: bool,
+    pub celo: bool,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
@@ -272,7 +274,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism)
+        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism, self.celo)
     }
 }
 
@@ -348,6 +350,13 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                 inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
             }
 
+            if self.celo {
+                evm.precompiles_mut()
+                    .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                        Some(celo_precompile::precompile())
+                    });
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -356,7 +365,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             if cheats.has_recover_overrides() {
                 let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
                 evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
-                    Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+                    Some(DynPrecompile::new_stateful(
+                        cheat_ecrecover.precompile_id().clone(),
+                        move |input| cheat_ecrecover.call(input),
+                    ))
                 });
             }
 

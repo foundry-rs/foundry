@@ -179,8 +179,7 @@ contract FuzzerDict {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "FuzzerDictTest.t.sol",
@@ -206,8 +205,7 @@ contract FuzzerDictTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Test that immutable address is used as fuzzed input, causing test to fail.
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "testImmutableOwner"]).assert_failure();
@@ -233,8 +231,7 @@ contract InlineMaxRejectsTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -261,8 +258,7 @@ contract FuzzTimeoutTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -293,8 +289,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "CounterTest.t.sol",
@@ -320,8 +315,7 @@ contract CounterTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Tests should not fail as revert happens in Counter contract.
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
@@ -350,8 +344,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
     cmd.assert_failure().stdout_eq(str![[r#"

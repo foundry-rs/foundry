@@ -119,8 +119,7 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
         let mut corpus_manager = CorpusManager::new(
-            &self.config.corpus,
-            &func.name,
+            self.config.corpus.clone(),
             strategy.boxed(),
             &self.executor,
             Some(func),
