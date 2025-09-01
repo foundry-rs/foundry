@@ -4,8 +4,8 @@ use crate::{
     Cheatcode, Cheatcodes, Result,
     Vm::*,
     json::{
-        canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
-        parse_json_keys, resolve_type, upsert_json_value,
+        check_json_key_exists, parse_json, parse_json_coerce, parse_json_keys, resolve_type,
+        upsert_json_value,
     },
 };
 use alloy_dyn_abi::DynSolType;
@@ -175,26 +175,6 @@ impl Cheatcode for writeToml_0Call {
 }
 
 impl Cheatcode for writeToml_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { json, path, valueKey } = self;
-        let json =
-            serde_json::from_str(json).unwrap_or_else(|_| JsonValue::String(json.to_owned()));
-
-        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let toml_data = fs::read_to_string(data_path)?;
-        let json_data: JsonValue =
-            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?;
-        let value =
-            jsonpath_lib::replace_with(json_data, &canonicalize_json_path(valueKey), &mut |_| {
-                Some(json.clone())
-            })?;
-
-        let toml_string = format_json_to_toml(value)?;
-        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
-    }
-}
-
-impl Cheatcode for writeTomlUpsertCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 
