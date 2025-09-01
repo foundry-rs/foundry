@@ -54,6 +54,11 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Cancun => SpecId::CANCUN,
         EthereumHardfork::Prague => SpecId::PRAGUE,
         EthereumHardfork::Osaka => SpecId::OSAKA,
+        EthereumHardfork::Bpo1
+        | EthereumHardfork::Bpo2
+        | EthereumHardfork::Bpo3
+        | EthereumHardfork::Bpo4
+        | EthereumHardfork::Bpo5 => unimplemented!(),
     }
 }
 

@@ -9,6 +9,8 @@ use op_revm::OpContext;
 use revm::{Inspector, precompile::Precompile};
 use std::fmt::Debug;
 
+pub mod celo_precompile;
+
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
@@ -152,6 +154,7 @@ mod tests {
                 ..Default::default()
             },
             is_optimism: true,
+            is_celo: false,
         };
 
         let mut chain = L1BlockInfo::default();
