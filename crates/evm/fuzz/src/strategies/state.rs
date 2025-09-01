@@ -263,8 +263,8 @@ impl FuzzDictionary {
             // Insert storage values.
             if self.config.include_storage {
                 let storage_layout = storage_layouts.get(address).cloned();
-                tracing::info!(
-                    "address {address:?} mapping_slots is_some {}",
+                trace!(
+                    "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
@@ -348,7 +348,7 @@ impl FuzzDictionary {
             // Identify Slot Type
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
         {
-            tracing::info!(?slot_info, "Inserting typed storage value");
+            trace!(?slot_info, "inserting typed storage value");
             self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
             self.insert_value(value);

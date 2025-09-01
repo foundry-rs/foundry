@@ -197,7 +197,7 @@ impl SlotIdentifier {
     ///
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
-        tracing::info!(?slot, "identifying slot");
+        trace!(?slot, "identifying slot");
         let slot_u256 = U256::from_be_bytes(slot.0);
         let slot_str = slot_u256.to_string();
 
@@ -601,12 +601,6 @@ impl SlotIdentifier {
         // Parse the final value type for decoding
         let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
 
-        tracing::info!(
-            "identified mapping slot: label={}, type={}, slot={}",
-            label,
-            dyn_sol_type,
-            slot_str
-        );
         Some(SlotInfo {
             label,
             slot_type: StorageTypeInfo { label: full_type_label, dyn_sol_type },
