@@ -63,6 +63,9 @@ jobs:
           # run-id: ${{ github.event.workflow_run.id }}
           path: foundry_artifacts
 
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@main
         with:
@@ -73,11 +76,11 @@ jobs:
       - name: Setup Node (for npm publish auth)
         uses: actions/setup-node@v4
         with:
-          node-version: lts
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Install Dependencies
-        working-directory: npm
+        working-directory: ./npm
         run: bun install --frozen-lockfile
 
       - name: Derive RELEASE_VERSION
@@ -103,7 +106,7 @@ jobs:
           echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish Binaries
-        working-directory: npm
+        working-directory: ./npm
         env:
           PROVENANCE: true
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -134,28 +137,8 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@main
-        with:
-          bun-version: latest
-          registries: |
-            https://registry.npmjs.org
-
-      - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install Dependencies
-        working-directory: npm
-        run: bun install --frozen-lockfile
-
       - name: Publish @foundry-rs/foundry
-        working-directory: npm
+        working-directory: ./npm
         env:
           PROVENANCE: true
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
