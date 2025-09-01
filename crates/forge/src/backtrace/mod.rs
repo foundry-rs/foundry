@@ -393,15 +393,11 @@ fn get_source_location_from_trace(
         return mapper.map_pc(pc);
     }
 
-    // Fallback: try to decode directly if we have source maps
+    // Try to decode directly if we have source maps
     if let Some((_, runtime_map)) = source_maps.get(&contract_address)
         && let Some(sources_list) = sources.get(&contract_address)
     {
         // Try to find the source element for this PC
-        // This is a simplified approach - in reality we'd need the bytecode
-        // and proper IC to PC mapping
-
-        // For now, estimate based on step index
         let estimated_ic = trace.steps.len().saturating_sub(1);
         if let Some(element) = runtime_map.get(estimated_ic)
             && let Some(source_idx) = element.index()
