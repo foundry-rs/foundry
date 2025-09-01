@@ -41,14 +41,9 @@ impl ConfigArgs {
             // we explicitly normalize the version, so mimic the behavior when invoking solc
             .normalized_evm_version();
 
-        let s = if self.basic {
-            let config = config.into_basic();
-            if shell::is_json() {
-                serde_json::to_string_pretty(&config)?
-            } else {
-                config.to_string_pretty()?
-            }
-        } else if shell::is_json() {
+        let config = if self.basic { config.into_basic() } else { config };
+
+        let s = if shell::is_json() {
             serde_json::to_string_pretty(&config)?
         } else {
             config.to_string_pretty()?
