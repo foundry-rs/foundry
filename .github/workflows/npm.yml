@@ -58,9 +58,9 @@ jobs:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
           pattern: "foundry_*"
-          repository: foundry-rs/foundry
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # run-id: ${{ github.event.workflow_run.id }}
+          run-id: 17369000041
           path: foundry_artifacts
 
       - name: Checkout
