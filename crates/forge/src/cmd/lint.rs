@@ -9,10 +9,7 @@ use foundry_cli::{
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{
-    filter::expand_globs,
-    lint::{DenyLevel, Severity},
-};
+use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -36,11 +33,6 @@ pub struct LintArgs {
     /// Activates the linter's JSON formatter (rustc-compatible).
     #[arg(long)]
     pub(crate) json: bool,
-
-    /// Specifies the minimum diagnostic level at which the process should finish with a non-zero.
-    /// exit code.
-    #[arg(long, value_name = "LEVEL")]
-    pub deny: Option<DenyLevel>,
 
     #[command(flatten)]
     pub(crate) build: BuildOpts,
@@ -126,7 +118,7 @@ impl LintArgs {
             Ok(())
         })?;
 
-        linter.lint(&input, self.deny.unwrap_or(config.get_deny_level()), &mut compiler)?;
+        linter.lint(&input, config.deny, &mut compiler)?;
 
         Ok(())
     }

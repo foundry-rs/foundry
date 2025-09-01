@@ -134,7 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
-        deny_warnings: false,
+        deny: false.into(),
         via_ir: true,
         ast: false,
         rpc_storage_caching: StorageCachingConfig {
@@ -1014,7 +1014,7 @@ ignored_error_codes = [
     "transient-storage",
 ]
 ignored_warnings_from = []
-deny_warnings = false
+deny = "never"
 test_failures_file = "cache/test-failures"
 show_progress = false
 ffi = false
@@ -1201,7 +1201,7 @@ exclude = []
     "transient-storage"
   ],
   "ignored_warnings_from": [],
-  "deny_warnings": false,
+  "deny": "never",
   "match_test": null,
   "no_match_test": null,
   "match_contract": null,

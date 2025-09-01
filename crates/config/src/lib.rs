@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::{cache::StorageCachingConfig, lint::DenyLevel};
+use crate::cache::StorageCachingConfig;
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -42,7 +42,7 @@ use foundry_compilers::{
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
 use semver::Version;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -310,8 +310,8 @@ pub struct Config {
     /// list of file paths to ignore
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
-    /// When true, compiler warnings are treated as errors
-    pub deny_warnings: bool,
+    /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+    pub deny: DenyLevel,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
@@ -561,6 +561,101 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+}
+
+/// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DenyLevel {
+    /// Always exit with zero code.
+    #[default]
+    Never,
+    /// Exit with a non-zero code if any warnings are found.
+    Warnings,
+    /// Exit with a non-zero code if any notes or warnings are found.
+    Notes,
+}
+
+// Custom deserialization to make `DenyLevel` parsing case-insensitive and backwards compatible with
+// booleans.
+impl<'de> Deserialize<'de> for DenyLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct DenyLevelVisitor;
+
+        impl<'de> de::Visitor<'de> for DenyLevelVisitor {
+            type Value = DenyLevel;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean or a string like 'never', 'warnings', or 'notes'")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(DenyLevel::from(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                DenyLevel::from_str(value).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_any(DenyLevelVisitor)
+    }
+}
+
+impl FromStr for DenyLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "warnings" | "warning" | "w" | "true" | "t" => Ok(DenyLevel::Warnings),
+            "notes" | "note" | "n" => Ok(DenyLevel::Notes),
+            "never" | "false" | "f" => Ok(DenyLevel::Never),
+            _ => Err(format!(
+                "unknown variant: found `{s}`, expected `one of `warnings`, `notes`, `never`"
+            )),
+        }
+    }
+}
+
+impl From<bool> for DenyLevel {
+    fn from(deny: bool) -> Self {
+        if deny { DenyLevel::Warnings } else { DenyLevel::Never }
+    }
+}
+
+impl DenyLevel {
+    /// Returns `true` if the deny level includes warnings.
+    pub fn warnings(&self) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Warnings | Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level includes notes.
+    pub fn notes(&self) -> bool {
+        match self {
+            Self::Never | Self::Warnings => false,
+            Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level is set to never (only errors).
+    pub fn never(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Warnings | Self::Notes => false,
+        }
+    }
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -1038,7 +1133,7 @@ impl Config {
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
-            .set_compiler_severity_filter(if self.deny_warnings {
+            .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
                 Severity::Error
@@ -1496,20 +1591,6 @@ impl Config {
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
         if self.root.join(&self.script).exists() { get_dir_remapping(&self.script) } else { None }
-    }
-
-    /// Returns the [`DenyLevel`] of the linter. Accounts for the most restrictive configuration.
-    pub fn get_deny_level(&self) -> DenyLevel {
-        match self.lint.deny {
-            DenyLevel::Notes => DenyLevel::Notes,
-            other => {
-                if self.deny_warnings {
-                    DenyLevel::Warnings
-                } else {
-                    other
-                }
-            }
-        }
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -2444,7 +2525,7 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
             ],
             ignored_file_paths: vec![],
-            deny_warnings: false,
+            deny: DenyLevel::Never,
             via_ir: false,
             ast: false,
             rpc_storage_caching: Default::default(),
@@ -3796,7 +3877,7 @@ mod tests {
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
                 ignored_warnings_from = ["something"]
-                deny_warnings = false
+                deny = false
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']

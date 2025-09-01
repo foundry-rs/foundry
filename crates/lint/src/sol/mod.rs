@@ -7,7 +7,7 @@ use crate::{
 };
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::lint::{DenyLevel, Severity};
+use foundry_config::{DenyLevel, lint::Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as VisitAST},

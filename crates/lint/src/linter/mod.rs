@@ -6,7 +6,7 @@ pub use late::{LateLintPass, LateLintVisitor};
 
 use eyre::Result;
 use foundry_compilers::Language;
-use foundry_config::lint::{DenyLevel, Severity};
+use foundry_config::{DenyLevel, lint::Severity};
 use solar::{
     interface::{
         Session, Span,

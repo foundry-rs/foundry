@@ -26,9 +26,6 @@ pub struct LinterConfig {
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
 
-    /// Set the minimum level threshold for diagnostics.
-    pub deny: DenyLevel,
-
     /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
     ///
     /// Default's to ["ERC"] to allow common names like `rescueERC20` or `ERC721TokenReceiver`.
@@ -42,23 +39,9 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
-            deny: DenyLevel::Never,
             mixed_case_exceptions: vec!["ERC".to_string()],
         }
     }
-}
-
-/// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DenyLevel {
-    /// Always exit with zero code.
-    #[default]
-    Never,
-    /// Exit with a non-zero code if any warnings are found.
-    Warnings,
-    /// Exit with a non-zero code if any notes or warnings are found.
-    Notes,
 }
 
 /// Severity of a lint.

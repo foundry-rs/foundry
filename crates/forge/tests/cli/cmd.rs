@@ -1255,7 +1255,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = false;
+        config.deny = false.into();
     });
     prj.add_raw_source(
         "A",
@@ -1283,7 +1283,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // warning fails to compile
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = true;
+        config.deny = true.into();
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
@@ -1297,7 +1297,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // ignores error code and compiles
     prj.update_config(|config| {
         config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
-        config.deny_warnings = true;
+        config.deny = true.into();
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"

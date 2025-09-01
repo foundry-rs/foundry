@@ -1,5 +1,5 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{LintSeverity, LinterConfig};
+use foundry_config::{DenyLevel, LintSeverity, LinterConfig};
 
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -187,7 +187,6 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
             mixed_case_exceptions: vec!["MIXED".to_string()],
-            deny: foundry_config::lint::DenyLevel::Never,
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
@@ -540,18 +539,18 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     cmd.forge_fuse().arg("lint").assert_success(); // DenyLevel::Never (default)
 
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Warnings;
+        config.deny = DenyLevel::Warnings;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Notes;
+        config.deny = DenyLevel::Notes;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 
     // cmd flags can override config
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Never;
+        config.deny = DenyLevel::Never;
     });
     cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure();
     cmd.forge_fuse().args(["lint", "--deny warnings"]).assert_failure();
@@ -560,24 +559,24 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
 
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Never;
+        config.deny = DenyLevel::Never;
         config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
     });
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Warnings;
+        config.deny = DenyLevel::Warnings;
     });
     cmd.forge_fuse().arg("lint").assert_success();
 
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Notes;
+        config.deny = DenyLevel::Notes;
     });
     cmd.forge_fuse().arg("lint").assert_failure();
 
     // cmd flags can override config
     prj.update_config(|config| {
-        config.lint.deny = foundry_config::lint::DenyLevel::Never;
+        config.deny = DenyLevel::Never;
     });
     cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });

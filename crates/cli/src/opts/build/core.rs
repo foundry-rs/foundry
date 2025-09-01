@@ -9,9 +9,9 @@ use foundry_compilers::{
     utils::canonicalized,
 };
 use foundry_config::{
-    Config, Remappings, figment,
+    Config, DenyLevel, Remappings,
     figment::{
-        Figment, Metadata, Profile, Provider,
+        self, Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
@@ -48,10 +48,18 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
-    /// Warnings will trigger a compiler error
-    #[arg(long, help_heading = "Compiler options")]
+    /// A compiler error will be triggered at the specified diagnostic level.
+    ///
+    /// Replaces the depracated `--deny_warnings` flag.
+    /// Accepts boolean values for backwards compatibility.
+    ///
+    /// Possible values:
+    ///  - `never` (`false`): Do not treat any diagnostics as errors.
+    ///  - `warnings` (`true`): Treat warnings as errors.
+    ///  - `notes`: Treat both, warnings and notes, as errors.
+    #[arg(long, short = 'D', help_heading = "Compiler options", default_value = "never")]
     #[serde(skip)]
-    pub deny_warnings: bool,
+    pub deny: DenyLevel,
 
     /// Do not auto-detect the `solc` version.
     #[arg(long, help_heading = "Compiler options")]
@@ -218,8 +226,10 @@ impl Provider for BuildOpts {
             dict.insert("offline".to_string(), true.into());
         }
 
-        if self.deny_warnings {
-            dict.insert("deny_warnings".to_string(), true.into());
+        if self.deny.notes() {
+            dict.insert("deny".to_string(), "notes".into());
+        } else if self.deny.warnings() {
+            dict.insert("deny".to_string(), "warnings".into());
         }
 
         if self.via_ir {
