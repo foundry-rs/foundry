@@ -99,7 +99,7 @@ impl std::ops::Deref for GeneratedOutput {
 impl std::ops::Deref for GeneratedOutputRef<'_> {
     type Target = IntermediateOutput;
     fn deref(&self) -> &Self::Target {
-        &self.intermediate
+        self.intermediate
     }
 }
 
@@ -195,7 +195,7 @@ impl IntermediateOutput {
                 .unwrap()
                 .unwrap()
                 .into_iter()
-                .zip(InstructionIter::new(&deployed_bytecode_bytes))
+                .zip(InstructionIter::new(deployed_bytecode_bytes))
                 .filter(|(s, _)| s.offset() == offset && s.length() == length)
                 .map(|(_, i)| i.pc)
                 .max()

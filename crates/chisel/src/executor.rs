@@ -43,7 +43,6 @@ impl SessionSource {
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
             Ok((bytecode.into_owned(), output.final_pc(contract)?))
         })?;
-        dbg!(final_pc);
 
         let Some(final_pc) = final_pc else { return Ok(Default::default()) };
 
@@ -96,9 +95,8 @@ impl SessionSource {
         if let Some(err) = err {
             let output = source_without_inspector.build()?;
 
-            let formatted_event = output.enter(|output| {
-                output.get_event(input).map(|event| format_event_definition(event))
-            });
+            let formatted_event =
+                output.enter(|output| output.get_event(input).map(format_event_definition));
             if let Some(formatted_event) = formatted_event {
                 return Ok((ControlFlow::Break(()), Some(formatted_event?)));
             }
