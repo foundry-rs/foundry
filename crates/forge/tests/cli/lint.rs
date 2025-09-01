@@ -640,13 +640,34 @@ forgetest!(can_fail_on_lints, |prj, cmd| {
     prj.update_config(|config| {
         config.deny = DenyLevel::Never;
     });
-    cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure();
     cmd.forge_fuse().args(["lint", "--deny warnings"]).assert_failure();
     cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
+
+    // usage of `--deny-warnings` flag works, but emits a warning
+    cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure().stderr_eq(str![[r#"
+Warning: Key `--deny-warnings` is being deprecated in favor of `--deny warnings`. It will be removed in future versions.
+...
+
+"#]]);
+
+    // usage of `deny_warnings` config works, but emits a warning
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.default]
+deny_warnings = true
+"#,
+    );
+    cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[r#"
+Warning: Key `deny_warnings` is being deprecated in favor of `deny`. It will be removed in future versions.
+...
+
+"#]]);
 
     // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
 
     prj.update_config(|config| {
+        config.deny_warnings = false;
         config.deny = DenyLevel::Never;
         config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
     });

@@ -57,9 +57,19 @@ pub struct BuildOpts {
     ///  - `never` (`false`): Do not treat any diagnostics as errors.
     ///  - `warnings` (`true`): Treat warnings as errors.
     ///  - `notes`: Treat both, warnings and notes, as errors.
-    #[arg(long, short = 'D', help_heading = "Compiler options", default_value = "never")]
+    #[arg(
+        long,
+        short = 'D',
+        help_heading = "Compiler options",
+        value_name = "LEVEL",
+        conflicts_with = "deny_warnings"
+    )]
     #[serde(skip)]
-    pub deny: DenyLevel,
+    pub deny: Option<DenyLevel>,
+
+    /// Deprecated: use `--deny=warnings` instead.
+    #[arg(long = "deny-warnings", hide = true)]
+    pub deny_warnings: bool,
 
     /// Do not auto-detect the `solc` version.
     #[arg(long, help_heading = "Compiler options")]
@@ -200,6 +210,12 @@ impl<'a> From<&'a BuildOpts> for Figment {
             figment = figment.merge(("skip", skip));
         };
 
+        if args.deny_warnings {
+            warn!(
+                "`--deny-warnings` is deprecated and will be removed in a future release. Use `--deny=warnings` instead."
+            );
+        }
+
         figment
     }
 }
@@ -226,10 +242,10 @@ impl Provider for BuildOpts {
             dict.insert("offline".to_string(), true.into());
         }
 
-        if self.deny.notes() {
-            dict.insert("deny".to_string(), "notes".into());
-        } else if self.deny.warnings() {
-            dict.insert("deny".to_string(), "warnings".into());
+        if self.deny_warnings {
+            dict.insert("deny_warnings".to_string(), figment::value::Value::from(true));
+        } else if let Some(deny) = self.deny {
+            dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
 
         if self.via_ir {

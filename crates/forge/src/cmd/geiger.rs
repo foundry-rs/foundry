@@ -52,7 +52,7 @@ impl GeigerArgs {
             json: false,
             build: self.build,
         };
-        lint_args.build.deny = DenyLevel::Notes;
+        lint_args.build.deny = Some(DenyLevel::Notes);
 
         // Run the lint command with the geiger-specific configuration
         lint_args.run()

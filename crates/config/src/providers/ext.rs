@@ -300,6 +300,12 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
                 }
             }
 
+            if let Some(v) = dict.remove("deny_warnings")
+                && !dict.contains_key("deny")
+            {
+                dict.insert("deny".to_string(), v);
+            }
+
             if let Some(v) = dict.remove("odyssey") {
                 dict.insert("odyssey".to_string(), v);
             }

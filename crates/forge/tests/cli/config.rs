@@ -134,6 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
         deny: false.into(),
+        deny_warnings: false,
         via_ir: true,
         ast: false,
         rpc_storage_caching: StorageCachingConfig {
@@ -1081,7 +1082,6 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
-deny = "never"
 mixed_case_exceptions = ["ERC"]
 
 [doc]
@@ -1308,7 +1308,6 @@ exclude = []
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "deny": "never",
     "mixed_case_exceptions": [
       "ERC"
     ]

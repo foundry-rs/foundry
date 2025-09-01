@@ -309,6 +309,9 @@ pub struct Config {
     pub ignored_file_paths: Vec<PathBuf>,
     /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
     pub deny: DenyLevel,
+    /// DEPRECARTED: use `deny` instead.
+    #[serde(default, skip_serializing)]
+    pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
@@ -661,7 +664,8 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 /// Deprecated keys and their replacements.
 ///
 /// See [Warning::DeprecatedKey]
-pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
+pub const DEPRECATIONS: &[(&str, &str)] =
+    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny")];
 
 impl Config {
     /// The default profile: "default"
@@ -758,6 +762,19 @@ impl Config {
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
+
+        // Handle deprecated `--deny-warnings` CLI flag
+        if config.deny_warnings {
+            config.deny = DenyLevel::Warnings;
+
+            let warning = Warning::DeprecatedKey {
+                old: "--deny-warnings".to_string(),
+                new: "--deny warnings".to_string(),
+            };
+            if !config.warnings.contains(&warning) {
+                config.warnings.push(warning);
+            }
+        }
 
         // The `"profile"` profile contains all the profiles as keys.
         let mut add_profile = |profile: &Profile| {
@@ -2512,6 +2529,7 @@ impl Default for Config {
             ],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
+            deny_warnings: false,
             via_ir: false,
             ast: false,
             rpc_storage_caching: Default::default(),
