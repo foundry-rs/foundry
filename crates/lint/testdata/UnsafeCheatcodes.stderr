@@ -2,7 +2,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 18 |         vm.ffi(inputs);
-   |            ---
+   |            ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -10,7 +10,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 22 |         vm.readFile("test.txt");
-   |            --------
+   |            ^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -18,7 +18,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 26 |         vm.readLine("test.txt");
-   |            --------
+   |            ^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -26,7 +26,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 30 |         vm.writeFile("test.txt", "data");
-   |            ---------
+   |            ^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -34,7 +34,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 34 |         vm.writeLine("test.txt", "data");
-   |            ---------
+   |            ^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -42,7 +42,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 38 |         vm.removeFile("test.txt");
-   |            ----------
+   |            ^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -50,7 +50,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 42 |         vm.closeFile("test.txt");
-   |            ---------
+   |            ^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -58,7 +58,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 46 |         vm.setEnv("KEY", "value");
-   |            ------
+   |            ^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -66,7 +66,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 50 |         vm.deriveKey("mnemonic", 0);
-   |            ---------
+   |            ^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -74,7 +74,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 55 |         bytes memory result = vm.ffi(inputs);
-   |                                  ---
+   |                                  ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -82,7 +82,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 59 |         vm.ffi(new string[](1));
-   |            ---
+   |            ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -90,7 +90,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 60 |         vm.setEnv("KEY", "value");
-   |            ------
+   |            ^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -98,7 +98,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   --> ROOT/testdata/UnsafeCheatcodes.sol:LL:CC
    |
 61 |         vm.readFile("test.txt");
-   |            --------
+   |            ^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 

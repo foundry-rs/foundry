@@ -890,6 +890,11 @@ impl TypedTransaction {
         matches!(self, Self::EIP4844(_))
     }
 
+    /// Returns true whether this tx is a EIP7702 transaction
+    pub fn is_eip7702(&self) -> bool {
+        matches!(self, Self::EIP7702(_))
+    }
+
     /// Returns the hash of the transaction.
     ///
     /// Note: If this transaction has the Impersonated signature then this returns a modified unique
@@ -1034,14 +1039,14 @@ impl Decodable2718 for TypedTransaction {
             TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
             TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match TxEnvelope::fallback_decode(buf)? {
             TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 }
@@ -1053,7 +1058,7 @@ impl From<TxEnvelope> for TypedTransaction {
             TxEnvelope::Eip2930(tx) => Self::EIP2930(tx),
             TxEnvelope::Eip1559(tx) => Self::EIP1559(tx),
             TxEnvelope::Eip4844(tx) => Self::EIP4844(tx),
-            _ => unreachable!(),
+            TxEnvelope::Eip7702(tx) => Self::EIP7702(tx),
         }
     }
 }
@@ -1271,7 +1276,7 @@ impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<Receipt<alloy_
             ReceiptEnvelope::Eip2930(r) => Self::EIP2930(r),
             ReceiptEnvelope::Eip1559(r) => Self::EIP1559(r),
             ReceiptEnvelope::Eip4844(r) => Self::EIP4844(r),
-            _ => unreachable!(),
+            ReceiptEnvelope::Eip7702(r) => Self::EIP7702(r),
         }
     }
 }
@@ -1285,6 +1290,7 @@ impl Encodable for TypedReceipt {
                     Self::EIP2930(r) => r.length() + 1,
                     Self::EIP1559(r) => r.length() + 1,
                     Self::EIP4844(r) => r.length() + 1,
+                    Self::EIP7702(r) => r.length() + 1,
                     Self::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
@@ -1303,6 +1309,11 @@ impl Encodable for TypedReceipt {
                     Self::EIP4844(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         3u8.encode(out);
+                        r.encode(out);
+                    }
+                    Self::EIP7702(r) => {
+                        Header { list: true, payload_length: payload_len }.encode(out);
+                        4u8.encode(out);
                         r.encode(out);
                     }
                     Self::Deposit(r) => {
@@ -1345,6 +1356,9 @@ impl Decodable for TypedReceipt {
                 } else if receipt_type == 0x03 {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP4844)
+                } else if receipt_type == 0x04 {
+                    buf.advance(1);
+                    <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP7702)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
                     <DepositReceipt as Decodable>::decode(buf).map(TypedReceipt::Deposit)
@@ -1411,14 +1425,15 @@ impl Decodable2718 for TypedReceipt {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
             ReceiptEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             ReceiptEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
-            _ => unreachable!(),
+            ReceiptEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match ReceiptEnvelope::fallback_decode(buf)? {
             ReceiptEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            _ => unreachable!(),
+            _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
     }
 }

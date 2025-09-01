@@ -2,7 +2,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
  --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
   |
 3 |         (1 / 2) * 3;
-  |         -----------
+  |         ^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -10,7 +10,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
  --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
   |
 5 |         ((1 / 2) * 3) * 4;
-  |          -----------
+  |          ^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -18,7 +18,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
  --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
   |
 6 |         ((1 * 2) / 3) * 4;
-  |         -----------------
+  |         ^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -26,7 +26,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
  --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
   |
 7 |         (1 / 2 / 3) * 4;
-  |         ---------------
+  |         ^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -34,7 +34,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
  --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
   |
 8 |         (1 / (2 + 3)) * 4;
-  |         -----------------
+  |         ^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -42,7 +42,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   --> ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    |
 15 |         1 / ((2 / 3) * 3);
-   |              -----------
+   |              ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 

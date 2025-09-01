@@ -29,7 +29,7 @@ fn test_verify_bytecode(
         .get_output()
         .stdout_lossy();
 
-    prj.add_source(contract_name, &source_code).unwrap();
+    prj.add_source(contract_name, &source_code);
     prj.write_config(config);
 
     let etherscan_key = next_etherscan_api_key();
@@ -96,7 +96,7 @@ fn test_verify_bytecode_with_ignore(
         .get_output()
         .stdout_lossy();
 
-    prj.add_source(contract_name, &source_code).unwrap();
+    prj.add_source(contract_name, &source_code);
     prj.write_config(config);
 
     let output = cmd
@@ -160,7 +160,7 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/v2/api",
+        "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
     );
 });
@@ -179,7 +179,7 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/v2/api",
+        "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
     );
 });
@@ -246,7 +246,7 @@ forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/v2/api",
+        "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "partial"),
     );
 });
@@ -267,7 +267,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/v2/api",
+        "https://api.etherscan.io/v2/api?chainid=1",
         ("ignored", "partial"),
         "creation",
         "1",
@@ -289,7 +289,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/v2/api",
+        "https://api.etherscan.io/v2/api?chainid=1",
         ("partial", "ignored"),
         "runtime",
         "1",

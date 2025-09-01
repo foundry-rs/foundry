@@ -1,7 +1,7 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
@@ -371,7 +371,11 @@ fn print_table(
     should_wrap: bool,
 ) -> Result<()> {
     let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
     table.set_header(headers);
     if should_wrap {
         table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);

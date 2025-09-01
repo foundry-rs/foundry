@@ -57,6 +57,7 @@ pub trait Lint {
 pub struct LintContext<'s, 'c> {
     sess: &'s Session,
     with_description: bool,
+    with_json_emitter: bool,
     pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
 }
@@ -70,10 +71,11 @@ impl<'s, 'c> LintContext<'s, 'c> {
     pub fn new(
         sess: &'s Session,
         with_description: bool,
+        with_json_emitter: bool,
         config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
     ) -> Self {
-        Self { sess, with_description, config, active_lints }
+        Self { sess, with_description, with_json_emitter, config, active_lints }
     }
 
     pub fn session(&self) -> &'s Session {
@@ -95,13 +97,19 @@ impl<'s, 'c> LintContext<'s, 'c> {
         }
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag.help(lint.help());
+        } else {
+            diag = diag.help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -134,14 +142,21 @@ impl<'s, 'c> LintContext<'s, 'c> {
         };
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .highlighted_note(snippet.to_note(self))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag
+                .note(snippet.to_note(self).iter().map(|l| l.0.as_str()).collect::<String>())
+                .help(lint.help());
+        } else {
+            diag = diag.highlighted_note(snippet.to_note(self)).help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -255,4 +270,9 @@ impl Snippet {
 
         &s[byte_offset..]
     }
+}
+
+/// Creates a hyperlink of the input url.
+fn hyperlink(url: &'static str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
 }
