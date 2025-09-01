@@ -375,7 +375,7 @@ mod tests {
     use foundry_test_utils::forgetest_async;
 
     forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
-        prj.add_source("Counter", "contract Counter {}").unwrap();
+        prj.add_source("Counter", "contract Counter {}");
 
         let args = VerifyArgs::parse_from([
             "foundry-cli",
