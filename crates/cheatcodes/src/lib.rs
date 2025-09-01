@@ -20,7 +20,7 @@ use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use spec::Status;
 
-pub use Vm::ForgeContext;
+pub use spec::Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
@@ -76,7 +76,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt<'_, '_, '_, '_>) -> Result {
         self.apply(ccx.state)
     }
 
@@ -84,7 +84,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full(&self, ccx: &mut CheatsCtxt<'_, '_, '_, '_>, executor: &mut dyn CheatcodesExecutor) -> Result {
         let _ = executor;
         self.apply_stateful(ccx)
     }
@@ -93,7 +93,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
 pub(crate) trait DynCheatcode: 'static + std::fmt::Debug {
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static>;
 
-    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result;
+    fn dyn_apply(&self, ccx: &mut CheatsCtxt<'_, '_, '_, '_>, executor: &mut dyn CheatcodesExecutor) -> Result;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
@@ -101,7 +101,7 @@ impl<T: Cheatcode> DynCheatcode for T {
         Self::CHEATCODE
     }
 
-    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn dyn_apply(&self, ccx: &mut CheatsCtxt<'_, '_, '_, '_>, executor: &mut dyn CheatcodesExecutor) -> Result {
         self.apply_full(ccx, executor)
     }
 }
@@ -136,7 +136,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
     pub(crate) gas_limit: u64,
 }
 
-impl<'db, 'db2> std::ops::Deref for CheatsCtxt<'_, '_, 'db, 'db2> {
+impl<'cheats, 'evm, 'db, 'db2> std::ops::Deref for CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
     type Target = EthEvmContext<&'db mut (dyn DatabaseExt + 'db2)>;
 
     #[inline(always)]
@@ -145,7 +145,7 @@ impl<'db, 'db2> std::ops::Deref for CheatsCtxt<'_, '_, 'db, 'db2> {
     }
 }
 
-impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_, '_> {
+impl<'cheats, 'evm, 'db, 'db2> std::ops::DerefMut for CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.ecx
@@ -164,5 +164,5 @@ impl CheatsCtxt<'_, '_, '_, '_> {
 
 #[cold]
 fn precompile_error(address: &Address) -> Error {
-    fmt_err!("cannot use precompile {address} as an argument")
+    Error::new(format!("cannot use precompile {address} as an argument"))
 }
