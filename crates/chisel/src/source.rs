@@ -74,6 +74,7 @@ impl fmt::Debug for GeneratedOutput {
 
 impl GeneratedOutput {
     pub fn enter<T: Send>(&self, f: impl FnOnce(GeneratedOutputRef<'_>) -> T + Send) -> T {
+        // TODO(dani): once intermediate is removed
         // self.output
         //     .parser()
         //     .solc()
@@ -221,6 +222,7 @@ impl IntermediateOutput {
     }
 }
 
+// TODO(dani): further migration blocked on upstream work
 #[cfg(false)]
 impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     pub fn gcx(&self) -> Gcx<'gcx> {
