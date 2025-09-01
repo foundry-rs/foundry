@@ -28,6 +28,10 @@ where
         if self.collect {
             self.collect_data(interp);
             if let Some(mapping_slots) = &mut self.fuzz_state.mapping_slots {
+                tracing::info!(
+                    "collecting mapping slots for address {:?}",
+                    interp.input.target_address
+                );
                 mapping_step(mapping_slots, interp);
             }
         }

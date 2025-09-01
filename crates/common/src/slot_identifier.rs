@@ -197,6 +197,7 @@ impl SlotIdentifier {
     ///
     /// It can also identify whether a slot belongs to a mapping if provided with [`MappingSlots`].
     pub fn identify(&self, slot: &B256, mapping_slots: Option<&MappingSlots>) -> Option<SlotInfo> {
+        tracing::info!(?slot, "identifying slot");
         let slot_u256 = U256::from_be_bytes(slot.0);
         let slot_str = slot_u256.to_string();
 
@@ -600,6 +601,12 @@ impl SlotIdentifier {
         // Parse the final value type for decoding
         let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
 
+        tracing::info!(
+            "identified mapping slot: label={}, type={}, slot={}",
+            label,
+            dyn_sol_type,
+            slot_str
+        );
         Some(SlotInfo {
             label,
             slot_type: StorageTypeInfo { label: full_type_label, dyn_sol_type },
@@ -629,7 +636,7 @@ impl SlotIdentifier {
 
         // Check if the value is another mapping (nested case)
         if let Some(value_storage_type) = self.storage_layout.types.get(value_type_ref) {
-            if value_storage_type.encoding == "mapping" {
+            if value_storage_type.encoding == ENCODING_MAPPING {
                 // Recursively resolve the nested mapping
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
@@ -645,6 +652,40 @@ impl SlotIdentifier {
         }
 
         None
+    }
+
+    /// Returns the [`DynSolType`] of for all mapping value types in [`StorageLayout`]
+    pub fn get_mapping_value_types(&self) -> Option<Vec<DynSolType>> {
+        let mapping_entries = self
+            .storage_layout
+            .types
+            .iter()
+            .filter_map(|(_, storage_type)| {
+                if storage_type.encoding == ENCODING_MAPPING {
+                    return Some(storage_type);
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if mapping_entries.is_empty() {
+            return None;
+        }
+
+        let mut value_types = Vec::new();
+
+        for value_entry in mapping_entries {
+            if value_entry.encoding == ENCODING_MAPPING
+                && let Some(inner_dyn_types) = self.get_mapping_value_types()
+            {
+                value_types.extend(inner_dyn_types);
+            } else if let Ok(dyn_type) = DynSolType::parse(&value_entry.label) {
+                value_types.push(dyn_type);
+            }
+        }
+
+        Some(value_types)
     }
 }
 

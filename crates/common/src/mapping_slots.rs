@@ -47,6 +47,11 @@ impl MappingSlots {
 /// Function to be used in Inspector::step to record mapping slots and keys
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
+    if interpreter.bytecode.opcode() == opcode::KECCAK256
+        || interpreter.bytecode.opcode() == opcode::SSTORE
+    {
+        tracing::info!("mapping_slots::step: opcode is keccak256 or sstore");
+    }
     match interpreter.bytecode.opcode() {
         opcode::KECCAK256 => {
             if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
@@ -64,6 +69,10 @@ pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Inte
             if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
                 && let Ok(slot) = interpreter.stack.peek(0)
             {
+                tracing::info!(
+                    "detected sstore to slot {slot:#x} for address {:#x}",
+                    interpreter.input.target_address
+                );
                 mapping_slots.insert(slot.into());
             }
         }
