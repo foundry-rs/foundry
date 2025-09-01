@@ -647,40 +647,6 @@ impl SlotIdentifier {
 
         None
     }
-
-    /// Returns the [`DynSolType`] of for all mapping value types in [`StorageLayout`]
-    pub fn get_mapping_value_types(&self) -> Option<Vec<DynSolType>> {
-        let mapping_entries = self
-            .storage_layout
-            .types
-            .iter()
-            .filter_map(|(_, storage_type)| {
-                if storage_type.encoding == ENCODING_MAPPING {
-                    return Some(storage_type);
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        if mapping_entries.is_empty() {
-            return None;
-        }
-
-        let mut value_types = Vec::new();
-
-        for value_entry in mapping_entries {
-            if value_entry.encoding == ENCODING_MAPPING
-                && let Some(inner_dyn_types) = self.get_mapping_value_types()
-            {
-                value_types.extend(inner_dyn_types);
-            } else if let Ok(dyn_type) = DynSolType::parse(&value_entry.label) {
-                value_types.push(dyn_type);
-            }
-        }
-
-        Some(value_types)
-    }
 }
 
 /// Returns the base indices for array types, e.g. "\[0\]\[0\]" for 2D arrays.
