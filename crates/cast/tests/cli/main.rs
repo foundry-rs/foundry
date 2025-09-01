@@ -257,6 +257,35 @@ Created new encrypted keystore file: [..]
 "#]]);
 });
 
+// tests that we can create a new wallet with default keystore location
+casttest!(new_wallet_default_keystore, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
+        r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#
+    ]]);
+
+    // Verify the default keystore directory was created
+    let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
+    assert!(keystore_path.exists());
+    assert!(keystore_path.is_dir());
+});
+
+// tests that we can outputting multiple keys without a keystore path
+casttest!(new_wallet_multiple_keys, |_prj, cmd| {
+    cmd.args(["wallet", "new", "-n", "2"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+
+"#]]);
+});
+
 // tests that we can get the address of a keystore file
 casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
     let keystore_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
@@ -2499,8 +2528,7 @@ contract LocalProjectContract {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "LocalProjectScript",
         r#"
@@ -2515,8 +2543,7 @@ contract LocalProjectScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2667,8 +2694,7 @@ library ExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "CounterInExternalLib",
         r#"
@@ -2683,8 +2709,7 @@ contract CounterInExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "CounterInExternalLibScript",
         r#"
@@ -2698,8 +2723,7 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2776,8 +2800,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -2878,8 +2901,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -3146,35 +3168,23 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(fetch_src_blockscout, |_prj, cmd| {
-    let url = "https://eth.blockscout.com/api";
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_blockscout,
+    |_prj, cmd| {
+        let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-    cmd.args([
-        "source",
-        &weth.to_string(),
-        "--chain-id",
-        "1",
-        "--explorer-api-url",
-        url,
-        "--flatten",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-contract WETH9 {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
-    uint8  public decimals = 18;
-..."#]]);
-});
-
-casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_etherscan_api_key();
-
-    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--chain-id",
+            "1",
+            "--explorer-api-url",
+            url,
+            "--flatten",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3183,7 +3193,33 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+    }
+);
+
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_default,
+    |_prj, cmd| {
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let etherscan_api_key = next_etherscan_api_key();
+
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--flatten",
+            "--etherscan-api-key",
+            &etherscan_api_key,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
@@ -3284,8 +3320,7 @@ contract SimpleStorage {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "SimpleStorageScript",
         r#"
@@ -3299,8 +3334,7 @@ contract SimpleStorageScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -3421,8 +3455,7 @@ contract ConstructorContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3497,8 +3530,7 @@ contract EstimateContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3547,8 +3579,7 @@ contract SimpleContract {
     uint256 public constant VALUE = 42;
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3606,8 +3637,7 @@ contract ComplexContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();

@@ -1,7 +1,9 @@
-use solar_ast::{Item, SourceUnit, visit::Visit as VisitAst};
-use solar_interface::SourceMap;
-use solar_parse::ast::Span;
-use solar_sema::hir::{self, Visit as VisitHir};
+use solar::{
+    ast::{Item, SourceUnit, visit::Visit as VisitAst},
+    interface::SourceMap,
+    parse::ast::Span,
+    sema::hir::{self, Visit as VisitHir},
+};
 use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 
 /// An inline config item
@@ -236,7 +238,6 @@ impl InlineConfig {
     }
 
     /// Check if the lint location is in a disabled range.
-    #[inline]
     pub fn is_disabled(&self, span: Span, lint: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(lint) {
             return ranges.iter().any(|range| range.includes(span.to_range()));

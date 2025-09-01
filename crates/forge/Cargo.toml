@@ -65,7 +65,7 @@ alloy-transport.workspace = true
 revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
+clap_complete.workspace = true
 clap_complete_fig = "4"
 dunce.workspace = true
 indicatif.workspace = true
@@ -77,12 +77,11 @@ semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
-solar-parse.workspace = true
-solar-sema.workspace = true
+solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml_edit = "0.23"
+toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"

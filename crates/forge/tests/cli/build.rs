@@ -42,8 +42,7 @@ contract Dummy {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     // set up command
     cmd.args(["compile", "--format-json"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
@@ -71,7 +70,7 @@ contract Dummy {
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
-    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -185,8 +184,7 @@ forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
 contract Foo {
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "a/Counter",
@@ -198,8 +196,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "b/Counter",
@@ -211,8 +208,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -241,8 +237,7 @@ forgetest_init!(build_sizes_multiple_contracts_json, |prj, cmd| {
 contract Foo {
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "a/Counter",
@@ -254,8 +249,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "b/Counter",
@@ -267,8 +261,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
@@ -312,16 +305,14 @@ contract InvalidContract {
     some_invalid_syntax
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "ValidContract",
         r"
 contract ValidContract {}
 ",
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.skip = vec![Glob::new("src/InvalidContract.sol").unwrap().into()];
@@ -339,8 +330,7 @@ import {B} from "/badpath/B.sol";
 
 contract A is B {}
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "CContract.sol",
@@ -349,8 +339,7 @@ import {B} from "badpath/B.sol";
 
 contract C is B {}
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "src/AContract.sol"]).assert_failure().stdout_eq(str![[r#"
 ...

@@ -5,7 +5,7 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::{BuildOpts, solar_pcx_from_build_opts},
+    opts::{BuildOpts, configure_pcx},
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
@@ -17,25 +17,25 @@ use std::path::PathBuf;
 pub struct LintArgs {
     /// Path to the file to be checked. Overrides the `ignore` project config.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
-    paths: Vec<PathBuf>,
+    pub(crate) paths: Vec<PathBuf>,
 
     /// Specifies which lints to run based on severity. Overrides the `severity` project config.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
-    severity: Option<Vec<Severity>>,
+    pub(crate) severity: Option<Vec<Severity>>,
 
     /// Specifies which lints to run based on their ID (e.g., "incorrect-shift"). Overrides the
     /// `exclude_lints` project config.
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
-    lint: Option<Vec<String>>,
+    pub(crate) lint: Option<Vec<String>>,
 
     /// Activates the linter's JSON formatter (rustc-compatible).
     #[arg(long)]
-    json: bool,
+    pub(crate) json: bool,
 
     #[command(flatten)]
-    build: BuildOpts,
+    pub(crate) build: BuildOpts,
 }
 
 foundry_config::impl_figment_convert!(LintArgs, build);
@@ -97,7 +97,7 @@ impl LintArgs {
         // Override default severity config with user-defined severity
         let severity = match self.severity {
             Some(target) => target,
-            None => config.lint.severity,
+            None => config.lint.severity.clone(),
         };
 
         if project.compiler.solc.is_none() {
@@ -112,13 +112,15 @@ impl LintArgs {
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
-        let sess = linter.init();
-
-        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-        linter.early_lint(&input, pcx);
-
-        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-        linter.late_lint(&input, pcx);
+        let mut compiler = linter.init();
+        compiler.enter_mut(|compiler| -> Result<()> {
+            let mut pcx = compiler.parse();
+            configure_pcx(&mut pcx, &config, Some(&project), Some(&input))?;
+            pcx.parse();
+            let _ = compiler.lower_asts();
+            Ok(())
+        })?;
+        linter.lint(&input, &mut compiler);
 
         Ok(())
     }
