@@ -19,7 +19,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
  [FILE]:9:20
   |
 9 |                 vm.ffi(inputs);
-  |                    ---
+  |                    ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -49,7 +49,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
  [FILE]:9:34
   |
 9 |                 bytes stuff = vm.ffi(inputs);
-  |                                  ---
+  |                                  ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -81,7 +81,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
  [FILE]:9:20
   |
 9 |                 vm.ffi(inputs);
-  |                    ---
+  |                    ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -89,7 +89,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   [FILE]:10:20
    |
 10 |                 vm.ffi(inputs);
-   |                    ---
+   |                    ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -97,7 +97,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   [FILE]:11:20
    |
 11 |                 vm.ffi(inputs);
-   |                    ---
+   |                    ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
