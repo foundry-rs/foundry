@@ -65,8 +65,7 @@ function getPublishVersion() {
   return `${base}-${suffix}`
 }
 
-function isValidSemver(v: string): boolean {
-  // Use Bun's semver engine: a version satisfies itself iff it is valid
+function isValidSemver(v: string) {
   return !!v && Bun.semver.satisfies(v, v)
 }
 
