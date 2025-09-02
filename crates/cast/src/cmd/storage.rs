@@ -389,4 +389,10 @@ mod tests {
         let key = config.get_etherscan_api_key(None).unwrap();
         assert_eq!(key, "dummykey".to_string());
     }
+
+    #[test]
+    fn parse_solc_version_arg() {
+        let args = StorageArgs::parse_from(["foundry-cli", "addr.eth", "--solc-version", "0.8.10"]);
+        assert_eq!(args.solc_version, Some(Version::parse("0.8.10").unwrap()));
+    }
 }
