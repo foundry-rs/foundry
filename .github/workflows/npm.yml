@@ -7,7 +7,6 @@ on:
         type: string
         required: false
         description: The run id of the release to publish
-        default: "latest"
   #
   # Temporarily disabled
   #
@@ -169,9 +168,9 @@ jobs:
       - name: Publish ${{ matrix.os }}-${{ matrix.arch }} Binary
         working-directory: ./npm
         env:
-          RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
-          VERSION_NAME: ${{ steps.release-version.outputs.RELEASE_VERSION }}
           PROVENANCE: true
+          VERSION_NAME: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+          RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -184,6 +183,10 @@ jobs:
           echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
 
   publish-meta:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     needs: publish-arch
     runs-on: ubuntu-latest
     env:
@@ -220,8 +223,9 @@ jobs:
         working-directory: ./npm
         run: bun run ./scripts/publish.ts ./@foundry-rs/forge
         env:
-          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
           NPM_TOKEN: ${{ env.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ env.NODE_AUTH_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}

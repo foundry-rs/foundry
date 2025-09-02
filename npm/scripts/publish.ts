@@ -123,7 +123,7 @@ async function publishPackage(packagePath: string, packedFile: string, version: 
   const tag = /-nightly(\.|$)/.test(version) ? 'nightly' : 'latest'
   const result = await Bun
     .$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL} --tag=${tag} --provenance=${
-    Bun.env.PROVENANCE || 'false'
+    Bun.env.PROVENANCE || 'true'
   }`
     .cwd(packagePath)
     .nothrow()
