@@ -319,7 +319,7 @@ mod tests {
     fn validate() {
         let helper = SolidityHelper::new();
         let dbg_r = |r: ValidationResult| match r {
-            ValidationResult::Incomplete => format!("Incomplete"),
+            ValidationResult::Incomplete => "Incomplete".to_string(),
             ValidationResult::Invalid(inner) => format!("Invalid({inner:?})"),
             ValidationResult::Valid(inner) => format!("Valid({inner:?})"),
             _ => "Unknown result".to_string(),

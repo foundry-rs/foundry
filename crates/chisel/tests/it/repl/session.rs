@@ -1,3 +1,4 @@
+use foundry_common::sh_eprint;
 use foundry_compilers::PathStyle;
 use foundry_test_utils::TestProject;
 use std::{io, time::Duration};
@@ -121,7 +122,7 @@ impl io::Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // The main difference between `stderr`: use the `eprint!` macro so that the output
         // can get captured by the test harness.
-        eprint!("{}", String::from_utf8_lossy(buf));
+        let _ = sh_eprint!("{}", String::from_utf8_lossy(buf));
         Ok(buf.len())
     }
 

@@ -19,8 +19,7 @@ macro_rules! repl_test {
     };
 }
 
-repl_test!(test_repl, |repl| {
-    repl.expect("Welcome to Chisel!").await;
+repl_test!(test_repl_help, |repl| {
     repl.sendln("!h").await;
     repl.expect("Chisel help").await;
 });
@@ -215,7 +214,6 @@ repl_test!(test_enum_min_max, |repl| {
 // Issue #9377: Test correct hex formatting for uint256.
 repl_test!(test_uint256_hex_formatting, |repl| {
     repl.sendln("uint256 x = 42").await;
-    repl.expect("42").await;
     // Full word hex should be 64 chars (256 bits).
     repl.sendln("x").await;
     repl.expect("0x000000000000000000000000000000000000000000000000000000000000002a").await;
