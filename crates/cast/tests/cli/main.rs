@@ -1905,6 +1905,52 @@ casttest!(storage, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.10",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.23",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_invalid_solc_version, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.2",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout_simple, |_prj, cmd| {
     cmd.args([
