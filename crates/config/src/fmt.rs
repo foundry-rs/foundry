@@ -35,7 +35,7 @@ pub struct FormatterConfig {
     pub contract_new_lines: bool,
     /// Sort import statements alphabetically in groups (a group is separated by a newline).
     pub sort_imports: bool,
-    /// Whether to supress spaces around the power operator (`**`).
+    /// Whether to suppress spaces around the power operator (`**`).
     pub pow_no_space: bool,
 }
 
