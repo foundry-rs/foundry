@@ -1,0 +1,11 @@
+telemetry = false
+
+run.bun = true
+
+[install]
+auto = "auto"
+
+[install.scopes]
+"@foundry-rs" = { url = "$NPM_REGISTRY_URL", username = "$NPM_USERNAME" }
+
+logLevel = "debug"

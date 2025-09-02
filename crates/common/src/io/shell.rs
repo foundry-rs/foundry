@@ -43,6 +43,11 @@ pub fn is_json() -> bool {
     Shell::get().is_json()
 }
 
+/// Returns whether the output format is [`OutputFormat::Markdown`].
+pub fn is_markdown() -> bool {
+    Shell::get().is_markdown()
+}
+
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
@@ -109,6 +114,8 @@ pub enum OutputFormat {
     Text,
     /// JSON output.
     Json,
+    /// Plain text with markdown tables.
+    Markdown,
 }
 
 impl OutputFormat {
@@ -120,6 +127,11 @@ impl OutputFormat {
     /// Returns true if the output format is `Json`.
     pub fn is_json(self) -> bool {
         self == Self::Json
+    }
+
+    /// Returns true if the output format is `Markdown`.
+    pub fn is_markdown(self) -> bool {
+        self == Self::Markdown
     }
 }
 
@@ -262,6 +274,11 @@ impl Shell {
     /// Returns `true` if the output format is JSON.
     pub fn is_json(&self) -> bool {
         self.output_format.is_json()
+    }
+
+    /// Returns `true` if the output format is Markdown.
+    pub fn is_markdown(&self) -> bool {
+        self.output_format.is_markdown()
     }
 
     /// Returns `true` if the verbosity level is `Quiet`.

@@ -73,13 +73,13 @@ impl Filter {
 }
 
 impl TestFilter for Filter {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_signature: &str) -> bool {
         if let Some(exclude) = &self.exclude_tests
-            && exclude.is_match(test_name)
+            && exclude.is_match(test_signature)
         {
             return false;
         }
-        self.test_regex.is_match(test_name)
+        self.test_regex.is_match(test_signature)
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {

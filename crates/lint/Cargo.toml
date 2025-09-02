@@ -19,11 +19,9 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
-solar-parse.workspace = true
-solar-ast.workspace = true
+solar.workspace = true
+# TODO: remove in next solar release: https://github.com/paradigmxyz/solar/pull/444
 solar-interface = { workspace = true, features = ["json"] }
-solar-data-structures.workspace = true
-solar-sema.workspace = true
 
 heck.workspace = true
 rayon.workspace = true

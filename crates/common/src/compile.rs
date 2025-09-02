@@ -7,7 +7,7 @@ use crate::{
     shell,
     term::SpinnerReporter,
 };
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -390,10 +390,13 @@ impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Text => {
-                writeln!(f, "\n{}", self.format_table_output())?;
+                writeln!(f, "\n{}", self.format_table_output(false))?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", self.format_json_output())?;
+            }
+            ReportKind::Markdown => {
+                writeln!(f, "\n{}", self.format_table_output(true))?;
             }
         }
 
@@ -423,9 +426,13 @@ impl SizeReport {
         serde_json::to_string(&contracts).unwrap()
     }
 
-    fn format_table_output(&self) -> Table {
+    fn format_table_output(&self, md: bool) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if md {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         table.set_header(vec![
             Cell::new("Contract"),
