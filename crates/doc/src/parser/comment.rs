@@ -51,12 +51,6 @@ impl CommentTag {
         };
         Some(tag)
     }
-
-    /// Create a new instance of [CommentTag::Custom] with the `variant` tag.
-    #[must_use]
-    pub fn variant() -> Self {
-        Self::Custom("variant".to_string())
-    }
 }
 
 /// The natspec documentation comment.
@@ -156,12 +150,6 @@ impl Comments {
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
         Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
-    }
-}
-
-impl From<Vec<Comment>> for Comments {
-    fn from(value: Vec<Comment>) -> Self {
-        Self(value)
     }
 }
 
