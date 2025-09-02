@@ -1,18 +1,15 @@
-use foundry_common::sh_eprint;
 use foundry_compilers::PathStyle;
 use foundry_test_utils::TestProject;
-use std::{io, time::Duration};
-
-type ReplSession = expectrl::repl::ReplSession<
-    expectrl::process::unix::UnixProcess,
-    expectrl::stream::log::LogStream<expectrl::process::unix::AsyncPtyStream, LogWriter>,
->;
+use rexpect::{reader::Options, session::PtySession, spawn_with_options};
 
 const TIMEOUT_SECS: u64 = 3;
+const PROMPT: &str = "➜ ";
 
+/// Testing session for Chisel.
 pub struct ChiselSession {
-    session: Box<ReplSession>,
+    session: Box<PtySession>,
     project: Box<TestProject>,
+    is_repl: bool,
 }
 
 static SUBCOMMANDS: &[&str] = &["list", "load", "view", "clear-cache", "eval", "help"];
@@ -24,7 +21,7 @@ fn is_repl(args: &[String]) -> bool {
 
 #[allow(dead_code)]
 impl ChiselSession {
-    pub async fn new(name: &str, flags: &str, init: bool) -> Self {
+    pub fn new(name: &str, flags: &str, init: bool) -> Self {
         let project = foundry_test_utils::TestProject::new(name, PathStyle::Dapptools);
         if init {
             foundry_test_utils::util::initialize(project.root());
@@ -45,46 +42,50 @@ impl ChiselSession {
         }
         let args = command.get_args().map(|s| s.to_str().unwrap().to_string()).collect::<Vec<_>>();
 
-        let session = expectrl::Session::spawn(command).unwrap();
-        let log = LogWriter;
-        let session = expectrl::session::log(session, log).unwrap();
-        let mut repl: ReplSession = expectrl::repl::ReplSession::new(
-            session,
-            "➜ ".to_string(),
-            Some("!q".to_string()),
-            false,
-        );
-        repl.set_expect_timeout(Some(Duration::from_secs(TIMEOUT_SECS)));
+        let session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(TIMEOUT_SECS * 1000),
+                strip_ansi_escape_codes: false,
+                encoding: rexpect::Encoding::UTF8,
+            },
+        )
+        .unwrap();
 
-        let mut repl = Self { session: Box::new(repl), project: Box::new(project) };
+        let is_repl = is_repl(&args);
+        let mut session = Self { session: Box::new(session), project: Box::new(project), is_repl };
 
         // Expect initial prompt only if we're in the REPL.
-        if is_repl(&args) {
-            repl.expect("Welcome to Chisel!").await;
+        if session.is_repl() {
+            session.expect("Welcome to Chisel!");
         }
 
-        repl
+        session
     }
 
     pub fn project(&self) -> &TestProject {
         &self.project
     }
 
+    pub fn is_repl(&self) -> bool {
+        self.is_repl
+    }
+
     /// Send a line to the REPL and expects the prompt to appear.
-    pub async fn sendln(&mut self, line: &str) {
-        match self.session.execute(line).await {
-            Ok(_) => (),
-            Err(e) => {
-                panic!("failed to send line {line:?}: {e}")
-            }
+    #[track_caller]
+    pub fn sendln(&mut self, line: &str) {
+        self.sendln_raw(line);
+        if self.is_repl() {
+            self.expect_prompt();
         }
     }
 
     /// Send a line to the REPL without expecting the prompt to appear.
     ///
     /// You might want to call `expect_prompt` after this.
-    pub async fn sendln_raw(&mut self, line: &str) {
-        match self.session.send_line(line).await {
+    #[track_caller]
+    pub fn sendln_raw(&mut self, line: &str) {
+        match self.session.send_line(line) {
             Ok(_) => (),
             Err(e) => {
                 panic!("failed to send line {line:?}: {e}")
@@ -93,8 +94,9 @@ impl ChiselSession {
     }
 
     /// Expect the needle to appear.
-    pub async fn expect(&mut self, needle: &str) {
-        match self.session.expect(needle).await {
+    #[track_caller]
+    pub fn expect(&mut self, needle: &str) {
+        match self.session.exp_string(needle) {
             Ok(_) => (),
             Err(e) => {
                 panic!("failed to expect {needle:?}: {e}")
@@ -103,34 +105,16 @@ impl ChiselSession {
     }
 
     /// Expect the prompt to appear.
-    pub async fn expect_prompt(&mut self) {
-        let prompt = self.session.get_prompt().to_string();
-        self.expect(&prompt).await;
+    #[track_caller]
+    pub fn expect_prompt(&mut self) {
+        self.expect(PROMPT);
     }
 
     /// Expect the prompt to appear `n` times.
-    pub async fn expect_prompts(&mut self, n: usize) {
-        let prompt = self.session.get_prompt().to_string();
+    #[track_caller]
+    pub fn expect_prompts(&mut self, n: usize) {
         for _ in 0..n {
-            self.expect(&prompt).await;
+            self.expect_prompt();
         }
-    }
-}
-
-struct LogWriter;
-impl io::Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // The main difference between `stderr`: use the `eprint!` macro so that the output
-        // can get captured by the test harness.
-        let _ = sh_eprint!("{}", String::from_utf8_lossy(buf));
-        Ok(buf.len())
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.write(buf).map(drop)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()
     }
 }
