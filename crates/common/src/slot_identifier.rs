@@ -206,8 +206,8 @@ impl SlotInfo {
         }
     }
 
-    /// Aggregates a [`DynSolType::Bytes`] or [`DynSolType::String`] that spans across multiple
-    /// slots by looking up the length in the base_slot.
+    /// Aggregates a [`DynSolType::Bytes`] or [`DynSolType::String`] value that spans across
+    /// multiple slots by looking up the length in the base_slot.
     ///
     /// Returns the aggregated raw bytes.
     fn aggregate_bytes_or_strings(
