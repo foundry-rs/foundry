@@ -125,7 +125,7 @@ impl MultiSolMacroGen {
                     syn::parse_quote! {
                             #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
                     alloy::contract, all_derives = true, extra_derives(serde::Serialize,
-                    serde::Deserialize))]     }
+                    serde::Deserialize, Clone))]     }
                 } else {
                     syn::parse_quote! {
                             #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
