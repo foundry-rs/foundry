@@ -341,16 +341,16 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code from creation tx input.
-        let maybe_creation_code = if receipt.to.is_none()
+        let maybe_creation_code: Bytes = if receipt.to.is_none()
             && receipt.contract_address == Some(self.address)
         {
             match &transaction.input.input {
-                Some(input) => &input[..],
+                Some(input) => Bytes::copy_from_slice(&input[..]),
                 None => unreachable!("creation tx input is None"),
             }
         } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
             match &transaction.input.input {
-                Some(input) => &input[32..],
+                Some(input) => Bytes::copy_from_slice(&input[32..]),
                 None => unreachable!("creation tx input is None"),
             }
         } else {
@@ -369,7 +369,7 @@ impl VerifyBytecodeArgs {
                     _ => None,
                 });
 
-            &creation_bytecode.ok_or_else(|| {
+            creation_bytecode.ok_or_else(|| {
                 eyre::eyre!(
                     "Could not extract the creation code for contract at address {}",
                     self.address
@@ -379,12 +379,13 @@ impl VerifyBytecodeArgs {
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
         // happens, try extracting arguments ourselves.
-        if !maybe_creation_code.ends_with(&constructor_args) {
+        if !maybe_creation_code.as_ref().ends_with(&constructor_args) {
             trace!("mismatch of constructor args with etherscan");
             // If local bytecode is longer than on-chain one, this is probably not a match.
-            if maybe_creation_code.len() >= local_bytecode.len() {
-                constructor_args =
-                    Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+            if maybe_creation_code.as_ref().len() >= local_bytecode.len() {
+                constructor_args = Bytes::copy_from_slice(
+                    &maybe_creation_code.as_ref()[local_bytecode.len()..],
+                );
                 trace!(
                     target: "forge::verify",
                     "setting constructor args to latest {} bytes of bytecode",
@@ -404,7 +405,7 @@ impl VerifyBytecodeArgs {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = crate::utils::match_bytecodes(
                 local_bytecode_vec.as_slice(),
-                maybe_creation_code,
+                maybe_creation_code.as_ref(),
                 &constructor_args,
                 false,
                 config.bytecode_hash,
