@@ -1,12 +1,13 @@
+// config: sort_imports = true
 // Repros of fmt issues
 
 // https://github.com/foundry-rs/foundry/issues/7944
-import {ERC20} from "@contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@contracts/token/ERC20/ext/ERC20Permit.sol";
-import {ERC20Burnable} from "@contracts/token/ERC20/ext/ERC20Burnable.sol";
-import {IERC20} from "@contracts/token/ERC20/IERC20.sol";
-import {IERC20Permit} from "@contracts/token/ERC20/ext/ERC20Permit.sol";
 import {AccessControl} from "@contracts/access/AccessControl.sol";
+import {ERC20} from "@contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@contracts/token/ERC20/IERC20.sol";
+import {ERC20Burnable} from "@contracts/token/ERC20/ext/ERC20Burnable.sol";
+import {ERC20Permit} from "@contracts/token/ERC20/ext/ERC20Permit.sol";
+import {IERC20Permit} from "@contracts/token/ERC20/ext/ERC20Permit.sol";
 
 // https://github.com/foundry-rs/foundry/issues/4403
 function errorIdentifier() {

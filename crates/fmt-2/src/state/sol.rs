@@ -1117,7 +1117,12 @@ impl<'ast> State<'_, 'ast> {
                     self.word("=");
                 } else {
                     if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo())) {
-                        self.space_if_not_bol();
+                        if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow)
+                        {
+                            self.space_if_not_bol();
+                        } else if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
+                            self.zerobreak();
+                        }
                     }
                     self.word(bin_op.kind.to_str());
                 }
@@ -1130,7 +1135,9 @@ impl<'ast> State<'_, 'ast> {
                         self.s.ibox(0);
                     }
                 }
-                self.nbsp();
+                if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
+                    self.nbsp();
+                }
                 self.print_expr(rhs);
 
                 if (has_complex_successor(&rhs.kind, false)

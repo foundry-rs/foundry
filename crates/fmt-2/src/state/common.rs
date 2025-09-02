@@ -334,8 +334,7 @@ impl<'ast> State<'_, 'ast> {
 
         let mut skip_last_break = is_single_without_cmnts;
         for (i, value) in values.iter().enumerate() {
-            let is_last = i == values.len() - 1;
-            let span = get_span(value);
+            let (is_last, span) = (i == values.len() - 1, get_span(value));
             if let Some(span) = span
                 && self
                     .print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
@@ -347,13 +346,16 @@ impl<'ast> State<'_, 'ast> {
 
             print(self, value);
             if !is_last {
-                self.word(",");
+                self.print_word(",");
             }
-            let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) }
-                .unwrap_or(pos_hi);
+            let next_span = if is_last { None } else { get_span(&values[i + 1]) };
+            let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
             if !is_last
                 && format.breaks_comments()
-                && self.peek_comment_before(next_pos).is_some_and(|cmnt| cmnt.style.is_mixed())
+                && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
+                    let disabled = self.inline_config.is_disabled(cmnt.span);
+                    (cmnt.style.is_mixed() && !disabled) || (cmnt.style.is_isolated() && disabled)
+                })
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
@@ -368,7 +370,10 @@ impl<'ast> State<'_, 'ast> {
                 self.break_offset_if_not_bol(0, -self.ind, false);
                 skip_last_break = true;
             }
-            if !is_last && !self.is_bol_or_only_ind() {
+            if let Some(next_span) = next_span
+                && !self.is_bol_or_only_ind()
+                && !self.inline_config.is_disabled(next_span)
+            {
                 format.add_break(false, values.len(), &mut self.s);
             }
         }

@@ -35,6 +35,8 @@ pub struct FormatterConfig {
     pub contract_new_lines: bool,
     /// Sort import statements alphabetically in groups (a group is separated by a newline).
     pub sort_imports: bool,
+    /// Whether to supress spaces around the power operator (`**`).
+    pub pow_no_space: bool,
 }
 
 /// Style of integer types.
@@ -193,6 +195,7 @@ impl Default for FormatterConfig {
             ignore: vec![],
             contract_new_lines: false,
             sort_imports: false,
+            pow_no_space: false,
         }
     }
 }

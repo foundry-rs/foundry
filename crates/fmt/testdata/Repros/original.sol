@@ -1,5 +1,13 @@
 // Repros of fmt issues
 
+// https://github.com/foundry-rs/foundry/issues/7944
+import { ERC20 } from "@contracts/token/ERC20/ERC20.sol";
+import { ERC20Permit } from "@contracts/token/ERC20/ext/ERC20Permit.sol";
+import { ERC20Burnable } from "@contracts/token/ERC20/ext/ERC20Burnable.sol";
+import { IERC20 } from "@contracts/token/ERC20/IERC20.sol";
+import { IERC20Permit } from "@contracts/token/ERC20/ext/ERC20Permit.sol";
+import { AccessControl } from "@contracts/access/AccessControl.sol";
+
 // https://github.com/foundry-rs/foundry/issues/4403
 function errorIdentifier() {
     bytes memory error = bytes("");
@@ -157,4 +165,15 @@ contract DbgFmtTest is Test {
     function internalNoArgs() internal pure returns (uint256) {
         return 0;
     }
+}
+
+// https://github.com/foundry-rs/foundry/issues/11249
+function argListRepro(address tokenIn, uint256 amountIn, bool data) {
+    maverickV2SwapCallback(
+        tokenIn,
+        amountIn, // forgefmt: disable-line
+        // forgefmt: disable-next-line
+        0 /* we didn't bother loading `amountOut` because we don't use it */,
+        data
+    );
 }

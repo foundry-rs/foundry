@@ -269,7 +269,7 @@ impl<'sess> State<'sess, '_> {
     fn handle_comment(&mut self, cmnt: Comment) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
-                if cmnt.style.is_trailing() {
+                if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);

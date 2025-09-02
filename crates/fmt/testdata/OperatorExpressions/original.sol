@@ -7,9 +7,9 @@ function test() {
     uint256 expr006 = 1 + 2 * 3;
     uint256 expr007 = (1 + 2) * 3;
     uint256 expr008 = 1 + (2 * 3);
-    uint256 expr009 = 1 ** 2 ** 3;
-    uint256 expr010 = 1 ** (2 ** 3);
-    uint256 expr011 = (1 ** 2) ** 3;
+    uint256 expr009 = 1**2 ** 3;
+    uint256 expr010 = 1**(2 ** 3);
+    uint256 expr011 = (1**2) ** 3;
     uint256 expr012 = ++expr011 + 1;
     bool expr013 = ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
