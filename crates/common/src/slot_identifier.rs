@@ -227,8 +227,8 @@ impl SlotInfo {
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
                 let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
-                let num_slots = ((length.to::<usize>() + 31) / 32).min(256);
-                let data_start = U256::from_be_bytes(alloy_primitives::keccak256(&base_slot.0).0);
+                let num_slots = length.to::<usize>().div_ceil(32).min(256);
+                let data_start = U256::from_be_bytes(alloy_primitives::keccak256(base_slot.0).0);
 
                 let mut members = Vec::new();
                 let mut full_data = Vec::with_capacity(length.to::<usize>());
@@ -239,7 +239,7 @@ impl SlotInfo {
 
                     // Create member info for this data slot - no label needed as it will be shown
                     // under the main variable
-                    let member_info = SlotInfo {
+                    let member_info = Self {
                         label: String::new(),
                         slot_type: StorageTypeInfo {
                             label: self.slot_type.label.clone(),
@@ -829,12 +829,11 @@ impl SlotIdentifier {
     fn handle_bytes_string(&self, slot: U256, slot_str: &str) -> Option<SlotInfo> {
         // First check if this slot is a main slot for any bytes/string variable
         for storage in &self.storage_layout.storage {
-            if let Ok(base_slot) = U256::from_str(&storage.slot) {
-                if slot == base_slot {
+            if let Ok(base_slot) = U256::from_str(&storage.slot)
+                && slot == base_slot {
                     // This is a main slot, check if it's a bytes/string type
                     if let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type)
-                    {
-                        if storage_type.encoding == ENCODING_BYTES {
+                        && storage_type.encoding == ENCODING_BYTES {
                             // Parse the type to get the correct DynSolType
                             let dyn_type = if storage_type.label == "string" {
                                 DynSolType::String
@@ -862,18 +861,16 @@ impl SlotIdentifier {
                                 keys: None,
                             });
                         }
-                    }
                 }
-            }
         }
 
         // If not a main slot, check if it could be a data slot for any long bytes/string
         // We check all bytes/string variables in the layout to see if this slot
         // falls in their data region (starting at keccak256(base_slot))
         for storage in &self.storage_layout.storage {
-            if let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type) {
-                if storage_type.encoding == ENCODING_BYTES {
-                    if let Ok(base_slot) = U256::from_str(&storage.slot) {
+            if let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type)
+                && storage_type.encoding == ENCODING_BYTES
+                    && let Ok(base_slot) = U256::from_str(&storage.slot) {
                         // Calculate where data slots would start for this variable
                         let data_start = U256::from_be_bytes(
                             alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0,
@@ -899,8 +896,6 @@ impl SlotIdentifier {
                             });
                         }
                     }
-                }
-            }
         }
 
         None
