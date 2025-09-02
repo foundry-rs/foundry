@@ -2645,6 +2645,7 @@ dependencies = [
  "strum 0.27.2",
  "time",
  "tracing",
+ "tracing-subscriber 0.3.20",
  "walkdir",
  "yansi",
 ]

@@ -150,7 +150,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://bsc-testnet-rpc.publicnode.com".to_string();
     }
 
-    let reth_works = false; // TODO: re-enable
+    let reth_works = true;
     let domain = if reth_works && matches!(chain, Mainnet) {
         *next(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS })
     } else {

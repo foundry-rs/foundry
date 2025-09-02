@@ -1791,7 +1791,7 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 });
 
 casttest!(
-    #[ignore = "reth is currently broken"]
+    #[ignore = "reth is currently slightly broken"]
     tx_using_sender_and_nonce,
     |_prj, cmd| {
         let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
