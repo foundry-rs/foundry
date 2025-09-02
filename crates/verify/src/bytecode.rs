@@ -383,9 +383,8 @@ impl VerifyBytecodeArgs {
             trace!("mismatch of constructor args with etherscan");
             // If local bytecode is longer than on-chain one, this is probably not a match.
             if maybe_creation_code.as_ref().len() >= local_bytecode.len() {
-                constructor_args = Bytes::copy_from_slice(
-                    &maybe_creation_code.as_ref()[local_bytecode.len()..],
-                );
+                constructor_args =
+                    Bytes::copy_from_slice(&maybe_creation_code.as_ref()[local_bytecode.len()..]);
                 trace!(
                     target: "forge::verify",
                     "setting constructor args to latest {} bytes of bytecode",
