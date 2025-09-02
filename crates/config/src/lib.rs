@@ -1635,7 +1635,7 @@ impl Config {
     /// let my_config = Config::figment_with_root(".").extract::<Config>();
     /// ```
     pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
-        Self::with_root(root.as_ref()).into()
+        Self::with_root(root.as_ref()).to_figment(FigmentProviders::Cast)
     }
 
     #[doc(hidden)]
