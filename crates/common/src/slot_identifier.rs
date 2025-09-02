@@ -91,11 +91,12 @@ impl SlotInfo {
                     // Short string/bytes (less than 32 bytes)
                     let length = (length_byte >> 1) as usize;
                     if length == 0 {
-                        return Some(if matches!(actual_type, DynSolType::String) {
+                        let empty = if matches!(actual_type, DynSolType::String) {
                             DynSolValue::String(String::new())
                         } else {
                             DynSolValue::Bytes(Vec::new())
-                        });
+                        };
+                        return Some(empty);
                     }
 
                     // Data is stored in the same slot, left-aligned
