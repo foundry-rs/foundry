@@ -1423,7 +1423,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
 
                                     // Then handle long bytes/strings if applicable
                                     if info.is_bytes_or_string() {
-                                        info.decode_bytes_or_string(
+                                        info.decode_bytes_or_string_values(
                                             &storage_access.slot,
                                             &raw_changes_by_slot,
                                         );

@@ -5,7 +5,7 @@
 
 use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex};
+use alloy_primitives::{B256, U256, hex, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::Serialize;
@@ -16,9 +16,6 @@ use tracing::trace;
 const ENCODING_INPLACE: &str = "inplace";
 const ENCODING_MAPPING: &str = "mapping";
 const ENCODING_BYTES: &str = "bytes";
-
-/// Mapping of [`B256`] slot values to their raw (previous, new) values.
-type RawChangeMap = BTreeMap<B256, (B256, B256)>;
 
 /// Information about a storage slot including its label, type, and decoded values.
 #[derive(Serialize, Debug)]
@@ -130,81 +127,119 @@ impl SlotInfo {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
-    /// Aggregates and decodes [`DynSolType::Bytes`] or [`DynSolType::String`] that span across
-    /// multiple slots using the
-    pub fn decode_bytes_or_string(&mut self, base_slot: &B256, storage_accesses: &RawChangeMap) {
+    /// Decodes a [`DynSolType::Bytes`] or [`DynSolType::String`] value
+    /// that spans across multiple slots.
+    pub fn decode_bytes_or_string(
+        &mut self,
+        base_slot: &B256,
+        storage_values: &B256Map<B256>,
+    ) -> Option<DynSolValue> {
+        // Only process bytes/string types
+        if !self.is_bytes_or_string() {
+            return None;
+        }
+
+        // Try to handle as long bytes/string
+        if let Some(data) = self.aggregate_bytes_or_strings(base_slot, storage_values) {
+            // Decode the full long bytes/string value
+            if matches!(self.slot_type.dyn_sol_type, DynSolType::String) {
+                let str_val = String::from_utf8(data).unwrap_or_default();
+                Some(DynSolValue::String(str_val))
+            } else {
+                Some(DynSolValue::Bytes(data))
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Decodes both previous and new [`DynSolType::Bytes`] or [`DynSolType::String`] values
+    /// that span across multiple slots using state diff data.
+    ///
+    /// Accepts a mapping of storage_slot to (previous_value, new_value).
+    pub fn decode_bytes_or_string_values(
+        &mut self,
+        base_slot: &B256,
+        storage_accesses: &BTreeMap<B256, (B256, B256)>,
+    ) {
         // Only process bytes/string types
         if !self.is_bytes_or_string() {
             return;
         }
 
-        // Try to handle as long bytes/string
-        if let Some((prev_data, new_data)) =
-            self.aggregate_bytes_or_strings(base_slot, storage_accesses)
-        {
-            // Decode the full long bytes/string value
-            if matches!(self.slot_type.dyn_sol_type, DynSolType::String) {
-                let prev_str = if prev_data.is_empty() {
-                    String::new()
-                } else {
-                    String::from_utf8(prev_data).unwrap_or_default()
-                };
-                let new_str = String::from_utf8(new_data).unwrap_or_default();
-                self.decoded = Some(DecodedSlotValues {
-                    previous_value: DynSolValue::String(prev_str),
-                    new_value: DynSolValue::String(new_str),
-                });
+        // Get both previous and new values from the storage accesses
+        if let Some((prev_base_value, new_base_value)) = storage_accesses.get(base_slot) {
+            let prev_length_byte = prev_base_value.0[31];
+            let new_length_byte = new_base_value.0[31];
+
+            // Decode previous value
+            let prev_decoded = if prev_length_byte & 1 == 1 {
+                // Long bytes/string - aggregate from multiple slots
+                let mut prev_map = B256Map::default();
+                for (slot, (prev_val, _)) in storage_accesses {
+                    prev_map.insert(*slot, *prev_val);
+                }
+                self.decode_bytes_or_string(base_slot, &prev_map)
             } else {
-                self.decoded = Some(DecodedSlotValues {
-                    previous_value: DynSolValue::Bytes(prev_data),
-                    new_value: DynSolValue::Bytes(new_data),
-                });
+                // Short bytes/string - decode directly from base slot
+                self.decode(*prev_base_value)
+            };
+
+            // Decode new value and populate members if it's long
+            let new_decoded = if new_length_byte & 1 == 1 {
+                // Long bytes/string - aggregate from multiple slots
+                let mut new_map = B256Map::default();
+                for (slot, (_, new_val)) in storage_accesses {
+                    new_map.insert(*slot, *new_val);
+                }
+                self.decode_bytes_or_string(base_slot, &new_map)
+            } else {
+                // Short bytes/string - decode directly from base slot
+                self.decode(*new_base_value)
+            };
+
+            // Set decoded values if both were successfully decoded
+            if let (Some(prev), Some(new)) = (prev_decoded, new_decoded) {
+                self.decoded = Some(DecodedSlotValues { previous_value: prev, new_value: new });
             }
         }
     }
 
-    /// Aggregates the [`DynSolType::Bytes`] or [`DynSolType::String`] that span across multiple
+    /// Aggregates a [`DynSolType::Bytes`] or [`DynSolType::String`] that spans across multiple
     /// slots by looking up the length in the base_slot.
     ///
-    /// Returns the aggregated raw previous and new value.
+    /// Returns the aggregated raw bytes.
     fn aggregate_bytes_or_strings(
         &mut self,
         base_slot: &B256,
-        storage_accesses: &RawChangeMap,
-    ) -> Option<(Vec<u8>, Vec<u8>)> {
+        storage_values: &B256Map<B256>,
+    ) -> Option<Vec<u8>> {
         if !self.is_bytes_or_string() {
             return None;
         }
 
-        // Check if it's a long bytes/string by looking at the new value
-        if let Some((prev_base_value, new_base_value)) = storage_accesses.get(base_slot) {
-            let new_length_byte = new_base_value.0[31];
-            let prev_length_byte = prev_base_value.0[31];
+        // Check if it's a long bytes/string by looking at the base value
+        if let Some(base_value) = storage_values.get(base_slot) {
+            let length_byte = base_value.0[31];
 
-            // Check if new value is long
-            if new_length_byte & 1 == 1 {
+            // Check if value is long
+            if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
-                let new_length: U256 = U256::from_be_bytes(new_base_value.0) >> 1;
-                let num_slots = ((new_length.to::<usize>() + 31) / 32).min(256);
+                let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
+                let num_slots = ((length.to::<usize>() + 31) / 32).min(256);
                 let data_start = U256::from_be_bytes(alloy_primitives::keccak256(&base_slot.0).0);
 
                 let mut members = Vec::new();
-                let mut full_new_data = Vec::with_capacity(new_length.to::<usize>());
-                let mut full_prev_data = Vec::new();
-
-                // Get previous length if it was also long
-                if prev_length_byte & 1 == 1 {
-                    let prev_length: U256 = U256::from_be_bytes(prev_base_value.0) >> 1;
-                    full_prev_data.reserve(prev_length.to::<usize>());
-                }
+                let mut full_data = Vec::with_capacity(length.to::<usize>());
 
                 for i in 0..num_slots {
                     let data_slot = B256::from(data_start + U256::from(i));
                     let data_slot_u256 = data_start + U256::from(i);
 
-                    // Create member info for this data slot
+                    // Create member info for this data slot - no label needed as it will be shown
+                    // under the main variable
                     let member_info = SlotInfo {
-                        label: format!("data[{}]", i),
+                        label: String::new(),
                         slot_type: StorageTypeInfo {
                             label: self.slot_type.label.clone(),
                             dyn_sol_type: DynSolType::FixedBytes(32),
@@ -212,24 +247,15 @@ impl SlotInfo {
                         offset: 0,
                         slot: data_slot_u256.to_string(),
                         members: None,
-                        decoded: None, /* Don't populate decoded for data slots - they're just
-                                        * raw bytes */
+                        decoded: None,
                         keys: None,
                     };
 
-                    if let Some((prev_value, new_value)) = storage_accesses.get(&data_slot) {
-                        // Collect new data
-                        let new_bytes_to_take =
-                            std::cmp::min(32, new_length.to::<usize>() - full_new_data.len());
-                        full_new_data.extend_from_slice(&new_value.0[..new_bytes_to_take]);
-
-                        // Collect previous data if it was long
-                        if prev_length_byte & 1 == 1 {
-                            let prev_length: U256 = U256::from_be_bytes(prev_base_value.0) >> 1;
-                            let prev_bytes_to_take =
-                                std::cmp::min(32, prev_length.to::<usize>() - full_prev_data.len());
-                            full_prev_data.extend_from_slice(&prev_value.0[..prev_bytes_to_take]);
-                        }
+                    if let Some(value) = storage_values.get(&data_slot) {
+                        // Collect data
+                        let bytes_to_take =
+                            std::cmp::min(32, length.to::<usize>() - full_data.len());
+                        full_data.extend_from_slice(&value.0[..bytes_to_take]);
                     }
 
                     members.push(member_info);
@@ -240,7 +266,7 @@ impl SlotInfo {
                     self.members = Some(members);
                 }
 
-                return Some((full_prev_data, full_new_data));
+                return Some(full_data);
             }
         }
 
@@ -858,7 +884,7 @@ impl SlotIdentifier {
                             let slot_index = (slot - data_start).to::<usize>();
 
                             return Some(SlotInfo {
-                                label: format!("{}.data[{}]", storage.label, slot_index),
+                                label: format!("{}[{}]", storage.label, slot_index),
                                 slot_type: StorageTypeInfo {
                                     label: storage_type.label.clone(), /* Keep original type
                                                                         * (string/bytes) */
