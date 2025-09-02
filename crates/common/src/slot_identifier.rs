@@ -496,7 +496,7 @@ impl SlotIdentifier {
                 };
                 // Get the base slot value from storage_values
                 if let Some(base_value) = storage_values.get(&base_slot)
-                    && let Some(info) = self.hanlde_bytes_string(slot_u256, &slot_str, base_value)
+                    && let Some(info) = self.handle_bytes_string(slot_u256, &slot_str, base_value)
                 {
                     return Some(info);
                 }
@@ -856,7 +856,7 @@ impl SlotIdentifier {
     /// * `slot_str` - String representation of the slot for output
     /// * `base_slot_value` - The value at the base slot (used to determine length for long
     ///   bytes/strings)
-    fn hanlde_bytes_string(
+    fn handle_bytes_string(
         &self,
         slot: U256,
         slot_str: &str,
