@@ -1,2 +1,1 @@
-#[cfg(unix)]
 mod repl;
