@@ -238,10 +238,9 @@ impl SlotInfo {
                     let data_slot = B256::from(data_start + U256::from(i));
                     let data_slot_u256 = data_start + U256::from(i);
 
-                    // Create member info for this data slot - no label needed as it will be shown
-                    // under the main variable
+                    // Create member info for this data slot with indexed label
                     let member_info = Self {
-                        label: String::new(),
+                        label: format!("{}[{}]", self.label, i),
                         slot_type: StorageTypeInfo {
                             label: self.slot_type.label.clone(),
                             dyn_sol_type: DynSolType::FixedBytes(32),
