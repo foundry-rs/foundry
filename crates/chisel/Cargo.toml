@@ -56,9 +56,6 @@ yansi.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
 
-[dev-dependencies]
-tracing-subscriber.workspace = true
-
 [features]
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]

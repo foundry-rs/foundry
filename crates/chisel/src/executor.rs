@@ -1417,6 +1417,7 @@ impl Iterator for InstructionIter<'_> {
 mod tests {
     use super::*;
     use foundry_compilers::{error::SolcError, solc::Solc};
+    use foundry_test_utils::init_tracing;
     use semver::Version;
     use std::sync::Mutex;
 
@@ -1791,11 +1792,5 @@ mod tests {
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
         }
-    }
-
-    fn init_tracing() {
-        let _ = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
     }
 }
