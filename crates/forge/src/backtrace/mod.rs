@@ -315,8 +315,6 @@ pub fn extract_backtrace<DB: DatabaseRef>(
             trace,
             contract_address,
             &pc_mappers,
-            source_maps,
-            sources,
         ) {
             frame = frame.with_source_location(
                 source_location.file,
@@ -371,8 +369,6 @@ fn get_source_location_from_trace(
     trace: &foundry_evm::traces::CallTrace,
     contract_address: Address,
     pc_mappers: &HashMap<Address, PcSourceMapper>,
-    source_maps: &HashMap<Address, (SourceMap, SourceMap)>,
-    sources: &HashMap<Address, Vec<(String, String)>>,
 ) -> Option<source_map::SourceLocation> {
     // Find the last step (which should be the revert point)
     let last_step = trace.steps.last()?;
@@ -390,49 +386,9 @@ fn get_source_location_from_trace(
 
     // Try to get source location from PC mapper
     if let Some(mapper) = pc_mappers.get(&contract_address) {
-        return mapper.map_pc(pc);
+        mapper.map_pc(pc)
+    } else {
+        None
     }
-
-    // Try to decode directly if we have source maps
-    if let Some((_, runtime_map)) = source_maps.get(&contract_address)
-        && let Some(sources_list) = sources.get(&contract_address)
-    {
-        // Try to find the source element for this PC
-        let estimated_ic = trace.steps.len().saturating_sub(1);
-        if let Some(element) = runtime_map.get(estimated_ic)
-            && let Some(source_idx) = element.index()
-            && let Some((file_path, content)) = sources_list.get(source_idx as usize)
-        {
-            let offset = element.offset() as usize;
-            let (line, column) = offset_to_line_column(content, offset);
-            return Some(source_map::SourceLocation {
-                file: file_path.clone(),
-                line,
-                column,
-                length: element.length() as usize,
-            });
-        }
-    }
-
-    None
 }
 
-/// Converts a byte offset to line and column numbers.
-fn offset_to_line_column(content: &str, offset: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut column = 1;
-
-    for (idx, ch) in content.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-
-    (line, column)
-}
