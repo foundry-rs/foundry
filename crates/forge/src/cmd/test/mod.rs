@@ -593,15 +593,6 @@ impl TestArgs {
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
 
-                    // Display backtrace for failed tests when verbosity >= 3
-                    if verbosity >= 3
-                        && result.status == TestStatus::Failure
-                        && let Some(ref backtrace) = result.backtrace
-                        && !backtrace.is_empty()
-                    {
-                        sh_println!("{}", backtrace)?;
-                    }
-
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind
                         && !metrics.is_empty()
@@ -664,6 +655,16 @@ impl TestArgs {
                     for trace in &decoded_traces {
                         sh_println!("{trace}")?;
                     }
+                }
+
+                // Display backtrace for failed tests when verbosity >= 3 (after traces)
+                if !silent
+                    && verbosity >= 3
+                    && result.status == TestStatus::Failure
+                    && let Some(ref backtrace) = result.backtrace
+                    && !backtrace.is_empty()
+                {
+                    sh_println!("{}", backtrace)?;
                 }
 
                 if let Some(gas_report) = &mut gas_report {
