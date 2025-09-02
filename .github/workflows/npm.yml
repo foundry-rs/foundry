@@ -188,6 +188,7 @@ jobs:
       contents: read
       id-token: write
     needs: publish-arch
+    name: Publish Meta Package
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
