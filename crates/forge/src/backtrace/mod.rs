@@ -39,7 +39,7 @@ impl fmt::Display for Backtrace {
             return Ok(());
         }
 
-        writeln!(f, "{}", Paint::yellow("Stack trace:"))?;
+        writeln!(f, "{}", Paint::yellow("Backtrace:"))?;
 
         for frame in self.frames.iter() {
             write!(f, "  ")?;
@@ -311,11 +311,19 @@ pub fn extract_backtrace<DB: DatabaseRef>(
         // Try to get actual source location from trace
         tracing::info!("Trace has {} steps for address {}", trace.steps.len(), contract_address);
 
-        if let Some(source_location) = get_source_location_from_trace(
-            trace,
-            contract_address,
-            &pc_mappers,
-        ) {
+        if let Some(source_location) = {
+            let last_step = trace.steps.last()?;
+
+            tracing::info!(
+                pc = last_step.pc,
+                address = %contract_address,
+                mappers_count = pc_mappers.len(),
+                steps_count = trace.steps.len(),
+                "Looking for source location"
+            );
+
+            pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
+        } {
             frame = frame.with_source_location(
                 source_location.file,
                 source_location.line,
@@ -363,32 +371,3 @@ pub fn extract_backtrace<DB: DatabaseRef>(
 
     if !frames.is_empty() { Some(Backtrace::new(frames)) } else { None }
 }
-
-/// Gets the source location from trace.
-fn get_source_location_from_trace(
-    trace: &foundry_evm::traces::CallTrace,
-    contract_address: Address,
-    pc_mappers: &HashMap<Address, PcSourceMapper>,
-) -> Option<source_map::SourceLocation> {
-    // Find the last step (which should be the revert point)
-    let last_step = trace.steps.last()?;
-
-    // Get the program counter from the step
-    let pc = last_step.pc;
-
-    tracing::info!(
-        pc = pc,
-        address = %contract_address,
-        mappers_count = pc_mappers.len(),
-        steps_count = trace.steps.len(),
-        "Looking for source location"
-    );
-
-    // Try to get source location from PC mapper
-    if let Some(mapper) = pc_mappers.get(&contract_address) {
-        mapper.map_pc(pc)
-    } else {
-        None
-    }
-}
-
