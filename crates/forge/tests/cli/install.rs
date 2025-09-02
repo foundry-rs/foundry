@@ -434,8 +434,7 @@ import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-        )
-        .unwrap();
+        );
 
         // build and check output
         cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"

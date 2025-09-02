@@ -151,16 +151,12 @@ pub(crate) struct CorpusManager {
 
 impl CorpusManager {
     pub fn new(
-        config: &FuzzCorpusConfig,
-        func_name: &String,
+        config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> eyre::Result<Self> {
-        let mut config = config.clone();
-        config.with_test_name(func_name);
-
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
             Just(MutationType::Repeat),

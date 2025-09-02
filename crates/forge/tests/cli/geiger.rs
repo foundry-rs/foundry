@@ -11,8 +11,7 @@ forgetest_init!(call, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...
@@ -40,8 +39,7 @@ forgetest_init!(assignment, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...
@@ -71,8 +69,7 @@ forgetest_init!(exit_code, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...

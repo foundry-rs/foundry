@@ -4,9 +4,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::{
-    Client, EtherscanApiVersion, contract::ContractMetadata, errors::EtherscanError,
-};
+use foundry_block_explorers::{Client, contract::ContractMetadata, errors::EtherscanError};
 use foundry_config::Chain;
 use std::pin::Pin;
 
@@ -143,9 +141,8 @@ pub async fn fetch_abi_from_etherscan(
     config: &foundry_config::Config,
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
-    let api_version = config.get_etherscan_api_version(Some(chain));
     let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new_with_api_version(chain, api_key, api_version)?;
+    let client = Client::new(chain, api_key)?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
@@ -158,9 +155,8 @@ pub async fn get_func_etherscan(
     args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
-    etherscan_api_version: EtherscanApiVersion,
 ) -> Result<Function> {
-    let client = Client::new_with_api_version(chain, etherscan_api_key, etherscan_api_version)?;
+    let client = Client::new(chain, etherscan_api_key)?;
     let source = find_source(client, contract).await?;
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 

@@ -1,10 +1,9 @@
 use foundry_config::fs_permissions::PathPermission;
 
 forgetest!(test_eip712, |prj, cmd| {
-    let path = prj
-        .add_source(
-            "Structs",
-            r#"
+    let path = prj.add_source(
+        "Structs",
+        r#"
 library Structs {
     struct Foo {
         Bar bar;
@@ -52,11 +51,13 @@ library Structs2 {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+No files changed, compilation skipped
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
  - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
@@ -152,10 +153,9 @@ Structs.sol > Structs2 > FooBar:
 });
 
 forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
-    let path = prj
-        .add_source(
-            "FreeStandingStructs.sol",
-            r#"
+    let path = prj.add_source(
+        "FreeStandingStructs.sol",
+        r#"
 // free-standing struct (outside a contract and lib)
 struct FreeStanding {
     uint256 id;
@@ -174,11 +174,13 @@ library InsideLibrary {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+No files changed, compilation skipped
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
  - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
@@ -213,8 +215,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -243,8 +244,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["bind-json"]).assert_success();
 
@@ -295,8 +295,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -341,8 +340,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // cheatcode by type definition can run without bindings
     cmd.forge_fuse()
@@ -482,8 +480,7 @@ contract Eip712HashStructDomainTest is DSTest {
     }
 }
 "#,
-        )
-        .unwrap();
+        );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
 });
@@ -530,8 +527,7 @@ library PermitHash {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Eip712Transaction.sol",
@@ -586,8 +582,7 @@ library TransactionHash {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
@@ -714,8 +709,7 @@ contract Eip712HashStructTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args(["test", "--mc", "Eip712HashStructTest", "-vv"])
@@ -760,8 +754,7 @@ contract Eip712HashTypedDataTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
 });
@@ -851,8 +844,7 @@ contract CounterStrike_Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
 });
