@@ -1376,6 +1376,16 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                     }
                 }
 
+                // Collect all storage accesses for this account
+                let raw_changes_by_slot = account_access
+                    .storageAccesses
+                    .iter()
+                    .filter_map(|access| {
+                        (access.isWrite && !access.reverted)
+                            .then_some((access.slot, (access.previousValue, access.newValue)))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
@@ -1404,11 +1414,20 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 });
 
                                 // Decode values if we have slot info
-                                if let Some(ref mut info) = slot_info {
+                                if let Some(info) = &mut slot_info {
+                                    // Always decode values first
                                     info.decode_values(
                                         storage_access.previousValue,
                                         storage_access.newValue,
                                     );
+
+                                    // Then handle long bytes/strings if applicable
+                                    if info.is_bytes_or_string() {
+                                        info.decode_bytes_or_string(
+                                            &storage_access.slot,
+                                            &raw_changes_by_slot,
+                                        );
+                                    }
                                 }
 
                                 slot_state_diff.insert(SlotStateDiff {
