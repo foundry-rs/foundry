@@ -7,12 +7,9 @@ on:
         type: string
         required: false
         description: The run id of the release to publish
-  #
-  # Temporarily disabled
-  #
-  # workflow_run:
-  #   types: [completed]
-  #   workflows: [release]
+  workflow_run:
+    types: [completed]
+    workflows: [release]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -49,7 +46,7 @@ jobs:
             arch: arm64
           - os: win32
             arch: amd64
-    # if: ${{ github.event_name == 'workflow_run' && github.event.workflow.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow.conclusion == 'success' }}
     outputs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     env:
@@ -66,7 +63,7 @@ jobs:
           pattern: "foundry_*"
           path: foundry_artifacts
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@main
