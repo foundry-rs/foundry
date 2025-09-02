@@ -6,7 +6,6 @@
 /// The jaro winkler similarity boosts candidates that have a common prefix, which is often the case
 /// in the event of typos. Thus, in a list of possible values like ["foo", "bar"], the value "fop"
 /// will yield `Some("foo")`, whereas "blark" would yield `None`.
-///
 pub fn did_you_mean<T, I>(v: &str, candidates: I) -> Vec<String>
 where
     T: AsRef<str>,
