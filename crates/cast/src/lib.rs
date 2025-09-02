@@ -1849,6 +1849,7 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::hex;
     /// use cast::SimpleCast as Cast;
     ///
     /// let (topics, data) = Cast::abi_encode_event(
@@ -1863,24 +1864,35 @@ impl SimpleCast {
     ///
     /// // topic0 is the event selector
     /// assert_eq!(topics.len(), 3);
-    /// assert_eq!(topics[0], "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
-    /// assert_eq!(topics[1], "0x0000000000000000000000001234567890123456789012345678901234567890");
-    /// assert_eq!(topics[2], "0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd");
-    /// assert_eq!(data, "0x00000000000000000000000000000000000000000000000000000000000003e8");
+    /// assert_eq!(
+    ///     topics[0].to_string(),
+    ///     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    /// );
+    /// assert_eq!(
+    ///     topics[1].to_string(),
+    ///     "0x0000000000000000000000001234567890123456789012345678901234567890"
+    /// );
+    /// assert_eq!(
+    ///     topics[2].to_string(),
+    ///     "0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    /// );
+    /// assert_eq!(
+    ///     hex::encode_prefixed(data),
+    ///     "0x00000000000000000000000000000000000000000000000000000000000003e8"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<(Vec<String>, String)> {
+    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<(Vec<B256>, Vec<u8>)> {
         let event = get_event(sig)?;
 
-        let tokens: Result<Vec<DynSolValue>> = std::iter::zip(&event.inputs, args)
+        let tokens = std::iter::zip(&event.inputs, args)
             .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
-            .collect();
-        let tokens = tokens?;
+            .collect::<Result<Vec<_>>>()?;
 
-        let mut topics = vec![format!("{:?}", event.selector())];
-        let mut data_tokens = Vec::new();
+        let mut topics = vec![event.selector()];
+        let mut data_tokens: Vec<u8> = Vec::new();
 
-        for (input, token) in event.inputs.iter().zip(tokens.iter()) {
+        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
                 if matches!(
@@ -1893,7 +1905,7 @@ impl SimpleCast {
                     // For dynamic types, hash the encoded value
                     let encoded = token.abi_encode();
                     let hash = keccak256(encoded);
-                    topics.push(format!("{hash:?}"));
+                    topics.push(hash);
                 } else {
                     // For fixed-size types, encode directly to 32 bytes
                     let mut encoded = [0u8; 32];
@@ -1902,25 +1914,15 @@ impl SimpleCast {
                         let start = 32 - token_encoded.len();
                         encoded[start..].copy_from_slice(&token_encoded);
                     }
-                    topics.push(format!("{:?}", B256::from(encoded)));
+                    topics.push(B256::from(encoded));
                 }
             } else {
                 // Non-indexed parameters go into data
-                data_tokens.push(token.clone());
+                data_tokens.extend_from_slice(&token.abi_encode());
             }
         }
 
-        let data = if !data_tokens.is_empty() {
-            let mut encoded_data = Vec::new();
-            for token in &data_tokens {
-                encoded_data.extend_from_slice(&token.abi_encode());
-            }
-            hex::encode_prefixed(encoded_data)
-        } else {
-            String::new()
-        };
-
-        Ok((topics, data))
+        Ok((topics, data_tokens))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.

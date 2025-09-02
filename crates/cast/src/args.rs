@@ -197,7 +197,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("[topic{}]: {}", i, topic)?;
             }
             if !data.is_empty() {
-                sh_println!("[data]: {}", data)?;
+                sh_println!("[data]: {}", hex::encode_prefixed(data))?;
             }
         }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
