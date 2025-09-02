@@ -6,6 +6,9 @@
 /// The jaro winkler similarity boosts candidates that have a common prefix, which is often the case
 /// in the event of typos. Thus, in a list of possible values like ["foo", "bar"], the value "fop"
 /// will yield `Some("foo")`, whereas "blark" would yield `None`.
+///
+/// This function is optimized to avoid creating temporary strings for candidates that don't meet
+/// the similarity threshold, improving performance for large candidate lists.
 pub fn did_you_mean<T, I>(v: &str, candidates: I) -> Vec<String>
 where
     T: AsRef<str>,
@@ -13,8 +16,14 @@ where
 {
     let mut candidates: Vec<(f64, String)> = candidates
         .into_iter()
-        .map(|pv| (strsim::jaro_winkler(v, pv.as_ref()), pv.as_ref().to_owned()))
-        .filter(|(similarity, _)| *similarity > 0.8)
+        .filter_map(|pv| {
+            let similarity = strsim::jaro_winkler(v, pv.as_ref());
+            if similarity > 0.8 {
+                Some((similarity, pv.as_ref().to_owned()))
+            } else {
+                None
+            }
+        })
         .collect();
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
     candidates.into_iter().map(|(_, pv)| pv).collect()
