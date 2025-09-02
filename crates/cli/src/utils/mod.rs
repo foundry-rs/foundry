@@ -202,6 +202,14 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
+}
+
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure

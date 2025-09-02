@@ -610,6 +610,7 @@ impl SessionSource {
             eyre::bail!("{output}");
         }
 
+        // TODO(dani): re-enable
         if cfg!(false) {
             output.parser_mut().solc_mut().compiler_mut().enter_mut(|c| {
                 let _ = c.lower_asts();
@@ -735,9 +736,10 @@ contract {contract_name} is Script {{
         if !config.no_vm
             && let Some(remapping) = config
                 .foundry_config
-                .get_all_remappings()
+                .remappings
+                .iter()
                 .find(|remapping| remapping.name == "forge-std/")
-            && let Some(vm_path) = WalkDir::new(&remapping.path)
+            && let Some(vm_path) = WalkDir::new(&remapping.path.path)
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .find(|e| e.file_name() == "Vm.sol")

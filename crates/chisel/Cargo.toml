@@ -54,7 +54,10 @@ tracing.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+foundry-test-utils.workspace = true
 tracing-subscriber.workspace = true
+expectrl = { version = "0.7", features = ["async"] }
+tokio.workspace = true
 
 [features]
 default = ["jemalloc"]

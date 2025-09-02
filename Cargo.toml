@@ -156,6 +156,7 @@ rayon.opt-level = 3
 regex.opt-level = 3
 regex-syntax.opt-level = 3
 regex-automata.opt-level = 3
+ptyprocess.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
@@ -353,6 +354,7 @@ jiff = "0.2"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

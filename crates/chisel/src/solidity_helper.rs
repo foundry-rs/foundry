@@ -171,23 +171,25 @@ impl SolidityHelper {
 
                 Literal { kind: Str { terminated, .. } } => {
                     if !terminated {
-                        return ValidationResult::Invalid(Some(
-                            "Unterminated string literal".to_string(),
-                        ));
+                        return ValidationResult::Incomplete;
                     }
                 }
 
                 BlockComment { terminated, .. } => {
                     if !terminated {
-                        return ValidationResult::Invalid(Some(
-                            "Unterminated block comment".to_string(),
-                        ));
+                        return ValidationResult::Incomplete;
                     }
                 }
 
                 _ => {}
             }
         }
+
+        // There are open brackets that are not properly closed.
+        if !stack.is_empty() {
+            return ValidationResult::Incomplete;
+        }
+
         ValidationResult::Valid(None)
     }
 
@@ -306,5 +308,66 @@ fn token_style(token: &Token) -> Style {
         Comment(..) => Color::Primary.dim(),
 
         _ => Color::Primary.foreground(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate() {
+        let helper = SolidityHelper::new();
+        let dbg_r = |r: ValidationResult| match r {
+            ValidationResult::Incomplete => format!("Incomplete"),
+            ValidationResult::Invalid(inner) => format!("Invalid({inner:?})"),
+            ValidationResult::Valid(inner) => format!("Valid({inner:?})"),
+            _ => "Unknown result".to_string(),
+        };
+        let valid = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Valid(None)), "{input:?}: {}", dbg_r(r))
+        };
+        let incomplete = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Incomplete), "{input:?}: {}", dbg_r(r))
+        };
+        let invalid = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Invalid(Some(_))), "{input:?}: {}", dbg_r(r))
+        };
+
+        valid("1");
+        valid("1 + 2");
+
+        valid("()");
+        valid("{}");
+        valid("[]");
+
+        incomplete("(");
+        incomplete("((");
+        incomplete("[");
+        incomplete("{");
+        incomplete("({");
+        valid("({})");
+
+        invalid(")");
+        invalid("]");
+        invalid("}");
+        invalid("(}");
+        invalid("(})");
+        invalid("[}");
+        invalid("[}]");
+
+        incomplete("\"");
+        incomplete("\'");
+        valid("\"\"");
+        valid("\'\'");
+
+        incomplete("/*");
+        incomplete("/*/*");
+        valid("/* */");
+        valid("/* /* */");
+        valid("/* /* */ */");
     }
 }

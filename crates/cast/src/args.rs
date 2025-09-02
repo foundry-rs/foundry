@@ -13,7 +13,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::{handler, utils, utils::LoadConfig};
+use foundry_cli::{utils, utils::LoadConfig};
 use foundry_common::{
     abi::{get_error, get_event},
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
@@ -38,11 +38,8 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::install_crypto_provider();
-    handler::install();
-    utils::load_dotenv();
+    utils::common_setup();
     utils::subscriber();
-    utils::enable_paint();
 
     Ok(())
 }

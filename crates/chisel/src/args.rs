@@ -4,10 +4,7 @@ use crate::{
 };
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{
-    handler,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
@@ -25,10 +22,8 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::install_crypto_provider();
-    handler::install();
+    utils::common_setup();
     utils::subscriber();
-    utils::load_dotenv();
 
     Ok(())
 }
