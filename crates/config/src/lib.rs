@@ -1662,7 +1662,7 @@ impl Config {
 
     fn _with_root(root: &Path) -> Self {
         // autodetect paths
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
+        let paths = ProjectPathsConfig::builder().remappings([]).build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Self {
             root: paths.root,
