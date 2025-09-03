@@ -35,6 +35,7 @@ impl SourceData {
         source: Arc<String>,
         language: MultiCompilerLanguage,
         path: PathBuf,
+        root: &Path,
     ) -> Self {
         let mut contract_definitions = Vec::new();
 
@@ -47,7 +48,7 @@ impl SourceData {
             }
             MultiCompilerLanguage::Solc(_) => {
                 let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
-                    let (_, source) = compiler.gcx().get_ast_source(&path)?;
+                    let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
                     for item in source.ast.as_ref()?.items.iter() {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
                             contract_definitions.push((
@@ -202,6 +203,7 @@ impl ContractSources {
                             source.content.clone(),
                             build.language,
                             stripped,
+                            root,
                         ));
                         entry.insert(source_data.clone());
                         source_data
