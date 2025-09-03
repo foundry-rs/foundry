@@ -1790,19 +1790,22 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
-    let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
-    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-    let args = vec![
-        "tx",
-        "--from",
-        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-        "--nonce",
-        "113642",
-        "--rpc-url",
-        rpc,
-    ];
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "reth is currently slightly broken"]
+    tx_using_sender_and_nonce,
+    |_prj, cmd| {
+        let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
+        // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
+        let args = vec![
+            "tx",
+            "--from",
+            "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
+            "--nonce",
+            "113642",
+            "--rpc-url",
+            rpc,
+        ];
+        cmd.args(args).assert_success().stdout_eq(str![[r#"
 
 blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
 blockNumber          22287055
@@ -1826,7 +1829,8 @@ value                0
 yParity              1
 ...
 "#]]);
-});
+    }
+);
 
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {

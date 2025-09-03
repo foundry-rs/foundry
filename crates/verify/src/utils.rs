@@ -8,6 +8,7 @@ use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
+    utils::lookup_compiler_version,
 };
 use foundry_common::{
     abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
@@ -21,7 +22,7 @@ use foundry_evm::{
 };
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
-use semver::Version;
+use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
@@ -411,6 +412,24 @@ pub async fn get_runtime_codes(
 /// This is used to check user input url for missing /api path
 pub fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
+}
+
+/// Given any solc [Version] return a [Version] with build metadata
+///
+/// # Example
+///
+/// ```ignore
+/// use semver::{BuildMetadata, Version};
+/// let version = Version::new(1, 2, 3);
+/// let version = ensure_solc_build_metadata(version).await?;
+/// assert_ne!(version.build, BuildMetadata::EMPTY);
+/// ```
+pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
+    if version.build != BuildMetadata::EMPTY {
+        Ok(version)
+    } else {
+        Ok(lookup_compiler_version(&version).await?)
+    }
 }
 
 #[cfg(test)]
