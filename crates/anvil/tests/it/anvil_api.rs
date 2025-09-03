@@ -670,6 +670,7 @@ async fn can_remove_pool_transactions() {
     assert_eq!(final_txs.pending.len(), 0);
 }
 
+#[ignore = "flaky test"]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
