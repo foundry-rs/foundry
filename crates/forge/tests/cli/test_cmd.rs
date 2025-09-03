@@ -3615,7 +3615,7 @@ forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "Counter.t.sol",
-        r#"
+        &r#"
 import "forge-std/Test.sol";
 import {StdChains} from "forge-std/StdChains.sol";
 
@@ -3642,7 +3642,7 @@ contract CounterTest is Test {
         // Temporary workaround for `https://eth.llamarpc.com/` being down
         setChain("mainnet", ChainData({
             name: "mainnet",
-            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            rpcUrl: "<url>",
             chainId: 1
         }));
 
@@ -3677,7 +3677,8 @@ contract CounterTest is Test {
         assertEq(data[3].bridges.length, 2);
     }
 }
-    "#,
+    "#
+        .replace("<url>", &rpc::next_http_rpc_endpoint()),
     );
 
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
