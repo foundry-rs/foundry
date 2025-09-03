@@ -1,6 +1,6 @@
 {
   "name": "@foundry-rs/forge-linux-arm64",
-  "version": "1.2.3",
+  "version": "1.3.2",
   "type": "module",
   "homepage": "https://getfoundry.sh/forge",
   "description": "Fast and flexible Ethereum testing framework (Linux arm64)",

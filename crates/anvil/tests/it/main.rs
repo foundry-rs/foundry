@@ -23,10 +23,4 @@ mod txpool;
 pub mod utils;
 mod wsapi;
 
-pub(crate) fn init_tracing() {
-    let _ = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-}
-
-fn main() {}
+pub use foundry_test_utils::init_tracing;
