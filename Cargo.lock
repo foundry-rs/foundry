@@ -4609,6 +4609,7 @@ dependencies = [
  "mesc",
  "number_prefix",
  "path-slash",
+ "rayon",
  "regex",
  "reqwest",
  "revm",

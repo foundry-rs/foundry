@@ -153,9 +153,11 @@ scrypt.opt-level = 3
 
 # Misc.
 rayon.opt-level = 3
+rayon-core.opt-level = 3
 regex.opt-level = 3
 regex-syntax.opt-level = 3
 regex-automata.opt-level = 3
+walkdir.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
