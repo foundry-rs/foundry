@@ -112,8 +112,8 @@ contract StateDiffBytesStringTest is DSTest {
         vm.startStateDiffRecording();
 
         // Set a long string (32 bytes or more)
-        string memory longStr =
-            "This is a very long string that exceeds 32 bytes and will be stored differently in Solidity storage";
+        string
+            memory longStr = "This is a very long string that exceeds 32 bytes and will be stored differently in Solidity storage";
         bytesStringStorage.setLongString(longStr);
 
         // Get the state diff as string
@@ -142,7 +142,11 @@ contract StateDiffBytesStringTest is DSTest {
         uint256 writeCount = 0;
         for (uint256 i = 0; i < accesses.length; i++) {
             if (accesses[i].account == address(bytesStringStorage)) {
-                for (uint256 j = 0; j < accesses[i].storageAccesses.length; j++) {
+                for (
+                    uint256 j = 0;
+                    j < accesses[i].storageAccesses.length;
+                    j++
+                ) {
                     if (accesses[i].storageAccesses[j].isWrite) {
                         writeCount++;
                     }
@@ -239,7 +243,9 @@ contract StateDiffBytesStringTest is DSTest {
 
         // Make multiple changes
         bytesStringStorage.setShortString("Short");
-        bytesStringStorage.setLongString("This is a long string that will use multiple storage slots for data");
+        bytesStringStorage.setLongString(
+            "This is a long string that will use multiple storage slots for data"
+        );
         bytesStringStorage.setShortBytes(hex"1234");
         bytesStringStorage.setFixedBytes(bytes32(uint256(0xdeadbeef)));
 
@@ -267,29 +273,4 @@ contract StateDiffBytesStringTest is DSTest {
         // Stop recording
         vm.stopAndReturnStateDiff();
     }
-
-    // TODO: Remove
-    // function testEmptyBytesAndString() public {
-    //     // Start recording state diffs
-    //     vm.startStateDiffRecording();
-
-    //     // First set some values
-    //     bytesStringStorage.setShortString("Not empty");
-    //     bytesStringStorage.setShortBytes(hex"abcd");
-
-    //     // Then clear them
-    //     bytesStringStorage.setShortString("");
-    //     bytesStringStorage.setShortBytes("");
-
-    //     // Get the state diff as JSON
-    //     string memory stateDiffJson = vm.getStateDiffJson();
-    //     emit log_string("State diff JSON for empty values:");
-    //     emit log_string(stateDiffJson);
-
-    //     // Check that empty values are properly decoded
-    //     assertTrue(vm.contains(stateDiffJson, '"newValue":""'));
-
-    //     // Stop recording
-    //     vm.stopAndReturnStateDiff();
-    // }
 }
