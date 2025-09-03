@@ -200,7 +200,7 @@ impl ContractSources {
                         let source_data = Arc::new(SourceData::new(
                             output,
                             source.content.clone(),
-                            build.language.into(),
+                            build.language,
                             stripped,
                         ));
                         entry.insert(source_data.clone());
