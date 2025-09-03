@@ -464,8 +464,10 @@ impl SlotIdentifier {
                 }
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
+                && let Some(info) =
+                    self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
             {
-                return self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots);
+                return Some(info);
             }
         }
 
