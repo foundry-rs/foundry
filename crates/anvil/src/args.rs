@@ -1,7 +1,7 @@
 use crate::opts::{Anvil, AnvilSubcommand};
 use clap::{CommandFactory, Parser};
 use eyre::Result;
-use foundry_cli::{handler, utils};
+use foundry_cli::utils;
 
 /// Run the `anvil` command line interface.
 pub fn run() -> Result<()> {
@@ -16,10 +16,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the exception handler and other utilities.
 pub fn setup() -> Result<()> {
-    utils::install_crypto_provider();
-    handler::install();
-    utils::load_dotenv();
-    utils::enable_paint();
+    utils::common_setup();
 
     Ok(())
 }
