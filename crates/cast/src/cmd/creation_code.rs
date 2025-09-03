@@ -139,9 +139,8 @@ pub async fn fetch_creation_code_from_etherscan(
     provider: RetryProvider,
 ) -> Result<Bytes> {
     let chain = config.chain.unwrap_or_default();
-    let api_version = config.get_etherscan_api_version(Some(chain));
     let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new_with_api_version(chain, api_key, api_version)?;
+    let client = Client::new(chain, api_key)?;
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;

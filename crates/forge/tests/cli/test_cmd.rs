@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
-    rpc, str,
+    TestCommand, rpc, str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
@@ -36,54 +36,39 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     assert_eq!(config.coverage_pattern_inverse, None);
 });
 
-// tests that warning is displayed when there are no tests in project
-forgetest!(warn_no_tests, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    );
-    // set up command
-    cmd.args(["test"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests found in project! Forge looks for functions that starts with `test`.
-
-"#]]);
-});
-
-// tests that warning is displayed with pattern when no tests match
-forgetest!(warn_no_tests_match, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    );
-
-    // set up command
+fn dummy_test_filter(cmd: &mut TestCommand) {
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+}
 
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
-	match-test: `testA.*`
-	no-match-test: `testB.*`
-	match-contract: `TestC.*`
-	no-match-contract: `TestD.*`
-	match-path: `*TestE*`
-	no-match-path: `*TestF*`
+// tests that a warning is displayed when there are no tests in project, regardless of filters
+forgetest!(warn_no_tests, |prj, cmd| {
+    // Must add at least one source to not fail earlier.
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {}
+",
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    cmd.forge_fuse();
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 });
 
-// tests that suggestion is provided with pattern when no tests match
+// tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
-    // set up project
     prj.add_source(
         "TestE.t.sol",
         r"
@@ -94,14 +79,9 @@ contract TestC {
    ",
     );
 
-    // set up command
-    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
-    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
-    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
 	match-contract: `TestC.*`
@@ -509,10 +489,8 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("failing_test", FAILING_TEST);
 
-    // set up command
     cmd.args(["test", "--fail-fast"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
@@ -520,10 +498,8 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_source("failing_test", FAILING_TEST);
-    // set up command
     cmd.args(["test", "--fail-fast", "--json"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
@@ -3445,6 +3421,85 @@ Listing selectors for contracts in the project...
 "#]]);
 });
 
+forgetest_init!(selectors_list_cmd_md, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+    event Incremented(uint256 newNumber);
+    error IncrementError();
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    prj.add_source(
+        "CounterV2.sol",
+        r"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+Counter
+
+| Type     | Signature            | Selector                                                           |
+|----------|----------------------|--------------------------------------------------------------------|
+| Function | increment()          | 0xd09de08a                                                         |
+| Function | number()             | 0x8381f58a                                                         |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+| Error    | IncrementError()     | 0x46544c04                                                         |
+
+CounterV2
+
+| Type     | Signature            | Selector   |
+|----------|----------------------|------------|
+| Function | incrementV2()        | 0x49365a69 |
+| Function | number()             | 0x8381f58a |
+| Function | setNumberV2(uint256) | 0xb525b68c |
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["selectors", "list", "--no-group", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+
+| Type     | Signature            | Selector                                                           | Contract  |
+|----------|----------------------|--------------------------------------------------------------------|-----------|
+| Function | increment()          | 0xd09de08a                                                         | Counter   |
+| Function | number()             | 0x8381f58a                                                         | Counter   |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         | Counter   |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 | Counter   |
+| Error    | IncrementError()     | 0x46544c04                                                         | Counter   |
+| Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
+| Function | number()             | 0x8381f58a                                                         | CounterV2 |
+| Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+
+"#]]);
+});
+
 // tests `interceptInitcode` function
 forgetest_init!(intercept_initcode, |prj, cmd| {
     prj.wipe_contracts();
@@ -3560,7 +3615,7 @@ forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "Counter.t.sol",
-        r#"
+        &r#"
 import "forge-std/Test.sol";
 import {StdChains} from "forge-std/StdChains.sol";
 
@@ -3587,7 +3642,7 @@ contract CounterTest is Test {
         // Temporary workaround for `https://eth.llamarpc.com/` being down
         setChain("mainnet", ChainData({
             name: "mainnet",
-            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            rpcUrl: "<url>",
             chainId: 1
         }));
 
@@ -3622,7 +3677,8 @@ contract CounterTest is Test {
         assertEq(data[3].bridges.length, 2);
     }
 }
-    "#,
+    "#
+        .replace("<url>", &rpc::next_http_rpc_endpoint()),
     );
 
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"

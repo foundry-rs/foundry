@@ -74,6 +74,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -1787,19 +1790,22 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
-    let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
-    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-    let args = vec![
-        "tx",
-        "--from",
-        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-        "--nonce",
-        "113642",
-        "--rpc-url",
-        rpc,
-    ];
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "reth is currently slightly broken"]
+    tx_using_sender_and_nonce,
+    |_prj, cmd| {
+        let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
+        // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
+        let args = vec![
+            "tx",
+            "--from",
+            "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
+            "--nonce",
+            "113642",
+            "--rpc-url",
+            rpc,
+        ];
+        cmd.args(args).assert_success().stdout_eq(str![[r#"
 
 blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
 blockNumber          22287055
@@ -1823,7 +1829,8 @@ value                0
 yParity              1
 ...
 "#]]);
-});
+    }
+);
 
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {
@@ -1990,6 +1997,41 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 |-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 ╰-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------╯
+
+
+"#]]);
+});
+
+casttest!(storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--md",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 
 "#]]);
