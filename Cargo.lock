@@ -4487,7 +4487,8 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fpar-remapping-find_many#3a184b25bdc4d085931e99518717d03374879fa1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65bb5aabd4c628c89db350909672e723834009cf5ed3af5bffd50504f311e408"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4520,7 +4521,8 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fpar-remapping-find_many#3a184b25bdc4d085931e99518717d03374879fa1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e87be595faa8f44496f970d45bb7b6676a85002d6c955e9b6e06495002408168"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4529,7 +4531,8 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fpar-remapping-find_many#3a184b25bdc4d085931e99518717d03374879fa1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41e854b93aa40d9144e604a3abc86ce084f3185d07d4f1c5b323036ffcf58f04"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4544,13 +4547,15 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "tracing",
+ "walkdir",
  "yansi",
 ]
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fpar-remapping-find_many#3a184b25bdc4d085931e99518717d03374879fa1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe557fdf36c54f2e612043524277d0597623a6a3153c8b33aa19a6596ab06158"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4564,7 +4569,8 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fpar-remapping-find_many#3a184b25bdc4d085931e99518717d03374879fa1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "972f228152765e199041a7c8fecc217b5ab4aade8e6bdd5ef62caa781a3cf239"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
