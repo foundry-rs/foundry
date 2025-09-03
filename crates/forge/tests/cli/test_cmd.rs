@@ -3677,7 +3677,7 @@ contract CounterTest is Test {
     }
 }
     "#
-        .replace("<url>", &rpc::next_http_rpc_endpoint()),
+        .replace("<url>", &rpc::next_http_archive_rpc_url()),
     );
 
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
