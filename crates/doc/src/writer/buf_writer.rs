@@ -1,6 +1,8 @@
 use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown, writer::traits::ParamLike};
 use itertools::Itertools;
-use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
+use solang_parser::pt::{
+    EnumDefinition, ErrorParameter, EventParameter, Parameter, VariableDeclaration,
+};
 use std::{
     fmt::{self, Display, Write},
     sync::LazyLock,
@@ -18,6 +20,11 @@ static PARAM_TABLE_SEPARATOR: LazyLock<String> =
 const DEPLOYMENTS_TABLE_HEADERS: &[&str] = &["Network", "Address"];
 static DEPLOYMENTS_TABLE_SEPARATOR: LazyLock<String> =
     LazyLock::new(|| DEPLOYMENTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
+
+/// Headers and separator for rendering the variants table.
+const VARIANTS_TABLE_HEADERS: &[&str] = &["Name", "Description"];
+static VARIANTS_TABLE_SEPARATOR: LazyLock<String> =
+    LazyLock::new(|| VARIANTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -175,6 +182,45 @@ impl BufWriter {
         comments: &Comments,
     ) -> fmt::Result {
         self.try_write_table(CommentTag::Param, params, comments, "Properties")
+    }
+
+    /// Tries to write the variant table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_variant_table(
+        &mut self,
+        params: &EnumDefinition,
+        comments: &Comments,
+    ) -> fmt::Result {
+        let comments = comments.include_tags(&[CommentTag::Param]);
+
+        // There is nothing to write.
+        if comments.is_empty() {
+            return Ok(());
+        }
+
+        self.write_bold("Variants")?;
+        self.writeln()?;
+
+        self.write_piped(&VARIANTS_TABLE_HEADERS.join("|"))?;
+        self.write_piped(&VARIANTS_TABLE_SEPARATOR)?;
+
+        for value in &params.values {
+            let param_name = value.as_ref().map(|v| v.name.clone());
+
+            let comment = param_name.as_ref().and_then(|name| {
+                comments.iter().find_map(|comment| comment.match_first_word(name))
+            });
+
+            let row = [
+                Markdown::Code(&param_name.unwrap_or("<none>".to_string())).as_doc()?,
+                comment.unwrap_or_default().replace('\n', " "),
+            ];
+            self.write_piped(&row.join("|"))?;
+        }
+
+        self.writeln()?;
+
+        Ok(())
     }
 
     /// Tries to write the parameters table to the buffer.
