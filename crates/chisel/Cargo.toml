@@ -35,7 +35,6 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
-alloy-json-abi.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
@@ -47,7 +46,6 @@ itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-solang-parser.workspace = true
 time = { version = "0.3", features = ["formatting"] }
 yansi.workspace = true
 tracing.workspace = true

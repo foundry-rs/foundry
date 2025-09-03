@@ -5,8 +5,6 @@
 //! execution helpers.
 
 use eyre::Result;
-use forge_fmt::solang_ext::{CodeLocationExt, SafeUnwrap};
-use foundry_common::fs;
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{ConfigurableContractArtifact, Source, Sources},
@@ -17,9 +15,12 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
-use solar::parse::interface::diagnostics::EmittedDiagnostics;
-use std::{cell::OnceCell, collections::HashMap, fmt, path::PathBuf};
+use solar::{
+    ast::Span,
+    parse::interface::diagnostics::EmittedDiagnostics,
+    sema::{Gcx, hir},
+};
+use std::{cell::OnceCell, fmt};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -31,40 +32,7 @@ static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
     output: ProjectCompileOutput,
-    pub(crate) intermediate: IntermediateOutput,
 }
-
-pub struct GeneratedOutputRef<'a> {
-    output: &'a ProjectCompileOutput,
-    // compiler: &'b solar::sema::CompilerRef<'c>,
-    pub(crate) intermediate: &'a IntermediateOutput,
-}
-
-/// Intermediate output for the compiled [SessionSource]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IntermediateOutput {
-    /// All expressions within the REPL contract's run function and top level scope.
-    pub repl_contract_expressions: HashMap<String, pt::Expression>,
-    /// Intermediate contracts
-    pub intermediate_contracts: IntermediateContracts,
-}
-
-/// A refined intermediate parse tree for a contract that enables easy lookups
-/// of definitions.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IntermediateContract {
-    /// All function definitions within the contract
-    pub function_definitions: HashMap<String, Box<pt::FunctionDefinition>>,
-    /// All event definitions within the contract
-    pub event_definitions: HashMap<String, Box<pt::EventDefinition>>,
-    /// All struct definitions within the contract
-    pub struct_definitions: HashMap<String, Box<pt::StructDefinition>>,
-    /// All variable definitions within the top level scope of the contract
-    pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
-}
-
-/// A defined type for a map of contract names to [IntermediateContract]s
-type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 impl fmt::Debug for GeneratedOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -72,158 +40,21 @@ impl fmt::Debug for GeneratedOutput {
     }
 }
 
+pub struct GeneratedOutputRef<'a, 'b, 'c> {
+    output: &'a ProjectCompileOutput,
+    compiler: &'b solar::sema::CompilerRef<'c>,
+}
+
 impl GeneratedOutput {
-    pub fn enter<T: Send>(&self, f: impl FnOnce(GeneratedOutputRef<'_>) -> T + Send) -> T {
-        // TODO(dani): once intermediate is removed
-        // self.output
-        //     .parser()
-        //     .solc()
-        //     .compiler()
-        //     .enter(|compiler| f(GeneratedOutputRef { output: &self.output, compiler }))
-        f(GeneratedOutputRef { output: &self.output, intermediate: &self.intermediate })
+    pub fn enter<T: Send>(&self, f: impl FnOnce(GeneratedOutputRef<'_, '_, '_>) -> T + Send) -> T {
+        self.output
+            .parser()
+            .solc()
+            .compiler()
+            .enter(|compiler| f(GeneratedOutputRef { output: &self.output, compiler }))
     }
 }
 
-impl GeneratedOutputRef<'_> {
-    pub fn repl_contract(&self) -> Option<&ConfigurableContractArtifact> {
-        self.output.find_first("REPL")
-    }
-}
-
-impl std::ops::Deref for GeneratedOutput {
-    type Target = IntermediateOutput;
-    fn deref(&self) -> &Self::Target {
-        &self.intermediate
-    }
-}
-impl std::ops::Deref for GeneratedOutputRef<'_> {
-    type Target = IntermediateOutput;
-    fn deref(&self) -> &Self::Target {
-        self.intermediate
-    }
-}
-
-impl IntermediateOutput {
-    pub fn get_event(&self, input: &str) -> Option<&pt::EventDefinition> {
-        self.intermediate_contracts
-            .get("REPL")
-            .and_then(|contract| contract.event_definitions.get(input).map(std::ops::Deref::deref))
-    }
-
-    pub fn final_pc(&self, contract: &ConfigurableContractArtifact) -> Result<Option<usize>> {
-        let deployed_bytecode = contract
-            .get_deployed_bytecode()
-            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
-        let deployed_bytecode_bytes = deployed_bytecode
-            .bytes()
-            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
-
-        let run_func_statements = self.run_func_body()?;
-
-        // Record loc of first yul block return statement (if any).
-        // This is used to decide which is the final statement within the `run()` method.
-        // see <https://github.com/foundry-rs/foundry/issues/4617>.
-        let last_yul_return = run_func_statements.iter().find_map(|statement| {
-            if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement
-                && let Some(statement) = block.statements.last()
-                && let pt::YulStatement::FunctionCall(yul_call) = statement
-                && yul_call.id.name == "return"
-            {
-                return Some(statement.loc());
-            }
-            None
-        });
-
-        // Find the last statement within the "run()" method and get the program
-        // counter via the source map.
-        let Some(final_statement) = run_func_statements.last() else { return Ok(None) };
-
-        // If the final statement is some type of block (assembly, unchecked, or regular),
-        // we need to find the final statement within that block. Otherwise, default to
-        // the source loc of the final statement of the `run()` function's block.
-        //
-        // There is some code duplication within the arms due to the difference between
-        // the [pt::Statement] type and the [pt::YulStatement] types.
-        let mut source_loc = match final_statement {
-            pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
-                let last_statement = block.statements.iter().rev().find(|statement| {
-                    !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
-                });
-                if let Some(statement) = last_statement {
-                    statement.loc()
-                } else {
-                    // In the case where the block is empty, attempt to grab the statement
-                    // before the asm block. Because we use saturating sub to get the second
-                    // to last index, this can always be safely unwrapped.
-                    run_func_statements
-                        .get(run_func_statements.len().saturating_sub(2))
-                        .unwrap()
-                        .loc()
-                }
-            }
-            pt::Statement::Block { loc: _, unchecked: _, statements } => {
-                if let Some(statement) = statements.last() {
-                    statement.loc()
-                } else {
-                    // In the case where the block is empty, attempt to grab the statement
-                    // before the block. Because we use saturating sub to get the second to
-                    // last index, this can always be safely unwrapped.
-                    run_func_statements
-                        .get(run_func_statements.len().saturating_sub(2))
-                        .unwrap()
-                        .loc()
-                }
-            }
-            _ => final_statement.loc(),
-        };
-
-        // Consider yul return statement as final statement (if it's loc is lower) .
-        if let Some(yul_return) = last_yul_return
-            && yul_return.end() < source_loc.start()
-        {
-            source_loc = yul_return;
-        }
-
-        // Map the source location of the final statement of the `run()` function to its
-        // corresponding runtime program counter
-        let final_pc = {
-            let offset = source_loc.start() as u32;
-            let length = (source_loc.end() - source_loc.start()) as u32;
-            contract
-                .get_source_map_deployed()
-                .unwrap()
-                .unwrap()
-                .into_iter()
-                .zip(InstructionIter::new(deployed_bytecode_bytes))
-                .filter(|(s, _)| s.offset() == offset && s.length() == length)
-                .map(|(_, i)| i.pc)
-                .max()
-                .unwrap_or_default()
-        };
-        Ok(Some(final_pc))
-    }
-
-    pub fn run_func_body(&self) -> Result<&Vec<pt::Statement>> {
-        match self
-            .intermediate_contracts
-            .get("REPL")
-            .ok_or_else(|| eyre::eyre!("Could not find REPL intermediate contract!"))?
-            .function_definitions
-            .get("run")
-            .ok_or_else(|| eyre::eyre!("Could not find run function definition in REPL contract!"))?
-            .body
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("Could not find run function body!"))?
-        {
-            pt::Statement::Block { statements, .. } => Ok(statements),
-            _ => eyre::bail!("Could not find statements within run function body!"),
-        }
-    }
-}
-
-// TODO(dani): further migration blocked on upstream work
-#[cfg(false)]
 impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     pub fn gcx(&self) -> Gcx<'gcx> {
         self.compiler.gcx()
@@ -320,7 +151,6 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // Map the source location of the final statement of the `run()` function to its
         // corresponding runtime program counter
         let (_sf, range) = self.compiler.sess().source_map().span_to_source(source_span).unwrap();
-        dbg!(source_span, &range, &_sf.src[range.clone()]);
         let offset = range.start as u32;
         let length = range.len() as u32;
         let final_pc = deployed_bytecode
@@ -593,8 +423,7 @@ impl SessionSource {
             return Ok(output);
         }
         let output = self.compile()?;
-        let intermediate = self.generate_intermediate_output()?;
-        let output = GeneratedOutput { output, intermediate };
+        let output = GeneratedOutput { output };
         Ok(self.output.get_or_init(|| output))
     }
 
@@ -638,53 +467,6 @@ impl SessionSource {
         }
 
         sources
-    }
-
-    /// Generate intermediate contracts for all contract definitions in the compilation source.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
-    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
-        let mut res_map = HashMap::default();
-        let parsed_map = self.get_sources();
-        for source in parsed_map.values() {
-            Self::get_intermediate_contract(&source.content, &mut res_map);
-        }
-        Ok(res_map)
-    }
-
-    /// Generate intermediate output for the REPL contract
-    pub fn generate_intermediate_output(&self) -> Result<IntermediateOutput> {
-        // Parse generate intermediate contracts
-        let intermediate_contracts = self.generate_intermediate_contracts()?;
-
-        // Construct variable definitions
-        let variable_definitions = intermediate_contracts
-            .get("REPL")
-            .ok_or_else(|| eyre::eyre!("Could not find intermediate REPL contract!"))?
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (k, v.ty))
-            .collect::<HashMap<String, pt::Expression>>();
-        // Construct intermediate output
-        let mut intermediate_output = IntermediateOutput {
-            repl_contract_expressions: variable_definitions,
-            intermediate_contracts,
-        };
-
-        // Add all statements within the run function to the repl_contract_expressions map
-        for (key, val) in intermediate_output
-            .run_func_body()?
-            .clone()
-            .iter()
-            .flat_map(Self::get_statement_definitions)
-        {
-            intermediate_output.repl_contract_expressions.insert(key, val);
-        }
-
-        Ok(intermediate_output)
     }
 
     /// Construct the source as a valid Forge script.
@@ -781,108 +563,6 @@ contract {contract_name} {{
             Ok(())
         });
         sess.dcx.emitted_errors().unwrap()
-    }
-
-    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
-    /// passed `res_map`. In addition, recurses on any imported files as well.
-    ///
-    /// ### Takes
-    /// - `content` - A Solidity source string
-    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
-    pub fn get_intermediate_contract(
-        content: &str,
-        res_map: &mut HashMap<String, IntermediateContract>,
-    ) {
-        if let Ok((pt::SourceUnit(source_unit_parts), _)) = solang_parser::parse(content, 0) {
-            let func_defs = source_unit_parts
-                .into_iter()
-                .filter_map(|sup| match sup {
-                    pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _)
-                        | pt::Import::Rename(s, _, _)
-                        | pt::Import::GlobalSymbol(s, _, _) => {
-                            let s = match s {
-                                pt::ImportPath::Filename(s) => s.string,
-                                pt::ImportPath::Path(p) => p.to_string(),
-                            };
-                            let path = PathBuf::from(s);
-
-                            match fs::read_to_string(path) {
-                                Ok(source) => {
-                                    Self::get_intermediate_contract(&source, res_map);
-                                    None
-                                }
-                                Err(_) => None,
-                            }
-                        }
-                    },
-                    pt::SourceUnitPart::ContractDefinition(cd) => {
-                        let mut intermediate = IntermediateContract::default();
-
-                        cd.parts.into_iter().for_each(|part| match part {
-                            pt::ContractPart::FunctionDefinition(def) => {
-                                // Only match normal function definitions here.
-                                if matches!(def.ty, pt::FunctionTy::Function) {
-                                    intermediate
-                                        .function_definitions
-                                        .insert(def.name.clone().unwrap().name, def);
-                                }
-                            }
-                            pt::ContractPart::EventDefinition(def) => {
-                                let event_name = def.name.safe_unwrap().name.clone();
-                                intermediate.event_definitions.insert(event_name, def);
-                            }
-                            pt::ContractPart::StructDefinition(def) => {
-                                let struct_name = def.name.safe_unwrap().name.clone();
-                                intermediate.struct_definitions.insert(struct_name, def);
-                            }
-                            pt::ContractPart::VariableDefinition(def) => {
-                                let var_name = def.name.safe_unwrap().name.clone();
-                                intermediate.variable_definitions.insert(var_name, def);
-                            }
-                            _ => {}
-                        });
-                        Some((cd.name.safe_unwrap().name.clone(), intermediate))
-                    }
-                    _ => None,
-                })
-                .collect::<HashMap<String, IntermediateContract>>();
-            res_map.extend(func_defs);
-        }
-    }
-
-    /// Helper to deconstruct a statement
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::Statement]
-    ///
-    /// ### Returns
-    ///
-    /// A vector containing tuples of the inner expressions' names, types, and storage locations.
-    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
-        match statement {
-            pt::Statement::VariableDefinition(_, def, _) => {
-                vec![(def.name.safe_unwrap().name.clone(), def.ty.clone())]
-            }
-            pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
-                if let pt::Expression::List(_, list) = left.as_ref() {
-                    list.iter()
-                        .filter_map(|(_, param)| {
-                            param.as_ref().and_then(|param| {
-                                param
-                                    .name
-                                    .as_ref()
-                                    .map(|name| (name.name.clone(), param.ty.clone()))
-                            })
-                        })
-                        .collect()
-                } else {
-                    Vec::default()
-                }
-            }
-            _ => Vec::default(),
-        }
     }
 }
 

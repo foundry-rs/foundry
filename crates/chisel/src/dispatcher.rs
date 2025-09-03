@@ -167,8 +167,8 @@ impl ChiselDispatcher {
         if do_execute {
             self.execute_and_replace(new_source).await.map(ControlFlow::Continue)
         } else {
-            let out = new_source.build()?;
-            debug!(%input, ?out, "skipped execute and rebuild source");
+            let _out = new_source.build()?;
+            debug!(%input, "skipped execute and rebuild source");
             *self.source_mut() = new_source;
             Ok(ControlFlow::Continue(()))
         }
