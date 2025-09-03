@@ -47,7 +47,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     env:
-      ETH_RPC_URL: https://reth-ethereum.ithaca.xyz/rpc
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v5
