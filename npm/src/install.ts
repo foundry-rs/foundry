@@ -13,8 +13,38 @@ const fallbackBinaryPath = NodePath.join(__dirname, BINARY_NAME)
 
 const require = NodeModule.createRequire(import.meta.url)
 
+function isLocalhostHost(hostname: string) {
+  // Accept typical localhost variants by default
+  return (
+    hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '::1'
+  )
+}
+
+function ensureSecureUrl(urlString: string, purpose: string) {
+  // Enforce HTTPS except for localhost, unless explicitly allowed
+  try {
+    const url = new URL(urlString)
+    if (url.protocol === 'http:') {
+      const allowInsecure = process.env.ALLOW_INSECURE_REGISTRY === 'true'
+      if (!isLocalhostHost(url.hostname) && !allowInsecure) {
+        throw new Error(
+          `Refusing to use insecure HTTP for ${purpose}: ${urlString}. `
+            + `Set ALLOW_INSECURE_REGISTRY=true to override (not recommended).`
+        )
+      }
+    }
+  } catch {
+    // If parsing fails, be conservative and do nothing here; request will likely fail anyway
+  }
+}
+
 function makeRequest(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    // Security guard: only allow http for localhost unless explicitly overridden
+    ensureSecureUrl(url, 'HTTP request')
+
     const client = url.startsWith('https:') ? NodeHttps : NodeHttp
     client
       .get(url, response => {
@@ -31,7 +61,14 @@ function makeRequest(url: string): Promise<Buffer> {
           && response.headers.location
         ) {
           // Follow redirects
-          makeRequest(response.headers.location).then(resolve, reject)
+          const redirected = (() => {
+            try {
+              return new URL(response.headers.location!, url).href
+            } catch {
+              return response.headers.location as string
+            }
+          })()
+          makeRequest(redirected).then(resolve, reject)
         } else {
           reject(
             new Error(
@@ -80,6 +117,8 @@ function extractFileFromTarball(
 
 async function downloadBinaryFromNpm() {
   const registryUrl = getRegistryUrl().replace(/\/$/, '')
+  // Security guard: only allow http registries for localhost unless explicitly overridden
+  ensureSecureUrl(registryUrl, 'registry URL')
   const encodedName = encodePackageNameForRegistry(PLATFORM_SPECIFIC_PACKAGE_NAME)
 
   // Determine which version to fetch: prefer the version pinned in optionalDependencies
@@ -104,6 +143,9 @@ async function downloadBinaryFromNpm() {
     )
   }
 
+  // Guard tarball URL scheme
+  ensureSecureUrl(dist.tarball, 'tarball URL')
+
   console.info(
     colors.green,
     'Downloading binary from:\n',
@@ -113,17 +155,53 @@ async function downloadBinaryFromNpm() {
   )
 
   // Download the tarball of the right binary distribution package
-  const tarballDownloadBuffer = await makeRequest(dist.tarball)
+  const tarballDownloadBuffer = await makeRequest(dist.tarball) // Verify integrity: prefer SRI integrity (sha512/sha256/sha1),
+   // fallback to legacy dist.shasum (sha1 hex). Fail if neither unless explicitly allowed.
+  ;(() => {
+    let verified = false
 
-  // Verify integrity if available
-  if (dist.integrity && dist.integrity.startsWith('sha512-')) {
-    const expected = dist.integrity.split('sha512-')[1]
-    const actual = NodeCrypto.createHash('sha512')
-      .update(tarballDownloadBuffer)
-      .digest('base64')
-    if (expected !== actual)
-      throw new Error('Downloaded tarball failed integrity check (sha512 mismatch)')
-  }
+    const integrity = typeof dist.integrity === 'string' ? dist.integrity : ''
+    const sriMatch = integrity.match(/^([a-z0-9]+)-([A-Za-z0-9+/=]+)$/i)
+    if (sriMatch) {
+      const algo = sriMatch[1].toLowerCase()
+      const expected = sriMatch[2]
+      const allowed = new Set(['sha512', 'sha256', 'sha1'])
+      if (allowed.has(algo)) {
+        const actual = NodeCrypto.createHash(algo as 'sha512')
+          .update(tarballDownloadBuffer)
+          .digest('base64')
+        if (expected !== actual)
+          throw new Error(`Downloaded tarball failed integrity check (${algo} mismatch)`)
+        verified = true
+      }
+    }
+
+    if (!verified && typeof dist.shasum === 'string' && dist.shasum.length === 40) {
+      const expectedSha1Hex = dist.shasum.toLowerCase()
+      const actualSha1Hex = NodeCrypto.createHash('sha1')
+        .update(tarballDownloadBuffer)
+        .digest('hex')
+      if (expectedSha1Hex !== actualSha1Hex)
+        throw new Error('Downloaded tarball failed integrity check (sha1 shasum mismatch)')
+      verified = true
+    }
+
+    if (!verified) {
+      const allowNoIntegrity = process.env.ALLOW_NO_INTEGRITY === 'true'
+        || process.env.ALLOW_UNVERIFIED_TARBALL === 'true'
+      if (!allowNoIntegrity) {
+        throw new Error(
+          'No integrity metadata found for downloaded tarball. '
+            + 'Set ALLOW_NO_INTEGRITY=true to bypass (not recommended).'
+        )
+      }
+      console.warn(
+        colors.yellow,
+        'Warning: proceeding without integrity verification (explicitly allowed).',
+        colors.reset
+      )
+    }
+  })()
 
   // Unpack and write binary
   const tarballBuffer = NodeZlib.gunzipSync(tarballDownloadBuffer)
