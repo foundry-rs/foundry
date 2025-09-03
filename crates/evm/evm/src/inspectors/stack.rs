@@ -316,6 +316,10 @@ pub struct InspectorStackInner {
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
+    /// Optional size of the edge coverage hitcount buffer. If set, the
+    /// resulting vector from the edge coverage inspector will be resized
+    /// (truncated or padded with zeros) to this length when collected.
+    pub edge_coverage_size: Option<usize>,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
@@ -424,7 +428,7 @@ impl InspectorStack {
     /// Set whether to enable the edge coverage collector.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        // TODO: configurable edge size?
+        // Edge coverage hitcount vector size can be adjusted via `set_edge_coverage_size`.
         self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
     }
 
@@ -444,6 +448,15 @@ impl InspectorStack {
     #[inline]
     pub fn set_create2_deployer(&mut self, deployer: Address) {
         self.create2_deployer = deployer;
+    }
+
+    /// Configure the expected size of the edge coverage hitcount output.
+    /// This does not alter the underlying inspector's internal representation,
+    /// but ensures the collected hitcount vector is resized to the provided
+    /// length on collection.
+    #[inline]
+    pub fn set_edge_coverage_size(&mut self, size: usize) {
+        self.edge_coverage_size = Some(size);
     }
 
     /// Set whether to enable the log collector.
@@ -498,6 +511,7 @@ impl InspectorStack {
                     chisel_state,
                     line_coverage,
                     edge_coverage,
+                    edge_coverage_size,
                     log_collector,
                     tracer,
                     reverter,
@@ -531,7 +545,13 @@ impl InspectorStack {
                 .unwrap_or_default(),
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
-            edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
+            edge_coverage: edge_coverage.map(|edge_coverage| {
+                let mut hitcount = edge_coverage.into_hitcount();
+                if let Some(size) = edge_coverage_size {
+                    hitcount.resize(size, 0);
+                }
+                hitcount
+            }),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
