@@ -36,7 +36,18 @@ pub use snapbox::{self, assert_data_eq, file, str};
 
 /// Initializes tracing for tests.
 pub fn init_tracing() {
-    let _ = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
+    }
+    let _ = tracing_subscriber::FmtSubscriber::builder().with_env_filter(env_filter()).try_init();
+    let _ = ui_test::color_eyre::install();
+}
+
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("../../cli/src/utils/default_directives.txt");
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    for &directive in DEFAULT_DIRECTIVES {
+        filter = filter.add_directive(directive.parse().unwrap());
+    }
+    filter
 }
