@@ -178,7 +178,10 @@ mod tests {
 
         sh_println!("{:?}", {
             sh_println!("hi")?;
-            "nested"
+            solar::data_structures::fmt::from_fn(|f| {
+                let _ = sh_println!("even more nested");
+                write!(f, "hi 2")
+            })
         })?;
 
         Ok(())
