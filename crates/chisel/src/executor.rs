@@ -148,9 +148,9 @@ impl SessionSource {
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
         let data = &memory[offset..offset + len];
-        let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
+        let value = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if should_continue { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
-        Ok((c, Some(format_token(token))))
+        Ok((c, Some(format_value(value))))
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
@@ -189,8 +189,8 @@ impl SessionSource {
 
 /// Formats a value into an inspection message
 // TODO: Verbosity option
-fn format_token(token: DynSolValue) -> String {
-    match token {
+fn format_value(value: DynSolValue) -> String {
+    match value {
         DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", "address".red(), a.cyan())
         }
@@ -241,8 +241,8 @@ fn format_token(token: DynSolValue) -> String {
             format!("Type: {}\n└ Value: {}", "bool".red(), b.cyan())
         }
         DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.abi_encode());
-            let s = token.as_str();
+            let hex = hex::encode(value.abi_encode());
+            let s = value.as_str();
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 if s.is_some() { "string" } else { "dynamic bytes" }.red(),
@@ -272,7 +272,7 @@ fn format_token(token: DynSolValue) -> String {
             );
             for token in tokens {
                 out.push_str("\n  ├ ");
-                out.push_str(&format_token(token).replace('\n', "\n  "));
+                out.push_str(&format_value(token).replace('\n', "\n  "));
                 out.push('\n');
             }
             out.push_str(&']'.red().to_string());
@@ -288,7 +288,7 @@ fn format_token(token: DynSolValue) -> String {
                 format!("{}({}) = {}", "tuple".red(), displayed_types.yellow(), '('.red());
             for token in tokens {
                 out.push_str("\n  ├ ");
-                out.push_str(&format_token(token).replace('\n', "\n  "));
+                out.push_str(&format_value(token).replace('\n', "\n  "));
                 out.push('\n');
             }
             out.push_str(&')'.red().to_string());
