@@ -1,12 +1,13 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
 use figment::{
-    value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
+use rayon::prelude::*;
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
     path::{Path, PathBuf},
 };
@@ -35,15 +36,12 @@ impl Remappings {
     /// Extract project paths that cannot be remapped by dependencies.
     pub fn with_figment(mut self, figment: &Figment) -> Self {
         let mut add_project_remapping = |path: &str| {
-            if let Ok(path) = figment.find_value(path) {
-                if let Some(path) = path.into_string() {
-                    let remapping = Remapping {
-                        context: None,
-                        name: format!("{path}/"),
-                        path: format!("{path}/"),
-                    };
-                    self.project_paths.push(remapping);
-                }
+            if let Ok(path) = figment.find_value(path)
+                && let Some(path) = path.into_string()
+            {
+                let remapping =
+                    Remapping { context: None, name: format!("{path}/"), path: format!("{path}/") };
+                self.project_paths.push(remapping);
             }
         };
         add_project_remapping("src");
@@ -63,9 +61,7 @@ impl Remappings {
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut seen = HashSet::new();
-        let remappings =
-            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
-        remappings
+        self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect()
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
@@ -78,9 +74,9 @@ impl Remappings {
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
-                return existing.name == remapping.name &&
-                    existing.context == remapping.context &&
-                    existing.path == remapping.path
+                return existing.name == remapping.name
+                    && existing.context == remapping.context
+                    && existing.path == remapping.path;
             }
 
             // What we're doing here is filtering for ambiguous paths. For example, if we have
@@ -97,8 +93,8 @@ impl Remappings {
             if !existing_name_path.ends_with('/') {
                 existing_name_path.push('/')
             }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path) ||
-                existing.name.starts_with(&remapping.name);
+            let is_conflicting = remapping.name.starts_with(&existing_name_path)
+                || existing.name.starts_with(&remapping.name);
             is_conflicting && existing.context == remapping.context
         }) {
             return;
@@ -212,23 +208,20 @@ impl RemappingsProvider<'_> {
         // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
+            let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
+                || self.find_nested_foundry_remappings(),
+                || self.auto_detect_remappings(),
+            );
+
             let mut lib_remappings = BTreeMap::new();
-            // find all remappings of from libs that use a foundry.toml
-            for r in self.lib_foundry_toml_remappings() {
+            for r in nested_foundry_remappings {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
-            // use auto detection for all libs
-            for r in self
-                .lib_paths
-                .iter()
-                .map(|lib| self.root.join(lib))
-                .inspect(|lib| trace!(?lib, "find all remappings"))
-                .flat_map(|lib| Remapping::find_many(&lib))
-            {
+            for r in auto_detected_remappings {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue
+                    continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -251,51 +244,67 @@ impl RemappingsProvider<'_> {
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
-    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+    fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
-            .iter()
+            .par_iter()
             .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
-            .inspect(|lib| {
-                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
+            .flat_map_iter(|lib| {
+                trace!(?lib, "find all remappings of nested foundry.toml");
+                self.nested_foundry_remappings(&lib)
             })
-            .flat_map(|lib: PathBuf| {
-                // load config, of the nested lib if it exists
-                let Ok(config) = Config::load_with_root(&lib) else { return vec![] };
-                let config = config.sanitized();
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
 
-                // if the configured _src_ directory is set to something that
-                // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
-                // lib), then we need to manually add a remapping here
-                let mut src_remapping = None;
-                if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-                    .contains(&config.src.as_path())
-                {
-                    if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
-                        let mut r = Remapping {
-                            context: None,
-                            name: format!("{name}/"),
-                            path: format!("{}", lib.join(&config.src).display()),
-                        };
-                        if !r.path.ends_with('/') {
-                            r.path.push('/')
-                        }
-                        src_remapping = Some(r);
-                    }
-                }
+    fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
+        // load config, of the nested lib if it exists
+        let Ok(config) = Config::load_with_root(lib) else { return vec![] };
+        let config = config.sanitized();
 
-                // Eventually, we could set context for remappings at this location,
-                // taking into account the OS platform. We'll need to be able to handle nested
-                // contexts depending on dependencies for this to work.
-                // For now, we just leave the default context (none).
-                let mut remappings =
-                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+        // if the configured _src_ directory is set to something that
+        // `Remapping::find_many` doesn't classify as a src directory (src, contracts,
+        // lib), then we need to manually add a remapping here
+        let mut src_remapping = None;
+        if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+            .contains(&config.src.as_path())
+            && let Some(name) = lib.file_name().and_then(|s| s.to_str())
+        {
+            let mut r = Remapping {
+                context: None,
+                name: format!("{name}/"),
+                path: format!("{}", lib.join(&config.src).display()),
+            };
+            if !r.path.ends_with('/') {
+                r.path.push('/')
+            }
+            src_remapping = Some(r);
+        }
 
-                if let Some(r) = src_remapping {
-                    remappings.push(r);
-                }
-                remappings
+        // Eventually, we could set context for remappings at this location,
+        // taking into account the OS platform. We'll need to be able to handle nested
+        // contexts depending on dependencies for this to work.
+        // For now, we just leave the default context (none).
+        let mut remappings =
+            config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+
+        if let Some(r) = src_remapping {
+            remappings.push(r);
+        }
+        remappings
+    }
+
+    /// Auto detect remappings from the lib paths
+    fn auto_detect_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.lib_paths
+            .par_iter()
+            .flat_map_iter(|lib| {
+                let lib = self.root.join(lib);
+                trace!(?lib, "find all remappings");
+                Remapping::find_many(&lib)
             })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 
@@ -311,7 +320,7 @@ impl Provider for RemappingsProvider<'_> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone())
+                    return Err(err.clone());
                 }
             }
         }?;
@@ -453,11 +462,15 @@ mod tests {
 
         let result = remappings.into_inner();
         assert_eq!(result.len(), 2, "Should allow same name with different contexts");
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol"));
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol"));
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
+        );
     }
 }

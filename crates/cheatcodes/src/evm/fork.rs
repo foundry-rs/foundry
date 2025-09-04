@@ -1,6 +1,6 @@
 use crate::{
-    json::json_value_to_token, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt,
-    Result, Vm::*,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*,
+    json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{fork::CreateFork, AsEnvMut, ContextExt};
+use foundry_evm_core::{AsEnvMut, ContextExt, fork::CreateFork};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -225,7 +225,7 @@ impl Cheatcode for eth_getLogsCall {
         let Self { fromBlock, toBlock, target, topics } = self;
         let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
         else {
-            bail!("blocks in block range must be less than 2^64 - 1")
+            bail!("blocks in block range must be less than 2^64")
         };
 
         if topics.len() > 4 {
@@ -263,6 +263,33 @@ impl Cheatcode for eth_getLogsCall {
             .collect::<Vec<_>>();
 
         Ok(eth_logs.abi_encode())
+    }
+}
+
+impl Cheatcode for getRawBlockHeaderCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { blockNumber } = self;
+        let url = ccx
+            .ecx
+            .journaled_state
+            .database
+            .active_fork_url()
+            .ok_or_else(|| fmt_err!("no active fork"))?;
+        let provider = ProviderBuilder::new(&url).build()?;
+        let block_number = u64::try_from(blockNumber)
+            .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
+        let block =
+            foundry_common::block_on(async move { provider.get_block(block_number.into()).await })
+                .map_err(|e| fmt_err!("failed to get block: {e}"))?
+                .ok_or_else(|| fmt_err!("block {block_number} not found"))?;
+
+        let header: alloy_consensus::Header = block
+            .into_inner()
+            .header
+            .inner
+            .try_into_header()
+            .map_err(|e| fmt_err!("failed to convert to header: {e}"))?;
+        Ok(alloy_rlp::encode(&header).abi_encode())
     }
 }
 
@@ -326,8 +353,8 @@ fn create_fork_request(
         evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
     }
     let fork = CreateFork {
-        enable_caching: !ccx.state.config.no_storage_caching &&
-            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching
+            && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: ccx.ecx.as_env_mut().to_owned(),
         evm_opts,

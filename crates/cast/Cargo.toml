@@ -53,6 +53,7 @@ alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
+alloy-eips.workspace = true
 
 op-alloy-flz.workspace = true
 op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
@@ -60,7 +61,7 @@ op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
-revm.workspace = true
+revm = { workspace = true, features = ["optional_balance_check"] }
 rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true
@@ -71,7 +72,7 @@ serde.workspace = true
 foundry-cli.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
+clap_complete.workspace = true
 clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true
@@ -86,9 +87,10 @@ yansi.workspace = true
 evmole.workspace = true
 
 [dev-dependencies]
+alloy-hardforks.workspace = true
+dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
-alloy-hardforks.workspace = true
 
 [features]
 default = ["jemalloc"]

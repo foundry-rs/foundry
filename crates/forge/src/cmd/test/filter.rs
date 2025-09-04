@@ -1,7 +1,7 @@
 use clap::Parser;
 use foundry_common::TestFilter;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
-use foundry_config::{filter::GlobMatcher, Config};
+use foundry_config::{Config, filter::GlobMatcher};
 use std::{fmt, path::Path};
 
 /// The filter to use during testing.
@@ -42,23 +42,17 @@ pub struct FilterArgs {
     /// Only show coverage for files that do not match the specified regex pattern.
     #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
     pub coverage_pattern_inverse: Option<regex::Regex>,
-
-    /// Qualified test failures from --rerun (contract, test) pairs.
-    /// This is not a CLI argument, but is populated internally when --rerun is used.
-    #[arg(skip)]
-    pub qualified_failures: Option<Vec<(String, String)>>,
 }
 
 impl FilterArgs {
     /// Returns true if the filter is empty.
     pub fn is_empty(&self) -> bool {
-        self.test_pattern.is_none() &&
-            self.test_pattern_inverse.is_none() &&
-            self.contract_pattern.is_none() &&
-            self.contract_pattern_inverse.is_none() &&
-            self.path_pattern.is_none() &&
-            self.path_pattern_inverse.is_none() &&
-            self.qualified_failures.is_none()
+        self.test_pattern.is_none()
+            && self.test_pattern_inverse.is_none()
+            && self.contract_pattern.is_none()
+            && self.contract_pattern_inverse.is_none()
+            && self.path_pattern.is_none()
+            && self.path_pattern_inverse.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -112,13 +106,13 @@ impl FileFilter for FilterArgs {
 }
 
 impl TestFilter for FilterArgs {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_signature: &str) -> bool {
         let mut ok = true;
         if let Some(re) = &self.test_pattern {
-            ok = ok && re.is_match(test_name);
+            ok = ok && re.is_match(test_signature);
         }
         if let Some(re) = &self.test_pattern_inverse {
-            ok = ok && !re.is_match(test_name);
+            ok = ok && !re.is_match(test_signature);
         }
         ok
     }
@@ -143,21 +137,6 @@ impl TestFilter for FilterArgs {
             ok = ok && !re.is_match(path);
         }
         ok
-    }
-
-    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
-        // If we have qualified failures, only match those specific combinations
-        if let Some(qualified_failures) = &self.qualified_failures {
-            for (failed_contract, failed_test) in qualified_failures {
-                if failed_contract == contract_name && failed_test == test_name {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Fall back to default behavior for non-qualified scenarios
-        self.matches_contract(contract_name) && self.matches_test(test_name)
     }
 }
 
@@ -228,8 +207,8 @@ impl FileFilter for ProjectPathsAwareFilter {
 }
 
 impl TestFilter for ProjectPathsAwareFilter {
-    fn matches_test(&self, test_name: &str) -> bool {
-        self.args_filter.matches_test(test_name)
+    fn matches_test(&self, test_signature: &str) -> bool {
+        self.args_filter.matches_test(test_signature)
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {
@@ -240,10 +219,6 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
-    }
-
-    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
-        self.args_filter.matches_qualified_test(contract_name, test_name)
     }
 }
 

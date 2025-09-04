@@ -1,9 +1,9 @@
 use crate::{
-    document::{read_context, DocumentContent},
+    CONTRACT_INHERITANCE_ID, CommentTag, Comments, CommentsRef, DEPLOYMENTS_ID, Document,
+    GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
+    document::{DocumentContent, read_context},
     parser::ParseSource,
     writer::BufWriter,
-    CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, DEPLOYMENTS_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
@@ -229,7 +229,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Enums")?;
                             enums.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_variant_table(item, comments)
                             })?;
                         }
                     }

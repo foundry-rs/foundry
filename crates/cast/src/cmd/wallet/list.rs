@@ -42,9 +42,9 @@ pub struct ListArgs {
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
         // list local accounts as files in keystore dir, no need to unlock / provide password
-        if self.dir.is_some() ||
-            self.all ||
-            (!self.ledger && !self.trezor && !self.aws && !self.gcp)
+        if self.dir.is_some()
+            || self.all
+            || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
             let _ = self.list_local_senders();
         }
@@ -87,6 +87,7 @@ impl ListArgs {
         list_senders!(list_opts.ledgers(), "Ledger");
         list_senders!(list_opts.trezors(), "Trezor");
         list_senders!(list_opts.aws_signers(), "AWS");
+        list_senders!(list_opts.gcp_signers(), "GCP");
 
         Ok(())
     }
@@ -105,12 +106,11 @@ impl ListArgs {
         // List all files within the keystore directory.
         for entry in std::fs::read_dir(keystore_dir)? {
             let path = entry?.path();
-            if path.is_file() {
-                if let Some(file_name) = path.file_name() {
-                    if let Some(name) = file_name.to_str() {
-                        sh_println!("{name} (Local)")?;
-                    }
-                }
+            if path.is_file()
+                && let Some(file_name) = path.file_name()
+                && let Some(name) = file_name.to_str()
+            {
+                sh_println!("{name} (Local)")?;
             }
         }
 

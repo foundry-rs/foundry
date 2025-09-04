@@ -162,7 +162,7 @@ contract GasComparisonTest is DSTest {
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonEmptyA");
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", b);
@@ -176,7 +176,7 @@ contract GasComparisonTest is DSTest {
         slot0 = 1;
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         slot1 = 1;
         uint256 b = _snapEnd();
@@ -194,7 +194,7 @@ contract GasComparisonTest is DSTest {
         slot0 = 2;
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         slot0 = 3;
         uint256 b = _snapEnd();
@@ -213,7 +213,7 @@ contract GasComparisonTest is DSTest {
         target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
@@ -228,7 +228,7 @@ contract GasComparisonTest is DSTest {
         new TargetC();
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         new TargetC();
         uint256 b = _snapEnd();
@@ -247,7 +247,7 @@ contract GasComparisonTest is DSTest {
         target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
@@ -266,7 +266,7 @@ contract GasComparisonTest is DSTest {
         flare.run(256);
         uint256 a = vm.stopSnapshotGas();
 
-        // Start a comparitive Solidity snapshot.
+        // Start a comparative Solidity snapshot.
         _snapStart();
         flare.run(256);
         uint256 b = _snapEnd();

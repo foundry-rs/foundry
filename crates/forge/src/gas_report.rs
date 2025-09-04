@@ -5,12 +5,8 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
-use foundry_common::{
-    calc,
-    reports::{report_kind, ReportKind},
-    TestFunctionExt,
-};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use foundry_common::{TestFunctionExt, calc, shell};
 use foundry_evm::traces::CallKind;
 
 use serde::{Deserialize, Serialize};
@@ -22,8 +18,6 @@ use std::{collections::BTreeMap, fmt::Display};
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
-    /// What kind of report to generate.
-    report_kind: ReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -44,14 +38,7 @@ impl GasReport {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        Self {
-            report_any,
-            report_kind: report_kind(),
-            report_for,
-            ignore,
-            include_tests,
-            ..Default::default()
-        }
+        Self { report_any, report_for, ignore, include_tests, ..Default::default() }
     }
 
     /// Whether the given contract should be reported.
@@ -156,20 +143,17 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                for (name, contract) in &self.contracts {
-                    if contract.functions.is_empty() {
-                        trace!(name, "gas report contract without functions");
-                        continue;
-                    }
-
-                    let table = self.format_table_output(contract, name);
-                    writeln!(f, "\n{table}")?;
+        if shell::is_json() {
+            writeln!(f, "{}", &self.format_json_output())?;
+        } else {
+            for (name, contract) in &self.contracts {
+                if contract.functions.is_empty() {
+                    trace!(name, "gas report contract without functions");
+                    continue;
                 }
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", &self.format_json_output())?;
+
+                let table = self.format_table_output(contract, name);
+                writeln!(f, "\n{table}")?;
             }
         }
 
@@ -216,7 +200,11 @@ impl GasReport {
 
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if shell::is_markdown() {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
 

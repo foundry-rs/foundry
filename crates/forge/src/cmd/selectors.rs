@@ -1,17 +1,18 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Table};
+use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
-    utils::{cache_local_signatures, FoundryPathExt},
+    utils::{FoundryPathExt, cache_local_signatures},
 };
 use foundry_common::{
-    compile::{compile_target, PathOrContractInfo, ProjectCompiler},
-    selectors::{import_selectors, SelectorImportData},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_target},
+    selectors::{SelectorImportData, import_selectors},
+    shell,
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
-use std::fs::canonicalize;
+use std::{collections::BTreeMap, fs::canonicalize};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -56,6 +57,9 @@ pub enum SelectorsSubcommands {
 
         #[command(flatten)]
         project_paths: ProjectPathOpts,
+
+        #[arg(long, help = "Do not group the selectors by contract in separate tables.")]
+        no_group: bool,
     },
 
     /// Find if a selector is present in the project
@@ -155,7 +159,7 @@ impl SelectorsSubcommands {
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                        continue;
                     }
 
                     sh_println!("Uploading selectors for {contract}...")?;
@@ -212,7 +216,11 @@ impl SelectorsSubcommands {
                     sh_println!("No colliding method selectors between the two contracts.")?;
                 } else {
                     let mut table = Table::new();
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    if shell::is_markdown() {
+                        table.load_preset(ASCII_MARKDOWN);
+                    } else {
+                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                    }
                     table.set_header([
                         String::from("Selector"),
                         first_contract.name,
@@ -225,7 +233,7 @@ impl SelectorsSubcommands {
                     sh_println!("\n{table}\n")?;
                 }
             }
-            Self::List { contract, project_paths } => {
+            Self::List { contract, project_paths, no_group } => {
                 sh_println!("Listing selectors for contracts in the project...")?;
                 let build_args = BuildOpts {
                     project_paths,
@@ -273,41 +281,98 @@ impl SelectorsSubcommands {
 
                 let mut artifacts = artifacts.into_iter().peekable();
 
-                while let Some((contract, artifact)) = artifacts.next() {
-                    let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
-                    if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                #[derive(PartialEq, PartialOrd, Eq, Ord)]
+                enum SelectorType {
+                    Function,
+                    Event,
+                    Error,
+                }
+                impl std::fmt::Display for SelectorType {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        match self {
+                            Self::Function => write!(f, "Function"),
+                            Self::Event => write!(f, "Event"),
+                            Self::Error => write!(f, "Error"),
+                        }
                     }
+                }
 
-                    sh_println!("{contract}")?;
+                let mut selectors =
+                    BTreeMap::<String, BTreeMap<SelectorType, Vec<(String, String)>>>::new();
 
-                    let mut table = Table::new();
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                for (contract, artifact) in artifacts.by_ref() {
+                    let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
-                    table.set_header(["Type", "Signature", "Selector"]);
+                    let contract_selectors = selectors.entry(contract.clone()).or_default();
 
                     for func in abi.functions() {
                         let sig = func.signature();
                         let selector = func.selector();
-                        table.add_row(["Function", &sig, &hex::encode_prefixed(selector)]);
+                        contract_selectors
+                            .entry(SelectorType::Function)
+                            .or_default()
+                            .push((hex::encode_prefixed(selector), sig));
                     }
 
                     for event in abi.events() {
                         let sig = event.signature();
                         let selector = event.selector();
-                        table.add_row(["Event", &sig, &hex::encode_prefixed(selector)]);
+                        contract_selectors
+                            .entry(SelectorType::Event)
+                            .or_default()
+                            .push((hex::encode_prefixed(selector), sig));
                     }
 
                     for error in abi.errors() {
                         let sig = error.signature();
                         let selector = error.selector();
-                        table.add_row(["Error", &sig, &hex::encode_prefixed(selector)]);
+                        contract_selectors
+                            .entry(SelectorType::Error)
+                            .or_default()
+                            .push((hex::encode_prefixed(selector), sig));
+                    }
+                }
+
+                if no_group {
+                    let mut table = Table::new();
+                    if shell::is_markdown() {
+                        table.load_preset(ASCII_MARKDOWN);
+                    } else {
+                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                    }
+                    table.set_header(["Type", "Signature", "Selector", "Contract"]);
+
+                    for (contract, contract_selectors) in selectors {
+                        for (selector_type, selectors) in contract_selectors {
+                            for (selector, sig) in selectors {
+                                table.add_row([
+                                    selector_type.to_string(),
+                                    sig,
+                                    selector,
+                                    contract.to_string(),
+                                ]);
+                            }
+                        }
                     }
 
-                    sh_println!("\n{table}\n")?;
+                    sh_println!("\n{table}")?;
+                } else {
+                    for (idx, (contract, contract_selectors)) in selectors.into_iter().enumerate() {
+                        sh_println!("{}{contract}", if idx == 0 { "" } else { "\n" })?;
+                        let mut table = Table::new();
+                        if shell::is_markdown() {
+                            table.load_preset(ASCII_MARKDOWN);
+                        } else {
+                            table.apply_modifier(UTF8_ROUND_CORNERS);
+                        }
+                        table.set_header(["Type", "Signature", "Selector"]);
 
-                    if artifacts.peek().is_some() {
-                        sh_println!()?
+                        for (selector_type, selectors) in contract_selectors {
+                            for (selector, sig) in selectors {
+                                table.add_row([selector_type.to_string(), sig, selector]);
+                            }
+                        }
+                        sh_println!("\n{table}")?;
                     }
                 }
             }
@@ -336,7 +401,11 @@ impl SelectorsSubcommands {
                     .collect::<Vec<_>>();
 
                 let mut table = Table::new();
-                table.apply_modifier(UTF8_ROUND_CORNERS);
+                if shell::is_markdown() {
+                    table.load_preset(ASCII_MARKDOWN);
+                } else {
+                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                }
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);
 

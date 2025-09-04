@@ -1,6 +1,6 @@
 use super::{
-    call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
+    call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
@@ -9,8 +9,8 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::utils::StateChangeset;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract},
-    FuzzedCases,
+    BasicTxDetails, FuzzedCases,
+    invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
@@ -29,9 +29,11 @@ pub struct InvariantFuzzTestResult {
     /// Additional traces used for gas report construction.
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
     /// The coverage info collected during the invariant test runs.
-    pub coverage: Option<HitMaps>,
+    pub line_coverage: Option<HitMaps>,
     /// Fuzzed selectors metrics collected during the invariant test runs.
     pub metrics: HashMap<String, InvariantMetrics>,
+    /// NUmber of failed replays from persisted corpus.
+    pub failed_corpus_replays: usize,
 }
 
 /// Enriched results of an invariant run check.
@@ -61,10 +63,10 @@ pub(crate) fn assert_invariants(
 ) -> Result<Option<RawCallResult>> {
     let mut inner_sequence = vec![];
 
-    if let Some(fuzzer) = &executor.inspector().fuzzer {
-        if let Some(call_generator) = &fuzzer.call_generator {
-            inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
-        }
+    if let Some(fuzzer) = &executor.inspector().fuzzer
+        && let Some(call_generator) = &fuzzer.call_generator
+    {
+        inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
     }
 
     let (call_result, success) = call_invariant_function(
@@ -95,7 +97,7 @@ pub(crate) fn assert_invariants(
 /// function (if it can continue).
 pub(crate) fn can_continue(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &InvariantTest,
+    invariant_test: &mut InvariantTest,
     invariant_run: &mut InvariantTestRun,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult,
@@ -126,14 +128,14 @@ pub(crate) fn can_continue(
             &invariant_test.targeted_contracts,
             &invariant_run.executor,
             &invariant_run.inputs,
-            &mut invariant_test.execution_data.borrow_mut().failures,
+            &mut invariant_test.test_data.failures,
         )?;
         if call_results.is_none() {
             return Ok(RichInvariantResults::new(false, None));
         }
     } else {
         // Increase the amount of reverts.
-        let mut invariant_data = invariant_test.execution_data.borrow_mut();
+        let invariant_data = &mut invariant_test.test_data;
         invariant_data.failures.reverts += 1;
         // If fail on revert is set, we must return immediately.
         if invariant_config.fail_on_revert {
@@ -162,7 +164,7 @@ pub(crate) fn can_continue(
 /// If call fails then the invariant test is considered failed.
 pub(crate) fn assert_after_invariant(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &InvariantTest,
+    invariant_test: &mut InvariantTest,
     invariant_run: &InvariantTestRun,
     invariant_config: &InvariantConfig,
 ) -> Result<bool> {

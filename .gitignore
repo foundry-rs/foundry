@@ -5,3 +5,17 @@ snapshots/
 out.json
 .idea
 .vscode
+.claude
+CLAUDE.md
+.env
+node_modules
+dist
+bin
+_
+*.tgz
+.zed
+.vercel
+.vite
+.wrangler
+build
+*.zip

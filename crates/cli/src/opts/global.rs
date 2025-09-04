@@ -30,6 +30,16 @@ pub struct GlobalArgs {
     #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
     json: bool,
 
+    /// Format log messages as Markdown.
+    #[arg(
+        help_heading = "Display options",
+        global = true,
+        long,
+        alias = "markdown",
+        conflicts_with = "json"
+    )]
+    md: bool,
+
     /// The color of the log messages.
     #[arg(help_heading = "Display options", global = true, long, value_enum)]
     color: Option<ColorChoice>,
@@ -51,9 +61,9 @@ impl GlobalArgs {
         }
 
         // Display a warning message if the current version is not stable.
-        if std::env::var("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_err() &&
-            !self.json &&
-            IS_NIGHTLY_VERSION
+        if std::env::var("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_err()
+            && !self.json
+            && IS_NIGHTLY_VERSION
         {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
         }
@@ -68,9 +78,12 @@ impl GlobalArgs {
             false => OutputMode::Normal,
         };
         let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
-        let format = match self.json {
-            true => OutputFormat::Json,
-            false => OutputFormat::Text,
+        let format = if self.json {
+            OutputFormat::Json
+        } else if self.md {
+            OutputFormat::Markdown
+        } else {
+            OutputFormat::Text
         };
 
         Shell::new_with(format, mode, color, self.verbosity)
@@ -79,6 +92,24 @@ impl GlobalArgs {
     /// Initialize the global thread pool.
     pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
         init_thread_pool(self.threads.unwrap_or(0))
+    }
+
+    /// Creates a new tokio runtime.
+    #[track_caller]
+    pub fn tokio_runtime(&self) -> tokio::runtime::Runtime {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        if let Some(threads) = self.threads
+            && threads > 0
+        {
+            builder.worker_threads(threads);
+        }
+        builder.enable_all().build().expect("failed to create tokio runtime")
+    }
+
+    /// Creates a new tokio runtime and blocks on the future.
+    #[track_caller]
+    pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.tokio_runtime().block_on(future)
     }
 }
 

@@ -3,7 +3,7 @@
 /// # Parameters
 ///
 /// Each lint requires the following input fields:
-/// - `$id`: Identitifier of the generated `SolLint` constant.
+/// - `$id`: Identifier of the generated `SolLint` constant.
 /// - `$severity`: The `Severity` of the lint (e.g. `High`, `Med`, `Low`, `Info`, `Gas`).
 /// - `$str_id`: A unique identifier used to reference a specific lint during configuration.
 /// - `$desc`: A short description of the lint.
@@ -29,43 +29,101 @@ macro_rules! declare_forge_lint {
     };
 }
 
-/// Registers Solidity linter passes with their corresponding `SolLint`.
+/// Registers Solidity linter passes that can have both early and late variants.
 ///
 /// # Parameters
 ///
-/// - `$pass_id`: Identitifier of the generated struct that will implement the pass trait.
-/// - (`$lint`): tuple with `SolLint` constants that should be evaluated on every input that pass.
+/// Each pass is declared with:
+/// - `$pass_id`: Identifier of the generated struct that will implement the pass trait(s).
+/// - `$pass_type`: Either `early`, `late`, or `both` to indicate which traits to implement.
+/// - `$lints`: A parenthesized, comma-separated list of `SolLint` constants.
 ///
 /// # Outputs
 ///
-/// - Structs for each linting pass (which should manually implement `EarlyLintPass`)
+/// - Structs for each linting pass
+/// - Helper methods to create early and late passes with required lifetimes
 /// - `const REGISTERED_LINTS` containing all registered lint objects
-/// - `const LINT_PASSES` mapping each lint to its corresponding pass
 #[macro_export]
 macro_rules! register_lints {
-    ( $( ($pass_id:ident, ($($lint:expr),+ $(,)?)) ),* $(,)? ) => {
-        // Declare the structs that will implement the pass trait
+    // 1. Internal rule for declaring structs and their associated lints.
+    ( @declare_structs $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
         $(
             #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
             pub struct $pass_id;
 
             impl $pass_id {
-                pub fn as_lint_pass<'a>() -> Box<dyn EarlyLintPass<'a>> {
-                    Box::new(Self::default())
-                }
+                /// Static slice of lints associated with this pass.
+                const LINTS: &'static [SolLint] = &[$($lint),*];
+
+                register_lints!(@early_impl $pass_id, $pass_type);
+                register_lints!(@late_impl $pass_id, $pass_type);
             }
         )*
+    };
 
-        // Expose array constants
-        pub const REGISTERED_LINTS: &[SolLint] = &[$( $($lint,) + )*];
-        pub const LINT_PASSES: &[(SolLint, fn() -> Box<dyn EarlyLintPass<'static>>)] = &[
-            $( $( ($lint, || Box::new($pass_id::default())), )+ )*
+    // 2. Internal rule for declaring the const array of ALL lints.
+    ( @declare_consts $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
+        pub const REGISTERED_LINTS: &[SolLint] = &[
+            $(
+                $($lint,)*
+            )*
         ];
+    };
 
-        // Helper function to create lint passes with the required lifetime
-        pub fn create_lint_passes<'a>() -> Vec<(Box<dyn EarlyLintPass<'a>>, SolLint)>
-        {
-            vec![ $( $(($pass_id::as_lint_pass(), $lint), )+ )* ]
+    // 3. Internal rule for declaring the helper functions.
+    ( @declare_funcs $( ($pass_id:ident, $pass_type:ident, $lints:tt) ),* $(,)? ) => {
+        pub fn create_early_lint_passes<'ast>() -> Vec<(Box<dyn EarlyLintPass<'ast>>, &'static [SolLint])> {
+            [
+                $(
+                    register_lints!(@early_create $pass_id, $pass_type),
+                )*
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
         }
+
+        pub fn create_late_lint_passes<'hir>() -> Vec<(Box<dyn LateLintPass<'hir>>, &'static [SolLint])> {
+            [
+                $(
+                    register_lints!(@late_create $pass_id, $pass_type),
+                )*
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        }
+    };
+
+    // --- HELPERS ------------------------------------------------------------
+    (@early_impl $_pass_id:ident, late) => {};
+    (@early_impl $pass_id:ident, $other:ident) => {
+        pub fn as_early_lint_pass<'a>() -> Box<dyn EarlyLintPass<'a>> {
+            Box::new(Self::default())
+        }
+    };
+
+    (@late_impl $_pass_id:ident, early) => {};
+    (@late_impl $pass_id:ident, $other:ident) => {
+        pub fn as_late_lint_pass<'hir>() -> Box<dyn LateLintPass<'hir>> {
+            Box::new(Self::default())
+        }
+    };
+
+    (@early_create $_pass_id:ident, late) => { None };
+    (@early_create $pass_id:ident, $_other:ident) => {
+        Some(($pass_id::as_early_lint_pass(), $pass_id::LINTS))
+    };
+
+    (@late_create $_pass_id:ident, early) => { None };
+    (@late_create $pass_id:ident, $_other:ident) => {
+        Some(($pass_id::as_late_lint_pass(), $pass_id::LINTS))
+    };
+
+    // --- ENTRY POINT ---------------------------------------------------------
+    ( $($tokens:tt)* ) => {
+        register_lints! { @declare_structs $($tokens)* }
+        register_lints! { @declare_consts  $($tokens)* }
+        register_lints! { @declare_funcs   $($tokens)* }
     };
 }

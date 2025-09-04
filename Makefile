@@ -46,13 +46,13 @@ build-%:
 
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
-	FEATURES="jemalloc aws-kms gcp-kms cli asm-keccak" $(MAKE) build-x86_64-unknown-linux-gnu
+	FEATURES="jemalloc aws-kms gcp-kms cli asm-keccak js-tracer" $(MAKE) build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
 	done
 
-	FEATURES="aws-kms gcp-kms cli asm-keccak" $(MAKE) build-aarch64-unknown-linux-gnu
+	FEATURES="aws-kms gcp-kms cli asm-keccak js-tracer" $(MAKE) build-aarch64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/arm64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
@@ -76,6 +76,15 @@ docker-build-prepare: ## Prepare the Docker build environment.
 	fi
 
 ##@ Test
+
+## Run unit/doc tests and generate html coverage report in `target/llvm-cov/html` folder.
+## Notice that `llvm-cov` supports doc tests only in nightly builds because the `--doc` flag 
+## is unstable (https://github.com/taiki-e/cargo-llvm-cov/issues/2).
+.PHONY: test-coverage
+test-coverage: 
+	cargo +nightly llvm-cov --no-report nextest -E 'kind(test) & !test(/\b(issue|ext_integration)/)' && \
+	cargo +nightly llvm-cov --no-report --doc && \
+	cargo +nightly llvm-cov report --doctests --open
 
 .PHONY: test-unit
 test-unit: ## Run unit tests.
@@ -105,19 +114,19 @@ lint-clippy: ## Run clippy on the codebase.
 	--all-features \
 	-- -D warnings
 
-.PHONY: lint-codespell
-lint-codespell: ## Run codespell on the codebase.
-	@command -v codespell >/dev/null || { \
-		echo "codespell not found. Please install it by running the command `pipx install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
+.PHONY: lint-typos
+lint-typos: ## Run typos on the codebase.
+	@command -v typos >/dev/null || { \
+		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos"; \
 		exit 1; \
 	}
-	codespell --skip "*.json"
+	typos
 
 .PHONY: lint
 lint: ## Run all linters.
 	make fmt && \
 	make lint-clippy && \
-	make lint-codespell
+	make lint-typos
 
 ##@ Other
 
@@ -134,3 +143,20 @@ pr: ## Run all checks and tests.
 	make deny && \
 	make lint && \
 	make test
+
+# dprint formatting commands
+.PHONY: dprint-fmt
+dprint-fmt: ## Format code with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint fmt
+
+.PHONY: dprint-check
+dprint-check: ## Check formatting with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint check

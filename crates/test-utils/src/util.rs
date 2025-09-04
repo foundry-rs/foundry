@@ -1,18 +1,17 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
-    error::Result as SolcResult,
-    project_util::{copy_dir, TempProject},
+    project_util::{TempProject, copy_dir},
     solc::SolcSettings,
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{assert_data_eq, cmd::OutputAssert, Data, IntoData};
+use snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert};
 use std::{
     env,
     ffi::OsStr,
@@ -21,15 +20,15 @@ use std::{
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, LazyLock,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
-const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -138,15 +137,22 @@ impl ExtTester {
         self
     }
 
-    /// Runs the test.
-    pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
+    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
+
+        // Export vyper and forge in test command - workaround for snekmate venom tests.
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
+            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_dir = forge_bin.parent().expect("forge path should have a parent");
+
+            let existing_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut new_paths = vec![vyper_dir.to_path_buf(), forge_dir.to_path_buf()];
+            new_paths.extend(std::env::split_paths(&existing_path));
+
+            let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
+            test_cmd.env("PATH", joined_path);
+        }
 
         // Wipe the default structure.
         prj.wipe();
@@ -178,7 +184,10 @@ impl ExtTester {
             }
         }
 
-        // Run installation command.
+        (prj, test_cmd)
+    }
+
+    pub fn run_install_commands(&self, root: &str) {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
@@ -195,6 +204,20 @@ impl ExtTester {
                 }
             }
         }
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut test_cmd) = self.setup_forge_prj();
+
+        // Run installation command.
+        self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");
@@ -302,7 +325,7 @@ pub fn initialize(target: &Path) {
 /// Clones a remote repository into the specified directory. Panics if the command fails.
 pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
     println!("{cmd:?}");
     let status = cmd.status().unwrap();
@@ -522,28 +545,28 @@ impl TestProject {
     }
 
     /// Adds a source file to the project.
-    pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, Self::add_source_prelude(contents))
+    pub fn add_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a source file to the project. Prefer using `add_source` instead.
-    pub fn add_raw_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, contents)
+    pub fn add_raw_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, contents).unwrap()
     }
 
     /// Adds a script file to the project.
-    pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_script(name, Self::add_source_prelude(contents))
+    pub fn add_script(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_script(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a test file to the project.
-    pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_test(name, Self::add_source_prelude(contents))
+    pub fn add_test(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_test(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a library file to the project.
-    pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_lib(name, Self::add_source_prelude(contents))
+    pub fn add_lib(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_lib(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     fn add_source_prelude(s: &str) -> String {
@@ -620,19 +643,19 @@ impl TestProject {
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
         let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.add_source("test.sol", s).unwrap()
+        self.add_source("test.sol", s)
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
         let s = include_str!("../../../testdata/default/logs/console.sol");
-        self.add_source("console.sol", s).unwrap()
+        self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
         let s = include_str!("../../../testdata/cheats/Vm.sol");
-        self.add_source("Vm.sol", s).unwrap()
+        self.add_source("Vm.sol", s)
     }
 
     /// Asserts all project paths exist. These are:
@@ -886,6 +909,14 @@ impl TestCommand {
         output.success();
     }
 
+    /// Runs `git submodule status` inside the project's dir
+    #[track_caller]
+    pub fn git_submodule_status(&self) -> Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("submodule").arg("status").current_dir(self.project.root());
+        cmd.output().unwrap()
+    }
+
     /// Runs `git add .` inside the project's dir
     #[track_caller]
     pub fn git_add(&self) {
@@ -928,6 +959,18 @@ impl TestCommand {
         let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
         let stdout = self.assert_success().get_output().stdout.clone();
         let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
+        assert_data_eq!(actual, expected);
+    }
+
+    /// Runs the command and asserts that it resulted in the expected outcome and JSON data.
+    #[track_caller]
+    pub fn assert_json_stderr(&mut self, success: bool, expected: impl IntoData) {
+        let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
+        let stderr = if success { self.assert_success() } else { self.assert_failure() }
+            .get_output()
+            .stderr
+            .clone();
+        let actual = stderr.into_data().is(snapbox::data::DataFormat::Json).unordered();
         assert_data_eq!(actual, expected);
     }
 
@@ -1015,7 +1058,9 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
-            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
+            ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
+            ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),

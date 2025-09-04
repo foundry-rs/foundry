@@ -8,7 +8,7 @@ use std::{fmt, path::Path};
 /// Test filter.
 pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included.
-    fn matches_test(&self, test_name: &str) -> bool;
+    fn matches_test(&self, test_signature: &str) -> bool;
 
     /// Returns whether the contract should be included.
     fn matches_contract(&self, contract_name: &str) -> bool;
@@ -22,6 +22,30 @@ pub trait TestFilter: Send + Sync {
     fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
         // Default implementation for backward compatibility
         self.matches_contract(contract_name) && self.matches_test(test_name)
+    }
+}
+
+impl<'a> dyn TestFilter + 'a {
+    /// Returns `true` if the function is a test function that matches the given filter.
+    pub fn matches_test_function(&self, func: &Function) -> bool {
+        func.is_any_test() && self.matches_test(&func.signature())
+    }
+}
+
+/// A test filter that filters out nothing.
+#[derive(Clone, Debug, Default)]
+pub struct EmptyTestFilter(());
+impl TestFilter for EmptyTestFilter {
+    fn matches_test(&self, _test_signature: &str) -> bool {
+        true
+    }
+
+    fn matches_contract(&self, _contract_name: &str) -> bool {
+        true
+    }
+
+    fn matches_path(&self, _path: &Path) -> bool {
+        true
     }
 }
 
@@ -77,6 +101,15 @@ pub trait TestFunctionExt {
         self.test_function_kind().is_fixture()
     }
 
+    /// Returns `true` if this function is test reserved function.
+    fn is_reserved(&self) -> bool {
+        self.is_any_test()
+            || self.is_setup()
+            || self.is_before_test_setup()
+            || self.is_after_invariant()
+            || self.is_fixture()
+    }
+
     #[doc(hidden)]
     fn tfe_as_str(&self) -> &str;
     #[doc(hidden)]
@@ -124,6 +157,8 @@ pub enum TestFunctionKind {
     FuzzTest { should_fail: bool },
     /// `invariant*` or `statefulFuzz*`.
     InvariantTest,
+    /// `table*`, with arguments.
+    TableTest,
     /// `afterInvariant`.
     AfterInvariant,
     /// `fixture*`.
@@ -134,7 +169,6 @@ pub enum TestFunctionKind {
 
 impl TestFunctionKind {
     /// Classify a function.
-    #[inline]
     pub fn classify(name: &str, has_inputs: bool) -> Self {
         match () {
             _ if name.starts_with("test") => {
@@ -148,6 +182,7 @@ impl TestFunctionKind {
             _ if name.starts_with("invariant") || name.starts_with("statefulFuzz") => {
                 Self::InvariantTest
             }
+            _ if name.starts_with("table") => Self::TableTest,
             _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
@@ -164,6 +199,7 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: false } => "fuzz",
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
+            Self::TableTest => "table",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
@@ -179,7 +215,10 @@ impl TestFunctionKind {
     /// Returns `true` if this function is a unit, fuzz, or invariant test.
     #[inline]
     pub const fn is_any_test(&self) -> bool {
-        matches!(self, Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::InvariantTest)
+        matches!(
+            self,
+            Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::TableTest | Self::InvariantTest
+        )
     }
 
     /// Returns `true` if this function is a test that should fail.
@@ -204,6 +243,12 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_invariant_test(&self) -> bool {
         matches!(self, Self::InvariantTest)
+    }
+
+    /// Returns `true` if this function is a table test.
+    #[inline]
+    pub const fn is_table_test(&self) -> bool {
+        matches!(self, Self::TableTest)
     }
 
     /// Returns `true` if this function is an `afterInvariant` function.

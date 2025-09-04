@@ -17,6 +17,7 @@
 | [Docs][foundry-docs]
 | [Developer Guidelines](./docs/dev/README.md)
 | [Contributing](./CONTRIBUTING.md)
+| [Crate Docs](https://foundry-rs.github.io/foundry)
 
 </div>
 
@@ -115,7 +116,7 @@ _In the above benchmarks, compilation was always skipped_
     <img src=".github/assets/build_benchmark_solady_light.png" width="600px">
   </picture>
 
-  <picture>
+<picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_openzeppelin_dark.png" width="600px">
     <img src=".github/assets/build_benchmark_openzeppelin_light.png" width="600px">
   </picture>
@@ -314,7 +315,7 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in the [Foundy Docs][foundry-docs], or in the relevant crate.
+First, see if the answer to your question can be found in the [Foundry Docs][foundry-docs], or in the relevant crate.
 
 If the answer is not there:
 

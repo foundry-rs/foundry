@@ -1,26 +1,23 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    preprocessor::TestOptimizerPreprocessor,
-    reports::{report_kind, ReportKind},
-    shell,
-    term::SpinnerReporter,
-    TestFunctionExt,
+    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
+    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
     compilers::{
-        solc::{Solc, SolcCompiler},
         Compiler,
+        solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
+    multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
-    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
 use std::{
@@ -148,12 +145,13 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
         mut self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
-        TestOptimizerPreprocessor: Preprocessor<C>,
+        DynamicTestLinkingPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
@@ -181,7 +179,7 @@ impl ProjectCompiler {
             let mut compiler =
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
             if preprocess {
-                compiler = compiler.with_preprocessor(TestOptimizerPreprocessor);
+                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
             compiler.compile().map_err(Into::into)
         })
@@ -197,7 +195,6 @@ impl ProjectCompiler {
     /// let prj = config.project().unwrap();
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
-    #[instrument(target = "forge::compile", skip_all)]
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
         self,
         f: F,
@@ -277,8 +274,7 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report =
-                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -298,8 +294,8 @@ impl ProjectCompiler {
                         .as_ref()
                         .map(|abi| {
                             abi.functions().any(|f| {
-                                f.test_function_kind().is_known() ||
-                                    matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                                f.test_function_kind().is_known()
+                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                             })
                         })
                         .unwrap_or(false);
@@ -348,8 +344,6 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
-    /// What kind of report to generate.
-    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -388,15 +382,11 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                writeln!(f, "\n{}", self.format_table_output())?;
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", self.format_json_output())?;
-            }
+        if shell::is_json() {
+            writeln!(f, "{}", self.format_json_output())?;
+        } else {
+            writeln!(f, "\n{}", self.format_table_output())?;
         }
-
         Ok(())
     }
 }
@@ -425,7 +415,11 @@ impl SizeReport {
 
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if shell::is_markdown() {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         table.set_header(vec![
             Cell::new("Contract"),
@@ -520,17 +514,14 @@ pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     quiet: bool,
 ) -> Result<ProjectCompileOutput<C>>
 where
-    TestOptimizerPreprocessor: Preprocessor<C>,
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(
-    metadata: &Metadata,
-    target_path: impl AsRef<Path>,
-) -> Result<Project<SolcCompiler>> {
-    let target_path = dunce::canonicalize(target_path.as_ref())?;
+pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
+    let target_path = dunce::canonicalize(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
@@ -560,14 +551,18 @@ pub fn etherscan_project(
         .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
+    // TODO: detect vyper
     let v = metadata.compiler_version()?;
     let solc = Solc::find_or_install(&v)?;
 
-    let compiler = SolcCompiler::Specific(solc);
+    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
-    Ok(ProjectBuilder::<SolcCompiler>::default()
-        .settings(SolcSettings {
-            settings: SolcConfig::builder().settings(settings).build(),
+    Ok(ProjectBuilder::<MultiCompiler>::default()
+        .settings(MultiCompilerSettings {
+            solc: SolcSettings {
+                settings: SolcConfig::builder().settings(settings).build(),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .paths(paths)

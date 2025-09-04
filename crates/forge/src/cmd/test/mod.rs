@@ -1,44 +1,39 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
+    MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::matches_contract,
+    multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
-use eyre::{bail, Context, OptionExt, Result};
-use foundry_block_explorers::EtherscanApiVersion;
+use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
+use foundry_common::{
+    EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
+};
 use foundry_compilers::{
-    artifacts::output_selection::OutputSelection,
-    compilers::{
-        multi::{MultiCompiler, MultiCompilerLanguage},
-        Language,
-    },
-    utils::source_files_iter,
-    ProjectCompileOutput,
+    Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
+    compilers::multi::MultiCompiler, multi::MultiCompilerLanguage, utils::source_files_iter,
 };
 use foundry_config::{
-    figment,
+    Config, figment,
     figment::{
-        value::{Dict, Map},
         Metadata, Profile, Provider,
+        value::{Dict, Map},
     },
     filter::GlobMatcher,
-    Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -47,7 +42,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::PathBuf,
-    sync::{mpsc::channel, Arc},
+    sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -57,7 +52,7 @@ mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{format_invariant_metrics_table, TestSummaryReport};
+use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -147,10 +142,6 @@ pub struct TestArgs {
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
-    /// The Etherscan API version.
-    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
-    etherscan_api_version: Option<EtherscanApiVersion>,
-
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
     list: bool,
@@ -187,6 +178,10 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
+    /// Disables the labels in the traces.
+    #[arg(long, help_heading = "Display options")]
+    pub disable_labels: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -206,75 +201,44 @@ impl TestArgs {
         self.execute_tests().await
     }
 
-    /// Returns sources which include any tests to be executed.
-    /// If no filters are provided, sources are filtered by existence of test/invariant methods in
-    /// them, If filters are provided, sources are additionally filtered by them.
+    /// Returns a list of files that need to be compiled in order to run all the tests that match
+    /// the given filter.
+    ///
+    /// This means that it will return all sources that are not test contracts or that match the
+    /// filter. We want to compile all non-test sources always because tests might depend on them
+    /// dynamically through cheatcodes.
+    #[instrument(target = "forge::test", skip_all)]
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
-        filter: &ProjectPathsAwareFilter,
+        test_filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
+        // An empty filter doesn't filter out anything.
+        // We can still optimize slightly by excluding scripts.
+        if test_filter.is_empty() {
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect());
+        }
+
         let mut project = config.create_project(true, true)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
-
         let output = project.compile()?;
-
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
 
-        // ABIs of all sources
-        let abis = output
-            .into_artifacts()
-            .filter_map(|(id, artifact)| artifact.abi.map(|abi| (id, abi)))
-            .collect::<BTreeMap<_, _>>();
-
-        // Filter sources by their abis and contract names.
-        let mut test_sources = abis
-            .iter()
-            .filter(|(id, abi)| matches_contract(id, abi, filter))
-            .map(|(id, _)| id.source.clone())
-            .collect::<BTreeSet<_>>();
-
-        if test_sources.is_empty() {
-            if filter.is_empty() {
-                sh_println!(
-                    "No tests found in project! \
-                        Forge looks for functions that starts with `test`."
-                )?;
-            } else {
-                sh_println!("No tests match the provided pattern:")?;
-                sh_print!("{filter}")?;
-
-                // Try to suggest a test when there's no match
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    let candidates = abis
-                        .into_iter()
-                        .filter(|(id, _)| {
-                            filter.matches_path(&id.source) && filter.matches_contract(&id.name)
-                        })
-                        .flat_map(|(_, abi)| abi.functions.into_keys())
-                        .collect::<Vec<_>>();
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        sh_println!("\nDid you mean `{suggestion}`?")?;
-                    }
-                }
-            }
-
-            eyre::bail!("No tests to run");
-        }
-
-        // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(
-            &project.paths.sources,
-            MultiCompilerLanguage::FILE_EXTENSIONS,
-        ));
-
-        Ok(test_sources)
+        Ok(output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+            .filter(|(id, abi)| {
+                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+            })
+            .map(|(id, _)| id.source)
+            .collect())
     }
 
     /// Executes all the tests in the project.
@@ -308,13 +272,10 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
-
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(sources_to_compile);
-
+            .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
@@ -355,6 +316,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
@@ -452,6 +414,32 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
+
+        if num_filtered == 0 {
+            let mut total_tests = num_filtered;
+            if !filter.is_empty() {
+                total_tests = runner.matching_test_functions(&EmptyTestFilter::default()).count();
+            }
+            if total_tests == 0 {
+                sh_println!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
+            } else {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        write!(msg, "\nDid you mean `{suggestion}`?")?;
+                    }
+                }
+                sh_warn!("{msg}")?;
+            }
+            return Ok(TestOutcome::empty(false));
+        }
+
         if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
                 "generate a flamegraph"
@@ -526,6 +514,7 @@ impl TestArgs {
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
+            .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -560,11 +549,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 ||
-                self.gas_report ||
-                self.debug ||
-                self.flamegraph ||
-                self.flamechart;
+            let identify_addresses = verbosity >= 3
+                || self.gas_report
+                || self.debug
+                || self.flamegraph
+                || self.flamechart;
 
             // Print suite header.
             if !silent {
@@ -587,10 +576,10 @@ impl TestArgs {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        if !metrics.is_empty() {
-                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
-                        }
+                    if let TestKind::Invariant { metrics, .. } = &result.kind
+                        && !metrics.is_empty()
+                    {
+                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
                     }
 
                     // We only display logs at level 2 and above
@@ -613,9 +602,7 @@ impl TestArgs {
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
-                decoder
-                    .labels
-                    .extend(result.labeled_addresses.iter().map(|(k, v)| (*k, v.clone())));
+                decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
@@ -823,12 +810,7 @@ impl TestArgs {
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
         if self.rerun {
-            // Try to load qualified failures first, fall back to legacy pattern matching
-            if let Some(qualified_failures) = last_run_failures_qualified(config) {
-                filter.qualified_failures = Some(qualified_failures);
-            } else {
-                filter.test_pattern = last_run_failures(config);
-            }
+            filter.test_pattern = last_run_failures(config);
         }
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
@@ -883,10 +865,6 @@ impl Provider for TestArgs {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
         }
 
-        if let Some(api_version) = &self.etherscan_api_version {
-            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
-        }
-
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
         }
@@ -916,98 +894,30 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
 /// Load persisted filter (with last test run failures) from file.
 fn last_run_failures(config: &Config) -> Option<regex::Regex> {
     match fs::read_to_string(&config.test_failures_file) {
-        Ok(filter) => Some(Regex::new(&filter).unwrap()),
+        Ok(filter) => Regex::new(&filter)
+            .inspect_err(|e| {
+                _ = sh_warn!(
+                    "failed to parse test filter from {:?}: {e}",
+                    config.test_failures_file
+                )
+            })
+            .ok(),
         Err(_) => None,
-    }
-}
-
-/// Load persisted failures as qualified contract/test combinations
-pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, String)>> {
-    match fs::read_to_string(&config.test_failures_file) {
-        Ok(content) => {
-            // Parse qualified pattern format: ContractName_testName or legacy format
-            if content.contains('_') && !content.contains('|') {
-                // Single qualified failure
-                if let Some((contract_name, test_name)) = split_qualified_test_name(&content) {
-                    Some(vec![(contract_name, test_name)])
-                } else {
-                    None
-                }
-            } else if content.contains('_') {
-                // Multiple qualified failures separated by |
-                let failures =
-                    content.split('|').filter_map(split_qualified_test_name).collect::<Vec<_>>();
-                if failures.is_empty() {
-                    None
-                } else {
-                    Some(failures)
-                }
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
-}
-
-/// Split a qualified test name into contract name and test name parts.
-/// Looks for the pattern ContractName_test... since test functions must start with "test".
-fn split_qualified_test_name(qualified_name: &str) -> Option<(String, String)> {
-    // Look for _test, _testFail, _testFuzz, _invariant_ patterns
-    if let Some(test_start) = qualified_name.find("_test") {
-        let contract_part = &qualified_name[..test_start];
-        let test_part = &qualified_name[test_start + 1..]; // Skip the '_'
-        Some((contract_part.to_string(), test_part.to_string()))
-    } else if let Some(test_start) = qualified_name.find("_invariant_") {
-        let contract_part = &qualified_name[..test_start];
-        let test_part = &qualified_name[test_start + 1..]; // Skip the '_'
-        Some((contract_part.to_string(), test_part.to_string()))
-    } else {
-        // Fallback to the original behavior if no test pattern is found
-        if let Some(pos) = qualified_name.rfind('_') {
-            let (contract_part, test_part) = qualified_name.split_at(pos);
-            let test_name = &test_part[1..]; // Remove the '_' prefix
-            Some((contract_part.to_string(), test_name.to_string()))
-        } else {
-            None
-        }
     }
 }
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let failures: Vec<_> =
-            outcome.into_tests_cloned().filter(|test| test.result.status.is_failure()).collect();
-
-        if failures.is_empty() {
-            return;
-        }
-
-        // Use qualified format if there are multiple contracts in the test run
-        // This is a conservative approach that ensures no ambiguity
-        let use_qualified = outcome.results.len() > 1;
-
         let mut filter = String::new();
-        let mut first = true;
-
-        for test in failures {
-            if test.signature.is_any_test() {
-                if let Some(test_match) = test.signature.split("(").next() {
-                    if !first {
-                        filter.push('|');
-                    }
-                    first = false;
-
-                    if use_qualified {
-                        // Use qualified format when failures come from multiple contracts
-                        let contract_name =
-                            test.artifact_id.split(':').next_back().unwrap_or(&test.artifact_id);
-                        filter.push_str(&format!("{contract_name}_{test_match}"));
-                    } else {
-                        // Use legacy format when all failures come from the same contract
-                        filter.push_str(test_match);
-                    }
+        let mut failures = outcome.failures().peekable();
+        while let Some((test_name, _)) = failures.next() {
+            if test_name.is_any_test()
+                && let Some(test_match) = test_name.split("(").next()
+            {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
                 }
             }
         }

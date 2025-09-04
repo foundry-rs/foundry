@@ -1,10 +1,9 @@
 use foundry_config::fs_permissions::PathPermission;
 
 forgetest!(test_eip712, |prj, cmd| {
-    let path = prj
-        .add_source(
-            "Structs",
-            r#"
+    let path = prj.add_source(
+        "Structs",
+        r#"
 library Structs {
     struct Foo {
         Bar bar;
@@ -52,28 +51,147 @@ library Structs2 {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
-Foo(Bar bar)Art(uint256 id)Bar(Art art)
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+No files changed, compilation skipped
+Structs.sol > Structs > Foo:
+ - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
+ - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
 
-Bar(Art art)Art(uint256 id)
+Structs.sol > Structs > Bar:
+ - type: Bar(Art art)Art(uint256 id)
+ - hash: 0xadeb03f4f98fb57c05c9a79d8dd2348220e9bd9fd332ec2fbd92479e5695a596
 
-Art(uint256 id)
+Structs.sol > Structs > Art:
+ - type: Art(uint256 id)
+ - hash: 0xbfeb9da97f9dbc2403e9d5ec3853f36414cae141d772601f24e0097d159d302b
 
-Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+Structs.sol > Structs > Complex:
+ - type: Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+ - hash: 0xfb0a234a82efcade7c031ebb4c58afd7f5f242ca67ed06f4050c60044dcee425
 
-Rec(Rec[] rec)
+Structs.sol > Structs > Rec:
+ - type: Rec(Rec[] rec)
+ - hash: 0x5f060eb740f5aee93a910587a100458c724479d189f6dd67ac39048bf312102e
 
-Foo(uint256 id)
+Structs.sol > Structs2 > Foo:
+ - type: Foo(uint256 id)
+ - hash: 0xb93d8bb2877cd5cc51979d9fe85339ab570714a6fd974225e2a763851092497e
 
-Rec(Bar[] bar)Bar(Rec rec)
+Structs.sol > Structs2 > Rec:
+ - type: Rec(Bar[] bar)Bar(Rec rec)
+ - hash: 0xe9dded72c72648f27772620cb4e10b773ce31a3ea26ef980c0b39d1834242cda
 
-Bar(Rec rec)Rec(Bar[] bar)
+Structs.sol > Structs2 > Bar:
+ - type: Bar(Rec rec)Rec(Bar[] bar)
+ - hash: 0x164eba932ecde04ec75feba228664d08f29c88d6a67e531757e023e6063c3b2c
 
-FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+Structs.sol > Structs2 > FooBar:
+ - type: FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+ - hash: 0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8
+
+
+"#]],
+    );
+
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref(), "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "path": "Structs.sol > Structs > Foo",
+    "type": "Foo(Bar bar)Art(uint256 id)Bar(Art art)",
+    "hash": "0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d"
+  },
+  {
+    "path": "Structs.sol > Structs > Bar",
+    "type": "Bar(Art art)Art(uint256 id)",
+    "hash": "0xadeb03f4f98fb57c05c9a79d8dd2348220e9bd9fd332ec2fbd92479e5695a596"
+  },
+  {
+    "path": "Structs.sol > Structs > Art",
+    "type": "Art(uint256 id)",
+    "hash": "0xbfeb9da97f9dbc2403e9d5ec3853f36414cae141d772601f24e0097d159d302b"
+  },
+  {
+    "path": "Structs.sol > Structs > Complex",
+    "type": "Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)",
+    "hash": "0xfb0a234a82efcade7c031ebb4c58afd7f5f242ca67ed06f4050c60044dcee425"
+  },
+  {
+    "path": "Structs.sol > Structs > Rec",
+    "type": "Rec(Rec[] rec)",
+    "hash": "0x5f060eb740f5aee93a910587a100458c724479d189f6dd67ac39048bf312102e"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Foo",
+    "type": "Foo(uint256 id)",
+    "hash": "0xb93d8bb2877cd5cc51979d9fe85339ab570714a6fd974225e2a763851092497e"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Rec",
+    "type": "Rec(Bar[] bar)Bar(Rec rec)",
+    "hash": "0xe9dded72c72648f27772620cb4e10b773ce31a3ea26ef980c0b39d1834242cda"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Bar",
+    "type": "Bar(Rec rec)Rec(Bar[] bar)",
+    "hash": "0x164eba932ecde04ec75feba228664d08f29c88d6a67e531757e023e6063c3b2c"
+  },
+  {
+    "path": "Structs.sol > Structs2 > FooBar",
+    "type": "FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)",
+    "hash": "0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8"
+  }
+]
+
+"#]],
+    );
+});
+
+forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
+    let path = prj.add_source(
+        "FreeStandingStructs.sol",
+        r#"
+// free-standing struct (outside a contract and lib)
+struct FreeStanding {
+    uint256 id;
+    string name;
+}
+
+contract InsideContract {
+    struct ContractStruct {
+        uint256 value;
+    }
+}
+
+library InsideLibrary {
+    struct LibraryStruct {
+        bytes32 hash;
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+No files changed, compilation skipped
+FreeStanding:
+ - type: FreeStanding(uint256 id,string name)
+ - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
+
+FreeStandingStructs.sol > InsideContract > ContractStruct:
+ - type: ContractStruct(uint256 value)
+ - hash: 0xfb63263e7cf823ff50385a991cb1bd5c1ff46b58011119984d52f8736331e3fe
+
+FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
+ - type: LibraryStruct(bytes32 hash)
+ - hash: 0x81d6d25f4d37549244d76a68f23ecdcbf3ae81e5a361ed6c492b6a2e126a2843
 
 
 "#]],
@@ -97,8 +215,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -127,8 +244,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["bind-json"]).assert_success();
 
@@ -179,8 +295,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -225,8 +340,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // cheatcode by type definition can run without bindings
     cmd.forge_fuse()
@@ -366,8 +480,7 @@ contract Eip712HashStructDomainTest is DSTest {
     }
 }
 "#,
-        )
-        .unwrap();
+        );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
 });
@@ -414,8 +527,7 @@ library PermitHash {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Eip712Transaction.sol",
@@ -470,8 +582,7 @@ library TransactionHash {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
@@ -522,7 +633,7 @@ contract Eip712HashStructTest is DSTest {
         assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
     }
 
-    function testHashPermitSingle_withTypeDefinion() public {
+    function testHashPermitSingle_withTypeDefinition() public {
         PermitDetails memory details = PermitDetails({
             token: 0x1111111111111111111111111111111111111111,
             amount: 1000 ether,
@@ -598,15 +709,14 @@ contract Eip712HashStructTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args(["test", "--mc", "Eip712HashStructTest", "-vv"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-[PASS] testHashPermitSingle_withTypeDefinion() ([GAS])
+[PASS] testHashPermitSingle_withTypeDefinition() ([GAS])
 Logs:
   PermitSingle struct hash from cheatcode:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
@@ -644,8 +754,97 @@ contract Eip712HashTypedDataTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
+});
+
+// repro: <https://github.com/foundry-rs/foundry/issues/11366>
+forgetest!(test_eip712_hash_typed_data_repro, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashTypedData.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+contract CounterStrike {
+    bytes32 public constant ATTACK_TYPEHASH = keccak256("Attack(address player,uint128 x,uint128 y,uint40 shootTime)");
+    bytes32 public constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
+    string public constant PROTOCOL_NAME = "CounterStrike";
+}
+
+contract CounterStrike_Test is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    struct EIP712Domain {
+        string name;
+        uint256 chainId;
+        address verifyingContract;
+    }
+
+    struct Attack {
+        address player;
+        uint128 x;
+        uint128 y;
+        uint40 shootTime;
+    }
+
+    string constant SCHEMA_EIP712_DOMAIN = "EIP712Domain(string name,uint256 chainId,address verifyingContract)";
+    string constant SCHEMA_ATTACK = "Attack(address player,uint128 x,uint128 y,uint40 shootTime)";
+
+    CounterStrike public counterStrike;
+    address public player;
+    uint256 public playerPrivateKey;
+    uint128 public x = 10_000e18;
+    uint128 public y = 20_000e18;
+    uint40 public shootTime = 12_345_678;
+
+    function setUp() public {
+        counterStrike = new CounterStrike();
+    }
+
+    function test_Attack() public view {
+        string memory domainJson = vm.serializeJsonType(
+            SCHEMA_EIP712_DOMAIN,
+            abi.encode(
+                EIP712Domain({
+                    name: counterStrike.PROTOCOL_NAME(),
+                    chainId: block.chainid,
+                    verifyingContract: address(counterStrike)
+                })
+            )
+        );
+        string memory messageJson = vm.serializeJsonType(
+            SCHEMA_ATTACK, abi.encode(Attack({ player: player, x: x, y: y, shootTime: shootTime }))
+        );
+
+        string memory typesJson = string.concat(
+            '{"EIP712Domain":[{"name":"name","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Attack":[{"name":"player","type":"address"},{"name":"x","type":"uint128"},{"name":"y","type":"uint128"},{"name":"shootTime","type":"uint40"}]}'
+        );
+        string memory primaryType = '"Attack"';
+        string memory typedDataJson = string.concat(
+            '{"types":',
+            typesJson,
+            ',"primaryType":',
+            primaryType,
+            ',"domain":',
+            domainJson,
+            ',"message":',
+            messageJson,
+            "}"
+        );
+
+        bytes32 digest = vm.eip712HashTypedData(typedDataJson);
+        console.logBytes32(digest);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
 });

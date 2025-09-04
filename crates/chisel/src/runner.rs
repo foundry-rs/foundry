@@ -3,13 +3,13 @@
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
 
-use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
     traces::{TraceKind, Traces},
 };
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{InstructionResult, return_ok};
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
 static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
@@ -48,7 +48,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
 
 /// ChiselRunner implementation
@@ -79,7 +79,7 @@ impl ChiselRunner {
     ///
     /// ### Returns
     ///
-    /// Optionally, a tuple containing the deployed address of the bytecode as well as a
+    /// A tuple containing the deployed address of the bytecode as well as a
     /// [ChiselResult] containing information about the result of the call to the deployed REPL
     /// contract.
     pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
@@ -135,7 +135,7 @@ impl ChiselRunner {
 
         let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, return_ok!()) {
+        if matches!(res.exit_reason, Some(return_ok!())) {
             // store the current gas limit and reset it later
             let init_gas_limit = self.executor.env().tx.gas_limit;
 
@@ -151,9 +151,9 @@ impl ChiselRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
-                    InstructionResult::Revert |
-                    InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFunds => {
+                    Some(InstructionResult::Revert)
+                    | Some(InstructionResult::OutOfGas)
+                    | Some(InstructionResult::OutOfFunds) => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
@@ -161,9 +161,9 @@ impl ChiselRunner {
                         // if last two successful estimations only vary by 10%, we consider this to
                         // sufficiently accurate
                         const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                            last_highest_gas_limit <
-                            1
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
+                            / last_highest_gas_limit
+                            < 1
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
@@ -173,7 +173,7 @@ impl ChiselRunner {
                     }
                 }
             }
-            // reset gas limit in the
+            // reset gas limit in the executor environment to its original value
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 
@@ -184,7 +184,9 @@ impl ChiselRunner {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
-            res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+            if !commit {
+                res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+            }
         }
 
         if commit {
@@ -199,13 +201,7 @@ impl ChiselRunner {
             success: !reverted,
             gas_used,
             logs,
-            traces: traces
-                .map(|traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
-
-                    vec![(TraceKind::Execution, traces)]
-                })
-                .unwrap_or_default(),
+            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             labeled_addresses: labels,
             address: None,
             state: chisel_state,

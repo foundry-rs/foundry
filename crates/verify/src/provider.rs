@@ -8,11 +8,11 @@ use async_trait::async_trait;
 use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
-    multi::MultiCompilerSettings,
-    solc::Solc,
     Graph, Project,
+    artifacts::{Metadata, Source, output_selection::OutputSelection},
+    compilers::solc::SolcCompiler,
+    multi::{MultiCompilerParser, MultiCompilerSettings},
+    solc::Solc,
 };
 use foundry_config::Config;
 use semver::Version;
@@ -88,8 +88,7 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph =
-            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
@@ -174,9 +173,9 @@ impl VerificationProviderType {
         // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
         if !has_key && self.is_sourcify() {
             sh_println!(
-            "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
+                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
-        )?;
+            )?;
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
@@ -200,7 +199,9 @@ impl VerificationProviderType {
         }
 
         // 5. If no valid provider is specified, bail.
-        eyre::bail!("No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier.")
+        eyre::bail!(
+            "No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier."
+        )
     }
 
     pub fn is_sourcify(&self) -> bool {
