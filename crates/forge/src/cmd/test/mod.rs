@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
-    backtrace::extract_backtrace,
+    backtrace::{extract_backtrace, source_map::SourceData},
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
@@ -24,7 +24,7 @@ use foundry_cli::{
 };
 use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
     compilers::{
         Language,
@@ -44,9 +44,9 @@ use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
@@ -510,9 +510,12 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
-        // Save source information for backtraces (only if verbosity >= 3)
-        let source_data =
-            if verbosity >= 3 { runner.source_data.clone() } else { Default::default() };
+        // Collect source information for backtraces (only if verbosity >= 3)
+        let source_data = if verbosity >= 3 {
+            collect_source_data(output, &config.root)
+        } else {
+            Default::default()
+        };
 
         let libraries = runner.libraries.clone();
 
@@ -681,17 +684,11 @@ impl TestArgs {
                             foundry_common::contracts::ContractsByAddress::new();
                         for node in arena.arena.nodes() {
                             if let Some(decoded) = &node.trace.decoded
-                                && let Some(label) = &decoded.label
+                                && let Some(contract_name) = &decoded.label
                             {
-                                let contract_name = if label.contains("::") {
-                                    label.split("::").next().unwrap_or(label)
-                                } else {
-                                    label
-                                };
-
                                 // Find the ABI for this contract
                                 for (artifact_id, contract_data) in known_contracts.iter() {
-                                    if artifact_id.name == contract_name {
+                                    if artifact_id.name == *contract_name {
                                         contracts_by_address.insert(
                                             node.trace.address,
                                             (contract_name.to_string(), contract_data.abi.clone()),
@@ -703,18 +700,18 @@ impl TestArgs {
                         }
 
                         // Convert source data to address-based for backtrace extraction
-                        let mut address_to_runtime_source_map = alloy_primitives::map::HashMap::new();
+                        let mut address_to_runtime_source_map =
+                            alloy_primitives::map::HashMap::new();
                         let mut address_to_sources = alloy_primitives::map::HashMap::new();
                         let mut address_to_bytecode = alloy_primitives::map::HashMap::new();
 
                         for (addr, (contract_name, _)) in &contracts_by_address {
                             // Find source data for this contract
                             for (artifact_id, data) in &source_data {
-                                if artifact_id.name == *contract_name
-                                    || artifact_id.name.ends_with(&format!(":{contract_name}"))
-                                {
+                                if artifact_id.name == *contract_name {
                                     // Extract data from SourceData
-                                    address_to_runtime_source_map.insert(*addr, data.source_map.clone());
+                                    address_to_runtime_source_map
+                                        .insert(*addr, data.source_map.clone());
                                     address_to_sources.insert(*addr, data.sources.clone());
                                     address_to_bytecode.insert(*addr, data.bytecode.clone());
                                     break;
@@ -1058,6 +1055,119 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
     }
     junit_report.set_time(total_duration);
     junit_report
+}
+
+/// Collects source data such as source maps, deployed bytecode and source content for backtrace
+/// support from the compilation output.
+fn collect_source_data(
+    output: &ProjectCompileOutput,
+    root: &Path,
+) -> HashMap<ArtifactId, SourceData> {
+    let mut source_data = HashMap::new();
+
+    // First, collect ALL source files from the compilation output with their proper indices
+    // This is critical for source mapping to work correctly
+    let mut all_sources_by_version: HashMap<semver::Version, Vec<(PathBuf, String)>> =
+        HashMap::new();
+
+    // First try to get sources from compilation output (fresh compilation)
+    let mut has_sources = false;
+    for (path, _, version) in output.output().sources.sources_with_version() {
+        has_sources = true;
+        // Try to make the path relative
+        let path_buf = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+
+        let source_content = foundry_common::fs::read_to_string(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        })
+        .unwrap_or_default();
+        let sources = all_sources_by_version.entry(version.clone()).or_default();
+
+        // In fresh compilation, sources come in order with contiguous IDs
+        sources.push((path_buf, source_content));
+    }
+
+    // If no sources from compilation output (cached), get them from build contexts
+    if !has_sources {
+        for (_build_id, build_context) in output.builds() {
+            // Try to get version from the build context
+            // For now, use a default version - we'll need to find the correct way to get
+            // this
+            let version = semver::Version::new(0, 8, 30); // Default to 0.8.30 for now
+
+            let sources = all_sources_by_version.entry(version.clone()).or_default();
+
+            // The source_id_to_path is already ordered by source ID (u32)
+            // We need to maintain this order for source map indices to work correctly
+            let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
+            for (source_id, source_path) in &build_context.source_id_to_path {
+                // Read source content from file
+                let full_path = if source_path.is_absolute() {
+                    source_path.clone()
+                } else {
+                    root.join(source_path)
+                };
+
+                let source_content =
+                    foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+
+                // Convert path to relative PathBuf
+                let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
+
+                ordered_sources.push((*source_id, path_buf, source_content));
+            }
+
+            // Sort by source ID to ensure proper ordering
+            ordered_sources.sort_by_key(|(id, _, _)| *id);
+
+            // Add sources in the correct order
+            for (_id, path_buf, content) in ordered_sources {
+                if !sources.iter().any(|(p, _)| p == &path_buf) {
+                    sources.push((path_buf, content));
+                }
+            }
+        }
+    }
+
+    // Now collect source data for each artifact
+    for (id, artifact) in output.artifact_ids() {
+        let id = id.with_stripped_file_prefixes(root);
+
+        // Extract all the data we need for backtraces
+        let source_map = artifact.get_source_map_deployed().and_then(|r| r.ok());
+        let sources = all_sources_by_version.get(&id.version).cloned();
+        let bytecode = artifact
+            .get_deployed_bytecode_bytes()
+            .map(|b| b.into_owned())
+            .filter(|b| !b.is_empty());
+
+        // Only create SourceData if we have all required components
+        match (source_map, sources, bytecode) {
+            (Some(source_map), Some(sources), Some(bytecode)) => {
+                source_data.insert(id.clone(), SourceData { source_map, sources, bytecode });
+            }
+            (source_map, sources, bytecode) => {
+                // Log what's missing for debugging
+                if source_map.is_none() {
+                    tracing::debug!("No source map for artifact {}", id.name);
+                }
+                if sources.is_none() {
+                    tracing::debug!(
+                        "No sources found for version {} (artifact {})",
+                        id.version,
+                        id.name
+                    );
+                }
+                if bytecode.is_none() {
+                    tracing::debug!("No bytecode for artifact {}", id.name);
+                }
+            }
+        }
+    }
+
+    source_data
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, backtrace::source_map::SourceData, progress::TestsProgress, 
-    result::SuiteResult, runner::LIBRARY_DEPLOYER,
+    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult, 
+    runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -32,9 +32,9 @@ use rayon::prelude::*;
 use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Debug,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, mpsc},
     time::Instant,
 };
@@ -69,8 +69,6 @@ pub struct MultiContractRunner {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig,
-    /// Source data for contracts (used for backtraces)
-    pub source_data: HashMap<ArtifactId, SourceData>,
 }
 
 impl std::ops::Deref for MultiContractRunner {
@@ -570,120 +568,6 @@ impl MultiContractRunnerBuilder {
             .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
             .build();
 
-        // Collect source data for backtrace support
-        // Only populate these fields if verbosity >= 3 for performance
-        let source_data = if self.verbosity >= 3 {
-            let mut source_data = HashMap::new();
-
-            // First, collect ALL source files from the compilation output with their proper indices
-            // This is critical for source mapping to work correctly
-            let mut all_sources_by_version: HashMap<semver::Version, Vec<(PathBuf, String)>> =
-                HashMap::new();
-
-            // First try to get sources from compilation output (fresh compilation)
-            let mut has_sources = false;
-            for (path, _, version) in output.output().sources.sources_with_version() {
-                has_sources = true;
-                // Try to make the path relative
-                let path_buf = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-
-                let source_content = foundry_common::fs::read_to_string(if path.is_absolute() {
-                    path.to_path_buf()
-                } else {
-                    root.join(path)
-                })
-                .unwrap_or_default();
-                let sources = all_sources_by_version.entry(version.clone()).or_default();
-
-                // In fresh compilation, sources come in order with contiguous IDs
-                sources.push((path_buf, source_content));
-            }
-
-            // If no sources from compilation output (cached), get them from build contexts
-            if !has_sources {
-                for (_build_id, build_context) in output.builds() {
-                    // Try to get version from the build context
-                    // For now, use a default version - we'll need to find the correct way to get
-                    // this
-                    let version = semver::Version::new(0, 8, 30); // Default to 0.8.30 for now
-
-                    let sources = all_sources_by_version.entry(version.clone()).or_default();
-
-                    // The source_id_to_path is already ordered by source ID (u32)
-                    // We need to maintain this order for source map indices to work correctly
-                    let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
-                    for (source_id, source_path) in &build_context.source_id_to_path {
-                        // Read source content from file
-                        let full_path = if source_path.is_absolute() {
-                            source_path.clone()
-                        } else {
-                            root.join(source_path)
-                        };
-
-                        let source_content =
-                            foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
-
-                        // Convert path to relative PathBuf
-                        let path_buf =
-                            source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
-
-                        ordered_sources.push((*source_id, path_buf, source_content));
-                    }
-
-                    // Sort by source ID to ensure proper ordering
-                    ordered_sources.sort_by_key(|(id, _, _)| *id);
-
-                    // Add sources in the correct order
-                    for (_id, path_buf, content) in ordered_sources {
-                        if !sources.iter().any(|(p, _)| p == &path_buf) {
-                            sources.push((path_buf, content));
-                        }
-                    }
-                }
-            }
-
-            // Now collect source data for each artifact
-            for (id, artifact) in output.artifact_ids() {
-                let id = id.with_stripped_file_prefixes(root);
-
-                // Extract all the data we need for backtraces
-                let source_map = artifact.get_source_map_deployed().and_then(|r| r.ok());
-                let sources = all_sources_by_version.get(&id.version).cloned();
-                let bytecode = artifact
-                    .get_deployed_bytecode_bytes()
-                    .map(|b| b.into_owned())
-                    .filter(|b| !b.is_empty());
-
-                // Only create SourceData if we have all required components
-                match (source_map, sources, bytecode) {
-                    (Some(source_map), Some(sources), Some(bytecode)) => {
-                        source_data.insert(id.clone(), SourceData {
-                            source_map,
-                            sources,
-                            bytecode,
-                        });
-                    }
-                    (source_map, sources, bytecode) => {
-                        // Log what's missing for debugging
-                        if source_map.is_none() {
-                            tracing::debug!("No source map for artifact {}", id.name);
-                        }
-                        if sources.is_none() {
-                            tracing::debug!("No sources found for version {} (artifact {})", id.version, id.name);
-                        }
-                        if bytecode.is_none() {
-                            tracing::debug!("No bytecode for artifact {}", id.name);
-                        }
-                    }
-                }
-            }
-
-            source_data
-        } else {
-            // Don't populate backtrace fields when verbosity < 3
-            HashMap::new()
-        };
-
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             revert_decoder,
@@ -708,7 +592,6 @@ impl MultiContractRunnerBuilder {
                 fail_fast: FailFast::new(self.fail_fast),
                 verbosity: self.verbosity,
             },
-            source_data,
         })
     }
 }
