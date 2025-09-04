@@ -41,7 +41,7 @@ forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
     // All files are built with optimized tests.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 23 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
@@ -60,7 +60,7 @@ No files changed, compilation skipped
     // All files are rebuilt with preprocessed cache false.
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 23 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
