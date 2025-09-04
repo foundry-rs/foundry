@@ -76,7 +76,11 @@ async fn test_state_diff_storage_layout() {
         let output = get_compiled(&mut project);
         ForgeTestData { project, output, config: config.into(), profile }
     };
-    let filter = Filter::new(".*", "(StateDiff|GetStorageSlotsTest)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+    let filter = Filter::new(
+        ".*",
+        "(StateDiff|GetStorageSlotsTest)",
+        &format!(".*cheats{RE_PATH_SEPARATOR}*"),
+    );
 
     let runner = test_data.runner_with(|config| {
         config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
