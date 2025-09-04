@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use foundry_evm::traces::SparsedTraceArena;
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, path::PathBuf};
 use yansi::Paint;
 
 mod solidity;
@@ -59,7 +59,7 @@ pub struct BacktraceFrame {
     /// The function name, if known.
     pub function_name: Option<String>,
     /// The source file path.
-    pub file: Option<String>,
+    pub file: Option<PathBuf>,
     /// The line number in the source file.
     pub line: Option<usize>,
     /// The column number in the source file.
@@ -92,7 +92,7 @@ impl BacktraceFrame {
     }
 
     /// Sets the source location.
-    pub fn with_source_location(mut self, file: String, line: usize, column: usize) -> Self {
+    pub fn with_source_location(mut self, file: PathBuf, line: usize, column: usize) -> Self {
         self.file = Some(file);
         self.line = Some(line);
         self.column = Some(column);
@@ -122,7 +122,7 @@ impl BacktraceFrame {
             result.push_str(" (");
 
             if let Some(file) = &self.file {
-                result.push_str(file);
+                result.push_str(&file.display().to_string());
             } else {
                 result.push_str("unknown");
             }
@@ -156,7 +156,7 @@ impl fmt::Display for BacktraceFrame {
 pub fn extract_backtrace(
     arena: &SparsedTraceArena,
     source_maps: &HashMap<Address, SourceMap>, // Runtime source maps
-    sources: &HashMap<Address, Vec<(String, String)>>, /* Contract sources (path, content) by
+    sources: &HashMap<Address, Vec<(PathBuf, String)>>, /* Contract sources (path, content) by
                                                 * address */
     deployed_bytecodes: &HashMap<Address, Bytes>, // Deployed bytecode for each contract
 ) -> Option<Backtrace> {

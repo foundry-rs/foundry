@@ -34,7 +34,7 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     time::Instant,
 };
@@ -72,7 +72,7 @@ pub struct MultiContractRunner {
     /// Runtime source maps for contracts (used for backtraces)
     pub source_maps: HashMap<ArtifactId, SourceMap>,
     /// Source files content mapped by artifact
-    pub source_files: HashMap<ArtifactId, Vec<(String, String)>>,
+    pub source_files: HashMap<ArtifactId, Vec<(PathBuf, String)>>,
     /// Deployed bytecode for contracts (for accurate PC mapping)
     pub deployed_bytecodes: HashMap<ArtifactId, Bytes>,
 }
@@ -582,20 +582,15 @@ impl MultiContractRunnerBuilder {
 
             // First, collect ALL source files from the compilation output with their proper indices
             // This is critical for source mapping to work correctly
-            let mut all_sources_by_version: HashMap<semver::Version, Vec<(String, String)>> =
+            let mut all_sources_by_version: HashMap<semver::Version, Vec<(PathBuf, String)>> =
                 HashMap::new();
 
             // First try to get sources from compilation output (fresh compilation)
             let mut has_sources = false;
-            for (path, _source_file, version) in output.output().sources.sources_with_version() {
+            for (path, _, version) in output.output().sources.sources_with_version() {
                 has_sources = true;
-                // The path might be absolute, so we need to make it relative to the root
-                let path_str = if path.is_absolute() {
-                    // Try to strip the root prefix to make it relative
-                    path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string()
-                } else {
-                    path.to_string_lossy().to_string()
-                };
+                // Try to make the path relative
+                let path_buf = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
                 let source_content = foundry_common::fs::read_to_string(if path.is_absolute() {
                     path.to_path_buf()
@@ -606,7 +601,7 @@ impl MultiContractRunnerBuilder {
                 let sources = all_sources_by_version.entry(version.clone()).or_default();
 
                 // In fresh compilation, sources come in order with contiguous IDs
-                sources.push((path_str, source_content));
+                sources.push((path_buf, source_content));
             }
 
             // If no sources from compilation output (cached), get them from build contexts
@@ -621,7 +616,7 @@ impl MultiContractRunnerBuilder {
 
                     // The source_id_to_path is already ordered by source ID (u32)
                     // We need to maintain this order for source map indices to work correctly
-                    let mut ordered_sources: Vec<(u32, String, String)> = Vec::new();
+                    let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
                     for (source_id, source_path) in &build_context.source_id_to_path {
                         // Read source content from file
                         let full_path = if source_path.is_absolute() {
@@ -633,23 +628,20 @@ impl MultiContractRunnerBuilder {
                         let source_content =
                             foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
 
-                        // Convert path to relative string
-                        let path_str = source_path
-                            .strip_prefix(root)
-                            .unwrap_or(source_path)
-                            .to_string_lossy()
-                            .to_string();
+                        // Convert path to relative PathBuf
+                        let path_buf =
+                            source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
 
-                        ordered_sources.push((*source_id, path_str, source_content));
+                        ordered_sources.push((*source_id, path_buf, source_content));
                     }
 
                     // Sort by source ID to ensure proper ordering
                     ordered_sources.sort_by_key(|(id, _, _)| *id);
 
                     // Add sources in the correct order
-                    for (_id, path_str, content) in ordered_sources {
-                        if !sources.iter().any(|(p, _)| p == &path_str) {
-                            sources.push((path_str, content));
+                    for (_id, path_buf, content) in ordered_sources {
+                        if !sources.iter().any(|(p, _)| p == &path_buf) {
+                            sources.push((path_buf, content));
                         }
                     }
                 }
@@ -660,7 +652,8 @@ impl MultiContractRunnerBuilder {
                 let id = id.with_stripped_file_prefixes(root);
 
                 // Extract runtime source map if available (for backtraces)
-                if let Some(deployed_map) = artifact.get_source_map_deployed().and_then(|r| r.ok()) {
+                if let Some(deployed_map) = artifact.get_source_map_deployed().and_then(|r| r.ok())
+                {
                     source_maps.insert(id.clone(), deployed_map);
                 }
 

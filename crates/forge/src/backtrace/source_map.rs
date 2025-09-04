@@ -3,6 +3,7 @@
 use alloy_primitives::Bytes;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use foundry_evm_core::ic::IcPcMap;
+use std::path::PathBuf;
 
 /// Maps program counters to source locations.
 pub struct PcSourceMapper {
@@ -11,14 +12,14 @@ pub struct PcSourceMapper {
     /// The source map from Solidity compiler.
     source_map: SourceMap,
     /// Source files indexed by source ID.
-    sources: Vec<(String, String)>, // (file_path, content)
+    sources: Vec<(PathBuf, String)>, // (file_path, content)
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
 }
 
 impl PcSourceMapper {
     /// Creates a new PC to source mapper.
-    pub fn new(bytecode: &Bytes, source_map: SourceMap, sources: Vec<(String, String)>) -> Self {
+    pub fn new(bytecode: &Bytes, source_map: SourceMap, sources: Vec<(PathBuf, String)>) -> Self {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(bytecode.as_ref());
 
@@ -82,7 +83,7 @@ impl PcSourceMapper {
         let (line, column) = self.offset_to_line_column(source_idx, offset)?;
 
         tracing::info!(
-            file = file_path,
+            file = ?file_path,
             line = line,
             column = column,
             offset = offset,
@@ -134,7 +135,7 @@ impl PcSourceMapper {
 /// Represents a location in source code.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
-    pub file: String,
+    pub file: PathBuf,
     pub line: usize,
     pub column: usize,
     pub length: usize,
