@@ -1,9 +1,9 @@
 use eyre::{Context, Result};
 use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
-    Artifact, Compiler, ProjectCompileOutput,
+    Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
+        Bytecode, ContractBytecodeSome, Libraries, Source,
         sourcemap::{SourceElement, SourceMap},
     },
     multi::MultiCompilerLanguage,
@@ -11,7 +11,6 @@ use foundry_compilers::{
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar::parse::{Parser, interface::Session};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -31,7 +30,13 @@ pub struct SourceData {
 }
 
 impl SourceData {
-    pub fn new(source: Arc<String>, language: MultiCompilerLanguage, path: PathBuf) -> Self {
+    pub fn new(
+        output: &ProjectCompileOutput,
+        source: Arc<String>,
+        language: MultiCompilerLanguage,
+        path: PathBuf,
+        root: &Path,
+    ) -> Self {
         let mut contract_definitions = Vec::new();
 
         match language {
@@ -42,21 +47,21 @@ impl SourceData {
                 }
             }
             MultiCompilerLanguage::Solc(_) => {
-                let sess = Session::builder().with_silent_emitter(None).build();
-                let _ = sess.enter(|| -> solar::parse::interface::Result<()> {
-                    let arena = solar::parse::ast::Arena::new();
-                    let filename = path.clone().into();
-                    let mut parser =
-                        Parser::from_source_code(&sess, &arena, filename, source.to_string())?;
-                    let ast = parser.parse_file().map_err(|e| e.emit())?;
-                    for item in ast.items {
-                        if let solar::parse::ast::ItemKind::Contract(contract) = &item.kind {
-                            let range = item.span.lo().to_usize()..item.span.hi().to_usize();
-                            contract_definitions.push((contract.name.to_string(), range));
+                let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
+                    let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
+                    for item in source.ast.as_ref()?.items.iter() {
+                        if let solar::ast::ItemKind::Contract(contract) = &item.kind {
+                            contract_definitions.push((
+                                contract.name.to_string(),
+                                compiler.sess().source_map().span_to_source(item.span).unwrap().1,
+                            ));
                         }
                     }
-                    Ok(())
+                    Some(())
                 });
+                if r.is_none() {
+                    warn!("failed to parse contract definitions for {}", path.display());
+                }
             }
         }
 
@@ -135,15 +140,12 @@ impl ContractSources {
         Ok(sources)
     }
 
-    pub fn insert<C: Compiler<CompilerContract = Contract>>(
+    pub fn insert(
         &mut self,
-        output: &ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput,
         root: &Path,
         libraries: Option<&Libraries>,
-    ) -> Result<()>
-    where
-        C::Language: Into<MultiCompilerLanguage>,
-    {
+    ) -> Result<()> {
         let link_data = libraries.map(|libraries| {
             let linker = Linker::new(root, output.artifact_ids().collect());
             (linker, libraries)
@@ -197,9 +199,11 @@ impl ContractSources {
                         })?;
                         let stripped = path.strip_prefix(root).unwrap_or(path).to_path_buf();
                         let source_data = Arc::new(SourceData::new(
+                            output,
                             source.content.clone(),
-                            build.language.into(),
+                            build.language,
                             stripped,
+                            root,
                         ));
                         entry.insert(source_data.clone());
                         source_data

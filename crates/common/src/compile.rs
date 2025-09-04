@@ -14,6 +14,7 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
+    multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -519,11 +520,8 @@ where
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(
-    metadata: &Metadata,
-    target_path: impl AsRef<Path>,
-) -> Result<Project<SolcCompiler>> {
-    let target_path = dunce::canonicalize(target_path.as_ref())?;
+pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
+    let target_path = dunce::canonicalize(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
@@ -553,14 +551,18 @@ pub fn etherscan_project(
         .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
+    // TODO: detect vyper
     let v = metadata.compiler_version()?;
     let solc = Solc::find_or_install(&v)?;
 
-    let compiler = SolcCompiler::Specific(solc);
+    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
-    Ok(ProjectBuilder::<SolcCompiler>::default()
-        .settings(SolcSettings {
-            settings: SolcConfig::builder().settings(settings).build(),
+    Ok(ProjectBuilder::<MultiCompiler>::default()
+        .settings(MultiCompilerSettings {
+            solc: SolcSettings {
+                settings: SolcConfig::builder().settings(settings).build(),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .paths(paths)
