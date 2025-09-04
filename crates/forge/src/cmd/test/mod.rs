@@ -707,17 +707,18 @@ impl TestArgs {
                         }
 
                         // Convert source maps to address-based for backtrace extraction
-                        let mut address_to_source_map = alloy_primitives::map::HashMap::new();
+                        let mut address_to_runtime_source_map = alloy_primitives::map::HashMap::new();
                         let mut address_to_sources = alloy_primitives::map::HashMap::new();
                         let mut address_to_bytecode = alloy_primitives::map::HashMap::new();
 
                         for (addr, (contract_name, _)) in &contracts_by_address {
                             // Find source maps and files for this contract
-                            for (artifact_id, maps) in &source_maps {
+                            for (artifact_id, runtime_map) in &source_maps {
                                 if artifact_id.name == *contract_name
                                     || artifact_id.name.ends_with(&format!(":{contract_name}"))
                                 {
-                                    address_to_source_map.insert(*addr, maps.clone());
+                                    // Runtime source map for backtraces
+                                    address_to_runtime_source_map.insert(*addr, runtime_map.clone());
                                     if let Some(sources) = source_files.get(artifact_id) {
                                         address_to_sources.insert(*addr, sources.clone());
                                     }
@@ -731,7 +732,7 @@ impl TestArgs {
 
                         if let Some(backtrace) = extract_backtrace(
                             arena,
-                            &address_to_source_map,
+                            &address_to_runtime_source_map,
                             &address_to_sources,
                             &address_to_bytecode,
                         ) && !backtrace.is_empty()

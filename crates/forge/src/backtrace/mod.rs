@@ -152,12 +152,13 @@ impl fmt::Display for BacktraceFrame {
     }
 }
 
-/// Extracts a backtrace from a [`SparsedTraceArena`] using [`SourceMap`]'s.
+/// Extracts a backtrace from a [`SparsedTraceArena`] using runtime [`SourceMap`]'s.
 pub fn extract_backtrace(
     arena: &SparsedTraceArena,
-    source_maps: &HashMap<Address, (SourceMap, SourceMap)>, // (creation, runtime)
-    sources: &HashMap<Address, Vec<(String, String)>>,      // Source files per contract
-    deployed_bytecodes: &HashMap<Address, Bytes>,           // Deployed bytecode for each contract
+    source_maps: &HashMap<Address, SourceMap>, // Runtime source maps
+    sources: &HashMap<Address, Vec<(String, String)>>, /* Contract sources (path, content) by
+                                                * address */
+    deployed_bytecodes: &HashMap<Address, Bytes>, // Deployed bytecode for each contract
 ) -> Option<Backtrace> {
     let resolved_arena = &arena.arena;
 
@@ -166,9 +167,9 @@ pub fn extract_backtrace(
     }
 
     // Build PC source mappers for each contract
-    let mut pc_mappers: HashMap<Address, PcSourceMapper> = HashMap::new();
+    let mut pc_mappers = HashMap::new();
 
-    for (addr, (_creation_map, runtime_map)) in source_maps {
+    for (addr, runtime_map) in source_maps {
         if let Some(contract_sources) = sources.get(addr)
             && let Some(bytecode) = deployed_bytecodes.get(addr)
         {

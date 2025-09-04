@@ -69,8 +69,8 @@ pub struct MultiContractRunner {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig,
-    /// Source maps for contracts (creation, deployed)
-    pub source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)>,
+    /// Runtime source maps for contracts (used for backtraces)
+    pub source_maps: HashMap<ArtifactId, SourceMap>,
     /// Source files content mapped by artifact
     pub source_files: HashMap<ArtifactId, Vec<(String, String)>>,
     /// Deployed bytecode for contracts (for accurate PC mapping)
@@ -659,12 +659,9 @@ impl MultiContractRunnerBuilder {
             for (id, artifact) in output.artifact_ids() {
                 let id = id.with_stripped_file_prefixes(root);
 
-                // Extract source maps if available
-                if let (Some(creation_map), Some(deployed_map)) = (
-                    artifact.get_source_map().and_then(|r| r.ok()),
-                    artifact.get_source_map_deployed().and_then(|r| r.ok()),
-                ) {
-                    source_maps.insert(id.clone(), (creation_map, deployed_map));
+                // Extract runtime source map if available (for backtraces)
+                if let Some(deployed_map) = artifact.get_source_map_deployed().and_then(|r| r.ok()) {
+                    source_maps.insert(id.clone(), deployed_map);
                 }
 
                 // Associate the artifact with its complete source file list based on version
