@@ -33,18 +33,19 @@ where
     S: tracing::Subscriber,
 {
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
-        if metadata.target() == NODE_USER_LOG_TARGET || metadata.target() == EVM_CONSOLE_LOG_TARGET
-        {
-            Interest::sometimes()
-        } else {
-            Interest::never()
+        // Use Interest::sometimes() for node targets to enable dynamic filtering
+        match metadata.target() {
+            NODE_USER_LOG_TARGET | EVM_CONSOLE_LOG_TARGET => Interest::sometimes(),
+            _ => Interest::always(),
         }
     }
 
     fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-        self.state.is_enabled() &&
-            (metadata.target() == NODE_USER_LOG_TARGET ||
-                metadata.target() == EVM_CONSOLE_LOG_TARGET)
+        // Only gate node targets, let everything else pass through
+        match metadata.target() {
+            NODE_USER_LOG_TARGET | EVM_CONSOLE_LOG_TARGET => self.state.is_enabled(),
+            _ => true,
+        }
     }
 }
 

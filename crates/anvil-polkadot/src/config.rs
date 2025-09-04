@@ -473,8 +473,7 @@ impl Default for AnvilNodeConfig {
             account_generator: None,
             base_fee: None,
             disable_min_priority_fee: false,
-            // TODO: we shouldn't need to do this. see init_tracing()
-            enable_tracing: false,
+            enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
             print_traces: false,
