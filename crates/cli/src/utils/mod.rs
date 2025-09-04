@@ -90,17 +90,7 @@ pub fn subscriber() {
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
-    const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Low level networking
-        "hyper=off",
-        "hyper_util=off",
-        "h2=off",
-        "rustls=off",
-        // Tokio
-        "mio=off",
-        // Too verbose
-        "jsonpath_lib=off",
-    ];
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
@@ -200,6 +190,14 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
 /// Returns the current time as a [`Duration`] since the Unix epoch.
 pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
+}
+
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
 }
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.

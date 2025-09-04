@@ -34,6 +34,7 @@ heck.workspace = true
 itertools.workspace = true
 mesc.workspace = true
 number_prefix = "0.4"
+rayon.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
