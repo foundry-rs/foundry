@@ -42,6 +42,11 @@ pub struct FilterArgs {
     /// Only show coverage for files that do not match the specified regex pattern.
     #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
     pub coverage_pattern_inverse: Option<regex::Regex>,
+
+    /// Qualified test failures from --rerun (contract, test) pairs.
+    /// Populated internally when --rerun is used.
+    #[arg(skip)]
+    pub qualified_failures: Option<Vec<(String, String)>>,
 }
 
 impl FilterArgs {
@@ -53,6 +58,7 @@ impl FilterArgs {
             && self.contract_pattern_inverse.is_none()
             && self.path_pattern.is_none()
             && self.path_pattern_inverse.is_none()
+            && self.qualified_failures.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -138,6 +144,13 @@ impl TestFilter for FilterArgs {
         }
         ok
     }
+
+    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        if let Some(pairs) = &self.qualified_failures {
+            return pairs.iter().any(|(c, t)| c == contract_name && t == test_name);
+        }
+        self.matches_contract(contract_name) && self.matches_test(test_name)
+    }
 }
 
 impl fmt::Display for FilterArgs {
@@ -219,6 +232,10 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    }
+
+    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        self.args_filter.matches_qualified_test(contract_name, test_name)
     }
 }
 
