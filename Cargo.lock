@@ -9268,9 +9268,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e8ff0e7ac2832b40dafe5b80811be1be41e6cab457c53aec3adcc80d8e03d02"
+checksum = "e82cbbac57dd746f8708f4c0dcede58af11f5149bf6e59f8923e8a33d4428aa3"
 dependencies = [
  "bon",
  "clap",
@@ -9287,9 +9287,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92fd37a392b41211f12efbe0d5475bc7effde301dddc088998be8ada02e39941"
+checksum = "061d804a58a3a5038cd6e537163f950bb288273bfc04bae3c6ee981ddfe11e60"
 dependencies = [
  "bon",
  "chrono",
@@ -9310,7 +9310,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.16",
  "tokio",
- "toml_edit 0.22.27",
+ "toml_edit 0.23.4",
  "uuid 1.18.0",
  "zip",
  "zip-extract",
@@ -10021,6 +10021,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7211ff1b8f0d3adae1663b7da9ffe396eabe1ca25f0b0bee42b0da29a9ddce93"
 dependencies = [
  "indexmap 2.11.0",
+ "serde",
+ "serde_spanned 1.0.0",
  "toml_datetime 0.7.0",
  "toml_parser",
  "toml_writer",

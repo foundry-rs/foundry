@@ -336,8 +336,8 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
-soldeer-commands = "=0.6.1"
-soldeer-core = { version = "=0.6.1", features = ["serde"] }
+soldeer-commands = "=0.7.0"
+soldeer-core = { version = "=0.7.0", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.20"
 tokio = "1"
