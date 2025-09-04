@@ -34,6 +34,8 @@ The process works like this:
 
 Crucially, this entire process is deterministic. Because the formatter completely rebuilds the code from the AST, it discards all original whitespace, line breaks, and other stylistic variations. This means that for a given AST and configuration, the output will always be identical. No matter how inconsistently the input code is formatted, the result is a single, canonical representation, ensuring predictability and consistency across any codebase.
 
+> **Debug Mode**: To visualize the debug output, and understand how the pretty-printer makes its decisions about boxes and breaks, see the [Debug](#debug) section in Testing.
+
 ### Comments
 
 Comment handling is a critical aspect of the formatter, designed to preserve developer intent while restructuring the code.
@@ -200,9 +202,9 @@ The testing process for each test suite is as follows:
 3.  Format `original.sol` and assert that the output matches the content of `*.fmt.sol`.
 4.  To ensure **idempotency**, format the content of `*.fmt.sol` again and assert that the output does not change.
 
-### Debugging the Formatter
+### Debug
 
-The formatter includes a debug mode that provides visual insight into the pretty-printer's decision-making process. This is invaluable for troubleshooting complex formatting issues.
+The formatter includes a debug mode that provides visual insight into the pretty-printer's decision-making process. This is invaluable for troubleshooting complex formatting issues and understanding how the boxes and breaks described in [The Pretty Printer](#the-pretty-printer-pp) section work.
 
 To enable it, run the formatter with the `FMT_DEBUG` environment variable set:
 ```sh
@@ -214,7 +216,6 @@ When enabled, the output will be annotated with special characters representing 
 *   **Boxes**:
     *   `«` and `»`: Mark the start and end of a **consistent** box (`cbox`).
     *   `‹` and `›`: Mark the start and end of an **inconsistent** box (`ibox`).
-    *   `₋₄`, `₄`, `₈`, etc: Numbers next to a box opening indicate its indentation offset.
 
 *   **Breaks**:
     *   `·`: Represents a `Break` token, which could be a space or a newline.
