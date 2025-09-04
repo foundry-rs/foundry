@@ -9,7 +9,7 @@ use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
-    Address, B256, U256, hex,
+    Address, B256, U256, hex, keccak256,
     map::{B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
@@ -966,8 +966,7 @@ impl Cheatcode for getStorageSlotsCall {
                     // Calculate data slots for long bytes/string
                     let length: U256 = value.data >> 1;
                     let num_data_slots = length.to::<usize>().div_ceil(32);
-                    let data_start =
-                        U256::from_be_bytes(alloy_primitives::keccak256(B256::from(slot).0).0);
+                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
 
                     for i in 0..num_data_slots {
                         slots.push(data_start + U256::from(i));
