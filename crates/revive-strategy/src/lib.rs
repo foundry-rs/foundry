@@ -20,15 +20,15 @@ pub use tracing::trace;
 /// Create Revive strategy for [ExecutorStrategy].
 pub trait ReviveExecutorStrategyBuilder {
     /// Create new revive strategy.
-    fn new_revive() -> Self;
+    fn new_revive(resolc_startup: bool) -> Self;
 }
 
 impl ReviveExecutorStrategyBuilder for ExecutorStrategy {
-    fn new_revive() -> Self {
+    fn new_revive(resolc_startup: bool) -> Self {
         Self {
             // TODO: we need to spawn test externalities for each test
             runner: Box::leak(Box::new(ReviveExecutorStrategyRunner::new())),
-            context: Box::new(ReviveExecutorStrategyContext::default()),
+            context: Box::new(ReviveExecutorStrategyContext::new(resolc_startup)),
         }
     }
 }

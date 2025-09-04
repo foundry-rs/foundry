@@ -15,6 +15,15 @@ pub struct ResolcOpts {
     )]
     pub resolc_compile: Option<bool>,
 
+    /// Enable PVM mode at startup (independent of compilation)
+    #[arg(
+        long = "resolc-startup",
+        help = "Enable PVM mode at startup",
+        value_name = "RESOLC_STARTUP",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub resolc_startup: Option<bool>,
+
     /// Specify the resolc version, or a path to a local resolc, to build with.
     ///
     /// Valid values follow the SemVer format `x.y.z-dev.n`, `resolc:x.y.z-dev.n` or
@@ -77,6 +86,10 @@ impl ResolcOpts {
         set_if_some!(
             self.resolc_compile.and_then(|v| if v { Some(true) } else { None }),
             resolc.resolc_compile
+        );
+        set_if_some!(
+            self.resolc_startup.and_then(|v| if v { Some(true) } else { None }),
+            resolc.resolc_startup
         );
         set_if_some!(
             self.use_resolc.as_ref().map(|v| SolcReq::from(v.trim_start_matches("resolc:"))),

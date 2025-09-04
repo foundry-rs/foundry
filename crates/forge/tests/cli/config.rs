@@ -1056,6 +1056,7 @@ path = "out"
 
 [profile.default.resolc]
 resolc_compile = false
+resolc_startup = false
 
 [fmt]
 line_length = 120
@@ -1310,6 +1311,7 @@ exclude = []
   "script_execution_protection": true,
   "resolc": {
     "resolc_compile": false,
+    "resolc_startup": false,
     "resolc": null,
     "optimizer_mode": null,
     "heap_size": null,

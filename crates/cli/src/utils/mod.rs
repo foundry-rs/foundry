@@ -122,7 +122,7 @@ pub fn get_executor_strategy(config: &Config) -> ExecutorStrategy {
     if config.resolc.resolc_compile {
         info!("using revive strategy");
         use revive_strategy::ReviveExecutorStrategyBuilder;
-        ExecutorStrategy::new_revive()
+        ExecutorStrategy::new_revive(config.resolc.resolc_startup)
     } else {
         ExecutorStrategy::new_evm()
     }

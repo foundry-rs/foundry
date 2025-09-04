@@ -59,6 +59,7 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         CheatcodeInspectorStrategy::new_pvm(
             self.revive_test_externalities.clone(),
             ctx.dual_compiled_contracts.clone(),
+            ctx.resolc_startup,
         )
     }
 

@@ -39,6 +39,7 @@ pub trait PvmCheatcodeInspectorStrategyBuilder {
     fn new_pvm(
         test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
         dual_compiled_contracts: DualCompiledContracts,
+        resolc_startup: bool,
     ) -> Self;
 }
 impl PvmCheatcodeInspectorStrategyBuilder for CheatcodeInspectorStrategy {
@@ -46,12 +47,14 @@ impl PvmCheatcodeInspectorStrategyBuilder for CheatcodeInspectorStrategy {
     fn new_pvm(
         test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
         dual_compiled_contracts: DualCompiledContracts,
+        resolc_startup: bool,
     ) -> Self {
         Self {
             runner: &PvmCheatcodeInspectorStrategyRunner,
             context: Box::new(PvmCheatcodeInspectorStrategyContext::new(
                 test_externalities,
                 dual_compiled_contracts,
+                resolc_startup,
             )),
         }
     }
@@ -63,6 +66,8 @@ pub struct PvmCheatcodeInspectorStrategyContext {
     /// Whether we're using PVM mode
     /// Currently unused but kept for future PVM-specific logic
     pub using_pvm: bool,
+    /// Whether to start in PVM mode (from config)
+    pub resolc_startup: bool,
     pub revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
     pub dual_compiled_contracts: DualCompiledContracts,
 }
@@ -71,9 +76,11 @@ impl PvmCheatcodeInspectorStrategyContext {
     pub fn new(
         revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
         dual_compiled_contracts: DualCompiledContracts,
+        resolc_startup: bool,
     ) -> Self {
         Self {
             using_pvm: false, // Start in EVM mode by default
+            resolc_startup,
             revive_test_externalities,
             dual_compiled_contracts,
         }
@@ -177,12 +184,17 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
 
     fn post_initialize_interp(
         &self,
-        _ctx: &mut dyn CheatcodeInspectorStrategyContext,
+        ctx: &mut dyn CheatcodeInspectorStrategyContext,
         _interpreter: &mut Interpreter,
-        _ecx: Ecx<'_, '_, '_>,
+        ecx: Ecx<'_, '_, '_>,
     ) {
-        // PVM mode is enabled, but no special initialization needed for now
-        // Only intercept PVM-specific calls when needed in future implementations
+        let ctx = get_context_ref_mut(ctx);
+
+        if ctx.resolc_startup && !ctx.using_pvm {
+            tracing::info!("startup PVM migration initiated");
+            select_pvm(ctx, ecx);
+            tracing::info!("startup PVM migration completed");
+        }
     }
 
     fn pre_step_end(
