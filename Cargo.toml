@@ -355,7 +355,6 @@ jiff = "0.2"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
-snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

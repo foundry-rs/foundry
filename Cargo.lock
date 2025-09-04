@@ -4128,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "forge-fmt-2"
-version = "1.3.2"
+version = "1.3.4"
 dependencies = [
  "foundry-common",
  "foundry-config",
