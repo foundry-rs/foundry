@@ -133,29 +133,29 @@ pub struct CallArgs {
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
 
-    /// Override the balance of an account.
-    /// Format: address:balance
-    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
+    /// Override the accounts balance.
+    /// Format: "address:balance,address:balance"
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE", value_delimiter = ',')]
     pub balance_overrides: Option<Vec<String>>,
 
-    /// Override the nonce of an account.
-    /// Format: address:nonce
-    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
+    /// Override the accounts nonce.
+    /// Format: "address:nonce,address:nonce"
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE", value_delimiter = ',')]
     pub nonce_overrides: Option<Vec<String>>,
 
-    /// Override the code of an account.
-    /// Format: address:code
-    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
+    /// Override the accounts code.
+    /// Format: "address:code,address:code"
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE", value_delimiter = ',')]
     pub code_overrides: Option<Vec<String>>,
 
-    /// Override the state of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the accounts state and replace the current state entirely with the new one.
+    /// Format: "address:slot:value,address:slot:value"
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
     pub state_overrides: Option<Vec<String>>,
 
-    /// Override the state diff of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the accounts state specific slots and preserve the rest of the state.
+    /// Format: "address:slot:value,address:slot:value"
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
     pub state_diff_overrides: Option<Vec<String>>,
 
     /// Override the block timestamp.

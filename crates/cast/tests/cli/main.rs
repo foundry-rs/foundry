@@ -3929,3 +3929,28 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
     ])
     .assert_success();
 });
+
+// tests that cast call properly applies multiple state diff overrides
+// <https://github.com/foundry-rs/foundry/issues/11551>
+casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "--from",
+        "0xf6F444fD3B0088c1375671c05A7513661beFa4e6",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0xe75235b8",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x5f8d8c59803e50e5f9f48caf388511fdcb9c5f9e87bf80dd2c0eb97895b6a2a9:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000001
+
+"#]]);
+});
