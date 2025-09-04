@@ -11,6 +11,15 @@ pub enum ChainHardfork {
     Optimism(OpHardfork),
 }
 
+impl std::fmt::Display for ChainHardfork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ethereum(hardfork) => write!(f, "{hardfork}"),
+            Self::Optimism(hardfork) => write!(f, "{hardfork}"),
+        }
+    }
+}
+
 impl From<EthereumHardfork> for ChainHardfork {
     fn from(value: EthereumHardfork) -> Self {
         Self::Ethereum(value)
