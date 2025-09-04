@@ -104,19 +104,15 @@ impl BacktraceFrame {
     pub fn format(&self) -> String {
         let mut result = String::new();
 
-        // Start with contract name
-        if let Some(ref contract) = self.contract_name {
-            // Extract just the contract name if it includes a path
-            let contract_only =
-                if let Some(pos) = contract.rfind(':') { &contract[pos + 1..] } else { contract };
-            result.push_str(contract_only);
+        if let Some(contract) = &self.contract_name {
+            result.push_str(contract);
         } else {
             // No contract name, show address
             result.push_str(&self.contract_address.to_string());
         }
 
         // Add function name if available
-        if let Some(ref func) = self.function_name {
+        if let Some(func) = &self.function_name {
             result.push('.');
             result.push_str(func);
         }
@@ -125,7 +121,7 @@ impl BacktraceFrame {
         if self.file.is_some() || self.line.is_some() {
             result.push_str(" (");
 
-            if let Some(ref file) = self.file {
+            if let Some(file) = &self.file {
                 result.push_str(file);
             } else {
                 result.push_str("unknown");
@@ -156,7 +152,7 @@ impl fmt::Display for BacktraceFrame {
     }
 }
 
-/// Extracts a backtrace from a decoded call trace arena with source information.
+/// Extracts a backtrace from a [`SparsedTraceArena`] using [`SourceMap`]'s.
 pub fn extract_backtrace(
     arena: &SparsedTraceArena,
     source_maps: &HashMap<Address, (SourceMap, SourceMap)>, // (creation, runtime)
@@ -218,7 +214,7 @@ pub fn extract_backtrace(
             // Get contract name from label
             if let Some(ref label) = decoded.label {
                 // Label format: "ContractName::functionName" or just "ContractName"
-                let parts: Vec<&str> = label.split("::").collect();
+                let parts = label.split("::").collect::<Vec<_>>();
                 if parts.len() > 1 {
                     // We have both contract and function in the label
                     let contract_name = parts[0];
