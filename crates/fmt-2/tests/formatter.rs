@@ -114,7 +114,7 @@ fn test_formatter(
 ) {
     let path = &*expected_path.with_file_name("original.sol");
     let expected_data = || {
-        let mut data = Data::read_from(expected_path, None);
+        let data = Data::read_from(expected_path, None);
         if cfg!(windows) {
             let content = data.to_string().replace("\r\n", "\n");
             Data::text(content)
