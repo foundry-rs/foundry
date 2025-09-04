@@ -280,9 +280,5 @@ pub fn extract_backtrace(
         // Move to parent node
         current_idx = node.parent;
     }
-
-    // Reverse frames to have innermost first
-    frames.reverse();
-
     if !frames.is_empty() { Some(Backtrace::new(frames)) } else { None }
 }
