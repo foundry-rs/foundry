@@ -5,6 +5,18 @@ use foundry_compilers::artifacts::sourcemap::SourceMap;
 use foundry_evm_core::ic::IcPcMap;
 use std::path::PathBuf;
 
+/// Source data for a single artifact/contract.
+/// Contains all the data needed to generate backtraces for a contract.
+#[derive(Debug, Clone)]
+pub struct SourceData {
+    /// Runtime source map for the contract
+    pub source_map: SourceMap,
+    /// Source files (path, content) indexed by source ID
+    pub sources: Vec<(PathBuf, String)>,
+    /// Deployed bytecode for accurate PC mapping
+    pub bytecode: Bytes,
+}
+
 /// Maps program counters to source locations.
 pub struct PcSourceMapper {
     /// Mapping from instruction counter to program counter.

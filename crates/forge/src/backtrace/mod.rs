@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt, path::PathBuf};
 use yansi::Paint;
 
 mod solidity;
-mod source_map;
+pub mod source_map;
 
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::PcSourceMapper;

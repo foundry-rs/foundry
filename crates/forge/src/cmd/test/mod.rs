@@ -511,12 +511,8 @@ impl TestArgs {
         let known_contracts = runner.known_contracts.clone();
 
         // Save source information for backtraces (only if verbosity >= 3)
-        let source_maps =
-            if verbosity >= 3 { runner.source_maps.clone() } else { Default::default() };
-        let source_files =
-            if verbosity >= 3 { runner.source_files.clone() } else { Default::default() };
-        let deployed_bytecodes =
-            if verbosity >= 3 { runner.deployed_bytecodes.clone() } else { Default::default() };
+        let source_data =
+            if verbosity >= 3 { runner.source_data.clone() } else { Default::default() };
 
         let libraries = runner.libraries.clone();
 
@@ -706,25 +702,21 @@ impl TestArgs {
                             }
                         }
 
-                        // Convert source maps to address-based for backtrace extraction
+                        // Convert source data to address-based for backtrace extraction
                         let mut address_to_runtime_source_map = alloy_primitives::map::HashMap::new();
                         let mut address_to_sources = alloy_primitives::map::HashMap::new();
                         let mut address_to_bytecode = alloy_primitives::map::HashMap::new();
 
                         for (addr, (contract_name, _)) in &contracts_by_address {
-                            // Find source maps and files for this contract
-                            for (artifact_id, runtime_map) in &source_maps {
+                            // Find source data for this contract
+                            for (artifact_id, data) in &source_data {
                                 if artifact_id.name == *contract_name
                                     || artifact_id.name.ends_with(&format!(":{contract_name}"))
                                 {
-                                    // Runtime source map for backtraces
-                                    address_to_runtime_source_map.insert(*addr, runtime_map.clone());
-                                    if let Some(sources) = source_files.get(artifact_id) {
-                                        address_to_sources.insert(*addr, sources.clone());
-                                    }
-                                    if let Some(bytecode) = deployed_bytecodes.get(artifact_id) {
-                                        address_to_bytecode.insert(*addr, bytecode.clone());
-                                    }
+                                    // Extract data from SourceData
+                                    address_to_runtime_source_map.insert(*addr, data.source_map.clone());
+                                    address_to_sources.insert(*addr, data.sources.clone());
+                                    address_to_bytecode.insert(*addr, data.bytecode.clone());
                                     break;
                                 }
                             }

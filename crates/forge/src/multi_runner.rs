@@ -1,8 +1,8 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
-    runner::LIBRARY_DEPLOYER,
+    ContractRunner, TestFilter, backtrace::source_map::SourceData, progress::TestsProgress, 
+    result::SuiteResult, runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -13,7 +13,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{Contract, Libraries, sourcemap::SourceMap},
+    artifacts::{Contract, Libraries},
     compilers::Compiler,
 };
 use foundry_config::{Config, InlineConfig};
@@ -69,12 +69,8 @@ pub struct MultiContractRunner {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig,
-    /// Runtime source maps for contracts (used for backtraces)
-    pub source_maps: HashMap<ArtifactId, SourceMap>,
-    /// Source files content mapped by artifact
-    pub source_files: HashMap<ArtifactId, Vec<(PathBuf, String)>>,
-    /// Deployed bytecode for contracts (for accurate PC mapping)
-    pub deployed_bytecodes: HashMap<ArtifactId, Bytes>,
+    /// Source data for contracts (used for backtraces)
+    pub source_data: HashMap<ArtifactId, SourceData>,
 }
 
 impl std::ops::Deref for MultiContractRunner {
@@ -574,11 +570,10 @@ impl MultiContractRunnerBuilder {
             .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
             .build();
 
-        // Collect source maps and source files for backtrace support
+        // Collect source data for backtrace support
         // Only populate these fields if verbosity >= 3 for performance
-        let (source_maps, source_files, deployed_bytecodes) = if self.verbosity >= 3 {
-            let mut source_maps = HashMap::new();
-            let mut source_files = HashMap::new();
+        let source_data = if self.verbosity >= 3 {
+            let mut source_data = HashMap::new();
 
             // First, collect ALL source files from the compilation output with their proper indices
             // This is critical for source mapping to work correctly
@@ -647,46 +642,46 @@ impl MultiContractRunnerBuilder {
                 }
             }
 
-            // Now collect source maps and associate them with the correct source files
+            // Now collect source data for each artifact
             for (id, artifact) in output.artifact_ids() {
                 let id = id.with_stripped_file_prefixes(root);
 
-                // Extract runtime source map if available (for backtraces)
-                if let Some(deployed_map) = artifact.get_source_map_deployed().and_then(|r| r.ok())
-                {
-                    source_maps.insert(id.clone(), deployed_map);
-                }
-
-                // Associate the artifact with its complete source file list based on version
-                if let Some(sources) = all_sources_by_version.get(&id.version) {
-                    source_files.insert(id.clone(), sources.clone());
-                } else {
-                    tracing::info!(
-                        "No sources found for version {} (artifact {})",
-                        id.version,
-                        id.name
-                    );
-                }
-            }
-
-            // Build deployed bytecodes map for ALL contracts (not just test contracts)
-            // This is needed for backtrace resolution of dynamically deployed contracts
-            let mut deployed_bytecodes = HashMap::new();
-            for (id, artifact) in output.artifact_ids() {
-                let id = id.with_stripped_file_prefixes(root);
-                if let Some(deployed) = artifact
+                // Extract all the data we need for backtraces
+                let source_map = artifact.get_source_map_deployed().and_then(|r| r.ok());
+                let sources = all_sources_by_version.get(&id.version).cloned();
+                let bytecode = artifact
                     .get_deployed_bytecode_bytes()
                     .map(|b| b.into_owned())
-                    .filter(|b| !b.is_empty())
-                {
-                    deployed_bytecodes.insert(id.clone(), deployed);
+                    .filter(|b| !b.is_empty());
+
+                // Only create SourceData if we have all required components
+                match (source_map, sources, bytecode) {
+                    (Some(source_map), Some(sources), Some(bytecode)) => {
+                        source_data.insert(id.clone(), SourceData {
+                            source_map,
+                            sources,
+                            bytecode,
+                        });
+                    }
+                    (source_map, sources, bytecode) => {
+                        // Log what's missing for debugging
+                        if source_map.is_none() {
+                            tracing::debug!("No source map for artifact {}", id.name);
+                        }
+                        if sources.is_none() {
+                            tracing::debug!("No sources found for version {} (artifact {})", id.version, id.name);
+                        }
+                        if bytecode.is_none() {
+                            tracing::debug!("No bytecode for artifact {}", id.name);
+                        }
+                    }
                 }
             }
 
-            (source_maps, source_files, deployed_bytecodes)
+            source_data
         } else {
             // Don't populate backtrace fields when verbosity < 3
-            (HashMap::new(), HashMap::new(), HashMap::new())
+            HashMap::new()
         };
 
         Ok(MultiContractRunner {
@@ -713,9 +708,7 @@ impl MultiContractRunnerBuilder {
                 fail_fast: FailFast::new(self.fail_fast),
                 verbosity: self.verbosity,
             },
-            source_maps,
-            source_files,
-            deployed_bytecodes,
+            source_data,
         })
     }
 }
