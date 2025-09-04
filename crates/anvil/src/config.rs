@@ -317,17 +317,6 @@ Base Fee
         let _ = write!(
             s,
             r#"
-Hardfork
-==================
-
-{}
-"#,
-            self.get_hardfork().green()
-        );
-
-        let _ = write!(
-            s,
-            r#"
 Gas Limit
 ==================
 
@@ -411,7 +400,6 @@ Genesis Number
               "base_fee": format!("{}", self.get_base_fee()),
               "gas_price": format!("{}", self.get_gas_price()),
               "gas_limit": gas_limit,
-              "hardfork": format!("{}", self.get_hardfork()),
             })
         } else {
             json!({
@@ -422,7 +410,6 @@ Genesis Number
               "gas_price": format!("{}", self.get_gas_price()),
               "gas_limit": gas_limit,
               "genesis_timestamp": format!("{}", self.get_genesis_timestamp()),
-              "hardfork": format!("{}", self.get_hardfork()),
             })
         }
     }
