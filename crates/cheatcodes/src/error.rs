@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(Error::from("hello").abi_encode(), error);
         assert_eq!(Error::encode("hello"), error);
 
-        assert_eq!(Error::from(b"hello").abi_encode(), b"hello");
+        assert_eq!(Error::from(b"hello").abi_encode().as_slice(), b"hello");
         assert_eq!(Error::encode(b"hello"), b"hello"[..]);
     }
 }
