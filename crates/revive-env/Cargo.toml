@@ -16,7 +16,8 @@ std = ["polkadot-sdk/std"]
 codec = { version = "3.7.5", default-features = false, package = "parity-scale-codec" }
 scale-info = { version = "2.11.6", default-features = false }
 
-polkadot-sdk.version = "2507.1.0"
+polkadot-sdk.git = "https://github.com/paritytech/polkadot-sdk.git"
+polkadot-sdk.branch = "master"
 polkadot-sdk.features = [
     "experimental",
     "runtime",
