@@ -865,7 +865,6 @@ impl SlotIdentifier {
     ) -> Option<SlotInfo> {
         for storage in &self.storage_layout.storage {
             // Get the type information and base slot
-
             let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type) else {
                 continue;
             };
