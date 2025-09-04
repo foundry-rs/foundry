@@ -36,13 +36,16 @@ fn enable_tracing() {
 fn tests_dir() -> PathBuf {
     // TODO: re-enable once `fmt-2` becomes `fmt`
     // Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fmt/testdata")
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fmt").join("testdata")
 }
 
 fn test_directory(base_name: &str) {
     enable_tracing();
     let dir = tests_dir().join(base_name);
-    let original = fs::read_to_string(dir.join("original.sol")).unwrap();
+    let mut original = fs::read_to_string(dir.join("original.sol")).unwrap();
+    if cfg!(windows) {
+        original = original.replace("\r\n", "\n");
+    }
     let mut handles = vec![];
     for res in dir.read_dir().unwrap() {
         let entry = res.unwrap();
@@ -55,7 +58,10 @@ fn test_directory(base_name: &str) {
         assert!(path.is_file(), "expected file: {path:?}");
         assert!(filename.ends_with("fmt.sol"), "unknown file: {path:?}");
 
-        let expected = fs::read_to_string(&path).unwrap();
+        let mut expected = fs::read_to_string(&path).unwrap();
+        if cfg!(windows) {
+            expected = expected.replace("\r\n", "\n");
+        }
 
         // The majority of the tests were written with the assumption that the default value for max
         // line length is `80`. Preserve that to avoid rewriting test logic.
@@ -107,7 +113,15 @@ fn test_formatter(
     comments_end: usize,
 ) {
     let path = &*expected_path.with_file_name("original.sol");
-    let expected_data = || Data::read_from(expected_path, None).raw();
+    let expected_data = || {
+        let mut data = Data::read_from(expected_path, None);
+        if cfg!(windows) {
+            let content = data.to_string().replace("\r\n", "\n");
+            Data::text(content)
+        } else {
+            data.raw()
+        }
+    };
 
     let mut source_formatted = format(source, path, config.clone());
     // Inject `expected`'s comments, if any, so we can use the expected file as a snapshot.
@@ -115,8 +129,11 @@ fn test_formatter(
     assert_data_eq!(&source_formatted, expected_data());
     assert_eof(&source_formatted);
 
-    let expected_formatted =
-        format(&std::fs::read_to_string(expected_path).unwrap(), expected_path, config);
+    let mut expected_content = std::fs::read_to_string(expected_path).unwrap();
+    if cfg!(windows) {
+        expected_content = expected_content.replace("\r\n", "\n");
+    }
+    let expected_formatted = format(&expected_content, expected_path, config);
     assert_data_eq!(&expected_formatted, expected_data());
     assert_eof(expected_source);
     assert_eof(&expected_formatted);
