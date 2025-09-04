@@ -1,11 +1,7 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt,
-    preprocessor::DynamicTestLinkingPreprocessor,
-    reports::{ReportKind, report_kind},
-    shell,
-    term::SpinnerReporter,
+    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
@@ -18,6 +14,7 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
+    multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -277,8 +274,7 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report =
-                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -348,8 +344,6 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
-    /// What kind of report to generate.
-    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -388,18 +382,11 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                writeln!(f, "\n{}", self.format_table_output(false))?;
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", self.format_json_output())?;
-            }
-            ReportKind::Markdown => {
-                writeln!(f, "\n{}", self.format_table_output(true))?;
-            }
+        if shell::is_json() {
+            writeln!(f, "{}", self.format_json_output())?;
+        } else {
+            writeln!(f, "\n{}", self.format_table_output())?;
         }
-
         Ok(())
     }
 }
@@ -426,9 +413,9 @@ impl SizeReport {
         serde_json::to_string(&contracts).unwrap()
     }
 
-    fn format_table_output(&self, md: bool) -> Table {
+    fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        if md {
+        if shell::is_markdown() {
             table.load_preset(ASCII_MARKDOWN);
         } else {
             table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -533,11 +520,8 @@ where
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(
-    metadata: &Metadata,
-    target_path: impl AsRef<Path>,
-) -> Result<Project<SolcCompiler>> {
-    let target_path = dunce::canonicalize(target_path.as_ref())?;
+pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
+    let target_path = dunce::canonicalize(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
@@ -567,14 +551,18 @@ pub fn etherscan_project(
         .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
+    // TODO: detect vyper
     let v = metadata.compiler_version()?;
     let solc = Solc::find_or_install(&v)?;
 
-    let compiler = SolcCompiler::Specific(solc);
+    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
-    Ok(ProjectBuilder::<SolcCompiler>::default()
-        .settings(SolcSettings {
-            settings: SolcConfig::builder().settings(settings).build(),
+    Ok(ProjectBuilder::<MultiCompiler>::default()
+        .settings(MultiCompilerSettings {
+            solc: SolcSettings {
+                settings: SolcConfig::builder().settings(settings).build(),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .paths(paths)

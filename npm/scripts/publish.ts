@@ -17,25 +17,32 @@ async function main() {
   const npmToken = Bun.env.NPM_TOKEN
   if (!npmToken) throw new Error('NPM_TOKEN is required')
 
-  const packagePath = Bun.argv[2]
-  if (!packagePath) throw new Error('Package path is required')
+  const inputPath = Bun.argv[2]
+  if (!inputPath) throw new Error('Package path is required')
+  const packagePath = NodePath.resolve(inputPath)
   console.info(colors.green, 'Package path:', packagePath)
 
   const publishVersion = getPublishVersion()
   console.info(colors.green, 'Publish version:', publishVersion)
   if (!publishVersion) throw new Error('Publish version is required')
 
-  if (packagePath === '@foundry-rs/forge')
+  if (await isMetaPackage(packagePath))
     await updateOptionalDependencies(packagePath, publishVersion)
 
-  await setPackageVersion(packagePath, publishVersion, npmToken)
+  await setPackageVersion(packagePath, publishVersion)
   const packedFile = await packPackage(packagePath)
-  await publishPackage(packagePath, packedFile)
+  await publishPackage(packagePath, packedFile, publishVersion)
 }
 
 function getPublishVersion() {
-  if (Bun.env.VERSION_NAME) return Bun.env.VERSION_NAME.replace(/^v/, '')
-  if (Bun.env.BUMP_VERSION) return Bun.env.BUMP_VERSION
+  const maybeVersion = (Bun.env.VERSION_NAME || '').replace(/^v/, '')
+  if (maybeVersion && isValidSemver(maybeVersion)) return maybeVersion
+
+  const bump = (Bun.env.BUMP_VERSION || '').replace(/^v/, '')
+  if (bump && isValidSemver(bump)) return bump
+
+  const releaseVersion = (Bun.env.RELEASE_VERSION || '').replace(/^v/, '')
+  const isNightly = releaseVersion.toLowerCase() === 'nightly'
 
   const cargoToml = NodeFS.readFileSync(
     NodePath.join(import.meta.dirname, '..', '..', 'Cargo.toml'),
@@ -45,7 +52,21 @@ function getPublishVersion() {
   const versionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)
   if (!versionMatch) throw new Error('Version not found in Cargo.toml')
 
-  return versionMatch[1]
+  const base = versionMatch[1]
+  if (!isNightly) return base
+
+  const date = new Date()
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(date.getUTCDate()).padStart(2, '0')
+  const yyyymmdd = `${y}${m}${d}`
+  const sha = (Bun.env.GITHUB_SHA || '').slice(0, 7)
+  const suffix = sha ? `nightly.${yyyymmdd}.${sha}` : `nightly.${yyyymmdd}`
+  return `${base}-${suffix}`
+}
+
+function isValidSemver(v: string) {
+  return !!v && Bun.semver.satisfies(v, v)
 }
 
 async function updateOptionalDependencies(packagePath: string, version: string) {
@@ -61,7 +82,17 @@ async function updateOptionalDependencies(packagePath: string, version: string) 
   }
 }
 
-async function setPackageVersion(packagePath: string, version: string, npmToken: string) {
+async function isMetaPackage(packagePath: string) {
+  try {
+    const packageJsonPath = NodePath.join(packagePath, 'package.json')
+    const packageJson = JSON.parse(NodeFS.readFileSync(packageJsonPath, 'utf-8'))
+    return packageJson?.name === '@foundry-rs/forge'
+  } catch {
+    return false
+  }
+}
+
+async function setPackageVersion(packagePath: string, version: string) {
   console.info(colors.green, 'Setting package version:', version)
   const result = await Bun.$`npm version ${version} --allow-same-version --no-git-tag-version`
     .cwd(packagePath)
@@ -87,9 +118,11 @@ async function packPackage(packagePath: string) {
   return packedFile
 }
 
-async function publishPackage(packagePath: string, packedFile: string) {
-  const result = await Bun.$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL} --provenance=${
-    Bun.env.PROVENANCE || 'false'
+async function publishPackage(packagePath: string, packedFile: string, version: string) {
+  const tag = /-nightly(\.|$)/.test(version) ? 'nightly' : 'latest'
+  const result = await Bun
+    .$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL} --tag=${tag} --provenance=${
+    Bun.env.PROVENANCE || 'true'
   }`
     .cwd(packagePath)
     .nothrow()

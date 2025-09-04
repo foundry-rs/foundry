@@ -263,7 +263,7 @@ pub struct InspectorData {
     pub line_coverage: Option<HitMaps>,
     pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Box<Cheatcodes>>,
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
 }
 

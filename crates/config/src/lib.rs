@@ -1688,16 +1688,6 @@ impl Config {
         }
     }
 
-    /// Returns the default config that uses dapptools style paths
-    pub fn dapptools() -> Self {
-        Self {
-            chain: Some(Chain::from_id(99)),
-            block_timestamp: U256::ZERO,
-            block_number: U256::ZERO,
-            ..Self::default()
-        }
-    }
-
     /// Extracts a basic subset of the config, used for initialisations.
     ///
     /// # Example
@@ -5154,7 +5144,7 @@ mod tests {
                     depth = 15
 
                     [rpc_endpoints]
-                    mainnet = "https://reth-ethereum.ithaca.xyz/rpc"
+                    mainnet = "https://test.xyz/rpc"
                     "#,
             )?;
 
@@ -5172,12 +5162,7 @@ mod tests {
             // optimism should be inherited from base config
             let endpoints = config.rpc_endpoints.resolved();
             assert!(
-                endpoints
-                    .get("mainnet")
-                    .unwrap()
-                    .url()
-                    .unwrap()
-                    .contains("reth-ethereum.ithaca.xyz")
+                endpoints.get("mainnet").unwrap().url().unwrap().contains("https://test.xyz/rpc")
             );
             assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
 

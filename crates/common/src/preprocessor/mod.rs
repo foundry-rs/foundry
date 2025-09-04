@@ -52,7 +52,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(paths.with_language_ref())
                 .into_compiler();
-        let _ = compiler.enter_mut(|compiler| -> solar::parse::interface::Result {
+        let _ = compiler.enter_mut(|compiler| -> solar::interface::Result {
             let mut pcx = compiler.parse();
 
             // Add the sources into the context.

@@ -103,7 +103,7 @@ impl BindJsonArgs {
     /// in most of the cases.
     fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
         let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar::parse::interface::Result<()> {
+        let result = sess.enter(|| -> solar::interface::Result<()> {
             sources.0.par_iter_mut().try_for_each(|(path, source)| {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
@@ -426,7 +426,7 @@ impl PreprocessorVisitor {
 }
 
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    type BreakValue = solar::parse::interface::data_structures::Never;
+    type BreakValue = solar::interface::data_structures::Never;
 
     fn visit_item_function(
         &mut self,
