@@ -176,7 +176,6 @@ impl SlotInfo {
             // Decode previous value
             let prev_decoded = if prev_length_byte & 1 == 1 {
                 // Long bytes/string - aggregate from multiple slots
-
                 let prev_map = storage_accesses
                     .iter()
                     .map(|(slot, (prev_val, _))| (*slot, *prev_val))
