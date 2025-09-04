@@ -200,45 +200,19 @@ pub fn extract_backtrace(
         let node = &resolved_arena.nodes()[idx];
         let trace = &node.trace;
 
-        // Skip successful calls unless they're in the failure path
-        if trace.success && idx != 0 {
-            current_idx = node.parent;
-            continue;
-        }
-
         let contract_address = trace.address;
         let mut frame = BacktraceFrame::new(contract_address);
 
         // Get contract and function names from decoded trace
         if let Some(decoded) = &trace.decoded {
             // Get contract name from label
-            if let Some(ref label) = decoded.label {
-                // Label format: "ContractName::functionName" or just "ContractName"
-                let parts = label.split("::").collect::<Vec<_>>();
-                if parts.len() > 1 {
-                    // We have both contract and function in the label
-                    let contract_name = parts[0];
-                    let func_part = parts[1];
-                    // Remove parentheses and arguments from function name
-                    let func_name = if let Some(paren_pos) = func_part.find('(') {
-                        &func_part[..paren_pos]
-                    } else {
-                        func_part
-                    };
-                    frame = frame
-                        .with_contract_name(contract_name.to_string())
-                        .with_function_name(func_name.to_string());
-                } else {
-                    // Label only has contract name
-                    frame = frame.with_contract_name(label.to_string());
-                }
+            if let Some(label) = &decoded.label {
+                frame = frame.with_contract_name(label.clone());
             }
 
             // Get function name from call_data if we don't have it yet
-            if frame.function_name.is_none()
-                && let Some(ref call_data) = decoded.call_data
-            {
-                // Use the signature from decoded call data, but remove args
+            if let Some(call_data) = &decoded.call_data {
+                // Use the signature from decoded call data. Remove args.
                 let sig = &call_data.signature;
                 let func_name =
                     if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
