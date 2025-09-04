@@ -18,7 +18,7 @@ use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
-use solar::parse::interface::diagnostics::EmittedDiagnostics;
+use solar::interface::diagnostics::EmittedDiagnostics;
 use std::{cell::OnceCell, collections::HashMap, fmt, path::PathBuf};
 use walkdir::WalkDir;
 
