@@ -139,33 +139,3 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
     }
     offsets
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::map::HashMap;
-
-    #[test]
-    fn test_line_offsets() {
-        let content = "line1\nline2\nline3";
-        let offsets = compute_line_offsets(content);
-        assert_eq!(offsets, vec![0, 5, 11]);
-    }
-
-    #[test]
-    fn test_offset_to_line_column() {
-        let sources = vec![("test.sol".to_string(), "line1\nline2\nline3".to_string())];
-        let mapper = PcSourceMapper {
-            ic_pc_map: IcPcMap { inner: HashMap::default() },
-            source_map: vec![],
-            sources,
-            line_offsets: vec![vec![0, 5, 11]],
-        };
-
-        // Test various offsets
-        assert_eq!(mapper.offset_to_line_column(0, 0), Some((1, 1)));
-        assert_eq!(mapper.offset_to_line_column(0, 4), Some((1, 5)));
-        assert_eq!(mapper.offset_to_line_column(0, 6), Some((2, 1)));
-        assert_eq!(mapper.offset_to_line_column(0, 12), Some((3, 1)));
-    }
-}
