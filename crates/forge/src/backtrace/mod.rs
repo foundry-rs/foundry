@@ -4,7 +4,6 @@ use alloy_primitives::{Address, Bytes};
 use foundry_common::contracts::ContractsByAddress;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use foundry_evm::traces::SparsedTraceArena;
-use revm::DatabaseRef;
 use std::{collections::HashMap, fmt};
 use yansi::Paint;
 
@@ -41,7 +40,7 @@ impl fmt::Display for Backtrace {
 
         writeln!(f, "{}", Paint::yellow("Backtrace:"))?;
 
-        for frame in self.frames.iter() {
+        for frame in &self.frames {
             write!(f, "  ")?;
             write!(f, "at ")?;
             writeln!(f, "{}", frame.format())?;
@@ -102,56 +101,41 @@ impl BacktraceFrame {
     }
 
     /// Returns a formatted string for this frame.
+    /// Format: <CONTRACT_NAME>.<FUNCTION_NAME> (FILE:LINE:COL)
     pub fn format(&self) -> String {
         let mut result = String::new();
 
-        // Format: file:line:column or just ContractName if no file info
-        if let Some(ref file) = self.file {
-            // Start with file path
-            result.push_str(file);
+        // Start with contract name
+        if let Some(ref contract) = self.contract_name {
+            // Extract just the contract name if it includes a path
+            let contract_only =
+                if let Some(pos) = contract.rfind(':') { &contract[pos + 1..] } else { contract };
+            result.push_str(contract_only);
+        } else {
+            // No contract name, show address
+            result.push_str(&self.contract_address.to_string());
+        }
 
-            // Add line and column directly after file path
+        // Add function name if available
+        if let Some(ref func) = self.function_name {
+            result.push('.');
+            result.push_str(func);
+        }
+
+        // Add location in parentheses if available
+        if self.file.is_some() || self.line.is_some() {
+            result.push_str(" (");
+
+            if let Some(ref file) = self.file {
+                result.push_str(file);
+            } else {
+                result.push_str("unknown");
+            }
+
             if let Some(line) = self.line {
                 result.push(':');
                 result.push_str(&line.to_string());
-                if let Some(column) = self.column {
-                    result.push(':');
-                    result.push_str(&column.to_string());
-                }
-            }
-        } else {
-            // No file info - try to show at least something useful
-            // Format: ContractName or address if no name available
-            if let Some(ref contract) = self.contract_name {
-                // Try to infer file path from contract name
-                if contract.contains(':') {
-                    // Already has file path like "src/SomeFile.sol:ContractName"
-                    result.push_str(contract);
-                } else {
-                    // Just contract name - we don't know the file path
-                    // Show as <ContractName> to indicate missing file info
-                    result.push('<');
-                    result.push_str(contract);
-                    result.push('>');
-                }
-            } else {
-                // No contract name, show address
-                result.push_str(&format!("<Contract {}>", self.contract_address));
-            }
 
-            // Add function if available
-            if let Some(ref func) = self.function_name {
-                result.push('.');
-                result.push_str(func);
-                result.push_str("()");
-            }
-
-            // Only add line:column if we have at least line info
-            if self.line.is_some()
-                && let Some(line) = self.line
-            {
-                result.push(':');
-                result.push_str(&line.to_string());
                 if let Some(column) = self.column {
                     result.push(':');
                     result.push_str(&column.to_string());
@@ -159,6 +143,8 @@ impl BacktraceFrame {
                     result.push_str(":0");
                 }
             }
+
+            result.push(')');
         }
 
         result
@@ -171,33 +157,31 @@ impl fmt::Display for BacktraceFrame {
     }
 }
 
-/// Extracts a backtrace from a call trace arena.
-///
-/// This function walks the call trace to find the revert point and builds
-/// a stack trace from the call hierarchy.
-pub fn extract_backtrace<DB: DatabaseRef>(
+/// Extracts a backtrace from a decoded call trace arena with source information.
+pub fn extract_backtrace(
     arena: &SparsedTraceArena,
-    contracts: &ContractsByAddress,
+    _contracts: &ContractsByAddress,
     source_maps: &HashMap<Address, (SourceMap, SourceMap)>, // (creation, runtime)
     sources: &HashMap<Address, Vec<(String, String)>>,      // Source files per contract
-    backend: &DB,
-    deployed_bytecodes: &HashMap<Address, Bytes>, // Deployed bytecode for each contract
+    deployed_bytecodes: &HashMap<Address, Bytes>,           // Deployed bytecode for each contract
 ) -> Option<Backtrace> {
-    // Get the actual call trace arena
     let resolved_arena = &arena.arena;
 
     if resolved_arena.nodes().is_empty() {
         return None;
     }
 
-    // Build a map of addresses to contract names from decoded traces
-    let mut address_to_name: HashMap<Address, String> = HashMap::new();
-    for node in resolved_arena.nodes() {
-        if let Some(decoded) = &node.trace.decoded
-            && let Some(ref label) = decoded.label
-            && let Some(contract_part) = label.split("::").next()
+    // Build PC source mappers for each contract
+    let mut pc_mappers: HashMap<Address, PcSourceMapper> = HashMap::new();
+
+    for (addr, (_creation_map, runtime_map)) in source_maps {
+        if let Some(contract_sources) = sources.get(addr)
+            && let Some(bytecode) = deployed_bytecodes.get(addr)
         {
-            address_to_name.insert(node.trace.address, contract_part.to_string());
+            pc_mappers.insert(
+                *addr,
+                PcSourceMapper::new(bytecode, runtime_map.clone(), contract_sources.clone()),
+            );
         }
     }
 
@@ -214,59 +198,6 @@ pub fn extract_backtrace<DB: DatabaseRef>(
 
     let deepest_idx = deepest_failed_idx?;
 
-    // Build PC source mappers for each contract
-    let mut pc_mappers: HashMap<Address, PcSourceMapper> = HashMap::new();
-
-    tracing::info!(
-        source_maps_count = source_maps.len(),
-        deployed_bytecodes_count = deployed_bytecodes.len(),
-        "Building PC mappers"
-    );
-
-    for (addr, (_creation_map, runtime_map)) in source_maps {
-        if let Some(contract_sources) = sources.get(addr) {
-            // First try to get the deployed bytecode from our mapping
-            let bytecode = if let Some(deployed) = deployed_bytecodes.get(addr) {
-                tracing::info!("Using deployed bytecode from mapping for address {}", addr);
-                deployed.clone()
-            } else {
-                // Fallback to getting it from the backend
-                if let Ok(Some(account)) = backend.basic_ref(*addr) {
-                    if let Some(code) = &account.code {
-                        if !code.is_empty() {
-                            let bytecode = code.original_bytes();
-                            tracing::info!(
-                                "Using bytecode from backend for address {} (size: {} bytes)",
-                                addr,
-                                bytecode.len()
-                            );
-                            bytecode
-                        } else {
-                            tracing::info!("Empty bytecode for address {}", addr);
-                            continue;
-                        }
-                    } else {
-                        tracing::info!("No code for address {}", addr);
-                        continue;
-                    }
-                } else {
-                    tracing::info!("Failed to get account for address {}", addr);
-                    continue;
-                }
-            };
-
-            pc_mappers.insert(
-                *addr,
-                PcSourceMapper::new(&bytecode, runtime_map.clone(), contract_sources.clone()),
-            );
-            tracing::info!("Created PC mapper for address {}", addr);
-        } else {
-            tracing::info!("No sources found for address {}", addr);
-        }
-    }
-
-    tracing::info!("Total PC mappers created: {}", pc_mappers.len());
-
     // Build the call stack by walking from the deepest node back to root
     let mut frames = Vec::new();
     let mut current_idx = Some(deepest_idx);
@@ -282,65 +213,54 @@ pub fn extract_backtrace<DB: DatabaseRef>(
         }
 
         let contract_address = trace.address;
-
-        // Create the frame
         let mut frame = BacktraceFrame::new(contract_address);
 
-        // Get contract info
-        if let Some((contract_name, _abi)) = contracts.get(&contract_address) {
-            frame = frame.with_contract_name(contract_name.clone());
-        } else if let Some(name) = address_to_name.get(&contract_address) {
-            frame = frame.with_contract_name(name.clone());
-        }
-
-        // Get function name from decoded trace if available
+        // Get contract and function names from decoded trace
         if let Some(decoded) = &trace.decoded {
+            // Get contract name from label
             if let Some(ref label) = decoded.label {
+                // Label format: "ContractName::functionName" or just "ContractName"
                 let parts: Vec<&str> = label.split("::").collect();
                 if parts.len() > 1 {
+                    // We have both contract and function in the label
+                    let contract_name = parts[0];
                     let func_part = parts[1];
-                    frame = frame.with_function_name(func_part.to_string());
+                    // Remove parentheses and arguments from function name
+                    let func_name = if let Some(paren_pos) = func_part.find('(') {
+                        &func_part[..paren_pos]
+                    } else {
+                        func_part
+                    };
+                    frame = frame
+                        .with_contract_name(contract_name.to_string())
+                        .with_function_name(func_name.to_string());
                 } else {
-                    frame = frame.with_function_name(label.clone());
+                    // Label only has contract name
+                    frame = frame.with_contract_name(label.to_string());
                 }
-            } else if let Some(ref call_data) = decoded.call_data {
-                frame = frame.with_function_name(call_data.signature.clone());
+            }
+
+            // Get function name from call_data if we don't have it yet
+            if frame.function_name.is_none()
+                && let Some(ref call_data) = decoded.call_data
+            {
+                // Use the signature from decoded call data, but remove args
+                let sig = &call_data.signature;
+                let func_name =
+                    if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
+                frame = frame.with_function_name(func_name.to_string());
             }
         }
 
-        // Try to get actual source location from trace
-        tracing::info!("Trace has {} steps for address {}", trace.steps.len(), contract_address);
-
-        if let Some(source_location) = {
-            let last_step = trace.steps.last()?;
-
-            tracing::info!(
-                pc = last_step.pc,
-                address = %contract_address,
-                mappers_count = pc_mappers.len(),
-                steps_count = trace.steps.len(),
-                "Looking for source location"
-            );
-
+        // Try to get source location from PC mapper
+        if let Some(source_location) = trace.steps.last().and_then(|last_step| {
             pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
-        } {
+        }) {
             frame = frame.with_source_location(
                 source_location.file,
                 source_location.line,
                 source_location.column,
             );
-        } else {
-            // Fallback: try to infer something from contract name
-            if let Some(sources_list) = sources.get(&contract_address)
-                && let Some((file_path, _)) = sources_list.first()
-            {
-                // TODO: Fix this. We don't have line/column info here
-                frame = frame.with_source_location(
-                    file_path.clone(),
-                    0, // Unknown line
-                    0, // Unknown column
-                );
-            }
         }
 
         // Only add the frame if it has meaningful information
@@ -355,11 +275,6 @@ pub fn extract_backtrace<DB: DatabaseRef>(
 
         if should_add {
             frames.push(frame);
-        } else {
-            tracing::info!(
-                "Skipping frame for {} - forge-std internal or no meaningful info",
-                contract_address
-            );
         }
 
         // Move to parent node

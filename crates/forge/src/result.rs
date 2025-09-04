@@ -422,10 +422,6 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-
-    /// Backtrace for test failures (only populated when verbosity >= 3).
-    #[serde(skip)]
-    pub backtrace: Option<crate::backtrace::Backtrace>,
 }
 
 impl fmt::Display for TestResult {
@@ -547,7 +543,7 @@ impl TestResult {
         success: bool,
         reason: Option<String>,
         raw_call_result: RawCallResult,
-        verbosity: u8,
+        _verbosity: u8,
     ) {
         self.kind =
             TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };

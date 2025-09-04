@@ -509,6 +509,14 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
+        // Save source information for backtraces (only if verbosity >= 3)
+        let source_maps =
+            if verbosity >= 3 { runner.source_maps.clone() } else { Default::default() };
+        let source_files =
+            if verbosity >= 3 { runner.source_files.clone() } else { Default::default() };
+        let deployed_bytecodes =
+            if verbosity >= 3 { runner.deployed_bytecodes.clone() } else { Default::default() };
+
         let libraries = runner.libraries.clone();
 
         // Run tests in a streaming fashion.
@@ -560,8 +568,8 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
-        for (contract_name, suite_result) in rx {
-            let tests = &suite_result.test_results;
+        for (contract_name, mut suite_result) in rx {
+            let tests = &mut suite_result.test_results;
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -624,7 +632,7 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &mut result.traces.clone() {
+                for (kind, arena) in &mut result.traces {
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -646,7 +654,11 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await;
-                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
+                        decoded_traces.push(render_trace_arena_inner(
+                            &arena.clone(),
+                            false,
+                            verbosity > 4,
+                        ));
                     }
                 }
 
@@ -657,14 +669,82 @@ impl TestArgs {
                     }
                 }
 
-                // Display backtrace for failed tests when verbosity >= 3 (after traces)
+                // Extract and display backtrace for failed tests when verbosity >= 3
                 if !silent
                     && verbosity >= 3
                     && result.status == TestStatus::Failure
-                    && let Some(ref backtrace) = result.backtrace
-                    && !backtrace.is_empty()
+                    && !result.traces.is_empty()
                 {
-                    sh_println!("{}", backtrace)?;
+                    // Find the execution trace (the actual test, not setup)
+                    if let Some((_, arena)) =
+                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                    {
+                        // Build contracts mapping from decoded traces
+                        let mut contracts_by_address =
+                            foundry_common::contracts::ContractsByAddress::new();
+                        for node in arena.arena.nodes() {
+                            if let Some(decoded) = &node.trace.decoded
+                                && let Some(label) = &decoded.label {
+                                    let contract_name = if label.contains("::") {
+                                        label.split("::").next().unwrap_or(label)
+                                    } else {
+                                        label
+                                    };
+
+                                    // Find the ABI for this contract
+                                    for (artifact_id, contract_data) in known_contracts.iter() {
+                                        if artifact_id.name == contract_name {
+                                            contracts_by_address.insert(
+                                                node.trace.address,
+                                                (
+                                                    contract_name.to_string(),
+                                                    contract_data.abi.clone(),
+                                                ),
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                        }
+
+                        // Convert source maps to address-based for backtrace extraction
+                        let mut address_to_source_map = alloy_primitives::map::HashMap::new();
+                        let mut address_to_sources = alloy_primitives::map::HashMap::new();
+                        let mut address_to_bytecode = alloy_primitives::map::HashMap::new();
+
+                        for (addr, (contract_name, _)) in &contracts_by_address {
+                            // Find source maps and files for this contract
+                            for (artifact_id, maps) in &source_maps {
+                                if artifact_id.name == *contract_name
+                                    || artifact_id.name.ends_with(&format!(":{contract_name}"))
+                                {
+                                    address_to_source_map.insert(*addr, maps.clone());
+                                    if let Some(sources) = source_files.get(artifact_id) {
+                                        address_to_sources.insert(*addr, sources.clone());
+                                    }
+                                    if let Some(bytecode) = deployed_bytecodes.get(artifact_id) {
+                                        address_to_bytecode.insert(*addr, bytecode.clone());
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Extract the backtrace with full source information
+                        // We use the simplified version that doesn't need a backend since we have
+                        // the bytecodes
+                        if let Some(backtrace) = crate::backtrace::extract_backtrace(
+                            arena,
+                            &contracts_by_address,
+                            &address_to_source_map,
+                            &address_to_sources,
+                            &address_to_bytecode,
+                        )
+                            && !backtrace.is_empty()
+                        {
+                            sh_println!("{}", backtrace)?;
+                        }
+                    }
                 }
 
                 if let Some(gas_report) = &mut gas_report {

@@ -585,14 +585,14 @@ impl MultiContractRunnerBuilder {
             let mut all_sources_by_version: HashMap<semver::Version, Vec<(String, String)>> =
                 HashMap::new();
 
-            // Process all available sources from the compilation output
-            // TODO: Handle cached files. Currently we're assuming fresh compilation
-            // where source IDs are contiguous starting from 0.
+            // First try to get sources from compilation output (fresh compilation)
+            let mut has_sources = false;
             for (path, _source_file, version) in output.output().sources.sources_with_version() {
+                has_sources = true;
                 // The path might be absolute, so we need to make it relative to the root
                 let path_str = if path.is_absolute() {
                     // Try to strip the root prefix to make it relative
-                    path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string()
+                    path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string()
                 } else {
                     path.to_string_lossy().to_string()
                 };
@@ -606,8 +606,53 @@ impl MultiContractRunnerBuilder {
                 let sources = all_sources_by_version.entry(version.clone()).or_default();
 
                 // In fresh compilation, sources come in order with contiguous IDs
-                tracing::info!("Adding source: {}", path_str);
                 sources.push((path_str, source_content));
+            }
+
+            // If no sources from compilation output (cached), get them from build contexts
+            if !has_sources {
+                for (_build_id, build_context) in output.builds() {
+                    // Try to get version from the build context
+                    // For now, use a default version - we'll need to find the correct way to get
+                    // this
+                    let version = semver::Version::new(0, 8, 30); // Default to 0.8.30 for now
+
+                    let sources = all_sources_by_version.entry(version.clone()).or_default();
+
+                    // The source_id_to_path is already ordered by source ID (u32)
+                    // We need to maintain this order for source map indices to work correctly
+                    let mut ordered_sources: Vec<(u32, String, String)> = Vec::new();
+                    for (source_id, source_path) in &build_context.source_id_to_path {
+                        // Read source content from file
+                        let full_path = if source_path.is_absolute() {
+                            source_path.clone()
+                        } else {
+                            root.join(source_path)
+                        };
+
+                        let source_content =
+                            foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+
+                        // Convert path to relative string
+                        let path_str = source_path
+                            .strip_prefix(root)
+                            .unwrap_or(source_path)
+                            .to_string_lossy()
+                            .to_string();
+
+                        ordered_sources.push((*source_id, path_str, source_content));
+                    }
+
+                    // Sort by source ID to ensure proper ordering
+                    ordered_sources.sort_by_key(|(id, _, _)| *id);
+
+                    // Add sources in the correct order
+                    for (_id, path_str, content) in ordered_sources {
+                        if !sources.iter().any(|(p, _)| p == &path_str) {
+                            sources.push((path_str, content));
+                        }
+                    }
+                }
             }
 
             // Now collect source maps and associate them with the correct source files
@@ -625,11 +670,6 @@ impl MultiContractRunnerBuilder {
                 // Associate the artifact with its complete source file list based on version
                 if let Some(sources) = all_sources_by_version.get(&id.version) {
                     source_files.insert(id.clone(), sources.clone());
-                    tracing::info!(
-                        "Associated {} source files with artifact {}",
-                        sources.len(),
-                        id.name
-                    );
                 } else {
                     tracing::info!(
                         "No sources found for version {} (artifact {})",

@@ -34,7 +34,7 @@ struct SourceFile {
     /// The file path.
     path: String,
     /// The file content.
-    content: String,
+    _content: String,
     /// Line start offsets for quick line/column calculation.
     line_offsets: Vec<usize>,
 }
@@ -51,7 +51,7 @@ impl PcToSourceMapper {
         let mut source_files = HashMap::new();
         for (index, (path, content)) in sources.into_iter().enumerate() {
             let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile { path, content, line_offsets });
+            source_files.insert(index, SourceFile { path, _content: content, line_offsets });
         }
 
         Self { pc_to_source, sources: source_files }
@@ -146,7 +146,7 @@ impl PcToSourceMapper {
         let mut source_files = HashMap::new();
         for (index, (path, content)) in sources.into_iter().enumerate() {
             let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile { path, content, line_offsets });
+            source_files.insert(index, SourceFile { path, _content: content, line_offsets });
         }
 
         Self { pc_to_source, sources: source_files }
