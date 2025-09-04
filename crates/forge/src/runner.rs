@@ -582,7 +582,6 @@ impl<'a> FunctionRunner<'a> {
         let success =
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
 
-
         self.result.single_result(success, reason, raw_call_result, self.tcfg.verbosity);
         self.result
     }
@@ -691,7 +690,6 @@ impl<'a> FunctionRunner<'a> {
                         args,
                         raw_call_result.traces.clone(),
                     )));
-
 
                 self.result.single_result(false, reason, raw_call_result, self.tcfg.verbosity);
                 return self.result;

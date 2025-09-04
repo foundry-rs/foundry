@@ -1,7 +1,6 @@
 //! Solidity stack trace support for test failures.
 
 use alloy_primitives::{Address, Bytes};
-use foundry_common::contracts::ContractsByAddress;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use foundry_evm::traces::SparsedTraceArena;
 use std::{collections::HashMap, fmt};
@@ -160,7 +159,6 @@ impl fmt::Display for BacktraceFrame {
 /// Extracts a backtrace from a decoded call trace arena with source information.
 pub fn extract_backtrace(
     arena: &SparsedTraceArena,
-    _contracts: &ContractsByAddress,
     source_maps: &HashMap<Address, (SourceMap, SourceMap)>, // (creation, runtime)
     sources: &HashMap<Address, Vec<(String, String)>>,      // Source files per contract
     deployed_bytecodes: &HashMap<Address, Bytes>,           // Deployed bytecode for each contract

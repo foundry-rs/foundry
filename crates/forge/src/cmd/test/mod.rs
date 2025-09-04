@@ -1,6 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    backtrace::extract_backtrace,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
@@ -684,27 +685,25 @@ impl TestArgs {
                             foundry_common::contracts::ContractsByAddress::new();
                         for node in arena.arena.nodes() {
                             if let Some(decoded) = &node.trace.decoded
-                                && let Some(label) = &decoded.label {
-                                    let contract_name = if label.contains("::") {
-                                        label.split("::").next().unwrap_or(label)
-                                    } else {
-                                        label
-                                    };
+                                && let Some(label) = &decoded.label
+                            {
+                                let contract_name = if label.contains("::") {
+                                    label.split("::").next().unwrap_or(label)
+                                } else {
+                                    label
+                                };
 
-                                    // Find the ABI for this contract
-                                    for (artifact_id, contract_data) in known_contracts.iter() {
-                                        if artifact_id.name == contract_name {
-                                            contracts_by_address.insert(
-                                                node.trace.address,
-                                                (
-                                                    contract_name.to_string(),
-                                                    contract_data.abi.clone(),
-                                                ),
-                                            );
-                                            break;
-                                        }
+                                // Find the ABI for this contract
+                                for (artifact_id, contract_data) in known_contracts.iter() {
+                                    if artifact_id.name == contract_name {
+                                        contracts_by_address.insert(
+                                            node.trace.address,
+                                            (contract_name.to_string(), contract_data.abi.clone()),
+                                        );
+                                        break;
                                     }
                                 }
+                            }
                         }
 
                         // Convert source maps to address-based for backtrace extraction
@@ -730,17 +729,12 @@ impl TestArgs {
                             }
                         }
 
-                        // Extract the backtrace with full source information
-                        // We use the simplified version that doesn't need a backend since we have
-                        // the bytecodes
-                        if let Some(backtrace) = crate::backtrace::extract_backtrace(
+                        if let Some(backtrace) = extract_backtrace(
                             arena,
-                            &contracts_by_address,
                             &address_to_source_map,
                             &address_to_sources,
                             &address_to_bytecode,
-                        )
-                            && !backtrace.is_empty()
+                        ) && !backtrace.is_empty()
                         {
                             sh_println!("{}", backtrace)?;
                         }

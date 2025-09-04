@@ -2,7 +2,6 @@
 
 use alloy_primitives::Bytes;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_core::ic::IcPcMap;
 use revm::bytecode::opcode;
 use std::collections::HashMap;
 
@@ -26,15 +25,13 @@ pub struct PcToSourceMapper {
     /// PC to source element mapping.
     pc_to_source: HashMap<usize, SourceElement>,
     /// Source file contents by file index.
-    sources: HashMap<usize, SourceFile>,
+    sources: HashMap<usize, SourceFileInfo>,
 }
 
 /// Information about a source file.
-struct SourceFile {
+struct SourceFileInfo {
     /// The file path.
     path: String,
-    /// The file content.
-    _content: String,
     /// Line start offsets for quick line/column calculation.
     line_offsets: Vec<usize>,
 }
@@ -51,7 +48,7 @@ impl PcToSourceMapper {
         let mut source_files = HashMap::new();
         for (index, (path, content)) in sources.into_iter().enumerate() {
             let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile { path, _content: content, line_offsets });
+            source_files.insert(index, SourceFileInfo { path, line_offsets });
         }
 
         Self { pc_to_source, sources: source_files }
@@ -104,7 +101,7 @@ impl PcToSourceMapper {
     }
 
     /// Converts a byte offset to line and column numbers (1-indexed).
-    fn offset_to_line_column(&self, source: &SourceFile, offset: usize) -> (usize, usize) {
+    fn offset_to_line_column(&self, source: &SourceFileInfo, offset: usize) -> (usize, usize) {
         // Binary search to find the line
         let line_index =
             source.line_offsets.binary_search(&offset).unwrap_or_else(|i| i.saturating_sub(1));
@@ -125,30 +122,5 @@ impl PcToSourceMapper {
             }
         }
         offsets
-    }
-
-    /// Alternative method using instruction-to-PC mapping from coverage.
-    pub fn new_with_ic_map(
-        _bytecode: &Bytes,
-        source_map: &SourceMap,
-        ic_pc_map: &IcPcMap,
-        sources: Vec<(String, String)>,
-    ) -> Self {
-        let mut pc_to_source = HashMap::new();
-
-        // Map instruction indices to source elements
-        for (ic, element) in source_map.iter().enumerate() {
-            if let Some(pc) = ic_pc_map.get(ic as u32) {
-                pc_to_source.insert(pc as usize, element.clone());
-            }
-        }
-
-        let mut source_files = HashMap::new();
-        for (index, (path, content)) in sources.into_iter().enumerate() {
-            let line_offsets = Self::compute_line_offsets(&content);
-            source_files.insert(index, SourceFile { path, _content: content, line_offsets });
-        }
-
-        Self { pc_to_source, sources: source_files }
     }
 }
