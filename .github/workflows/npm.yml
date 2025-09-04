@@ -46,7 +46,12 @@ jobs:
             arch: arm64
           - os: win32
             arch: amd64
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow.conclusion == 'success' }}
+    # Run automatically after a successful 'release' workflow, or manually if a run_id is provided
+    if: >-
+      ${{
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.run_id != '')
+      }}
     outputs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     env:
