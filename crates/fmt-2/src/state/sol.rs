@@ -277,7 +277,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.nbsp();
 
-        // TODO(rusowsky): move into helper fn to deal with disabled lists of items
         if let Some(first) = bases.first().map(|base| base.span())
             && let Some(last) = bases.last().map(|base| base.span())
             && self.inline_config.is_disabled(Span::new(first.lo(), last.hi()))
@@ -2254,7 +2253,6 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
 
         ast::ItemKind::Contract(..) => true,
 
-        // TODO: is this logic correct? that's what i figured out based on unit tests
         ast::ItemKind::Struct(strukt) => !strukt.fields.is_empty(),
         ast::ItemKind::Function(func) => {
             func.body.as_ref().is_some_and(|b| !b.is_empty())

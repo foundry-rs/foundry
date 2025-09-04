@@ -222,7 +222,7 @@ When enabled, the output will be annotated with special characters representing 
 
 For example, running debug mode on the `HelloWorld` contract from earlier would produce an output like this:
 
-```
+```text
 pragma solidity ^0.8.10;·
 ·
 «‹«contract HelloWorld »{›·
