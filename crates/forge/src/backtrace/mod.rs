@@ -1,9 +1,8 @@
 //! Solidity stack trace support for test failures.
 
-use alloy_primitives::{Address, Bytes};
-use foundry_compilers::artifacts::sourcemap::SourceMap;
+use alloy_primitives::{Address, map::HashMap};
 use foundry_evm::traces::SparsedTraceArena;
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{fmt, path::PathBuf};
 use yansi::Paint;
 
 mod solidity;
@@ -11,6 +10,8 @@ pub mod source_map;
 
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::PcSourceMapper;
+
+use crate::backtrace::source_map::SourceData;
 
 /// A Solidity stack trace for a test failure.
 #[derive(Debug, Clone, Default)]
@@ -152,13 +153,10 @@ impl fmt::Display for BacktraceFrame {
     }
 }
 
-/// Extracts a backtrace from a [`SparsedTraceArena`] using runtime [`SourceMap`]'s.
+/// Extracts a backtrace from a [`SparsedTraceArena`] using source data.
 pub fn extract_backtrace(
     arena: &SparsedTraceArena,
-    source_maps: &HashMap<Address, SourceMap>, // Runtime source maps
-    sources: &HashMap<Address, Vec<(PathBuf, String)>>, /* Contract sources (path, content) by
-                                                * address */
-    deployed_bytecodes: &HashMap<Address, Bytes>, // Deployed bytecode for each contract
+    source_data: &HashMap<Address, SourceData>,
 ) -> Option<Backtrace> {
     let resolved_arena = &arena.arena;
 
@@ -169,15 +167,11 @@ pub fn extract_backtrace(
     // Build PC source mappers for each contract
     let mut pc_mappers = HashMap::new();
 
-    for (addr, runtime_map) in source_maps {
-        if let Some(contract_sources) = sources.get(addr)
-            && let Some(bytecode) = deployed_bytecodes.get(addr)
-        {
-            pc_mappers.insert(
-                *addr,
-                PcSourceMapper::new(bytecode, runtime_map.clone(), contract_sources.clone()),
-            );
-        }
+    for (addr, data) in source_data {
+        pc_mappers.insert(
+            *addr,
+            PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
+        );
     }
 
     // Find the deepest failed node (where the actual revert happened)

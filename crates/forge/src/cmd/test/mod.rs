@@ -13,7 +13,7 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
-use alloy_primitives::U256;
+use alloy_primitives::{U256, map::foldhash::HashMap};
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -22,7 +22,9 @@ use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{
+    ContractsByAddress, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
@@ -43,8 +45,9 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
+use semver::Version;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
@@ -680,8 +683,7 @@ impl TestArgs {
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
                     {
                         // Build contracts mapping from decoded traces
-                        let mut contracts_by_address =
-                            foundry_common::contracts::ContractsByAddress::new();
+                        let mut contracts_by_address = ContractsByAddress::new();
                         for node in arena.arena.nodes() {
                             if let Some(decoded) = &node.trace.decoded
                                 && let Some(contract_name) = &decoded.label
@@ -691,7 +693,7 @@ impl TestArgs {
                                     if artifact_id.name == *contract_name {
                                         contracts_by_address.insert(
                                             node.trace.address,
-                                            (contract_name.to_string(), contract_data.abi.clone()),
+                                            (artifact_id.identifier(), contract_data.abi.clone()),
                                         );
                                         break;
                                     }
@@ -700,31 +702,21 @@ impl TestArgs {
                         }
 
                         // Convert source data to address-based for backtrace extraction
-                        let mut address_to_runtime_source_map =
-                            alloy_primitives::map::HashMap::new();
-                        let mut address_to_sources = alloy_primitives::map::HashMap::new();
-                        let mut address_to_bytecode = alloy_primitives::map::HashMap::new();
+                        let mut address_to_source_data = HashMap::default();
 
-                        for (addr, (contract_name, _)) in &contracts_by_address {
+                        for (addr, (contract_identifier, _)) in &contracts_by_address {
                             // Find source data for this contract
                             for (artifact_id, data) in &source_data {
-                                if artifact_id.name == *contract_name {
-                                    // Extract data from SourceData
-                                    address_to_runtime_source_map
-                                        .insert(*addr, data.source_map.clone());
-                                    address_to_sources.insert(*addr, data.sources.clone());
-                                    address_to_bytecode.insert(*addr, data.bytecode.clone());
+                                // Match on full identifier (source:name)
+                                if artifact_id.identifier() == *contract_identifier {
+                                    address_to_source_data.insert(*addr, data.clone());
                                     break;
                                 }
                             }
                         }
 
-                        if let Some(backtrace) = extract_backtrace(
-                            arena,
-                            &address_to_runtime_source_map,
-                            &address_to_sources,
-                            &address_to_bytecode,
-                        ) && !backtrace.is_empty()
+                        if let Some(backtrace) = extract_backtrace(arena, &address_to_source_data)
+                            && !backtrace.is_empty()
                         {
                             sh_println!("{}", backtrace)?;
                         }
@@ -1063,12 +1055,11 @@ fn collect_source_data(
     output: &ProjectCompileOutput,
     root: &Path,
 ) -> HashMap<ArtifactId, SourceData> {
-    let mut source_data = HashMap::new();
+    let mut source_data = HashMap::default();
 
     // First, collect ALL source files from the compilation output with their proper indices
     // This is critical for source mapping to work correctly
-    let mut all_sources_by_version: HashMap<semver::Version, Vec<(PathBuf, String)>> =
-        HashMap::new();
+    let mut all_sources_by_version: HashMap<Version, Vec<(PathBuf, String)>> = HashMap::default();
 
     // First try to get sources from compilation output (fresh compilation)
     let mut has_sources = false;
@@ -1093,9 +1084,8 @@ fn collect_source_data(
     if !has_sources {
         for (_build_id, build_context) in output.builds() {
             // Try to get version from the build context
-            // For now, use a default version - we'll need to find the correct way to get
-            // this
-            let version = semver::Version::new(0, 8, 30); // Default to 0.8.30 for now
+            // TODO: Get actual version
+            let version = Version::new(0, 8, 30); // Default to 0.8.30 for now
 
             let sources = all_sources_by_version.entry(version.clone()).or_default();
 
