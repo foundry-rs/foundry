@@ -262,7 +262,6 @@ impl_from!(
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
     alloy_consensus::crypto::RecoveryError,
-    eyre::Report,
     FsPathError,
     hex::FromHexError,
     BackendError,
@@ -283,6 +282,12 @@ impl_from!(
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
+    }
+}
+
+impl From<eyre::Report> for Error {
+    fn from(err: eyre::Report) -> Self {
+        Self::new_string(foundry_common::errors::display_chain(&err))
     }
 }
 

@@ -6,7 +6,7 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use serde_json::Value;
-use solar::parse::ast;
+use solar::ast;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations

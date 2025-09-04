@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::{is_test_contract, matches_artifact},
+    multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -24,8 +24,8 @@ use foundry_common::{
     EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
 };
 use foundry_compilers::{
-    ProjectCompileOutput, artifacts::output_selection::OutputSelection,
-    compilers::multi::MultiCompiler,
+    Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
+    compilers::multi::MultiCompiler, multi::MultiCompilerLanguage, utils::source_files_iter,
 };
 use foundry_config::{
     Config, figment,
@@ -207,17 +207,18 @@ impl TestArgs {
     /// This means that it will return all sources that are not test contracts or that match the
     /// filter. We want to compile all non-test sources always because tests might depend on them
     /// dynamically through cheatcodes.
-    ///
-    /// Returns `None` if all sources should be compiled.
     #[instrument(target = "forge::test", skip_all)]
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
         test_filter: &ProjectPathsAwareFilter,
-    ) -> Result<Option<BTreeSet<PathBuf>>> {
+    ) -> Result<BTreeSet<PathBuf>> {
         // An empty filter doesn't filter out anything.
+        // We can still optimize slightly by excluding scripts.
         if test_filter.is_empty() {
-            return Ok(None);
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect());
         }
 
         let mut project = config.create_project(true, true)?;
@@ -230,15 +231,14 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
-        let sources = output
+        Ok(output
             .artifact_ids()
             .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
             .filter(|(id, abi)| {
-                !is_test_contract(abi.functions()) || matches_artifact(test_filter, id, abi)
+                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
             })
             .map(|(id, _)| id.source)
-            .collect::<BTreeSet<_>>();
-        Ok(Some(sources))
+            .collect())
     }
 
     /// Executes all the tests in the project.
@@ -275,7 +275,7 @@ impl TestArgs {
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(self.get_sources_to_compile(&config, &filter)?.unwrap_or_default());
+            .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.

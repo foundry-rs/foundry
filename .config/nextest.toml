@@ -12,7 +12,3 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
-
-[[profile.default.overrides]]
-filter = "package(chisel)"
-test-group = "chisel-serial"

@@ -2,10 +2,7 @@ use crate::cmd::test::TestOutcome;
 use comfy_table::{
     Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
-use foundry_common::{
-    reports::{ReportKind, report_kind},
-    shell,
-};
+use foundry_common::shell;
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
 use serde_json::json;
@@ -13,8 +10,6 @@ use std::{collections::HashMap, fmt::Display};
 
 /// Represents a test summary report.
 pub struct TestSummaryReport {
-    /// The kind of report to generate.
-    report_kind: ReportKind,
     /// Whether the report should be detailed.
     is_detailed: bool,
     /// The test outcome to report.
@@ -23,32 +18,17 @@ pub struct TestSummaryReport {
 
 impl TestSummaryReport {
     pub fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
-        Self { report_kind: report_kind(), is_detailed, outcome }
+        Self { is_detailed, outcome }
     }
 }
 
 impl Display for TestSummaryReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                writeln!(
-                    f,
-                    "\n{}",
-                    &self.format_table_output(&self.is_detailed, &self.outcome, false)
-                )?;
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
-            }
-            ReportKind::Markdown => {
-                writeln!(
-                    f,
-                    "\n{}",
-                    &self.format_table_output(&self.is_detailed, &self.outcome, true)
-                )?;
-            }
+        if shell::is_json() {
+            writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
+        } else {
+            writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
         }
-
         Ok(())
     }
 }
@@ -81,9 +61,9 @@ impl TestSummaryReport {
         serde_json::to_string_pretty(&output).unwrap()
     }
 
-    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome, md: bool) -> Table {
+    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
-        if md {
+        if shell::is_markdown() {
             table.load_preset(ASCII_MARKDOWN);
         } else {
             table.apply_modifier(UTF8_ROUND_CORNERS);

@@ -451,7 +451,7 @@ pub struct AnvilEvmArgs {
     )]
     pub fork_block_number: Option<i128>,
 
-    /// Fetch state from a specific transaction hash over a remote endpoint.
+    /// Fetch state from after a specific transaction hash has been applied over a remote endpoint.
     ///
     /// See --fork-url.
     #[arg(
