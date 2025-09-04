@@ -46,13 +46,17 @@ pub struct InitArgs {
     #[arg(long, conflicts_with = "template")]
     pub use_parent_git: bool,
 
+    /// Do not create example contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
+    #[arg(long, conflicts_with = "template")]
+    pub no_example: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, template, branch, install, offline, force, vscode, use_parent_git, vyper } =
+        let Self { root, template, branch, install, offline, force, vscode, use_parent_git, vyper, no_example } =
             self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
 
@@ -128,41 +132,44 @@ impl InitArgs {
             let script = root.join("script");
             fs::create_dir_all(&script)?;
 
-            if vyper {
-                // write the contract file
-                let contract_path = src.join("Counter.vy");
-                fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.vy"))?;
-                let interface_path = src.join("ICounter.sol");
-                fs::write(interface_path, include_str!("../../assets/vyper/ICounterTemplate.sol"))?;
+            // Only create example contracts if not disabled
+            if !no_example {
+                if vyper {
+                    // write the contract file
+                    let contract_path = src.join("Counter.vy");
+                    fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.vy"))?;
+                    let interface_path = src.join("ICounter.sol");
+                    fs::write(interface_path, include_str!("../../assets/vyper/ICounterTemplate.sol"))?;
 
-                // write the tests
-                let contract_path = test.join("Counter.t.sol");
-                fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.t.sol"))?;
+                    // write the tests
+                    let contract_path = test.join("Counter.t.sol");
+                    fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.t.sol"))?;
 
-                // write the script
-                let contract_path = script.join("Counter.s.sol");
-                fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.s.sol"))?;
-            } else {
-                // write the contract file
-                let contract_path = src.join("Counter.sol");
-                fs::write(
-                    contract_path,
-                    include_str!("../../assets/solidity/CounterTemplate.sol"),
-                )?;
+                    // write the script
+                    let contract_path = script.join("Counter.s.sol");
+                    fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.s.sol"))?;
+                } else {
+                    // write the contract file
+                    let contract_path = src.join("Counter.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.sol"),
+                    )?;
 
-                // write the tests
-                let contract_path = test.join("Counter.t.sol");
-                fs::write(
-                    contract_path,
-                    include_str!("../../assets/solidity/CounterTemplate.t.sol"),
-                )?;
+                    // write the tests
+                    let contract_path = test.join("Counter.t.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.t.sol"),
+                    )?;
 
-                // write the script
-                let contract_path = script.join("Counter.s.sol");
-                fs::write(
-                    contract_path,
-                    include_str!("../../assets/solidity/CounterTemplate.s.sol"),
-                )?;
+                    // write the script
+                    let contract_path = script.join("Counter.s.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.s.sol"),
+                    )?;
+                }
             }
 
             // Write the default README file
