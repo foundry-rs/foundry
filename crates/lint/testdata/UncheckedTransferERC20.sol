@@ -7,32 +7,48 @@ interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
 }
 
+interface IERC20Wrapper {
+    function transfer(address to, uint256 amount) external;
+    function transferFrom(address from, address to, uint256 amount) external;
+}
+
 contract UncheckedTransfer {
     IERC20 public token;
+    IERC20Wrapper public tokenWrapper;
     mapping(address => uint256) public balances;
 
     constructor(address _token) {
         token = IERC20(_token);
+        tokenWrapper = IERC20Wrapper(_token);
     }
 
     // SHOULD FAIL: Unchecked transfer calls
     function uncheckedTransfer(address to, uint256 amount) public {
+        IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         token.transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
     }
 
     function uncheckedTransferFrom(address from, address to, uint256 amount) public {
+        IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         token.transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-    }
-
-    function multipleUnchecked(address to, uint256 amount) public {
-        token.transfer(to, amount / 2); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transfer(to, amount / 2); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
     }
 
     function uncheckedInLoop(address[] memory recipients, uint256[] memory amounts) public {
         for (uint i = 0; i < recipients.length; i++) {
+            IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
             token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         }
+    }
+
+    // SHOULD PASS: Function with same params but NO boolean return
+    function proxyCheckedTransfer(address to, uint256 amount) public {
+        IERC20Wrapper(address(token)).transfer(to, amount);
+        tokenWrapper.transfer(to, amount);
+    }
+
+    function proxyCheckedTransferFrom(address from, address to, uint256 amount) public {
+        IERC20Wrapper(address(token)).transferFrom(from, to, amount);
+        tokenWrapper.transferFrom(from, to, amount);
     }
 
     // SHOULD PASS: Properly checked transfer calls
