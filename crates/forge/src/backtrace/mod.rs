@@ -230,20 +230,7 @@ pub fn extract_backtrace(
                 source_location.column,
             );
         }
-
-        // Only add the frame if it has meaningful information
-        // Skip frames that are just forge-std internals with no real location
-        let should_add = if let Some(ref file) = frame.file {
-            // Skip forge-std frames with line 0 (these are compiler-generated)
-            !(file.contains("lib/forge-std") && frame.line == Some(0))
-        } else {
-            // Include frames with contract/function names even without file info
-            frame.contract_name.is_some() || frame.function_name.is_some()
-        };
-
-        if should_add {
-            frames.push(frame);
-        }
+        frames.push(frame);
 
         // Move to parent node
         current_idx = node.parent;

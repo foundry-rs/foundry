@@ -45,7 +45,7 @@ impl PcSourceMapper {
             "Got source element for IC"
         );
 
-        // Get the source file index
+        // Get the source file index - returns None if index is -1
         let source_idx_opt = element.index();
         tracing::info!(
             source_idx = ?source_idx_opt,
@@ -64,10 +64,21 @@ impl PcSourceMapper {
         }
 
         // Get the source file info
-        let (file_path, _content) = &self.sources[source_idx];
+        let (file_path, content) = &self.sources[source_idx];
 
         // Convert byte offset to line and column
         let offset = element.offset() as usize;
+
+        // Check if offset is valid for this source file
+        if offset >= content.len() {
+            tracing::info!(
+                offset = offset,
+                content_len = content.len(),
+                "Offset out of bounds for source file"
+            );
+            return None;
+        }
+
         let (line, column) = self.offset_to_line_column(source_idx, offset)?;
 
         tracing::info!(
@@ -113,7 +124,7 @@ impl PcSourceMapper {
 
         // Calculate column within the line
         let line_start = if line == 0 { 0 } else { line_offsets[line - 1] + 1 };
-        let column = offset - line_start;
+        let column = offset.saturating_sub(line_start);
 
         // Lines and columns are 1-indexed in most editors
         Some((line + 1, column + 1))
