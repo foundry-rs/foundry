@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.3.2"
+version = "1.3.4"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.88"
@@ -153,9 +153,11 @@ scrypt.opt-level = 3
 
 # Misc.
 rayon.opt-level = 3
+rayon-core.opt-level = 3
 regex.opt-level = 3
 regex-syntax.opt-level = 3
 regex-automata.opt-level = 3
+walkdir.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
@@ -334,8 +336,8 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
-soldeer-commands = "=0.6.1"
-soldeer-core = { version = "=0.6.1", features = ["serde"] }
+soldeer-commands = "=0.7.0"
+soldeer-core = { version = "=0.7.0", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.20"
 tokio = "1"
@@ -353,6 +355,7 @@ jiff = "0.2"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -362,6 +365,9 @@ flate2 = "1.1"
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

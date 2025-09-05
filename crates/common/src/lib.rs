@@ -29,7 +29,6 @@ pub mod fs;
 pub mod mapping_slots;
 mod preprocessor;
 pub mod provider;
-pub mod reports;
 pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
