@@ -348,7 +348,7 @@ contract RecordAccountAccessesTest is DSTest {
             "0x000000000000000000000000000000000000162e\n- balance diff: 0 \xE2\x86\x92 1000000000000000000\n\n";
         expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
         expectedStateDiff =
-            string.concat(expectedStateDiff, "\ncontract: default/cheats/RecordAccountAccesses.t.sol:SelfCaller");
+            string.concat(expectedStateDiff, "\ncontract: default/cheats/RecordAccountAccesses.t.sol:SelfCaller");  
         expectedStateDiff = string.concat(
             expectedStateDiff,
             "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n- nonce diff: 0 \xE2\x86\x92 1\n\n"
