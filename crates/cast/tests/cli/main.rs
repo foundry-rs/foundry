@@ -3933,9 +3933,10 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
 // tests that cast call properly applies multiple state diff overrides
 // <https://github.com/foundry-rs/foundry/issues/11551>
 casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "call",
+        "--trace",
         "--from",
         "0xf6F444fD3B0088c1375671c05A7513661beFa4e6",
         "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
@@ -3950,12 +3951,15 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-0x0000000000000000000000000000000000000000000000000000000000000001
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::getThreshold()
+...
 
 "#]]);
 
     cmd.cast_fuse().args([
         "call",
+        "--trace",
         "--from",
         "0x2066901073a33ba2500274704aB04763875cF210",
         "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
@@ -3970,7 +3974,9 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-0x0000000000000000000000000000000000000000000000000000000000000001
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
+...
 
 "#]]);
 });
