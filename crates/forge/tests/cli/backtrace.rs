@@ -1,5 +1,7 @@
 //! Tests for backtrace functionality
 
+use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
+
 forgetest!(test_backtraces, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -100,7 +102,6 @@ forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
 
-    // Add initial source files
     prj.add_source(
         "SimpleRevert.sol",
         r#"
@@ -115,7 +116,7 @@ contract SimpleRevert {
 "#,
     );
 
-    // Add another source file that won't be modified (to test caching)
+    // Add another source file that won't be modified
     prj.add_source(
         "HelperContract.sol",
         r#"
@@ -134,7 +135,6 @@ contract HelperContract {
 "#,
     );
 
-    // Add test file
     prj.add_test(
         "BacktraceTest.t.sol",
         r#"
@@ -259,6 +259,97 @@ Backtrace:
   at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:21:43)
 
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
+forgetest!(test_fork_backtrace, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let etherscan_api_key = next_etherscan_api_key();
+    let fork_url = next_http_rpc_endpoint();
+
+    prj.add_source(
+        "ForkedERC20Wrapper.sol",
+        include_str!("../fixtures/backtraces/ForkedERC20Wrapper.sol"),
+    );
+
+    prj.add_test("ForkBacktrace.t.sol", include_str!("../fixtures/backtraces/ForkBacktrace.t.sol"));
+
+    let output = cmd
+        .args(["test", "-vvv", "--fork-url", &fork_url, "--match-contract", "ForkBacktraceTest"])
+        .assert_failure();
+
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 5 tests for test/ForkBacktrace.t.sol:ForkBacktraceTest
+[FAIL: USDC transfer failed] testDirectOnChainRevert() ([GAS])
+...
+Backtrace:
+  at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
+  at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
+  at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:38:20)
+
+[FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() ([GAS])
+...
+Backtrace:
+  at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
+  at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
+  at ForkedERC20Wrapper.nestedFailure (src/ForkedERC20Wrapper.sol:14:89)
+  at ForkBacktraceTest.testNestedFailure (test/ForkBacktrace.t.sol:30:51)
+
+[FAIL: Account has zero USDC balance] testRequireNonZeroBalance() ([GAS])
+...
+Backtrace:
+  at ForkedERC20Wrapper.requireNonZeroBalance (src/ForkedERC20Wrapper.sol:23:68)
+  at ForkBacktraceTest.testRequireNonZeroBalance (test/ForkBacktrace.t.sol:26:64)
+
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+...
+Backtrace:
+  at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transferFrom
+  at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transferFrom
+  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
+  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
+
+[FAIL: ERC20: transfer amount exceeds balance] testTransferWithoutBalance() ([GAS])
+...
+Backtrace:
+  at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
+  at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
+  at ForkedERC20Wrapper.transferWithoutBalance (src/ForkedERC20Wrapper.sol:14:89)
+  at ForkBacktraceTest.testTransferWithoutBalance (test/ForkBacktrace.t.sol:18:60)
+
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "testTransferFromWithoutApproval",
+            "-vvv",
+            "--fork-url",
+            &fork_url,
+            "--etherscan-api-key",
+            &etherscan_api_key,
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+Ran 1 test for test/ForkBacktrace.t.sol:ForkBacktraceTest
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+...
+Backtrace:
+  at FiatTokenV2_2.transferFrom
+  at FiatTokenProxy.fallback
+  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
+  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
 ...
 "#]]);
 });
