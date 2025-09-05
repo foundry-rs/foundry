@@ -45,7 +45,6 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
-use semver::Version;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -704,11 +703,27 @@ impl TestArgs {
                         // Convert source data to address-based for backtrace extraction
                         let mut address_to_source_data = HashMap::default();
 
+                        tracing::debug!(
+                            "contracts_by_address has {} entries",
+                            contracts_by_address.len()
+                        );
+                        tracing::debug!("source_data has {} entries", source_data.len());
+
                         for (addr, (contract_identifier, _)) in &contracts_by_address {
                             // Find source data for this contract
+                            tracing::debug!(
+                                "Looking for source data for contract {} at address {}",
+                                contract_identifier,
+                                addr
+                            );
                             for (artifact_id, data) in &source_data {
                                 // Match on full identifier (source:name)
                                 if artifact_id.identifier() == *contract_identifier {
+                                    tracing::debug!(
+                                        "Found source data for {} at {}",
+                                        contract_identifier,
+                                        addr
+                                    );
                                     address_to_source_data.insert(*addr, data.clone());
                                     break;
                                 }
@@ -1057,96 +1072,102 @@ fn collect_source_data(
 ) -> HashMap<ArtifactId, SourceData> {
     let mut source_data = HashMap::default();
 
-    // First, collect ALL source files from the compilation output with their proper indices
-    // This is critical for source mapping to work correctly
-    let mut all_sources_by_version: HashMap<Version, Vec<(PathBuf, String)>> = HashMap::default();
+    // Cache for build_id -> sources mapping to avoid reprocessing
+    let mut sources_by_build_id: HashMap<String, Vec<(PathBuf, String)>> = HashMap::default();
 
-    // First try to get sources from compilation output (fresh compilation)
-    let mut has_sources = false;
-    for (path, _, version) in output.output().sources.sources_with_version() {
-        has_sources = true;
-        // Try to make the path relative
-        let path_buf = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-
-        let source_content = foundry_common::fs::read_to_string(if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            root.join(path)
-        })
-        .unwrap_or_default();
-        let sources = all_sources_by_version.entry(version.clone()).or_default();
-
-        // In fresh compilation, sources come in order with contiguous IDs
-        sources.push((path_buf, source_content));
-    }
-
-    // If no sources from compilation output (cached), get them from build contexts
-    if !has_sources {
-        for (_build_id, build_context) in output.builds() {
-            // Try to get version from the build context
-            // TODO: Get actual version
-            let version = Version::new(0, 8, 30); // Default to 0.8.30 for now
-
-            let sources = all_sources_by_version.entry(version.clone()).or_default();
-
-            // The source_id_to_path is already ordered by source ID (u32)
-            // We need to maintain this order for source map indices to work correctly
-            let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
-            for (source_id, source_path) in &build_context.source_id_to_path {
-                // Read source content from file
-                let full_path = if source_path.is_absolute() {
-                    source_path.clone()
-                } else {
-                    root.join(source_path)
-                };
-
-                let source_content =
-                    foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
-
-                // Convert path to relative PathBuf
-                let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
-
-                ordered_sources.push((*source_id, path_buf, source_content));
-            }
-
-            // Sort by source ID to ensure proper ordering
-            ordered_sources.sort_by_key(|(id, _, _)| *id);
-
-            // Add sources in the correct order
-            for (_id, path_buf, content) in ordered_sources {
-                if !sources.iter().any(|(p, _)| p == &path_buf) {
-                    sources.push((path_buf, content));
-                }
-            }
-        }
-    }
-
-    // Now collect source data for each artifact
+    // Use the same approach as artifact_ids() - iterate directly through the artifacts
     for (id, artifact) in output.artifact_ids() {
         let id = id.with_stripped_file_prefixes(root);
 
         // Extract all the data we need for backtraces
         let source_map = artifact.get_source_map_deployed().and_then(|r| r.ok());
-        let sources = all_sources_by_version.get(&id.version).cloned();
         let bytecode = artifact
             .get_deployed_bytecode_bytes()
             .map(|b| b.into_owned())
             .filter(|b| !b.is_empty());
 
-        // Only create SourceData if we have all required components
-        match (source_map, sources, bytecode) {
-            (Some(source_map), Some(sources), Some(bytecode)) => {
-                source_data.insert(id.clone(), SourceData { source_map, sources, bytecode });
+        // Find the build_id for this artifact by looking through the artifact files
+        let build_id = output
+            .compiled_artifacts()
+            .artifact_files()
+            .chain(output.cached_artifacts().artifact_files())
+            .find(|af| {
+                // Match by checking if this artifact file corresponds to the same artifact
+                // Check if the artifact pointer is the same
+                std::ptr::eq(&af.artifact as *const _, artifact as *const _)
+            })
+            .map(|af| af.build_id.clone());
+
+        let Some(build_id) = build_id else {
+            trace!(artifact = ?id.identifier(), "no build_id found");
+            continue;
+        };
+
+        // Get or compute sources for this build_id
+        let sources = sources_by_build_id.entry(build_id.clone()).or_insert_with(|| {
+            // Get the build context for this build_id
+            if let Some(build_context) =
+                output.builds().find(|(bid, _)| *bid == &build_id).map(|(_, ctx)| ctx)
+            {
+                // Build ordered sources from the build context
+                let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
+
+                for (source_id, source_path) in &build_context.source_id_to_path {
+                    // Read source content from file
+                    let full_path = if source_path.is_absolute() {
+                        source_path.clone()
+                    } else {
+                        root.join(source_path)
+                    };
+
+                    let source_content =
+                        foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+
+                    // Convert path to relative PathBuf
+                    let path_buf =
+                        source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
+
+                    ordered_sources.push((*source_id, path_buf, source_content));
+                }
+
+                // Sort by source ID to ensure proper ordering (important for source map indices)
+                ordered_sources.sort_by_key(|(id, _, _)| *id);
+
+                // Build the final sources vector in the correct order
+                let mut sources = Vec::new();
+                for (id, path_buf, content) in ordered_sources {
+                    // Ensure we have space for this source ID
+                    let idx = id as usize;
+                    if sources.len() <= idx {
+                        sources.resize(idx + 1, (PathBuf::new(), String::new()));
+                    }
+                    sources[idx] = (path_buf, content);
+                }
+
+                sources
+            } else {
+                tracing::debug!("No build context found for build_id {}", build_id);
+                Vec::new()
             }
-            (source_map, sources, bytecode) => {
+        });
+
+        // Only create SourceData if we have all required components
+        match (source_map, bytecode) {
+            (Some(source_map), Some(bytecode)) if !sources.is_empty() => {
+                source_data.insert(
+                    id.clone(),
+                    SourceData { source_map, sources: sources.clone(), bytecode },
+                );
+            }
+            (source_map, bytecode) => {
                 // Log what's missing for debugging
                 if source_map.is_none() {
                     tracing::debug!("No source map for artifact {}", id.name);
                 }
-                if sources.is_none() {
+                if sources.is_empty() {
                     tracing::debug!(
-                        "No sources found for version {} (artifact {})",
-                        id.version,
+                        "No sources found for build_id {} (artifact {})",
+                        build_id,
                         id.name
                     );
                 }
@@ -1156,7 +1177,6 @@ fn collect_source_data(
             }
         }
     }
-
     source_data
 }
 
