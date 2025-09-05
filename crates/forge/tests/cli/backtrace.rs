@@ -95,3 +95,170 @@ Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 });
+
+forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    // Add initial source files
+    prj.add_source(
+        "SimpleRevert.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SimpleRevert {
+    function doRevert(string memory reason) public pure {
+        revert(reason);
+    }
+}
+"#,
+    );
+
+    // Add another source file that won't be modified (to test caching)
+    prj.add_source(
+        "HelperContract.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract HelperContract {
+    function getValue() public pure returns (uint256) {
+        return 42;
+    }
+    
+    function doRevert() public pure {
+        revert("Helper revert");
+    }
+}
+"#,
+    );
+
+    // Add test file
+    prj.add_test(
+        "BacktraceTest.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "../src/test.sol";
+import "../src/SimpleRevert.sol";
+import "../src/HelperContract.sol";
+
+contract BacktraceTest is DSTest {
+    SimpleRevert simpleRevert;
+    HelperContract helper;
+    
+    function setUp() public {
+        simpleRevert = new SimpleRevert();
+        helper = new HelperContract();
+    }
+    
+    function testSimpleRevert() public {
+        simpleRevert.doRevert("Test failure");
+    }
+    
+    function testHelperRevert() public {
+        helper.doRevert();
+    }
+}
+"#,
+    );
+
+    let output = cmd.args(["test", "-vvv"]).assert_failure();
+
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 2 tests for test/BacktraceTest.t.sol:BacktraceTest
+[FAIL: Helper revert] testHelperRevert() ([GAS])
+...
+Backtrace:
+  at HelperContract.doRevert (src/HelperContract.sol:11:47)
+  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:23:50)
+
+[FAIL: Test failure] testSimpleRevert() ([GAS])
+...
+Backtrace:
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:67)
+  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:19:50)
+
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Modify the source file - add a comment to change line numbers
+    prj.add_source(
+        "SimpleRevert.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SimpleRevert {
+    function doRevert(string memory reason) public pure {
+        // Added comment to shift line numbers
+        revert(reason);
+    }
+}
+"#,
+    );
+
+    // Modify the test file as well
+    prj.add_test(
+        "BacktraceTest.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "../src/test.sol";
+import "../src/SimpleRevert.sol";
+import "../src/HelperContract.sol";
+
+contract BacktraceTest is DSTest {
+    SimpleRevert simpleRevert;
+    HelperContract helper;
+    
+    function setUp() public {
+        simpleRevert = new SimpleRevert();
+        helper = new HelperContract();
+    }
+    
+    function testSimpleRevert() public {
+        // Added some comments
+        // to change line numbers
+        simpleRevert.doRevert("Test failure");
+    }
+    
+    function testHelperRevert() public {
+        helper.doRevert();
+    }
+}
+"#,
+    );
+
+    // Second run - mixed compilation (SimpleRevert fresh, BacktraceTest fresh, HelperContract
+    // cached)
+    let output = cmd.forge_fuse().args(["test", "-vvv"]).assert_failure();
+
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+Ran 2 tests for test/BacktraceTest.t.sol:BacktraceTest
+[FAIL: Helper revert] testHelperRevert() ([GAS])
+...
+Backtrace:
+  at HelperContract.doRevert (src/HelperContract.sol:11:47)
+  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:25:50)
+
+[FAIL: Test failure] testSimpleRevert() ([GAS])
+...
+Backtrace:
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:8:56)
+  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:21:43)
+
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
