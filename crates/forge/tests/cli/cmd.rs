@@ -53,6 +53,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -3377,6 +3380,15 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 
 "#]]);
 
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  | 481              | 509               | 24,095             | 48,643              |
+
+
+"#]]);
+
     cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
@@ -3696,6 +3708,15 @@ forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, 
 
 
 "#]]);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "method-identifiers", "--md"]).assert_success().stdout_eq(str![[r#"
+
+| Method                                                                                                                                                                                                                                                                                                                            | Identifier |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))[],((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))) | f38dafbb   |
+
+
+"#]]);
 });
 
 forgetest_init!(can_inspect_standard_json, |prj, cmd| {
@@ -3789,6 +3810,35 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | test_Increment                          | 51847           | 51847  | 51847  | 51847  | 1       |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
+
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| src/Counter.sol:Counter Contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 156813                           | 509             |       |        |       |         |
+|                                  |                 |       |        |       |         |
+| Function Name                    | Min             | Avg   | Median | Max   | # Calls |
+| increment                        | 43482           | 43482 | 43482  | 43482 | 1       |
+| number                           | 2424            | 2424  | 2424   | 2424  | 1       |
+| setNumber                        | 23784           | 23784 | 23784  | 23784 | 1       |
+
+| test/Counter.t.sol:CounterTest Contract |                 |        |        |        |         |
+|-----------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                         | Deployment Size |        |        |        |         |
+| 1544498                                 | 7573            |        |        |        |         |
+|                                         |                 |        |        |        |         |
+| Function Name                           | Min             | Avg    | Median | Max    | # Calls |
+| setUp                                   | 218902          | 218902 | 218902 | 218902 | 1       |
+| test_Increment                          | 51847           | 51847  | 51847  | 51847  | 1       |
 
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)

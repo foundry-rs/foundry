@@ -121,7 +121,7 @@ contract CounterTest is Test {
 }
     "#,
     );
-    // All 20 files are compiled on first run.
+    // All files are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 21 files with [..]
