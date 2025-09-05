@@ -233,41 +233,38 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn configure(&self, compiler: &mut Compiler) {
-        let dcx = compiler.dcx_mut();
-        let sm = dcx.source_map_mut().unwrap().clone();
-        dcx.set_emitter(if self.with_json_emitter {
+    fn lint(&self, input: &[PathBuf], compiler: &Compiler) {
+        let sm = compiler.sess().clone_source_map();
+        let dcx = compiler.dcx();
+        let prev_emitter = dcx.set_emitter(if self.with_json_emitter {
             let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
             let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(false);
             Box::new(json_emitter)
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
         });
-        dcx.set_flags_mut(|f| f.track_diagnostics = false);
-    }
+        dcx.set_flags(|f| f.track_diagnostics = false);
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) {
-        compiler.enter_mut(|compiler| {
+        compiler.enter(|compiler| {
             let gcx = compiler.gcx();
 
-            // Early lints.
-            gcx.sources.raw.par_iter().for_each(|source| {
-                if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_ast(gcx.sess, ast, &source.file, path);
-                }
-            });
+            input.par_iter().for_each(|path| {
+                let Some((_, ast_source)) = gcx.get_ast_source(path) else {
+                    panic!("AST source not found for {}", path.display());
+                };
+                let Some(ast) = &ast_source.ast else {
+                    panic!("AST missing for {}", path.display());
+                };
+                let _ = self.process_source_ast(gcx.sess, ast, &ast_source.file, path);
 
-            // Late lints.
-            gcx.hir.par_sources_enumerated().for_each(|(source_id, source)| {
-                if let FileName::Real(path) = &source.file.name
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_hir(gcx, source_id, &source.file);
-                }
+                let Some((hir_source_id, hir_source)) = gcx.get_hir_source(path) else {
+                    panic!("HIR source not found for {}", path.display());
+                };
+                let _ = self.process_source_hir(gcx, hir_source_id, &hir_source.file);
             });
         });
+
+        dcx.set_emitter(prev_emitter);
     }
 }
 

@@ -23,48 +23,48 @@ contract ContractWithLints {
     }
     function FUNCTION_MIXED_CASE_INFO() public {}
 }
-    "#;
+"#;
 
 const OTHER_CONTRACT: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    // forge-lint: disable-next-line
-    import { ContractWithLints } from "./ContractWithLints.sol";
+// forge-lint: disable-next-line
+import { ContractWithLints } from "./ContractWithLints.sol";
 
-    contract OtherContractWithLints {
-        function functionMIXEDCaseInfo() public {}
-    }
-        "#;
+contract OtherContractWithLints {
+    function functionMIXEDCaseInfo() public {}
+}
+"#;
 
 const ONLY_IMPORTS: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    // forge-lint: disable-next-line
-    import { ContractWithLints } from "./ContractWithLints.sol";
+// forge-lint: disable-next-line
+import { ContractWithLints } from "./ContractWithLints.sol";
 
-    import { _PascalCaseInfo } from "./ContractWithLints.sol";
-    import "./ContractWithLints.sol";
-        "#;
+import { _PascalCaseInfo } from "./ContractWithLints.sol";
+import "./ContractWithLints.sol";
+"#;
 
 const COUNTER_A: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    contract CounterA {
-        uint256 public CounterA_Fail_Lint;
-    }
-        "#;
+contract CounterA {
+    uint256 public CounterA_Fail_Lint;
+}
+"#;
 
 const COUNTER_B: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    contract CounterB {
-        uint256 public CounterB_Fail_Lint;
-    }
-        "#;
+contract CounterB {
+    uint256 public CounterB_Fail_Lint;
+}
+"#;
 
 const COUNTER_WITH_CONST: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -83,7 +83,7 @@ contract Counter {
         number++;
     }
 }
-        "#;
+"#;
 
 const COUNTER_TEST_WITH_CONST: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -104,7 +104,7 @@ contract CounterTest {
     }
   }
 }
-        "#;
+"#;
 
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();

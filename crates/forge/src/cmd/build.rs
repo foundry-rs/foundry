@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    opts::{BuildOpts, configure_pcx},
+    opts::BuildOpts,
     utils::{LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
@@ -114,14 +114,20 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref())
+            self.lint(&project, &config, self.paths.as_deref(), &output)
                 .map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
         Ok(output)
     }
 
-    fn lint(&self, project: &Project, config: &Config, files: Option<&[PathBuf]>) -> Result<()> {
+    fn lint(
+        &self,
+        project: &Project,
+        config: &Config,
+        files: Option<&[PathBuf]>,
+        output: &ProjectCompileOutput,
+    ) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
@@ -168,15 +174,8 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
-                let mut compiler = linter.init();
-                compiler.enter_mut(|compiler| -> Result<()> {
-                    let mut pcx = compiler.parse();
-                    configure_pcx(&mut pcx, config, Some(project), Some(&input_files))?;
-                    pcx.parse();
-                    let _ = compiler.lower_asts();
-                    Ok(())
-                })?;
-                linter.lint(&input_files, &mut compiler);
+                let compiler = output.parser().solc().compiler();
+                linter.lint(&input_files, &compiler);
             }
         }
 
