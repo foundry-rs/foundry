@@ -110,6 +110,9 @@ pub trait ExecutorStrategyExt {
         _output: ProjectCompileOutput,
     ) {
     }
+
+    fn checkpoint(&self) {}
+    fn reload_checkpoint(&self) {}
 }
 
 /// Implements [ExecutorStrategyRunner] for EVM.

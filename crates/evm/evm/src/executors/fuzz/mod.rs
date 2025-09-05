@@ -106,8 +106,9 @@ impl FuzzedExecutor {
             if timer.is_timed_out() {
                 return Err(TestCaseError::fail(TEST_TIMEOUT));
             }
-
+            self.executor.strategy.runner.checkpoint();
             let fuzz_res = self.single_fuzz(address, calldata)?;
+            self.executor.strategy.runner.reload_checkpoint();
 
             // If running with progress then increment current run.
             if let Some(progress) = progress {
@@ -245,7 +246,7 @@ impl FuzzedExecutor {
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::AssumeReject))
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =

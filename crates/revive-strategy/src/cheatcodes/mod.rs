@@ -1,10 +1,10 @@
 use std::{
     any::{Any, TypeId},
     fmt::Debug,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{ruint::aliases::U256, Address, Bytes, B256};
 use foundry_common::sh_err;
 use foundry_compilers::resolc::dual_compiled_contracts::DualCompiledContracts;
 use revive_env::{AccountId, Runtime, System};
@@ -24,7 +24,6 @@ use polkadot_sdk::{
     },
     polkadot_sdk_frame::prelude::OriginFor,
     sp_core::{self, H160},
-    sp_io,
     sp_weights::Weight,
 };
 
@@ -35,24 +34,17 @@ use revm::{
     },
     primitives::{CreateScheme, SignedAuthorization},
 };
+
+use crate::{execute_with_externalities, trace, tracing::apply_prestate_trace};
 pub trait PvmCheatcodeInspectorStrategyBuilder {
-    fn new_pvm(
-        test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
-        dual_compiled_contracts: DualCompiledContracts,
-        resolc_startup: bool,
-    ) -> Self;
+    fn new_pvm(dual_compiled_contracts: DualCompiledContracts, resolc_startup: bool) -> Self;
 }
 impl PvmCheatcodeInspectorStrategyBuilder for CheatcodeInspectorStrategy {
     // Creates a new PVM strategy
-    fn new_pvm(
-        test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
-        dual_compiled_contracts: DualCompiledContracts,
-        resolc_startup: bool,
-    ) -> Self {
+    fn new_pvm(dual_compiled_contracts: DualCompiledContracts, resolc_startup: bool) -> Self {
         Self {
             runner: &PvmCheatcodeInspectorStrategyRunner,
             context: Box::new(PvmCheatcodeInspectorStrategyContext::new(
-                test_externalities,
                 dual_compiled_contracts,
                 resolc_startup,
             )),
@@ -68,20 +60,14 @@ pub struct PvmCheatcodeInspectorStrategyContext {
     pub using_pvm: bool,
     /// Whether to start in PVM mode (from config)
     pub resolc_startup: bool,
-    pub revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
     pub dual_compiled_contracts: DualCompiledContracts,
 }
 
 impl PvmCheatcodeInspectorStrategyContext {
-    pub fn new(
-        revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
-        dual_compiled_contracts: DualCompiledContracts,
-        resolc_startup: bool,
-    ) -> Self {
+    pub fn new(dual_compiled_contracts: DualCompiledContracts, resolc_startup: bool) -> Self {
         Self {
             using_pvm: false, // Start in EVM mode by default
             resolc_startup,
-            revive_test_externalities,
             dual_compiled_contracts,
         }
     }
@@ -222,10 +208,11 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
             _ => return true,
         };
 
-        let balance =
-            ctx.revive_test_externalities.lock().unwrap().execute_with(|| {
+        let balance = execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
                 Pallet::<Runtime>::evm_balance(&H160::from_slice(address.as_slice()))
-            });
+            })
+        });
         let balance = U256::from_limbs(balance.0);
 
         // Skip the current BALANCE instruction since we've already handled it
@@ -251,7 +238,6 @@ fn select_pvm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: InnerEcx<'_,
     tracing::info!("switching to PVM");
     ctx.using_pvm = true;
     let persistent_accounts = data.db.persistent_accounts().clone();
-
     for address in persistent_accounts {
         let acc = data.load_account(address).expect("just loaded above");
         let amount = acc.data.info.balance;
@@ -267,26 +253,27 @@ fn select_pvm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: InnerEcx<'_,
             let _ = sh_err!("Amount mismatch {amount} != {amount_evm}, Polkadot balances are u128. Test results may be incorrect.");
         }
         let min_balance = pallet_balances::Pallet::<Runtime>::minimum_balance();
-        ctx.revive_test_externalities.lock().unwrap().execute_with(|| {
-            let account_id =
-                AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
-            let current_nonce = System::account_nonce(&account_id);
+        execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                let account_id =
+                    AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
+                let current_nonce = System::account_nonce(&account_id);
 
-            assert!(
-                current_nonce as u64 <= nonce,
-                "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
-            );
+                assert!(
+                    current_nonce as u64 <= nonce,
+                    "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
+                );
 
-            while (System::account_nonce(&account_id) as u64) < nonce {
-                System::inc_account_nonce(&account_id);
-            }
+                while (System::account_nonce(&account_id) as u64) < nonce {
+                    System::inc_account_nonce(&account_id);
+                }
 
-            // TODO: set `dust` after we have access to `AccountInfo`.
-            <Runtime as Config>::Currency::set_balance(
-                &account_id,
-                balance_native.into_rounded_balance().saturating_add(min_balance),
-            );
-        })
+                <Runtime as Config>::Currency::set_balance(
+                    &account_id,
+                    balance_native.into_rounded_balance().saturating_add(min_balance),
+                );
+            })
+        });
     }
 }
 
@@ -341,43 +328,47 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
             );
         let gas_limit = sp_core::U256::from(input.gas_limit()).min(max_gas);
 
-        let res = ctx.revive_test_externalities.lock().unwrap().execute_with(|| {
-            let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
-                &H160::from_slice(input.caller().as_slice()),
-            ));
-            let evm_value = sp_core::U256::from_little_endian(&input.value().as_le_bytes());
+        let (res, _call_trace, prestate_trace) = execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                crate::tracing::trace::<Runtime, _, _>(|| {
+                    let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
+                        &H160::from_slice(input.caller().as_slice()),
+                    ));
+                    let evm_value = sp_core::U256::from_little_endian(&input.value().as_le_bytes());
 
-            let (gas_limit, storage_deposit_limit) =
-                <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
-                    gas_limit,
-                )
-                .expect("gas limit is valid");
-            let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
-            let code = Code::Upload(contract.resolc_bytecode.as_bytes().unwrap().to_vec());
-            let data = constructor_args.to_vec();
-            let salt = match input.scheme() {
-                Some(CreateScheme::Create2 { salt }) => Some(
-                    salt.as_limbs()
-                        .iter()
-                        .flat_map(|&x| x.to_le_bytes())
-                        .collect::<Vec<u8>>()
-                        .try_into()
-                        .unwrap(),
-                ),
-                _ => None,
-            };
-            let bump_nonce = BumpNonce::No;
+                    let (gas_limit, storage_deposit_limit) =
+                    <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
+                        gas_limit,
+                    )
+                    .expect("gas limit is valid");
+                    let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
+                    let code = Code::Upload(contract.resolc_bytecode.as_bytes().unwrap().to_vec());
+                    let data = constructor_args.to_vec();
+                    let salt = match input.scheme() {
+                        Some(CreateScheme::Create2 { salt }) => Some(
+                            salt.as_limbs()
+                                .iter()
+                                .flat_map(|&x| x.to_le_bytes())
+                                .collect::<Vec<u8>>()
+                                .try_into()
+                                .unwrap(),
+                        ),
+                        _ => None,
+                    };
+                    let bump_nonce = BumpNonce::No;
 
-            Pallet::<Runtime>::bare_instantiate(
-                origin,
-                evm_value,
-                gas_limit,
-                storage_deposit_limit,
-                code,
-                data,
-                salt,
-                bump_nonce,
-            )
+                    Pallet::<Runtime>::bare_instantiate(
+                        origin,
+                        evm_value,
+                        gas_limit,
+                        storage_deposit_limit,
+                        code,
+                        data,
+                        salt,
+                        bump_nonce,
+                    )
+                })
+            })
         });
 
         let mut gas = Gas::new(input.gas_limit());
@@ -387,7 +378,7 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                 res.gas_required,
                 res.storage_deposit.charge_or_zero(),
             );
-        match res.result {
+        let result = match res.result {
             Ok(result) => {
                 let _ = gas.record_cost(gas_used.as_u64());
 
@@ -426,7 +417,11 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                     address: None,
                 })
             }
-        }
+        };
+
+        apply_prestate_trace(prestate_trace, ecx);
+
+        result
     }
 
     /// Try handling the `CALL` within PVM.
@@ -469,28 +464,33 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
             );
         let gas_limit = sp_core::U256::from(call.gas_limit).min(max_gas);
 
-        let res = ctx.revive_test_externalities.lock().unwrap().execute_with(|| {
-            let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
-                &H160::from_slice(call.caller.as_slice()),
-            ));
-            let evm_value = sp_core::U256::from_little_endian(&call.call_value().as_le_bytes());
+        let (res, _call_trace, prestate_trace) = execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                trace::<Runtime, _, _>(|| {
+                    let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
+                        &H160::from_slice(call.caller.as_slice()),
+                    ));
+                    let evm_value =
+                        sp_core::U256::from_little_endian(&call.call_value().as_le_bytes());
 
-            let (gas_limit, storage_deposit_limit) =
-                <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
-                    gas_limit,
-                )
-                .expect("gas limit is valid");
-            let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
-            let target = H160::from_slice(call.target_address.as_slice());
+                    let (gas_limit, storage_deposit_limit) =
+                    <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
+                        gas_limit,
+                    )
+                    .expect("gas limit is valid");
+                    let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
+                    let target = H160::from_slice(call.target_address.as_slice());
 
-            Pallet::<Runtime>::bare_call(
-                origin,
-                target,
-                evm_value,
-                gas_limit,
-                storage_deposit_limit,
-                call.input.to_vec(),
-            )
+                    Pallet::<Runtime>::bare_call(
+                        origin,
+                        target,
+                        evm_value,
+                        gas_limit,
+                        storage_deposit_limit,
+                        call.input.to_vec(),
+                    )
+                })
+            })
         });
 
         let mut gas = Gas::new(call.gas_limit);
@@ -500,11 +500,11 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                 res.gas_required,
                 res.storage_deposit.charge_or_zero(),
             );
-        match res.result {
+        let result = match res.result {
             Ok(result) => {
                 let _ = gas.record_cost(gas_used.as_u64());
-
                 let outcome = if result.did_revert() {
+                    tracing::error!("Contract call reverted");
                     CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
@@ -539,7 +539,11 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                     memory_offset: call.return_memory_offset.clone(),
                 })
             }
-        }
+        };
+
+        apply_prestate_trace(prestate_trace, ecx);
+
+        result
     }
 }
 

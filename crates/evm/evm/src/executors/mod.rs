@@ -348,7 +348,7 @@ impl Executor {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
-        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.backend_mut().set_caller(from);
         let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
         let mut res = self.transact_raw(from, to, calldata, U256::ZERO)?;
         res = res.into_result(rd)?;

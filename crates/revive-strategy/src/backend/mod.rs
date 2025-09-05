@@ -1,26 +1,22 @@
-use std::{
-    any::Any,
-    sync::{Arc, Mutex},
-};
+use std::any::Any;
 
 use foundry_evm::backend::{
     BackendStrategy, BackendStrategyContext, BackendStrategyRunner, EvmBackendStrategyRunner,
     ForkDB,
 };
-use polkadot_sdk::sp_io;
 use serde::{Deserialize, Serialize};
 
 /// Create revive strategy for [BackendStrategy].
 pub trait ReviveBackendStrategyBuilder {
     /// Create new revive strategy.
-    fn new_revive(test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self;
+    fn new_revive() -> Self;
 }
 
 impl ReviveBackendStrategyBuilder for BackendStrategy {
-    fn new_revive(test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self {
+    fn new_revive() -> Self {
         Self {
             runner: &ReviveBackendStrategyRunner,
-            context: Box::new(ReviveBackendStrategyContext::new(test_externalities)),
+            context: Box::new(ReviveBackendStrategyContext::new()),
         }
     }
 }
@@ -41,7 +37,7 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
             return EvmBackendStrategyRunner.inspect(backend, env, inspector, inspect_ctx);
         }
 
-        todo!()
+        todo!();
     }
 
     fn update_fork_db(
@@ -79,13 +75,11 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
 
 /// Context for [ReviveBackendStrategyRunner].
 #[derive(Debug, Clone)]
-pub struct ReviveBackendStrategyContext {
-    pub revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
-}
+pub struct ReviveBackendStrategyContext;
 
 impl ReviveBackendStrategyContext {
-    fn new(revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>) -> Self {
-        Self { revive_test_externalities }
+    fn new() -> Self {
+        Self
     }
 }
 
@@ -101,10 +95,6 @@ impl BackendStrategyContext for ReviveBackendStrategyContext {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
-}
-
-pub fn get_backend_ref(ctx: &dyn BackendStrategyContext) -> &ReviveBackendStrategyContext {
-    ctx.as_any_ref().downcast_ref().expect("expected ReviveExecutorStrategyContext")
 }
 
 #[derive(Clone, Debug, Default)]

@@ -18,6 +18,7 @@ name = "forge"
 path = "bin/main.rs"
 
 [dependencies]
+revive-strategy = { workspace = true }
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common.workspace = true

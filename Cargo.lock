@@ -6173,6 +6173,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
+ "revive-strategy",
  "rvm-rs",
  "semver 1.0.26",
  "serde",

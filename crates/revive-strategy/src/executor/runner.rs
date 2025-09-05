@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use alloy_primitives::{Address, U256};
 use foundry_cheatcodes::CheatcodeInspectorStrategy;
 use foundry_compilers::{
@@ -17,38 +15,28 @@ use polkadot_sdk::{
     pallet_balances,
     pallet_revive::{AddressMapper, BalanceOf, BalanceWithDust},
     sp_core::{self, H160},
-    sp_io,
 };
-use revive_env::{AccountId, ExtBuilder, Runtime, System};
+use revive_env::{AccountId, Runtime, System};
 use revm::primitives::{EnvWithHandlerCfg, ResultAndState};
 
 use crate::{
-    backend::{get_backend_ref, ReviveBackendStrategyBuilder, ReviveInspectContext},
-    cheatcodes::PvmCheatcodeInspectorStrategyBuilder,
-    executor::context::ReviveExecutorStrategyContext,
+    backend::ReviveBackendStrategyBuilder, cheatcodes::PvmCheatcodeInspectorStrategyBuilder,
+    execute_with_externalities, executor::context::ReviveExecutorStrategyContext,
 };
 
 /// Defines the [ExecutorStrategyRunner] strategy for Revive.
 #[derive(Debug, Default, Clone)]
-pub struct ReviveExecutorStrategyRunner {
-    pub revive_test_externalities: Arc<Mutex<sp_io::TestExternalities>>,
-}
+pub struct ReviveExecutorStrategyRunner;
 
 impl ReviveExecutorStrategyRunner {
     pub fn new() -> Self {
-        Self {
-            revive_test_externalities: Arc::new(Mutex::new(
-                ExtBuilder::default()
-                    .balance_genesis_config(vec![(H160::from_low_u64_be(1), 1000)])
-                    .build(),
-            )),
-        }
+        Self
     }
 }
 
 impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
     fn new_backend_strategy(&self, _ctx: &dyn ExecutorStrategyContext) -> BackendStrategy {
-        BackendStrategy::new_revive(self.revive_test_externalities.clone())
+        BackendStrategy::new_revive()
     }
 
     fn new_cheatcodes_strategy(
@@ -56,11 +44,7 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         ctx: &dyn ExecutorStrategyContext,
     ) -> foundry_cheatcodes::CheatcodesStrategy {
         let ctx = get_context_ref(ctx);
-        CheatcodeInspectorStrategy::new_pvm(
-            self.revive_test_externalities.clone(),
-            ctx.dual_compiled_contracts.clone(),
-            ctx.resolc_startup,
-        )
+        CheatcodeInspectorStrategy::new_pvm(ctx.dual_compiled_contracts.clone(), ctx.resolc_startup)
     }
 
     /// Sets the balance of an account.
@@ -80,15 +64,15 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
 
         EvmExecutorStrategyRunner.set_balance(executor, address, amount)?;
 
-        let backend = get_backend_ref(executor.backend().strategy.context.as_ref());
-        let mut ext = backend.revive_test_externalities.lock().unwrap();
         let min_balance = pallet_balances::Pallet::<Runtime>::minimum_balance();
 
-        ext.execute_with(|| {
-            pallet_balances::Pallet::<Runtime>::set_balance(
-                &AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice())),
-                balance_native.into_rounded_balance().saturating_add(min_balance),
-            );
+        execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                pallet_balances::Pallet::<Runtime>::set_balance(
+                    &AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice())),
+                    balance_native.into_rounded_balance().saturating_add(min_balance),
+                );
+            })
         });
         Ok(())
     }
@@ -110,21 +94,21 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         nonce: u64,
     ) -> foundry_evm::backend::BackendResult<()> {
         EvmExecutorStrategyRunner.set_nonce(executor, address, nonce)?;
-        let backend = get_backend_ref(executor.backend().strategy.context.as_ref());
-        let mut ext = backend.revive_test_externalities.lock().unwrap();
-        ext.execute_with(|| {
-            let account_id =
-                AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
-            let current_nonce = System::account_nonce(&account_id);
+        execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                let account_id =
+                    AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
+                let current_nonce = System::account_nonce(&account_id);
 
-            assert!(
-                current_nonce as u64 <= nonce,
-                "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
-            );
+                assert!(
+                    current_nonce as u64 <= nonce,
+                    "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
+                );
 
-            while (System::account_nonce(&account_id) as u64) < nonce {
-                System::inc_account_nonce(&account_id);
-            }
+                while (System::account_nonce(&account_id) as u64) < nonce {
+                    System::inc_account_nonce(&account_id);
+                }
+            })
         });
         Ok(())
     }
@@ -135,12 +119,12 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         address: Address,
     ) -> foundry_evm::backend::BackendResult<u64> {
         let evm_nonce = EvmExecutorStrategyRunner.get_nonce(executor, address)?;
-        let backend = get_backend_ref(executor.backend().strategy.context.as_ref());
-        let mut ext = backend.revive_test_externalities.lock().unwrap();
-        let revive_nonce = ext.execute_with(|| {
-            System::account_nonce(AccountId::to_fallback_account_id(&H160::from_slice(
-                address.as_slice(),
-            )))
+        let revive_nonce = execute_with_externalities(|externalities| {
+            externalities.execute_with(|| {
+                System::account_nonce(AccountId::to_fallback_account_id(&H160::from_slice(
+                    address.as_slice(),
+                )))
+            })
         });
 
         assert_eq!(evm_nonce, revive_nonce as u64);
@@ -155,12 +139,7 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         executor_env: &EnvWithHandlerCfg,
         inspector: &mut foundry_evm::inspectors::InspectorStack,
     ) -> eyre::Result<ResultAndState> {
-        let ctx = get_context_ref(ctx);
-        if ctx.wip_in_pvm {
-            backend.inspect(env, inspector, Box::new(ReviveInspectContext))
-        } else {
-            EvmExecutorStrategyRunner.call(ctx, backend, env, executor_env, inspector)
-        }
+        EvmExecutorStrategyRunner.call(ctx, backend, env, executor_env, inspector)
     }
 
     fn transact(
@@ -171,12 +150,7 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         executor_env: &EnvWithHandlerCfg,
         inspector: &mut foundry_evm::inspectors::InspectorStack,
     ) -> eyre::Result<ResultAndState> {
-        let ctx = get_context_ref_mut(ctx);
-        if ctx.wip_in_pvm {
-            backend.inspect(env, inspector, Box::new(ReviveInspectContext))
-        } else {
-            EvmExecutorStrategyRunner.transact(ctx, backend, env, executor_env, inspector)
-        }
+        EvmExecutorStrategyRunner.transact(ctx, backend, env, executor_env, inspector)
     }
 }
 
@@ -207,5 +181,12 @@ impl ExecutorStrategyExt for ReviveExecutorStrategyRunner {
     ) {
         let ctx = get_context_ref_mut(ctx);
         ctx.compilation_output.replace(output);
+    }
+
+    fn checkpoint(&self) {
+        crate::save_checkpoint();
+    }
+    fn reload_checkpoint(&self) {
+        crate::return_to_checkpoint();
     }
 }
