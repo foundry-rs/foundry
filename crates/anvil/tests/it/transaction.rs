@@ -1351,12 +1351,8 @@ async fn can_send_tx_osaka_valid_with_limit_enabled() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_tx_osaka_valid_with_limit_disabled() {
-    let (_api, handle) = spawn(
-        NodeConfig::test()
-            .enable_tx_gas_limit(true)
-            .with_hardfork(Some(EthereumHardfork::Osaka.into())),
-    )
-    .await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
     let provider = handle.http_provider();
     let wallet = handle.dev_wallets().next().unwrap();
     let sender = wallet.address();
