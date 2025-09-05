@@ -325,7 +325,7 @@ impl ContractsByArtifact {
                     left = right + offset.length as usize;
                 }
 
-                let partal_match = if left < code.len() {
+                let is_partial = if left < code.len() {
                     match deployed_code {
                         BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
                         BytecodeObject::Unlinked(bytes) => {
@@ -340,7 +340,7 @@ impl ContractsByArtifact {
                     true
                 };
 
-                if !partal_match {
+                if !is_partial {
                     return false;
                 }
 
