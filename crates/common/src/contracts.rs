@@ -1,6 +1,6 @@
 //! Commonly used contract types and functions.
 
-use crate::{compile::PathOrContractInfo, strip_bytecode_placeholders};
+use crate::{compile::PathOrContractInfo, find_metadata_start, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{Address, B256, Bytes, Selector, hex};
@@ -288,6 +288,13 @@ impl ContractsByArtifact {
 
             if has_call_protection {
                 ignored.push(Offsets { start: 1, length: 20 });
+            }
+
+            if let Some(metadata) = find_metadata_start(code) {
+                ignored.push(Offsets {
+                    start: metadata as u32,
+                    length: (code.len() - metadata) as u32,
+                });
             }
 
             ignored.sort_by_key(|o| o.start);
