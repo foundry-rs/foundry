@@ -161,9 +161,9 @@ impl CloneArgs {
     /// * `enable_git` - whether to enable git for the project.
     /// * `quiet` - whether to print messages.
     pub(crate) fn init_an_empty_project(root: &Path, install: DependencyInstallOpts) -> Result<()> {
-        // Initialize the project with no_example set to true to avoid creating example contracts
+        // Initialize the project with empty set to true to avoid creating example contracts
         let init_args =
-            InitArgs { root: root.to_path_buf(), install, no_example: true, ..Default::default() };
+            InitArgs { root: root.to_path_buf(), install, empty: true, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         Ok(())

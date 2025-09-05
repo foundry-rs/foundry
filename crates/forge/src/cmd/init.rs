@@ -48,7 +48,7 @@ pub struct InitArgs {
 
     /// Do not create example contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
     #[arg(long, conflicts_with = "template")]
-    pub no_example: bool,
+    pub empty: bool,
 
     #[command(flatten)]
     pub install: DependencyInstallOpts,
@@ -66,7 +66,7 @@ impl InitArgs {
             vscode,
             use_parent_git,
             vyper,
-            no_example,
+            empty,
         } = self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
 
@@ -143,7 +143,7 @@ impl InitArgs {
             fs::create_dir_all(&script)?;
 
             // Only create example contracts if not disabled
-            if !no_example {
+            if !empty {
                 if vyper {
                     // write the contract file
                     let contract_path = src.join("Counter.vy");
