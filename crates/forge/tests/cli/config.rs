@@ -991,7 +991,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "prague"
+evm_version = "osaka"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -1170,7 +1170,7 @@ exclude = []
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "prague",
+  "evm_version": "osaka",
   "gas_reports": [
     "*"
   ],
@@ -1834,7 +1834,7 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
+    assert_eq!("\"osaka\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 

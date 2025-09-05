@@ -1296,9 +1296,9 @@ async fn can_mine_multiple_in_block() {
 
 // ensures that the gas estimate is running on pending block by default
 #[tokio::test(flavor = "multi_thread")]
-async fn estimates_gas_prague() {
+async fn estimates_gas_osaka() {
     let (api, _handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
 
     // {"data":"0xcafebabe","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"
     // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}

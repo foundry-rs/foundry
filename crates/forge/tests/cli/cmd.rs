@@ -3757,7 +3757,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
         ]
       }
     },
-    "evmVersion": "prague",
+    "evmVersion": "osaka",
     "viaIR": false,
     "libraries": {}
   }

@@ -11,7 +11,7 @@ use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (_api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
 
@@ -80,7 +80,7 @@ async fn can_send_eip7702_tx() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_request() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
 

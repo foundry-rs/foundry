@@ -349,7 +349,7 @@ async fn can_bypass_sidecar_requirement() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_blobs_by_versioned_hash() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
@@ -387,7 +387,7 @@ async fn can_get_blobs_by_versioned_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_blobs_by_tx_hash() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();

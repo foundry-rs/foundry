@@ -187,9 +187,9 @@ impl RunArgs {
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
             if evm_version.is_none() {
-                // if the block has the excess_blob_gas field, we assume it's a Cancun block
+                // if the block has the excess_blob_gas field, we assume it's an Osaka block
                 if block.header.excess_blob_gas.is_some() {
-                    evm_version = Some(EvmVersion::Prague);
+                    evm_version = Some(EvmVersion::Osaka);
                 }
             }
             apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);

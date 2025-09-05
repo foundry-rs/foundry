@@ -1013,7 +1013,7 @@ fault: function(log) {}
 #[cfg(feature = "js-tracer")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_js_tracer() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
     let provider = crate::utils::http_provider(&handle.http_endpoint());
 

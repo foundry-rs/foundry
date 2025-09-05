@@ -2730,7 +2730,7 @@ contract EIP7702Script is Script {
    "#,
         );
 
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (_api, handle) = spawn(node_config).await;
 
     cmd.args([
@@ -2909,7 +2909,7 @@ contract BatchCallDelegationScript is Script {
    "#,
         );
 
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
 
     cmd.args([

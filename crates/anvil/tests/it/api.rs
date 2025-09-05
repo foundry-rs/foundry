@@ -408,7 +408,7 @@ async fn can_mine_while_mining() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_raw_tx_sync() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
 
@@ -438,7 +438,7 @@ async fn can_send_raw_tx_sync() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_tx_sync() {
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
     let (api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();

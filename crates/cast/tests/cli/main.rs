@@ -2368,7 +2368,7 @@ Transaction successfully executed.
 
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
     let endpoint = handle.http_endpoint();
 
     cmd.args([
