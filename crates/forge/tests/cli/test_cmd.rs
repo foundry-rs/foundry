@@ -650,7 +650,7 @@ contract TransientTest is Test {
    "#,
     );
 
-    cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+    cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "Cancun"]).assert_success();
 });
 
 forgetest_init!(
@@ -2787,7 +2787,7 @@ contract ScrollForkTest is Test {
    "#,
         );
 
-        cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+        cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "Cancun"])
             .assert_success();
     }
 );
