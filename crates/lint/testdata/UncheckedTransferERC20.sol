@@ -79,6 +79,8 @@ contract UncheckedTransfer {
     function checkedTransferInExpression(address to, uint256 amount) public {
         if (token.transfer(to, amount)) {
             balances[to] += amount;
+        } else {
+            revert("Transfer failed");
         }
     }
 
