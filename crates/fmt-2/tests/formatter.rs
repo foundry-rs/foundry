@@ -60,7 +60,8 @@ fn test_directory(base_name: &str) {
 
         let mut expected = fs::read_to_string(&path).unwrap();
         if cfg!(windows) {
-            expected = expected.replace("\r\n", "\n");
+            expected =
+                expected.replace("\r\n", "\n").replace(r"\'", r"/'").replace(r#"\""#, r#"/""#);
         }
 
         // The majority of the tests were written with the assumption that the default value for max
@@ -116,7 +117,11 @@ fn test_formatter(
     let expected_data = || {
         let data = Data::read_from(expected_path, None);
         if cfg!(windows) {
-            let content = data.to_string().replace("\r\n", "\n");
+            let content = data
+                .to_string()
+                .replace("\r\n", "\n")
+                .replace(r"\'", r"/'")
+                .replace(r#"\""#, r#"/""#);
             Data::text(content)
         } else {
             data.raw()
@@ -131,7 +136,8 @@ fn test_formatter(
 
     let mut expected_content = std::fs::read_to_string(expected_path).unwrap();
     if cfg!(windows) {
-        expected_content = expected_content.replace("\r\n", "\n");
+        expected_content =
+            expected_content.replace("\r\n", "\n").replace(r"\'", r"/'").replace(r#"\""#, r#"/""#);
     }
     let expected_formatted = format(&expected_content, expected_path, config);
     assert_data_eq!(&expected_formatted, expected_data());
