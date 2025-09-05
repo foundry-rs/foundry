@@ -6,7 +6,10 @@ use figment::{
 };
 use foundry_compilers::ProjectPathsConfig;
 use heck::ToSnakeCase;
-use std::path::{Path, PathBuf};
+use std::{
+    cell::OnceCell,
+    path::{Path, PathBuf},
+};
 
 pub(crate) trait ProviderExt: Provider + Sized {
     fn rename(
@@ -46,18 +49,19 @@ impl<P: Provider> ProviderExt for P {}
 /// A convenience provider to retrieve a toml file.
 /// This will return an error if the env var is set but the file does not exist
 pub(crate) struct TomlFileProvider {
-    pub env_var: Option<&'static str>,
-    pub default: PathBuf,
-    pub cache: Option<Result<Map<Profile, Dict>, Error>>,
+    env_var: Option<&'static str>,
+    env_val: OnceCell<Option<String>>,
+    default: PathBuf,
+    cache: OnceCell<Result<Map<Profile, Dict>, Error>>,
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: impl Into<PathBuf>) -> Self {
-        Self { env_var, default: default.into(), cache: None }
+    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+        Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 
-    fn env_val(&self) -> Option<String> {
-        self.env_var.and_then(Env::var)
+    fn env_val(&self) -> Option<&str> {
+        self.env_val.get_or_init(|| self.env_var.and_then(Env::var)).as_deref()
     }
 
     fn file(&self) -> PathBuf {
@@ -72,11 +76,6 @@ impl TomlFileProvider {
             }
         }
         false
-    }
-
-    pub(crate) fn cached(mut self) -> Self {
-        self.cache = Some(self.read());
-        self
     }
 
     /// Reads and processes the TOML configuration file, handling inheritance if configured.
@@ -248,7 +247,7 @@ impl Provider for TomlFileProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(cache) = self.cache.as_ref() { cache.clone() } else { self.read() }
+        self.cache.get_or_init(|| self.read()).clone()
     }
 }
 
@@ -262,16 +261,20 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut map = Map::new();
-        for (profile, dict) in self.0.data()? {
+        let mut map = self.0.data()?;
+        for (profile, dict) in &mut map {
             if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
                 // don't force snake case for keys in standalone sections
-                map.insert(profile, dict);
                 continue;
             }
-            map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+            let dict2 = std::mem::take(dict);
+            *dict = dict2.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect();
         }
         Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
     }
 }
 
@@ -299,13 +302,13 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
                     dict.insert("solc".to_string(), v);
                 }
             }
-
-            if let Some(v) = dict.remove("odyssey") {
-                dict.insert("odyssey".to_string(), v);
-            }
             map.insert(profile, dict);
         }
         Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
     }
 }
 
@@ -474,6 +477,7 @@ impl<P: Provider> Provider for RenameProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut data = self.provider.data()?;
         if let Some(data) = data.remove(&self.from) {
@@ -481,6 +485,7 @@ impl<P: Provider> Provider for RenameProfileProvider<P> {
         }
         Ok(Default::default())
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.to.clone())
     }
@@ -517,31 +522,32 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        self.provider.data().and_then(|mut data| {
-            if let Some(profiles) = data.remove(&self.wrapping_key) {
-                for (profile_str, profile_val) in profiles {
-                    let profile = Profile::new(&profile_str);
-                    if profile != self.profile {
-                        continue;
-                    }
-                    match profile_val {
-                        Value::Dict(_, dict) => return Ok(profile.collect(dict)),
-                        bad_val => {
-                            let mut err = Error::from(figment::error::Kind::InvalidType(
-                                bad_val.to_actual(),
-                                "dict".into(),
-                            ));
-                            err.metadata = Some(self.provider.metadata());
-                            err.profile = Some(self.profile.clone());
-                            return Err(err);
-                        }
+        let mut data = self.provider.data()?;
+        if let Some(profiles) = data.remove(&self.wrapping_key) {
+            for (profile_str, profile_val) in profiles {
+                let profile = Profile::new(&profile_str);
+                if profile != self.profile {
+                    continue;
+                }
+                match profile_val {
+                    Value::Dict(_, dict) => return Ok(profile.collect(dict)),
+                    bad_val => {
+                        let mut err = Error::from(figment::error::Kind::InvalidType(
+                            bad_val.to_actual(),
+                            "dict".into(),
+                        ));
+                        err.metadata = Some(self.provider.metadata());
+                        err.profile = Some(self.profile.clone());
+                        return Err(err);
                     }
                 }
             }
-            Ok(Default::default())
-        })
+        }
+        Ok(Default::default())
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
@@ -578,15 +584,18 @@ impl<P: Provider> Provider for WrapProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         if let Some(inner) = self.provider.data()?.remove(&self.profile) {
             let value = Value::from(inner);
-            let dict = [(self.profile.to_string().to_snake_case(), value)].into_iter().collect();
+            let mut dict = Dict::new();
+            dict.insert(self.profile.as_str().as_str().to_snake_case(), value);
             Ok(self.wrapping_key.collect(dict))
         } else {
             Ok(Default::default())
         }
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
@@ -631,6 +640,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut figment = Figment::from(&self.provider);
         for profile in &self.profiles {
@@ -651,6 +661,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
             err
         })
     }
+
     fn profile(&self) -> Option<Profile> {
         self.profiles.last().cloned()
     }
@@ -677,13 +688,11 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let data = self.provider.data()?;
-        if let Some(fallback) = data.get(&self.fallback) {
-            let mut inner = data.get(&self.profile).cloned().unwrap_or_default();
+        let mut data = self.provider.data()?;
+        if let Some(fallback) = data.remove(&self.fallback) {
+            let mut inner = data.remove(&self.profile).unwrap_or_default();
             for (k, v) in fallback {
-                if !inner.contains_key(k) {
-                    inner.insert(k.to_owned(), v.clone());
-                }
+                inner.entry(k).or_insert(v);
             }
             Ok(self.profile.collect(inner))
         } else {
