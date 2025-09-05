@@ -2,7 +2,7 @@ use crate::{cmd::NodeArgs, substrate_node::chain_spec};
 use clap::{Parser, Subcommand};
 use foundry_cli::opts::GlobalArgs;
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
-use polkadot_sdk::{sc_cli::SubstrateCli, sc_service};
+use polkadot_sdk::{sc_cli, sc_service};
 
 #[derive(Parser)]
 #[command(name = "anvil-polkadot", version = SHORT_VERSION, long_version = LONG_VERSION, next_display_order = None)]
@@ -31,8 +31,10 @@ pub enum AnvilSubcommand {
     GenerateFigSpec,
 }
 
+pub struct SubstrateCli;
+
 // Implementation of the SubstrateCli, which enables us to launch an in-process substrate node.
-impl SubstrateCli for Anvil {
+impl sc_cli::SubstrateCli for SubstrateCli {
     fn impl_name() -> String {
         "Anvil Substrate Node".into()
     }

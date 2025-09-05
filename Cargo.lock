@@ -1248,6 +1248,7 @@ dependencies = [
  "itertools 0.14.0",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
+ "parity-scale-codec",
  "parking_lot 0.12.3",
  "polkadot-sdk",
  "rand 0.8.5",

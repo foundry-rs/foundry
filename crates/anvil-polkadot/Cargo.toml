@@ -126,6 +126,7 @@ clap = { version = "4", features = [
 clap_complete = { version = "4" }
 chrono.workspace = true
 clap_complete_fig = "4"
+parity-scale-codec = "3.7.5"
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
