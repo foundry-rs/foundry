@@ -83,7 +83,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
                 None
             }
         }
-        // Call to adress wrapped by the contract interface
+        // Call to address wrapped by the contract interface
         hir::ExprKind::Call(
             hir::Expr {
                 kind: hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Contract(cid))]),
