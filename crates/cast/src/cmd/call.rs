@@ -1,10 +1,11 @@
+use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -34,8 +35,6 @@ use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
-
-use super::run::fetch_contracts_bytecode_from_trace;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -402,18 +401,29 @@ impl CallArgs {
                 state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
         }
 
-        // Parse state overrides
-        for override_str in self.state_overrides.iter().flatten() {
-            let (addr, slot, value) = address_slot_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_state(addr, [(slot.into(), value.into())]);
+        type StateOverrides = HashMap<Address, HashMap<B256, B256>>;
+        let parse_state_overrides =
+            |overrides: &Option<Vec<String>>| -> Result<StateOverrides, eyre::Report> {
+                let mut state_overrides: StateOverrides = StateOverrides::default();
+
+                overrides.iter().flatten().try_for_each(|s| -> Result<(), eyre::Report> {
+                    let (addr, slot, value) = address_slot_value_override(s)?;
+                    state_overrides.entry(addr).or_default().insert(slot.into(), value.into());
+                    Ok(())
+                })?;
+
+                Ok(state_overrides)
+            };
+
+        // Parse and apply state overrides
+        for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
+            state_overrides_builder = state_overrides_builder.with_state(addr, entries.into_iter());
         }
 
-        // Parse state diff overrides
-        for override_str in self.state_diff_overrides.iter().flatten() {
-            let (addr, slot, value) = address_slot_value_override(override_str)?;
+        // Parse and apply state diff overrides
+        for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
             state_overrides_builder =
-                state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
+                state_overrides_builder.with_state_diff(addr, entries.into_iter())
         }
 
         Ok(Some(state_overrides_builder.build()))
