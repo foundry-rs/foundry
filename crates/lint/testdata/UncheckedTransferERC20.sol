@@ -89,8 +89,38 @@ contract UncheckedTransfer {
         );
     }
 
-    // Edge case: approve is not a transfer function, should not be flagged
     function uncheckedApprove(address spender, uint256 amount) public {
         token.approve(spender, amount);
+    }
+}
+
+library Currency {
+    function transfer(Currency currency, address to, uint256 amount) internal {
+        // transfer and check output internally
+    }
+    function transferFrom(Currency currency, address from, address to, uint256 amount) internal {
+        // transfer and check output internally
+    }
+}
+
+contract UncheckedTransferUsingCurrencyLib {
+    using Currency for address;
+
+    Currency public token;
+    mapping(address => uint256) public balances;
+
+    constructor(Currency _token) {
+        token = _token;
+    }
+
+    // SHOULD PASS: Function with same params but NO boolean return
+    function currencyTransfer(address to, uint256 amount) public {
+        token.transfer(to, amount);
+        token.transfer(to, amount);
+    }
+
+    function currencyTransferFrom(address from, address to, uint256 amount) public {
+        token.transferFrom(from, to, amount);
+        token.transferFrom(from, to, amount);
     }
 }

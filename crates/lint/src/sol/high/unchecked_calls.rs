@@ -76,7 +76,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
 
     let Some(cid) = (match &contract_expr.kind {
         // Call to pre-instantiated contract variable
-        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(id))]) => {
+        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(id)), ..]) => {
             if let hir::TypeKind::Custom(hir::ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
                 Some(cid)
             } else {
