@@ -358,10 +358,10 @@ impl ContractsByArtifact {
                 };
 
                 if exact_match {
-                    return true;
+                    true
                 } else {
                     partial_match = Some((*id, *contract));
-                    return false;
+                    false
                 }
             })
             .or(partial_match)
