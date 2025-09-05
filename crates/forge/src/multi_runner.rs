@@ -1,7 +1,7 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult, 
+    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
     runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};

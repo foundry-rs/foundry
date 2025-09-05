@@ -1,6 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    MultiContractRunner, MultiContractRunnerBuilder,
     backtrace::{extract_backtrace, source_map::SourceData},
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -22,7 +22,8 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    ContractsByAddress, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
+    ContractsByAddress, EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs,
+    fs, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
@@ -1083,7 +1084,7 @@ fn collect_source_data(
             .find(|af| {
                 // Match by checking if this artifact file corresponds to the same artifact
                 // Check if the artifact pointer is the same
-                std::ptr::eq(&af.artifact as *const _, artifact as *const _)
+                std::ptr::eq(&raw const af.artifact, artifact as *const _)
             })
             .map(|af| af.build_id.clone());
 
