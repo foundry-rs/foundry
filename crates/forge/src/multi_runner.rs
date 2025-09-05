@@ -579,10 +579,3 @@ pub(crate) fn matches_contract(
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
 }
-
-/// Returns `true` if the given contract is a test contract.
-pub(crate) fn is_test_contract(
-    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
-) -> bool {
-    functions.into_iter().any(|func| func.borrow().is_any_test())
-}

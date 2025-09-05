@@ -705,14 +705,14 @@ impl Config {
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
             figment = Self::merge_toml_provider(
                 figment,
-                TomlFileProvider::new(None, global_toml).cached(),
+                TomlFileProvider::new(None, global_toml),
                 profile.clone(),
             );
         }
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)).cached(),
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
             profile.clone(),
         );
 
