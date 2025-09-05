@@ -140,11 +140,7 @@ fn test_formatter(
 
     let mut expected_content = std::fs::read_to_string(expected_path).unwrap();
     if cfg!(windows) {
-        expected_content = expected_content
-            .replace("\r\n", "\n")
-            .replace(r"\'", r"/'")
-            .replace(r#"\""#, r#"/""#)
-            .replace("\\\n", "/\n");
+        expected_content = expected_content.replace("\r\n", "\n");
     }
     let expected_formatted = format(&expected_content, expected_path, config);
     assert_data_eq!(&expected_formatted, expected_data());
