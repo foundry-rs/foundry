@@ -133,7 +133,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
-        deny: false.into(),
+        deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
         via_ir: true,
         ast: false,

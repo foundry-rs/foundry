@@ -589,7 +589,7 @@ impl<'de> Deserialize<'de> for DenyLevel {
             type Value = DenyLevel;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a boolean or a string like 'never', 'warnings', or 'notes'")
+                formatter.write_str("one of the following strings: `never`, `warnings`, `notes`")
             }
 
             fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
@@ -616,11 +616,11 @@ impl FromStr for DenyLevel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "warnings" | "warning" | "w" | "true" | "t" => Ok(Self::Warnings),
+            "warnings" | "warning" | "w" => Ok(Self::Warnings),
             "notes" | "note" | "n" => Ok(Self::Notes),
             "never" | "false" | "f" => Ok(Self::Never),
             _ => Err(format!(
-                "unknown variant: found `{s}`, expected `one of `warnings`, `notes`, `never`"
+                "unknown variant: found `{s}`, expected one of `never`, `warnings`, `notes`"
             )),
         }
     }
@@ -665,7 +665,7 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 ///
 /// See [Warning::DeprecatedKey]
 pub const DEPRECATIONS: &[(&str, &str)] =
-    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny")];
+    &[("cancun", "evm_version = Cancun"), ("deny_warnings = true", "deny = warnings")];
 
 impl Config {
     /// The default profile: "default"
@@ -762,19 +762,6 @@ impl Config {
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
-
-        // Handle deprecated `--deny-warnings` CLI flag
-        if config.deny_warnings {
-            config.deny = DenyLevel::Warnings;
-
-            let warning = Warning::DeprecatedKey {
-                old: "--deny-warnings".to_string(),
-                new: "--deny warnings".to_string(),
-            };
-            if !config.warnings.contains(&warning) {
-                config.warnings.push(warning);
-            }
-        }
 
         // The `"profile"` profile contains all the profiles as keys.
         let mut add_profile = |profile: &Profile| {
@@ -3867,7 +3854,7 @@ mod tests {
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
                 ignored_warnings_from = ["something"]
-                deny = false
+                deny = "never"
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
@@ -6304,6 +6291,24 @@ mod tests {
             // Non-array values should be replaced
             assert_eq!(config.optimizer, Some(false));
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_deny_warnings_is_handled() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                deny_warnings = true
+                "#,
+            )?;
+            let config = Config::load().unwrap();
+
+            // Assert that the deprecated flag is correctly interpreted
+            assert_eq!(config.deny, DenyLevel::Warnings);
             Ok(())
         });
     }
