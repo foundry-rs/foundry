@@ -43,7 +43,7 @@ chrono.workspace = true
 
 # bin
 forge-doc.workspace = true
-forge-fmt.workspace = true
+forge-fmt-2.workspace = true
 forge-lint.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true

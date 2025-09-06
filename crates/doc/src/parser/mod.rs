@@ -1,6 +1,6 @@
 //! The parser module.
 
-use forge_fmt::{FormatterConfig, Visitable, Visitor};
+use crate::fmt::{FormatterConfig, Visitable, Visitor};
 use itertools::Itertools;
 use solang_parser::{
     doccomment::{DocComment, parse_doccomments},
@@ -352,15 +352,15 @@ mod tests {
             pragma solidity ^0.8.19;
             /// @name Test
             ///  no tag
-            ///@notice    Cool contract    
-            ///   @  dev     This is not a dev tag 
+            ///@notice    Cool contract
+            ///   @  dev     This is not a dev tag
             /**
              * @dev line one
              *    line 2
              */
             contract Test {
-                /*** my function    
-                      i like whitespace    
+                /*** my function
+                      i like whitespace
             */
                 function test() {}
             }

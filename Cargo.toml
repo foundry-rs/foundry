@@ -19,7 +19,6 @@ members = [
     "crates/evm/evm/",
     "crates/evm/fuzz/",
     "crates/evm/traces/",
-    "crates/fmt/",
     "crates/fmt-2/",
     "crates/forge/",
     "crates/script-sequence/",
@@ -182,7 +181,7 @@ chisel = { path = "crates/chisel" }
 forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
-forge-fmt = { path = "crates/fmt" }
+forge-fmt-2 = { path = "crates/fmt-2" }
 forge-lint = { path = "crates/lint" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }

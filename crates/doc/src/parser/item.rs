@@ -1,6 +1,7 @@
-use crate::{Comments, error::ParserResult};
-use forge_fmt::{
-    Comments as FmtComments, Formatter, FormatterConfig, InlineConfig, Visitor,
+use crate::{
+    Comments,
+    error::{ParserError, ParserResult},
+    fmt::{Comments as FmtComments, Formatter, FormatterConfig, InlineConfig, Visitor},
     solang_ext::SafeUnwrap,
 };
 use solang_parser::pt::{
@@ -82,31 +83,9 @@ impl ParseItem {
 
     /// Set formatted code on the [ParseItem].
     pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        let mut code = String::new();
-        let mut fmt = Formatter::new(
-            &mut code,
-            source,
-            FmtComments::default(),
-            InlineConfig::default(),
-            config,
-        );
-
-        match self.source.clone() {
-            ParseSource::Contract(mut contract) => {
-                contract.parts = vec![];
-                fmt.visit_contract(&mut contract)?
-            }
-            ParseSource::Function(mut func) => {
-                func.body = None;
-                fmt.visit_function(&mut func)?
-            }
-            ParseSource::Variable(mut var) => fmt.visit_var_definition(&mut var)?,
-            ParseSource::Event(mut event) => fmt.visit_event(&mut event)?,
-            ParseSource::Error(mut error) => fmt.visit_error(&mut error)?,
-            ParseSource::Struct(mut structure) => fmt.visit_struct(&mut structure)?,
-            ParseSource::Enum(mut enumeration) => fmt.visit_enum(&mut enumeration)?,
-            ParseSource::Type(mut ty) => fmt.visit_type_definition(&mut ty)?,
-        };
+        let code = forge_fmt_2::format(source, config)
+            .into_result()
+            .map_err(|e| ParserError::Formatter2(e))?;
 
         self.code = code;
 

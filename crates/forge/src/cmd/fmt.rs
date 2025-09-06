@@ -1,13 +1,13 @@
 use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::fs;
+use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
+use solar::interface::source_map::FileName;
 use std::{
     fmt::{self, Write},
     io,
@@ -98,97 +98,135 @@ impl FmtArgs {
             }
         };
 
-        let format = |source: String, path: Option<&Path>| -> Result<_> {
-            let name = match path {
-                Some(path) => path.strip_prefix(&config.root).unwrap_or(path).display().to_string(),
-                None => "stdin".to_string(),
-            };
-
-            let parsed = parse(&source).wrap_err_with(|| {
-                format!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
-            })?;
-
-            if !parsed.invalid_inline_config_items.is_empty() {
-                for (loc, warning) in &parsed.invalid_inline_config_items {
-                    let mut lines = source[..loc.start().min(source.len())].split('\n');
-                    let col = lines.next_back().unwrap().len() + 1;
-                    let row = lines.count() + 1;
-                    sh_warn!("[{}:{}:{}] {}", name, row, col, warning)?;
-                }
-            }
-
-            let mut output = String::new();
-            format_to(&mut output, parsed, config.fmt.clone()).unwrap();
-
-            solang_parser::parse(&output, 0).map_err(|diags| {
-                eyre::eyre!(
-                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged.\n\
-                     Debug info: {diags:?}\n\
-                     Formatted output:\n\n{output}"
-                )
-            })?;
-
-            let diff = TextDiff::from_lines(&source, &output);
-            let new_format = diff.ratio() < 1.0;
-            if self.check || path.is_none() {
-                if self.raw {
-                    sh_print!("{output}")?;
-                }
-
-                // If new format then compute diff summary.
-                if new_format {
-                    return Ok(Some(format_diff_summary(&name, &diff)));
-                }
-            } else if let Some(path) = path {
-                // If new format then write it on disk.
-                if new_format {
-                    fs::write(path, output)?;
-                }
-            }
-            Ok(None)
-        };
-
-        let diffs = match input {
-            Input::Stdin(source) => format(source, None).map(|diff| vec![diff]),
-            Input::Paths(paths) => {
-                if paths.is_empty() {
+        let paths_to_fmt = match &input {
+            Input::Paths(paths_to_fmt) => {
+                if paths_to_fmt.is_empty() {
                     sh_warn!(
                         "Nothing to format.\n\
-                         HINT: If you are working outside of the project, \
-                         try providing paths to your source files: `forge fmt <paths>`"
+                    HINT: If you are working outside of the project, \
+                    try providing paths to your source files: `forge fmt <paths>`"
                     )?;
                     return Ok(());
+                } else {
+                    paths_to_fmt.iter().cloned()
                 }
-                paths
-                    .par_iter()
-                    .map(|path| {
-                        let source = fs::read_to_string(path)?;
-                        format(source, Some(path))
-                    })
-                    .collect()
             }
-        }?;
+            Input::Stdin(_) => [].iter().cloned(),
+        };
 
-        let mut diffs = diffs.iter().flatten();
-        if let Some(first) = diffs.next() {
-            // This branch is only reachable with stdin or --check
+        let project = config.solar_project()?;
+        let mut output = ProjectCompiler::new().files(paths_to_fmt).compile(&project)?;
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
 
-            if !self.raw {
-                let mut stdout = io::stdout().lock();
-                let first = std::iter::once(first);
-                for (i, diff) in first.chain(diffs).enumerate() {
-                    if i > 0 {
-                        let _ = stdout.write_all(b"\n");
+        let res = compiler.enter_mut(|c| -> solar::interface::Result<()> {
+            let mut pcx = c.parse();
+            pcx.set_resolve_imports(false);
+
+            // If the input was stdin, manually add it as a file.
+            if let Input::Stdin(content) = &input {
+                let sess = c.sess();
+                let file = sess
+                    .source_map()
+                    .new_source_file(
+                        solar::parse::interface::source_map::FileName::Custom("std-in".to_string()),
+                        content,
+                    )
+                    .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+
+                pcx.add_file(file);
+                pcx.parse();
+            }
+            Ok(())
+        });
+        res.map_err(|_| eyre::format_err!("unable to parse input"))?;
+
+        let res = compiler.enter(|c| -> Result<()> {
+            let gcx = c.gcx();
+            let fmt_config = &config.fmt;
+
+            match &input {
+                Input::Stdin(original_source) => {
+                    let source_unit = gcx
+                        .sources
+                        .raw
+                        .iter()
+                        .find(|source| matches!(source.file.name, FileName::Custom(_)))
+                        .ok_or_else(|| eyre::eyre!("stdin source not found"))?;
+
+                    let formatted_source =
+                        forge_fmt_2::format_ast(&gcx, source_unit, fmt_config.clone());
+
+                    let diff = TextDiff::from_lines(original_source, &formatted_source);
+                    if diff.ratio() < 1.0 {
+                        if self.raw {
+                            print!("{formatted_source}");
+                        } else {
+                            print!("{}", format_diff_summary("stdin", &diff));
+                        }
+                        if self.check {
+                            std::process::exit(1);
+                        }
                     }
-                    let _ = stdout.write_all(diff.as_bytes());
+                }
+                Input::Paths(_) => {
+                    let diffs: Vec<String> = gcx
+                        .sources
+                        .raw
+                        .par_iter()
+                        .filter_map(|source_unit| {
+                            let path = source_unit.file.name.as_real()?;
+                            let original = &source_unit.file.src;
+                            let formatted =
+                                forge_fmt_2::format_ast(&gcx, source_unit, fmt_config.clone());
+
+                            if original.as_str() == &formatted {
+                                return None;
+                            }
+
+                            if self.check {
+                                let name = path
+                                    .strip_prefix(&config.root)
+                                    .unwrap_or(path)
+                                    .display()
+                                    .to_string();
+                                let summary = format_diff_summary(
+                                    &name,
+                                    &TextDiff::from_lines(original.as_str(), &formatted),
+                                );
+                                Some(Ok(summary))
+                            } else {
+                                match fs::write(path, formatted) {
+                                    Ok(_) => {
+                                        println!("Formatted {}", path.display());
+                                        None
+                                    }
+                                    Err(e) => Some(Err(eyre::eyre!(
+                                        "Failed to write to {}: {}",
+                                        path.display(),
+                                        e
+                                    ))),
+                                }
+                            }
+                        })
+                        .collect::<Result<_>>()?;
+
+                    if !diffs.is_empty() {
+                        // This block is only reached in --check mode when files need formatting.
+                        let mut stdout = io::stdout().lock();
+                        for (i, diff) in diffs.iter().enumerate() {
+                            if i > 0 {
+                                let _ = stdout.write_all(b"\n");
+                            }
+                            let _ = stdout.write_all(diff.as_bytes());
+                        }
+                        std::process::exit(1);
+                    }
                 }
             }
+            Ok(())
+        });
 
-            if self.check {
-                std::process::exit(1);
-            }
-        }
-
+        res?;
         Ok(())
     }
 

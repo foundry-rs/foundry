@@ -14,11 +14,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-forge-fmt.workspace = true
+forge-fmt-2.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
+solar-interface.workspace = true
 alloy-primitives.workspace = true
 
 derive_more.workspace = true
@@ -33,3 +34,8 @@ thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 regex.workspace = true
+
+# formatter deps
+ariadne = "0.5"
+[dev-dependencies]
+similar-asserts.workspace = true

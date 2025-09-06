@@ -26,7 +26,7 @@ use solar::{
         ast::{SourceUnit, Span},
         interface::{Session, diagnostics::EmittedDiagnostics, source_map::SourceFile},
     },
-    sema::Compiler,
+    sema::{Compiler, Gcx, Source},
 };
 
 use std::{path::Path, sync::Arc};
@@ -122,6 +122,15 @@ pub fn format_source(
     })
 }
 
+/// Format a string input with the default compiler.
+pub fn format(source: &str, config: FormatterConfig) -> FormatterResult {
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+
+    format_source(source, None, config, &mut compiler)
+}
+
 fn format_inner(
     config: FormatterConfig,
     compiler: &mut Compiler,
@@ -212,20 +221,7 @@ fn format_once(
         }
         .ok_or_else(|| c.dcx().bug("no source file parsed").emit())?;
 
-        let ast = source.ast.as_ref().ok_or_else(|| c.dcx().err("unable to read AST").emit())?;
-
-        let comments = Comments::new(
-            &source.file,
-            c.sess().source_map(),
-            true,
-            config.wrap_comments,
-            if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
-        );
-        let inline_config = parse_inline_config(c.sess(), &comments, ast);
-
-        let mut state = state::State::new(c.sess().source_map(), config, inline_config, comments);
-        state.print_source_unit(ast);
-        Ok(state.s.eof())
+        Ok(format_ast(&gcx, source, config))
     });
 
     let diagnostics = compiler.sess().dcx.emitted_diagnostics().unwrap();
@@ -236,6 +232,26 @@ fn format_once(
         (Err(_), Ok(_)) => unreachable!(),
         (Err(_), Err(_)) => FormatterResult::Err(diagnostics),
     }
+}
+
+// A parallel-safe "worker" function.
+pub fn format_ast<'ast>(
+    gcx: &Gcx<'ast>,
+    source: &'ast Source<'ast>,
+    config: FormatterConfig,
+) -> String {
+    let comments = Comments::new(
+        &source.file,
+        gcx.sess.source_map(),
+        true,
+        config.wrap_comments,
+        if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
+    );
+    let inline_config = parse_inline_config(gcx.sess, &comments, source.ast.as_ref().unwrap());
+
+    let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
+    state.print_source_unit(source.ast.as_ref().unwrap());
+    state.s.eof()
 }
 
 fn parse_inline_config<'ast>(

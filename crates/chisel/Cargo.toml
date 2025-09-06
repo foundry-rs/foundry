@@ -19,7 +19,8 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
-forge-fmt.workspace = true
+forge-doc.workspace = true
+forge-fmt-2.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }

@@ -1,10 +1,14 @@
-use forge_fmt::FormatterError;
+use crate::fmt::FormatterError;
+use solar_interface::diagnostics::EmittedDiagnostics;
 use thiserror::Error;
 
 /// The parser error.
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub enum ParserError {
+    /// Formatter error.
+    #[error(transparent)]
+    Formatter2(EmittedDiagnostics),
     /// Formatter error.
     #[error(transparent)]
     Formatter(#[from] FormatterError),
