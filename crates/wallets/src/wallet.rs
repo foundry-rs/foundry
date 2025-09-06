@@ -134,10 +134,20 @@ impl WalletOpts {
         } else {
             eyre::bail!(
                 "\
-Error accessing local wallet. Did you set a private key, mnemonic or keystore?
+Error accessing local wallet. Did you pass a keystore, hardware wallet, private key or mnemonic?
+
 Run the command with --help flag for more information or use the corresponding CLI
 flag to set your key via:
---private-key, --mnemonic-path, --aws, --gcp, --interactive, --trezor or --ledger.
+
+--keystore
+--interactive
+--private-key
+--mnemonic-path
+--aws
+--gcp
+--trezor
+--ledger
+
 Alternatively, when using the `cast send` or `cast mktx` commands with a local node
 or RPC that has unlocked accounts, the --unlocked or --ethsign flags can be used,
 respectively. The sender address can be specified by setting the `ETH_FROM` environment

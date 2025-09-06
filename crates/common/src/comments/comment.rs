@@ -1,6 +1,6 @@
 //! Modified from [`rustc_ast::util::comments`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast/src/util/comments.rs).
 
-use solar_parse::{
+use solar::parse::{
     ast::{CommentKind, Span},
     interface::BytePos,
 };

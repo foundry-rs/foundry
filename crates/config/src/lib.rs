@@ -36,7 +36,7 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
 };
 use regex::Regex;
@@ -66,7 +66,7 @@ use etherscan::{
     EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
 };
 
-mod resolve;
+pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
@@ -81,9 +81,6 @@ pub use lint::{LinterConfig, Severity as LintSeverity};
 pub mod fs_permissions;
 pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
-
-pub mod fork_config;
-pub use fork_config::{ForkChainConfig, ForkConfigs};
 
 pub mod error;
 use error::ExtractConfigError;
@@ -103,7 +100,6 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use foundry_block_explorers::EtherscanApiVersion;
 
 pub mod providers;
 pub use providers::Remappings;
@@ -132,6 +128,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
+
+pub use semver;
 
 /// Foundry configuration
 ///
@@ -301,8 +299,6 @@ pub struct Config {
     pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
-    /// etherscan API version
-    pub etherscan_api_version: Option<EtherscanApiVersion>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
@@ -449,8 +445,6 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
-    /// Fork configuration
-    pub forks: ForkConfigs,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -598,7 +592,6 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
-        "forks",
     ];
 
     /// File name of config toml file
@@ -689,7 +682,6 @@ impl Config {
         add_profile(&config.profile);
 
         config.normalize_optimizer_settings();
-        config.forks.resolve_env_vars()?;
 
         Ok(config)
     }
@@ -713,14 +705,14 @@ impl Config {
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
             figment = Self::merge_toml_provider(
                 figment,
-                TomlFileProvider::new(None, global_toml).cached(),
+                TomlFileProvider::new(None, global_toml),
                 profile.clone(),
             );
         }
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)).cached(),
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
             profile.clone(),
         );
 
@@ -962,6 +954,17 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// A cached, in-memory project that does not request any artifacts.
+    ///
+    /// Use this when you just want the source graph or the Solar compiler context.
+    pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+        let mut project = self.project()?;
+        project.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection([]);
+        });
+        Ok(project)
+    }
+
     /// Builds mapping with additional settings profiles.
     fn additional_settings(
         &self,
@@ -990,7 +993,7 @@ impl Config {
             return Ok(BTreeMap::new());
         }
 
-        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let graph = Graph::<MultiCompilerParser>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
 
         for res in &self.compilation_restrictions {
@@ -1132,7 +1135,6 @@ impl Config {
     }
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
-    #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
         evm_spec_id(self.evm_version, self.odyssey)
     }
@@ -1413,23 +1415,17 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let default_api_version = self.etherscan_api_version.unwrap_or_default();
-
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
             && self.etherscan.contains_key(maybe_alias)
         {
-            return self
-                .etherscan
-                .clone()
-                .resolved(default_api_version)
-                .remove(maybe_alias)
-                .transpose();
+            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
         }
 
         // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain.or(self.chain).and_then(|chain| {
-            self.etherscan.clone().resolved(default_api_version).find_chain(chain)
-        }) {
+        if let Some(res) = chain
+            .or(self.chain)
+            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        {
             match (res, self.etherscan_api_key.as_ref()) {
                 (Ok(mut config), Some(key)) => {
                     // we update the key, because if an etherscan_api_key is set, it should take
@@ -1447,11 +1443,7 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            match ResolvedEtherscanConfig::create(
-                key,
-                chain.or(self.chain).unwrap_or_default(),
-                default_api_version,
-            ) {
+            match ResolvedEtherscanConfig::create(key, chain.or(self.chain).unwrap_or_default()) {
                 Some(config) => return Ok(Some(config)),
                 None => {
                     return Err(EtherscanConfigError::UnknownChain(
@@ -1471,17 +1463,6 @@ impl Config {
     /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
-    }
-
-    /// Helper function to get the API version.
-    ///
-    /// See also [Self::get_etherscan_config_with_chain]
-    pub fn get_etherscan_api_version(&self, chain: Option<Chain>) -> EtherscanApiVersion {
-        self.get_etherscan_config_with_chain(chain)
-            .ok()
-            .flatten()
-            .map(|c| c.api_version)
-            .unwrap_or_default()
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -1704,16 +1685,6 @@ impl Config {
             src: "contracts".into(),
             out: "artifacts".into(),
             libs: vec!["node_modules".into()],
-            ..Self::default()
-        }
-    }
-
-    /// Returns the default config that uses dapptools style paths
-    pub fn dapptools() -> Self {
-        Self {
-            chain: Some(Chain::from_id(99)),
-            block_timestamp: U256::ZERO,
-            block_number: U256::ZERO,
             ..Self::default()
         }
     }
@@ -2424,7 +2395,6 @@ impl Default for Config {
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
             etherscan_api_key: None,
-            etherscan_api_version: None,
             verbosity: 0,
             remappings: vec![],
             auto_detect_remappings: true,
@@ -2472,7 +2442,6 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
-            forks: Default::default(),
         }
     }
 }
@@ -2632,10 +2601,9 @@ mod tests {
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
-    use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{collections::HashMap, fs::File, io::Write};
+    use std::{fs::File, io::Write};
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -3123,11 +3091,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
+            assert!(config.etherscan.clone().resolved().has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
+            let configs = config.etherscan.resolved();
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3141,7 +3109,6 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3151,7 +3118,6 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -3178,11 +3144,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
+            assert!(config.etherscan.clone().resolved().has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
+            let configs = config.etherscan.resolved();
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3196,7 +3162,6 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3206,7 +3171,6 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V1,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -5151,256 +5115,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_fork_config() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                    [forks]
-
-                    [forks.mainnet]
-                    rpc_endpoint = "${MAINNET_RPC}"
-
-                    [forks.mainnet.vars]
-                    weth = "${WETH_MAINNET}"
-                    usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-                    pool_name = "USDC-ETH"
-                    pool_fee = 3000
-                    max_slippage = 500
-
-                    # Array configurations for testing array support
-                    bool_array = [true, false, true]
-                    int_array = [-100, 200, -300]
-                    uint_array = [100, 200, 300]
-                    addr_array = [
-                        "${ADDR_1}",
-                        "0x2222222222222222222222222222222222222222"
-                    ]
-                    bytes32_array = [
-                        "0x1111111111111111111111111111111111111111111111111111111111111111",
-                        "0x2222222222222222222222222222222222222222222222222222222222222222"
-                    ]
-                    bytes_array = ["0x1234", "0x5678", "0xabcd"]
-                    string_array = ["hello", "world", "test"]
-
-                    [forks.10]
-                    rpc_endpoint = "${OPTIMISM_RPC}"
-
-                    [forks.10.vars]
-                    weth = "${WETH_OPTIMISM}"
-                "#,
-            )?;
-
-            // Now set the environment variables
-            jail.set_env("MAINNET_RPC", "mainnet-rpc");
-            jail.set_env("OPTIMISM_RPC", "optimism-rpc");
-            jail.set_env("WETH_MAINNET", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-            jail.set_env("WETH_OPTIMISM", "0x4200000000000000000000000000000000000006");
-            jail.set_env("ADDR_1", "0x1111111111111111111111111111111111111111");
-
-            // Reload the config with env vars set
-            let config = Config::load().unwrap();
-
-            let expected: HashMap<Chain, ForkChainConfig> = vec![
-                (
-                    Chain::mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            "mainnet-rpc".to_string(),
-                        ))),
-                        vars: vec![
-                        ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
-                        ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
-                        ("pool_name".into(), "USDC-ETH".into()),
-                        ("pool_fee".into(), 3000.into()),
-                        ("max_slippage".into(), 500.into()),
-                        ("bool_array".into(), vec![true, false, true].into()),
-                        ("int_array".into(), vec![-100i64, 200, -300].into()),
-                        ("uint_array".into(), vec![100i64, 200, 300].into()),
-                        ("addr_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes32_array".into(), vec![
-                            "0x1111111111111111111111111111111111111111111111111111111111111111",
-                            "0x2222222222222222222222222222222222222222222222222222222222222222"
-                        ].into()),
-                        ("bytes_array".into(), vec!["0x1234", "0x5678", "0xabcd"].into()),
-                        ("string_array".into(), vec!["hello", "world", "test"].into()),
-                    ]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-                (
-                    Chain::optimism_mainnet(),
-                    ForkChainConfig {
-                        rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                            "optimism-rpc".to_string(),
-                        ))),
-                        vars: vec![(
-                            "weth".into(),
-                            "0x4200000000000000000000000000000000000006".into(),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    },
-                ),
-            ]
-            .into_iter()
-            .collect();
-            assert_eq!(
-                expected.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>(),
-                config.forks.keys().map(|chain| chain.id()).sorted().collect::<Vec<_>>()
-            );
-
-            let expected_mainnet = expected.get(&Chain::mainnet()).unwrap();
-            let expected_optimism = expected.get(&Chain::optimism_mainnet()).unwrap();
-            let mainnet = config.forks.get(&Chain::mainnet()).unwrap();
-            let optimism = config.forks.get(&Chain::optimism_mainnet()).unwrap();
-
-            // Verify that rpc_endpoints are resolved to their actual value
-            if let Some(rpc) = &mainnet.rpc_endpoint {
-                let resolved_url = rpc.to_owned().resolve().url().unwrap();
-                assert_eq!(resolved_url, "mainnet-rpc");
-            }
-            if let Some(rpc) = &optimism.rpc_endpoint {
-                let resolved_url = rpc.to_owned().resolve().url().unwrap();
-                assert_eq!(resolved_url, "optimism-rpc");
-            }
-
-            // Verify that weth placeholders are resolved to their actual addresses
-            assert_eq!(
-                mainnet.vars.get("weth").unwrap().as_str().unwrap(),
-                expected_mainnet.vars.get("weth").unwrap().as_str().unwrap(),
-            );
-            assert_eq!(
-                optimism.vars.get("weth").unwrap().as_str().unwrap(),
-                expected_optimism.vars.get("weth").unwrap().as_str().unwrap(),
-            );
-
-            // Check all other vars match expected values
-            for (k, v) in &expected_mainnet.vars {
-                assert_eq!(v, mainnet.vars.get(k).unwrap());
-            }
-
-            // Verify array values are properly loaded
-            let bool_array = mainnet.vars.get("bool_array").unwrap();
-            assert!(bool_array.as_array().is_some());
-            assert_eq!(bool_array.as_array().unwrap().len(), 3);
-
-            let int_array = mainnet.vars.get("int_array").unwrap();
-            assert!(int_array.as_array().is_some());
-            assert_eq!(int_array.as_array().unwrap().len(), 3);
-
-            let uint_array = mainnet.vars.get("uint_array").unwrap();
-            assert!(uint_array.as_array().is_some());
-            assert_eq!(uint_array.as_array().unwrap().len(), 3);
-
-            // Verify that the environment variable in the array was resolved
-            let addr_array = mainnet.vars.get("addr_array").unwrap();
-            assert!(addr_array.as_array().is_some());
-            assert_eq!(addr_array.as_array().unwrap().len(), 2);
-            assert_eq!(
-                addr_array.as_array().unwrap()[0].as_str().unwrap(),
-                "0x1111111111111111111111111111111111111111"
-            );
-            assert_eq!(
-                addr_array.as_array().unwrap()[1].as_str().unwrap(),
-                "0x2222222222222222222222222222222222222222"
-            );
-
-            let bytes32_array = mainnet.vars.get("bytes32_array").unwrap();
-            assert!(bytes32_array.as_array().is_some());
-            assert_eq!(bytes32_array.as_array().unwrap().len(), 2);
-
-            let bytes_array = mainnet.vars.get("bytes_array").unwrap();
-            assert!(bytes_array.as_array().is_some());
-            assert_eq!(bytes_array.as_array().unwrap().len(), 3);
-
-            let string_array = mainnet.vars.get("string_array").unwrap();
-            assert!(string_array.as_array().is_some());
-            assert_eq!(string_array.as_array().unwrap().len(), 3);
-            assert_eq!(string_array.as_array().unwrap()[0].as_str().unwrap(), "hello");
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_fork_config_invalid_chain_fails() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                        [forks]
-
-                        [forks.randomchain]
-                        rpc_endpoint = "random-chain-rpc"
-                        [forks.randomchain.vars]
-                        some_value = "some_value"
-                    "#,
-            )?;
-            let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
-
-            // Check the error message
-            assert!(err_str.contains("`forks.randomchain`"));
-
-            Ok(())
-        });
-
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                        [forks]
-
-                        [forks.0]
-                        rpc_endpoint = "random-chain-rpc"
-                        [forks.0.vars]
-                        some_value = "some_value"
-                    "#,
-            )?;
-            let result = Config::load();
-            // Despite there is no `NamedChain` associated with `0` id, it is a valid u64
-            assert!(result.is_ok());
-            assert!(result.unwrap().forks.get(&Chain::from_id_unchecked(0)).is_some());
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_fork_config_missing_env_var_fails() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                    [forks]
-                    [forks.mainnet]
-                    rpc_endpoint = "${MISSING_RPC_VAR}"
-
-                    [forks.mainnet.vars]
-                    some_value = "${MISSING_VAR}"
-                "#,
-            )?;
-            let result = Config::load();
-            assert!(result.is_err());
-            let err_str = result.unwrap_err().to_string();
-
-            // Check that the error message contains the chain name and specific variable name
-            assert!(
-                err_str.contains("[forks.mainnet]")
-                    && (err_str.contains("MISSING_RPC_VAR") || err_str.contains("MISSING_VAR"))
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn test_can_inherit_a_base_toml() {
         figment::Jail::expect_with(|jail| {
             // Create base config file with optimizer_runs = 800
@@ -5431,7 +5145,7 @@ mod tests {
                     depth = 15
 
                     [rpc_endpoints]
-                    mainnet = "https://reth-ethereum.ithaca.xyz/rpc"
+                    mainnet = "https://test.xyz/rpc"
                     "#,
             )?;
 
@@ -5449,12 +5163,7 @@ mod tests {
             // optimism should be inherited from base config
             let endpoints = config.rpc_endpoints.resolved();
             assert!(
-                endpoints
-                    .get("mainnet")
-                    .unwrap()
-                    .url()
-                    .unwrap()
-                    .contains("reth-ethereum.ithaca.xyz")
+                endpoints.get("mainnet").unwrap().url().unwrap().contains("https://test.xyz/rpc")
             );
             assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
 
