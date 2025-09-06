@@ -97,7 +97,7 @@ impl<T, E> DiagnosticsResult<T, E> {
 
 pub fn format_file(
     path: &Path,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     compiler: &mut Compiler,
 ) -> FormatterResult {
     format_inner(config, compiler, &|sess| {
@@ -108,7 +108,7 @@ pub fn format_file(
 pub fn format_source(
     source: &str,
     path: Option<&Path>,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     compiler: &mut Compiler,
 ) -> FormatterResult {
     format_inner(config, compiler, &|sess| {
@@ -128,11 +128,11 @@ pub fn format(source: &str, config: FormatterConfig) -> FormatterResult {
         solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
     );
 
-    format_source(source, None, config, &mut compiler)
+    format_source(source, None, Arc::new(config), &mut compiler)
 }
 
 fn format_inner(
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     compiler: &mut Compiler,
     mk_file: &(dyn Fn(&Session) -> solar::parse::interface::Result<Arc<SourceFile>> + Sync + Send),
 ) -> FormatterResult {
@@ -189,7 +189,7 @@ fn diff(first: &str, second: &str) -> impl std::fmt::Display {
 }
 
 fn format_once(
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     compiler: &mut Compiler,
     mk_file: &(
          dyn Fn(&solar::interface::Session) -> solar::interface::Result<Arc<SourceFile>>
@@ -238,7 +238,7 @@ fn format_once(
 pub fn format_ast<'ast>(
     gcx: &Gcx<'ast>,
     source: &'ast Source<'ast>,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
 ) -> String {
     let comments = Comments::new(
         &source.file,

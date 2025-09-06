@@ -13,7 +13,7 @@ use solar::parse::{
     interface::{BytePos, SourceMap},
     token,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 mod common;
 mod sol;
@@ -25,7 +25,7 @@ pub(super) struct State<'sess, 'ast> {
 
     sm: &'sess SourceMap,
     pub(super) comments: Comments,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
@@ -96,7 +96,7 @@ impl Separator {
 impl<'sess> State<'sess, '_> {
     pub(super) fn new(
         sm: &'sess SourceMap,
-        config: FormatterConfig,
+        config: Arc<FormatterConfig>,
         inline_config: InlineConfig<()>,
         comments: Comments,
     ) -> Self {
