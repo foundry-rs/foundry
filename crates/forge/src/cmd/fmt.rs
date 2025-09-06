@@ -107,9 +107,9 @@ impl FmtArgs {
             let diff = TextDiff::from_lines(&original, &formatted);
             if diff.ratio() < 1.0 {
                 if self.raw {
-                    print!("{formatted}");
+                    sh_print!("{formatted}")?;
                 } else {
-                    print!("{}", format_diff_summary("stdin", &diff));
+                    sh_print!("{}", format_diff_summary("stdin", &diff))?;
                 }
                 if self.check {
                     std::process::exit(1);
@@ -151,7 +151,7 @@ impl FmtArgs {
                     let original = &source_unit.file.src;
                     let formatted = forge_fmt_2::format_ast(&gcx, source_unit, fmt_config.clone());
 
-                    if original.as_str() == &formatted {
+                    if original.as_str() == formatted {
                         return None;
                     }
 
@@ -166,7 +166,7 @@ impl FmtArgs {
                     } else {
                         match fs::write(path, formatted) {
                             Ok(_) => {
-                                println!("Formatted {}", path.display());
+                                let _ = sh_println!("Formatted {}", path.display());
                                 None
                             }
                             Err(e) => Some(Err(eyre::eyre!(

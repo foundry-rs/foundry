@@ -4,11 +4,12 @@ use solar::sema::Compiler;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[track_caller]
-fn format(source: &str, path: &Path, fmt_config: FormatterConfig) -> String {
+fn format(source: &str, path: &Path, fmt_config: Arc<FormatterConfig>) -> String {
     let mut compiler = Compiler::new(
         solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
     );
@@ -92,14 +93,16 @@ fn test_directory(base_name: &str) {
 
             comments_end += line.len() + 1;
         }
-        let config = config
-            .try_into()
-            .unwrap_or_else(|err| panic!("invalid test config for {filename}: {err}"));
+        let config = Arc::new(
+            config
+                .try_into::<FormatterConfig>()
+                .unwrap_or_else(|err| panic!("invalid test config for {filename}: {err}")),
+        );
 
         let original = original.clone();
         let tname = format!("{base_name}/{filename}");
         let spawn = move || {
-            test_formatter(&path, config, &original, &expected, comments_end);
+            test_formatter(&path, config.clone(), &original, &expected, comments_end);
         };
         handles.push(std::thread::Builder::new().name(tname).spawn(spawn).unwrap());
     }
@@ -111,7 +114,7 @@ fn test_directory(base_name: &str) {
 
 fn test_formatter(
     expected_path: &Path,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     source: &str,
     expected_source: &str,
     comments_end: usize,

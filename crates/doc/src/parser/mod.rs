@@ -1,6 +1,7 @@
 //! The parser module.
 
-use crate::fmt::{FormatterConfig, Visitable, Visitor};
+use crate::fmt::{Visitable, Visitor};
+use foundry_config::FormatterConfig;
 use itertools::Itertools;
 use solang_parser::{
     doccomment::{DocComment, parse_doccomments},

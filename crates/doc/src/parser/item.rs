@@ -1,9 +1,9 @@
 use crate::{
     Comments,
     error::{ParserError, ParserResult},
-    fmt::{Comments as FmtComments, Formatter, FormatterConfig, InlineConfig, Visitor},
     solang_ext::SafeUnwrap,
 };
+use foundry_config::fmt::FormatterConfig;
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
@@ -83,9 +83,8 @@ impl ParseItem {
 
     /// Set formatted code on the [ParseItem].
     pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        let code = forge_fmt_2::format(source, config)
-            .into_result()
-            .map_err(|e| ParserError::Formatter2(e))?;
+        let code =
+            forge_fmt_2::format(source, config).into_result().map_err(ParserError::Formatter2)?;
 
         self.code = code;
 

@@ -1,6 +1,6 @@
 //! Integration tests for `forge fmt` command
 
-use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
+use foundry_test_utils::{forgetest, forgetest_init};
 use std::{fs, io::Write};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT

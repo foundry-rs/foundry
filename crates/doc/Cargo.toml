@@ -34,8 +34,3 @@ thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 regex.workspace = true
-
-# formatter deps
-ariadne = "0.5"
-[dev-dependencies]
-similar-asserts.workspace = true
