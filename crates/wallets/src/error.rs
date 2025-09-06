@@ -1,14 +1,14 @@
 use alloy_primitives::hex::FromHexError;
-use alloy_signer::k256::ecdsa;
-use alloy_signer_ledger::LedgerError;
-use alloy_signer_local::LocalSignerError;
-use alloy_signer_trezor::TrezorError;
+use alloy::signers::k256::ecdsa;
+use alloy::signers::ledger::LedgerError;
+use alloy::signers::local::LocalSignerError;
+use alloy::signers::trezor::TrezorError;
 
 #[cfg(feature = "aws-kms")]
-use alloy_signer_aws::AwsSignerError;
+use alloy::signers::aws::AwsSignerError;
 
 #[cfg(feature = "gcp-kms")]
-use alloy_signer_gcp::GcpSignerError;
+use alloy::signers::gcp::GcpSignerError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrivateKeyError {

@@ -11,7 +11,7 @@ use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy::signers::Signer;
 use alloy_transport::TransportError;
 use eyre::Result;
 use foundry_cli::{

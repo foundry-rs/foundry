@@ -3,20 +3,20 @@ use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, ChainId, Signature, hex};
-use alloy_signer::Signer;
-use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
-use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
-use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
+use alloy::signers::Signer;
+use alloy::signers::ledger::{HDPath as LedgerHDPath, LedgerSigner};
+use alloy::signers::local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
+use alloy::signers::trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[cfg(feature = "aws-kms")]
-use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
+use {alloy::signers::aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
 use {
-    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
+    alloy::signers::gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
     gcloud_sdk::{
         GoogleApi,
         google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
@@ -149,11 +149,11 @@ impl WalletSigner {
             }
             #[cfg(feature = "aws-kms")]
             Self::Aws(aws) => {
-                senders.push(alloy_signer::Signer::address(aws));
+                senders.push(alloy::signer::Signer::address(aws));
             }
             #[cfg(feature = "gcp-kms")]
             Self::Gcp(gcp) => {
-                senders.push(alloy_signer::Signer::address(gcp));
+                senders.push(alloy::signer::Signer::address(gcp));
             }
         }
         Ok(senders)
@@ -198,16 +198,16 @@ macro_rules! delegate {
 #[async_trait]
 impl Signer for WalletSigner {
     /// Signs the given hash.
-    async fn sign_hash(&self, hash: &B256) -> alloy_signer::Result<Signature> {
+    async fn sign_hash(&self, hash: &B256) -> alloy::signers::Result<Signature> {
         delegate!(self, inner => inner.sign_hash(hash)).await
     }
 
-    async fn sign_message(&self, message: &[u8]) -> alloy_signer::Result<Signature> {
+    async fn sign_message(&self, message: &[u8]) -> alloy::signers::Result<Signature> {
         delegate!(self, inner => inner.sign_message(message)).await
     }
 
     fn address(&self) -> Address {
-        delegate!(self, inner => alloy_signer::Signer::address(inner))
+        delegate!(self, inner => alloy::signers::Signer::address(inner))
     }
 
     fn chain_id(&self) -> Option<ChainId> {
@@ -222,7 +222,7 @@ impl Signer for WalletSigner {
         &self,
         payload: &T,
         domain: &Eip712Domain,
-    ) -> alloy_signer::Result<Signature>
+    ) -> alloy::signers::Result<Signature>
     where
         Self: Sized,
     {
@@ -232,7 +232,7 @@ impl Signer for WalletSigner {
     async fn sign_dynamic_typed_data(
         &self,
         payload: &TypedData,
-    ) -> alloy_signer::Result<Signature> {
+    ) -> alloy::signers::Result<Signature> {
         delegate!(self, inner => inner.sign_dynamic_typed_data(payload)).await
     }
 }
@@ -240,13 +240,13 @@ impl Signer for WalletSigner {
 #[async_trait]
 impl TxSigner<Signature> for WalletSigner {
     fn address(&self) -> Address {
-        delegate!(self, inner => alloy_signer::Signer::address(inner))
+        delegate!(self, inner => alloy::signers::Signer::address(inner))
     }
 
     async fn sign_transaction(
         &self,
         tx: &mut dyn SignableTransaction<Signature>,
-    ) -> alloy_signer::Result<Signature> {
+    ) -> alloy::signers::Result<Signature> {
         delegate!(self, inner => inner.sign_transaction(tx)).await
     }
 }
@@ -268,7 +268,7 @@ impl PendingSigner {
                     Err(e) => match e {
                         // Catch the `MacMismatch` error, which indicates an incorrect password and
                         // return a more user-friendly `IncorrectKeystorePassword`.
-                        alloy_signer_local::LocalSignerError::EthKeystoreError(
+                        alloy::signers::local::LocalSignerError::EthKeystoreError(
                             eth_keystore::KeystoreError::MacMismatch,
                         ) => Err(WalletSignerError::IncorrectKeystorePassword),
                         _ => Err(WalletSignerError::Local(e)),

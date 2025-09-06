@@ -48,8 +48,7 @@ alloy-provider = { workspace = true, features = [
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-serde.workspace = true
-alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
-alloy-signer.workspace = true
+alloy = { workspace = true, features = ["signers", "signer-local", "signer-mnemonic", "signer-keystore"] }
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }

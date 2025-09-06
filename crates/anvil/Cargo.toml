@@ -38,8 +38,7 @@ alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true
-alloy-signer = { workspace = true, features = ["eip712"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy = { workspace = true, features = ["signers", "signer-local", "eip712", "signer-mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }

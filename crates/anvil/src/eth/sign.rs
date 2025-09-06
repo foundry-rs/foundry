@@ -3,8 +3,8 @@ use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
-use alloy_signer::Signer as AlloySigner;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::signers::Signer as AlloySigner;
+use alloy::signers::local::PrivateKeySigner;
 use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
 
 /// A transaction signer

@@ -59,7 +59,8 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
-alloy-signer.workspace = true
+# alloy-signer.workspace = true
+alloy = {workspace = true, features = ["signers"]}
 alloy-transport.workspace = true
 
 revm.workspace = true
@@ -116,7 +117,8 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 tempfile.workspace = true
 
-alloy-signer-local.workspace = true
+# alloy-signer-local.workspace = true
+alloy = { workspace = true, features = ["signer-local"] }
 
 [features]
 default = ["jemalloc"]

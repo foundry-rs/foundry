@@ -21,7 +21,7 @@ use crate::{
 };
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
-use alloy_signer_local::PrivateKeySigner;
+use alloy::signers::local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};

@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, hex};
-use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
-use alloy_signer_local::PrivateKeySigner;
+use alloy::signers::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
+use alloy::signers::local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Result;
 use foundry_common::sh_println;

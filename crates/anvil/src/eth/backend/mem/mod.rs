@@ -75,8 +75,8 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use alloy_signer::Signature;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::signers::Signature;
+use alloy::signers::local::PrivateKeySigner;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},

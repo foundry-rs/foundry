@@ -1,7 +1,7 @@
 use crate::Vm;
 use alloy_primitives::{Bytes, hex};
-use alloy_signer::Error as SignerError;
-use alloy_signer_local::LocalSignerError;
+use alloy::signers::Error as SignerError;
+use alloy::signers::local::LocalSignerError;
 use alloy_sol_types::SolError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy::signers::Signer;
 use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]

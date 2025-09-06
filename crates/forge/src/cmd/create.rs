@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes, hex};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy::signers::Signer;
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};

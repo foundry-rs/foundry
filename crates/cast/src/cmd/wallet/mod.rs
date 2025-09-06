@@ -3,8 +3,8 @@ use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
-use alloy_signer::Signer;
-use alloy_signer_local::{
+use alloy::signers::Signer;
+use alloy::signers::local::{
     MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{English, Entropy, Mnemonic},
 };

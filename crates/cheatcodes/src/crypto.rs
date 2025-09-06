@@ -2,8 +2,8 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_signer::{Signer, SignerSync};
-use alloy_signer_local::{
+use alloy::signers::{Signer, SignerSync};
+use alloy::signers::local::{
     LocalSigner, MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
@@ -203,7 +203,7 @@ impl Cheatcode for publicKeyP256Call {
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
-    let addr = alloy_signer::utils::secret_key_to_address(&key);
+    let addr = alloy::signers::utils::secret_key_to_address(&key);
 
     let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
     let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());

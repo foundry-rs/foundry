@@ -6,7 +6,7 @@ use alloy_primitives::{U256, bytes};
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use alloy_signer::SignerSync;
+use alloy::signers::SignerSync;
 use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]

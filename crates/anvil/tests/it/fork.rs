@@ -15,7 +15,7 @@ use alloy_rpc_types::{
     state::EvmOverrides,
 };
 use alloy_serde::WithOtherFields;
-use alloy_signer_local::PrivateKeySigner;
+use alloy::signers::local::PrivateKeySigner;
 use anvil::{NodeConfig, NodeHandle, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;

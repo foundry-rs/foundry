@@ -7,7 +7,7 @@ use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy::signers::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{

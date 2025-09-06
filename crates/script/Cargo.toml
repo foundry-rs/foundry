@@ -45,7 +45,7 @@ alloy-json-abi.workspace = true
 dialoguer = { version = "0.11", default-features = false }
 indicatif.workspace = true
 
-alloy-signer.workspace = true
+alloy = {workspace = true, features = ["signers"]}
 alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true

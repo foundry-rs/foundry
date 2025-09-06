@@ -6,7 +6,7 @@ use crate::{
 use alloy_genesis::Genesis;
 use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{B256, U256, utils::Unit};
-use alloy_signer_local::coins_bip39::{English, Mnemonic};
+use alloy::signers::local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;

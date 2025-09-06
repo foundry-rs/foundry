@@ -17,7 +17,7 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
 };
-use alloy_signer::Signer;
+use alloy::signers::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
