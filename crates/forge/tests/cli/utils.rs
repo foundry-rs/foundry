@@ -2,7 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::Address;
-use alloy::signer::local::PrivateKeySigner;
+use alloy::signers::local::PrivateKeySigner;
 
 /// Returns the current millis since unix epoch.
 ///
