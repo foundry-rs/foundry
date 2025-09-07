@@ -665,7 +665,7 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 ///
 /// See [Warning::DeprecatedKey]
 pub const DEPRECATIONS: &[(&str, &str)] =
-    &[("cancun", "evm_version = Cancun"), ("deny_warnings = true", "deny = warnings")];
+    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
 
 impl Config {
     /// The default profile: "default"
