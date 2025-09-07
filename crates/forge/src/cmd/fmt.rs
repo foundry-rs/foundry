@@ -2,11 +2,12 @@ use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::fs;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
+use solar::sema::Compiler;
 use std::{
     fmt::{self, Write},
     io,
@@ -134,15 +135,28 @@ impl FmtArgs {
             Input::Stdin(_) => unreachable!(),
         };
 
-        // TODO(rusowsky): compile without resolving sources, so that solar doesn't error
-        let project = config.solar_project()?;
-        let mut output = ProjectCompiler::new().files(paths_to_fmt).compile(&project)?;
-        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        let mut compiler = Compiler::new(
+            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+        );
 
+        // Disable import resolution, load files, and parse them.
+        if compiler
+            .enter_mut(|c| -> solar::interface::Result<()> {
+                let mut pcx = c.parse();
+                pcx.set_resolve_imports(false);
+                pcx.load_files(paths_to_fmt)?;
+                pcx.parse();
+                Ok(())
+            })
+            .is_err()
+        {
+            eyre::bail!("unable to parse sources");
+        }
+
+        // Format and, if necessary, check the diffs.
         let res = compiler.enter(|c| -> Result<()> {
             let gcx = c.gcx();
             let fmt_config = Arc::new(config.fmt);
-
             let diffs: Vec<String> = gcx
                 .sources
                 .raw
