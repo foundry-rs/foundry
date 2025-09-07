@@ -134,6 +134,7 @@ impl FmtArgs {
             Input::Stdin(_) => unreachable!(),
         };
 
+        // TODO(rusowsky): compile without resolving sources, so that solar doesn't error
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().files(paths_to_fmt).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();

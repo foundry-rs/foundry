@@ -296,7 +296,7 @@ mod tests {
                 struct ContractStruct { }
                 enum ContractEnum { }
 
-                uint256 constant CONTRACT_CONSTANT;
+                uint256 constant CONTRACT_CONSTANT = 0;
                 bool contractVar;
 
                 function contractFunction(uint256) external returns (uint256) {

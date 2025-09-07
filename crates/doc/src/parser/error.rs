@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum ParserError {
     /// Formatter error.
     #[error(transparent)]
-    Formatter2(EmittedDiagnostics),
+    Formatter(EmittedDiagnostics),
     /// Internal parser error.
     #[error(transparent)]
     Internal(#[from] eyre::Error),

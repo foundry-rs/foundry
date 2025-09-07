@@ -9,8 +9,7 @@ use crate::{
 };
 use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
-use forge_fmt::FormatterConfig;
-use foundry_config::RpcEndpointUrl;
+use foundry_config::{FormatterConfig, RpcEndpointUrl};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
@@ -66,9 +65,8 @@ pub struct EtherscanABIResponse {
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
 pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
-    forge_fmt::format(source, config)
-        .into_result()
-        .map_err(|_| eyre::eyre!("Formatter could not parse source!"))
+    let formatted = forge_fmt::format(source, config).into_result()?;
+    Ok(formatted)
 }
 
 impl ChiselDispatcher {
