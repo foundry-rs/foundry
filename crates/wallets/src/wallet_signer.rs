@@ -12,15 +12,18 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[cfg(feature = "aws-kms")]
-use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
+use {
+    alloy_signer_aws::AwsSigner, alloy_signer_aws::aws_config::BehaviorVersion,
+    alloy_signer_aws::aws_sdk_kms::Client as AwsClient,
+};
 
 #[cfg(feature = "gcp-kms")]
 use {
-    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
-    gcloud_sdk::{
+    alloy_signer_gcp::gcloud_sdk::{
         GoogleApi,
         google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
     },
+    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
 };
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
@@ -56,7 +59,8 @@ impl WalletSigner {
     pub async fn from_aws(key_id: String) -> Result<Self> {
         #[cfg(feature = "aws-kms")]
         {
-            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let config =
+                alloy_signer_aws::aws_config::load_defaults(BehaviorVersion::latest()).await;
             let client = AwsClient::new(&config);
 
             Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
