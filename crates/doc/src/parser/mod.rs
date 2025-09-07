@@ -1,6 +1,6 @@
 //! The parser module.
 
-use crate::fmt::{Visitable, Visitor};
+use crate::solang_ext::{Visitable, Visitor};
 use foundry_config::FormatterConfig;
 use itertools::Itertools;
 use solang_parser::{

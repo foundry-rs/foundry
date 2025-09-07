@@ -84,7 +84,7 @@ impl ParseItem {
     /// Set formatted code on the [ParseItem].
     pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
         let code =
-            forge_fmt_2::format(source, config).into_result().map_err(ParserError::Formatter2)?;
+            forge_fmt::format(source, config).into_result().map_err(ParserError::Formatter2)?;
 
         self.code = code;
 

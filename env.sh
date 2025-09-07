@@ -1,7 +1,7 @@
-alias forge-fmt="cargo r --quiet -p forge-fmt-2 --"
+alias forge-fmt="cargo r --quiet -p forge-fmt --"
 forge-fmt-cmp() {
-    cargo b --quiet -p forge-fmt-2 || return 1
-    forge_fmt_new="$(pwd)/target/debug/forge-fmt-2"
+    cargo b --quiet -p forge-fmt || return 1
+    forge_fmt_new="$(pwd)/target/debug/forge-fmt"
 
     tmp="$(mktemp -d)"
     in_f="$tmp/in.sol"

@@ -1,6 +1,6 @@
 use crate::{
     AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
-    document::DocumentContent, fmt::Visitable, helpers::merge_toml_table,
+    document::DocumentContent, helpers::merge_toml_table, solang_ext::Visitable,
 };
 use alloy_primitives::map::HashMap;
 use eyre::{Context, Result};

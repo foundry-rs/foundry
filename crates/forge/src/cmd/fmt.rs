@@ -100,7 +100,7 @@ impl FmtArgs {
 
         // Handle stdin on its own
         if let Input::Stdin(original) = input {
-            let formatted = forge_fmt_2::format(&original, config.fmt)
+            let formatted = forge_fmt::format(&original, config.fmt)
                 .into_result()
                 .map_err(|_| eyre::eyre!("failed to format stdin"))?;
 
@@ -149,7 +149,7 @@ impl FmtArgs {
                 .filter_map(|source_unit| {
                     let path = source_unit.file.name.as_real()?;
                     let original = &source_unit.file.src;
-                    let formatted = forge_fmt_2::format_ast(&gcx, source_unit, fmt_config.clone());
+                    let formatted = forge_fmt::format_ast(&gcx, source_unit, fmt_config.clone());
 
                     if original.as_str() == formatted {
                         return None;

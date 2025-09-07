@@ -13,7 +13,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-forge-fmt-2.workspace = true
+forge-fmt.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
