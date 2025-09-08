@@ -16,7 +16,10 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    slot_identifier::{ENCODING_BYTES, ENCODING_INPLACE, SlotIdentifier, SlotInfo},
+    slot_identifier::{
+        ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
+        SlotInfo,
+    },
 };
 use foundry_evm_core::{
     ContextExt,
@@ -929,6 +932,13 @@ impl Cheatcode for getStorageSlotsCall {
             .types
             .get(&storage.storage_type)
             .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+
+        if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
+        {
+            return Err(fmt_err!(
+                "cannot get storage slots for variable {variableName} with mapping or dynamic array types"
+            ));
+        }
 
         let slot = U256::from_str(&storage.slot).map_err(|_| {
             fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
