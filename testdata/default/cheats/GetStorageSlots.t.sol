@@ -18,8 +18,8 @@ contract StorageContract {
     bytes public longBytes; // Slot 7 (32+ bytes, will use multiple slots)
 
     // String variables
-    string public shortString; // Slot 7 (less than 32 bytes)
-    string public longString; // Slot 8 (32+ bytes, will use multiple slots)
+    string public shortString; // Slot 8 (less than 32 bytes)
+    string public longString; // Slot 9 (32+ bytes, will use multiple slots)
 
     function setShortBytes(bytes memory _data) public {
         shortBytes = _data;
