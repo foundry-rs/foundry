@@ -8,12 +8,18 @@ use crate::{
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
-use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
+use alloy_primitives::{
+    Address, B256, U256, hex, keccak256,
+    map::{B256Map, HashMap},
+};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::{
     fs::{read_json_file, write_json_file},
-    slot_identifier::{SlotIdentifier, SlotInfo},
+    slot_identifier::{
+        ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
+        SlotInfo,
+    },
 };
 use foundry_evm_core::{
     ContextExt,
@@ -34,6 +40,7 @@ use std::{
     collections::{BTreeMap, HashSet, btree_map::Entry},
     fmt::Display,
     path::Path,
+    str::FromStr,
 };
 
 mod record_debug_step;
@@ -905,6 +912,83 @@ impl Cheatcode for getStateDiffJsonCall {
     }
 }
 
+impl Cheatcode for getStorageSlotsCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, variableName } = self;
+
+        let storage_layout = get_contract_data(ccx, *target)
+            .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
+            .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+        trace!(storage = ?storage_layout.storage, "fetched storage");
+
+        let storage = storage_layout
+            .storage
+            .iter()
+            .find(|s| s.label.to_lowercase() == *variableName.to_lowercase())
+            .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
+
+        let storage_type = storage_layout
+            .types
+            .get(&storage.storage_type)
+            .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+
+        if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
+        {
+            return Err(fmt_err!(
+                "cannot get storage slots for variables with mapping or dynamic array types"
+            ));
+        }
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+
+        let mut slots = Vec::new();
+
+        // Always push the base slot
+        slots.push(slot);
+
+        if storage_type.encoding == ENCODING_INPLACE {
+            // For inplace encoding, calculate the number of slots needed
+            let num_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+                fmt_err!(
+                    "invalid number_of_bytes {} for variable {variableName}",
+                    storage_type.number_of_bytes
+                )
+            })?;
+            let num_slots = num_bytes.div_ceil(U256::from(32));
+
+            // Start from 1 since base slot is already added
+            for i in 1..num_slots.to::<usize>() {
+                slots.push(slot + U256::from(i));
+            }
+        }
+
+        if storage_type.encoding == ENCODING_BYTES {
+            // Try to check if it's a long bytes/string by reading the current storage
+            // value
+            if let Ok(value) = ccx.ecx.journaled_state.sload(*target, slot) {
+                let value_bytes = value.data.to_be_bytes::<32>();
+                let length_byte = value_bytes[31];
+                // Check if it's a long bytes/string (LSB is 1)
+                if length_byte & 1 == 1 {
+                    // Calculate data slots for long bytes/string
+                    let length: U256 = value.data >> 1;
+                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
+
+                    for i in 0..num_data_slots {
+                        slots.push(data_start + U256::from(i));
+                    }
+                }
+            }
+        }
+
+        Ok(slots.abi_encode())
+    }
+}
+
 impl Cheatcode for getStorageAccessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let mut storage_accesses = Vec::new();
@@ -1376,6 +1460,16 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                     }
                 }
 
+                // Collect all storage accesses for this account
+                let raw_changes_by_slot = account_access
+                    .storageAccesses
+                    .iter()
+                    .filter_map(|access| {
+                        (access.isWrite && !access.reverted)
+                            .then_some((access.slot, (access.previousValue, access.newValue)))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
@@ -1398,18 +1492,42 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                     .as_ref()
                                     .and_then(|slots| slots.get(&storage_access.account));
 
-                                let mut slot_info = layout.and_then(|layout| {
+                                let slot_info = layout.and_then(|layout| {
                                     let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots)
-                                });
+                                    decoder
+                                        .identify(&storage_access.slot, mapping_slots)
+                                        .or_else(|| {
+                                            // Create a map of new values for bytes/string
+                                            // identification. These values are used to determine
+                                            // the length of the data which helps determine how many
+                                            // slots to search
+                                            let current_base_slot_values = raw_changes_by_slot
+                                                .iter()
+                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                                .collect::<B256Map<_>>();
+                                            decoder.identify_bytes_or_string(
+                                                &storage_access.slot,
+                                                &current_base_slot_values,
+                                            )
+                                        })
+                                        .map(|mut info| {
+                                            // Always decode values first
+                                            info.decode_values(
+                                                storage_access.previousValue,
+                                                storage_access.newValue,
+                                            );
 
-                                // Decode values if we have slot info
-                                if let Some(ref mut info) = slot_info {
-                                    info.decode_values(
-                                        storage_access.previousValue,
-                                        storage_access.newValue,
-                                    );
-                                }
+                                            // Then handle long bytes/strings if applicable
+                                            if info.is_bytes_or_string() {
+                                                info.decode_bytes_or_string_values(
+                                                    &storage_access.slot,
+                                                    &raw_changes_by_slot,
+                                                );
+                                            }
+
+                                            info
+                                        })
+                                });
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
