@@ -329,7 +329,7 @@ contract ParseTomlTest is DSTest {
 
         assertEq(keccak256(abi.encode(members)), keccak256(abi.encode(data.members)));
     }
-    
+
     function test_floatNaN() public {
         bytes memory data = vm.parseToml(toml, ".nanFloat");
         string memory decodedData = abi.decode(data, (string));
