@@ -54,10 +54,7 @@ contract GetStorageSlotsTest is DSTest {
 
     function testGetStorageSlots() public {
         // Test 1: Simple variable
-        uint256[] memory slots = vm.getStorageSlots(
-            address(storageContract),
-            "value"
-        );
+        uint256[] memory slots = vm.getStorageSlots(address(storageContract), "value");
         assertEq(slots.length, 1);
         assertEq(slots[0], 0);
 
