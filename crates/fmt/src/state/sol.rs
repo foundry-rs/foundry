@@ -1096,6 +1096,7 @@ impl<'ast> State<'_, 'ast> {
                     self.hardbreak_if_not_bol();
                 } else {
                     self.nbsp();
+                    self.neverbreak();
                 }
                 self.print_expr(rhs);
                 self.end();
@@ -1393,7 +1394,7 @@ impl<'ast> State<'_, 'ast> {
                     // inline single-element expressions that are simple and fit
                     if let [expr] = exprs {
                         has_complex_successor(&expr.kind, true)
-                            || self.estimate_size(span) > self.space_left()
+                            || self.estimate_size(span) + 2 > self.space_left()
                     } else {
                         false
                     },
