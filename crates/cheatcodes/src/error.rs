@@ -142,7 +142,6 @@ impl Error {
     }
 
     /// Returns the kind of this error.
-    #[inline]
     pub fn kind(&self) -> ErrorKind<'_> {
         let data = self.data();
         if self.is_str {
@@ -154,38 +153,31 @@ impl Error {
     }
 
     /// Returns the raw data of this error.
-    #[inline]
     pub fn data(&self) -> &[u8] {
         unsafe { &*self.data }
     }
 
     /// Returns `true` if this error is a human-readable string.
-    #[inline]
     pub fn is_str(&self) -> bool {
         self.is_str
     }
 
-    #[inline]
     fn new_str(data: &'static str) -> Self {
         Self::_new(true, false, data.as_bytes())
     }
 
-    #[inline]
     fn new_string(data: String) -> Self {
         Self::_new(true, true, Box::into_raw(data.into_boxed_str().into_boxed_bytes()))
     }
 
-    #[inline]
     fn new_bytes(data: &'static [u8]) -> Self {
         Self::_new(false, false, data)
     }
 
-    #[inline]
     fn new_vec(data: Vec<u8>) -> Self {
         Self::_new(false, true, Box::into_raw(data.into_boxed_slice()))
     }
 
-    #[inline]
     fn _new(is_str: bool, drop: bool, data: *const [u8]) -> Self {
         debug_assert!(!data.is_null());
         Self { is_str, drop, data }
@@ -249,7 +241,6 @@ impl From<Vec<u8>> for Error {
 }
 
 impl From<Bytes> for Error {
-    #[inline]
     fn from(value: Bytes) -> Self {
         Self::new_vec(value.into())
     }
@@ -271,7 +262,6 @@ impl_from!(
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
     alloy_consensus::crypto::RecoveryError,
-    eyre::Report,
     FsPathError,
     hex::FromHexError,
     BackendError,
@@ -292,6 +282,12 @@ impl_from!(
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
+    }
+}
+
+impl From<eyre::Report> for Error {
+    fn from(err: eyre::Report) -> Self {
+        Self::new_string(foundry_common::errors::display_chain(&err))
     }
 }
 

@@ -572,6 +572,7 @@ impl TestResult {
             mean_gas: result.mean_gas(false),
             first_case: result.first_case,
             runs: result.gas_by_case.len(),
+            failed_corpus_replays: result.failed_corpus_replays,
         };
 
         // Record logs, labels, traces and merge coverages.
@@ -590,6 +591,19 @@ impl TestResult {
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+    }
+
+    /// Returns the fail result for fuzz test setup.
+    pub fn fuzz_setup_fail(&mut self, e: Report) {
+        self.kind = TestKind::Fuzz {
+            first_case: Default::default(),
+            runs: 0,
+            mean_gas: 0,
+            median_gas: 0,
+            failed_corpus_replays: 0,
+        };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
     }
 
     /// Returns the skipped result for invariant test.
@@ -670,6 +684,33 @@ impl TestResult {
         self.gas_report_traces = gas_report_traces;
     }
 
+    /// Returns the result for a table test. Merges table test execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn table_result(&mut self, result: FuzzTestResult) {
+        self.kind = TestKind::Table {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            runs: result.gas_by_case.len(),
+        };
+
+        // Record logs, labels, traces and merge coverages.
+        extend!(self, result, TraceKind::Execution);
+
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
+        };
+        self.reason = result.reason;
+        self.counterexample = result.counterexample;
+        self.duration = Duration::default();
+        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -701,6 +742,7 @@ pub enum TestKindReport {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     Invariant {
         runs: usize,
@@ -708,6 +750,11 @@ pub enum TestKindReport {
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+    },
+    Table {
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
     },
 }
 
@@ -717,8 +764,15 @@ impl fmt::Display for TestKindReport {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            Self::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(
+                        f,
+                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
+                    )
+                } else {
+                    write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 if *failed_corpus_replays != 0 {
@@ -730,6 +784,9 @@ impl fmt::Display for TestKindReport {
                     write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
                 }
             }
+            Self::Table { runs, mean_gas, median_gas } => {
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            }
         }
     }
 }
@@ -740,7 +797,7 @@ impl TestKindReport {
         match *self {
             Self::Unit { gas } => gas,
             // We use the median for comparisons
-            Self::Fuzz { median_gas, .. } => median_gas,
+            Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
             Self::Invariant { .. } => 0,
         }
@@ -759,6 +816,7 @@ pub enum TestKind {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+        failed_corpus_replays: usize,
     },
     /// An invariant test.
     Invariant {
@@ -768,6 +826,8 @@ pub enum TestKind {
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
     },
+    /// A table test.
+    Table { runs: usize, mean_gas: u64, median_gas: u64 },
 }
 
 impl Default for TestKind {
@@ -781,8 +841,13 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
-            Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            Self::Fuzz { first_case: _, runs, mean_gas, median_gas, failed_corpus_replays } => {
+                TestKindReport::Fuzz {
+                    runs: *runs,
+                    mean_gas: *mean_gas,
+                    median_gas: *median_gas,
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
             }
             Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
                 TestKindReport::Invariant {
@@ -792,6 +857,9 @@ impl TestKind {
                     metrics: HashMap::default(),
                     failed_corpus_replays: *failed_corpus_replays,
                 }
+            }
+            Self::Table { runs, mean_gas, median_gas } => {
+                TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
         }
     }

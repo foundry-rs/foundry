@@ -51,8 +51,7 @@ contract A {
         a = _a;
     }
 }"#,
-        )
-        .unwrap();
+        );
 
         let script = prj.add_script("Counter.s.sol", r#"
 import "../src/Counter2.sol";
@@ -84,8 +83,7 @@ contract Script0 is Script, Test {
         bytes32 _d2 = b.other().d();
     }
 }"#,
-        )
-        .unwrap();
+        );
 
         cmd.forge_fuse().args(["build"]).assert_success();
 

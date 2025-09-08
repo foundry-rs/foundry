@@ -2,12 +2,16 @@ use crate::{
     PrecompileFactory,
     eth::{
         backend::{
-            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            cheats::{CheatEcrecover, CheatsManager},
+            db::Db,
+            env::Env,
+            mem::op_haltreason_to_instruction_result,
             validate::TransactionValidator,
         },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
+    evm::celo_precompile,
     inject_precompiles,
     mem::inspector::AnvilInspector,
 };
@@ -15,7 +19,11 @@ use alloy_consensus::{
     Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
-use alloy_evm::{EthEvm, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{
+    EthEvm, Evm,
+    eth::EthEvmContext,
+    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
+};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
@@ -28,7 +36,7 @@ use foundry_evm::{
     backend::DatabaseError,
     traces::{CallTraceDecoder, CallTraceNode},
 };
-use foundry_evm_core::either_evm::EitherEvm;
+use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -120,6 +128,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
     pub optimism: bool,
+    pub celo: bool,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
@@ -127,6 +136,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     pub blob_params: BlobParams,
+    pub cheats: CheatsManager,
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
@@ -264,7 +274,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism)
+        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism, self.celo)
     }
 }
 
@@ -340,8 +350,26 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                 inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
             }
 
+            if self.celo {
+                evm.precompiles_mut()
+                    .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                        Some(celo_precompile::precompile())
+                    });
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
+            }
+
+            let cheats = Arc::new(self.cheats.clone());
+            if cheats.has_recover_overrides() {
+                let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
+                evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
+                    Some(DynPrecompile::new_stateful(
+                        cheat_ecrecover.precompile_id().clone(),
+                        move |input| cheat_ecrecover.call(input),
+                    ))
+                });
             }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());

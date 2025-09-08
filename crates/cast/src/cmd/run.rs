@@ -162,6 +162,7 @@ impl RunArgs {
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+        env.evm_env.cfg_env.limit_contract_code_size = None;
         env.evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
@@ -363,10 +364,6 @@ impl figment::Provider for RunArgs {
 
         if let Some(api_key) = &self.etherscan.key {
             map.insert("etherscan_api_key".into(), api_key.as_str().into());
-        }
-
-        if let Some(api_version) = &self.etherscan.api_version {
-            map.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(evm_version) = self.evm_version {

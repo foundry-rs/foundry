@@ -1809,10 +1809,7 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         }
     }
 
@@ -1842,10 +1839,7 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         };
         Ok(format!("0x{encoded}"))
     }
@@ -2290,7 +2284,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().with_chain_id(chain);
+    let mut builder = Client::builder().chain(chain)?;
 
     let deduced = chain.etherscan_urls();
 
@@ -2313,7 +2307,7 @@ fn explorer_client(
 
 #[cfg(test)]
 mod tests {
-    use super::SimpleCast as Cast;
+    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
     use alloy_primitives::hex;
 
     #[test]
@@ -2429,6 +2423,47 @@ mod tests {
                 ""
             ]
         );
+    }
+
+    #[test]
+    fn calldata_decode_nested_json() {
+        let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
+        let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
+        let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded)).unwrap();
+        let expected = serde_json::json!([
+            [
+                [
+                    "0x04366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed74",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x60f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf7",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x93dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb731886",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            ],
+            1735573273,
+            132886,
+            "0xAF9d27ffe4d51eD54AC8eEc78f2785D7E11E5ab1",
+            "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
+        ]);
+        assert_eq!(json_value, expected);
     }
 
     #[test]

@@ -6,40 +6,42 @@ pub use late::{LateLintPass, LateLintVisitor};
 
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_interface::{
-    Session, Span,
-    diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
+use solar::{
+    interface::{
+        Session, Span,
+        diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
+    },
+    sema::Compiler,
 };
-use solar_sema::ParsingContext;
 use std::path::PathBuf;
 
 use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
-/// code files. A linter can be implemented for any smart contract language supported by Foundry.
+/// code files.
 ///
-/// # Type Parameters
-///
-/// - `Language`: Represents the target programming language. Must implement the [`Language`] trait.
-/// - `Lint`: Represents the types of lints performed by the linter. Must implement the [`Lint`]
-///   trait.
-///
-/// # Required Methods
-///
-/// - `init`: Creates a new solar `Session` with the appropriate linter configuration.
-/// - `early_lint`: Scans the source files (using the AST) emitting a diagnostic for lints found.
-/// - `late_lint`: Scans the source files (using the HIR) emitting a diagnostic for lints found.
-///
-/// # Note:
-///
-/// - For `early_lint` and `late_lint`, the `ParsingContext` should have the sources pre-loaded.
-pub trait Linter: Send + Sync + Clone {
+/// A linter can be implemented for any smart contract language supported by Foundry.
+pub trait Linter: Send + Sync {
+    /// The target [`Language`].
     type Language: Language;
+    /// The [`Lint`] type.
     type Lint: Lint;
 
-    fn init(&self) -> Session;
-    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
-    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
+    /// Build a solar [`Compiler`] from the given linter config.
+    fn init(&self) -> Compiler {
+        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+        self.configure(&mut compiler);
+        compiler
+    }
+
+    /// Configure a solar [`Compiler`] from the given linter config.
+    fn configure(&self, compiler: &mut Compiler);
+
+    /// Run all lints.
+    ///
+    /// The `compiler` should have already been configured with all the sources necessary,
+    /// as well as having performed parsing and lowering.
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
 }
 
 pub trait Lint {
@@ -49,21 +51,28 @@ pub trait Lint {
     fn help(&self) -> &'static str;
 }
 
-pub struct LintContext<'s> {
+pub struct LintContext<'s, 'c> {
     sess: &'s Session,
     with_description: bool,
-    pub inline_config: InlineConfig,
+    with_json_emitter: bool,
+    pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
 }
 
-impl<'s> LintContext<'s> {
+pub struct LinterConfig<'s> {
+    pub inline: InlineConfig,
+    pub mixed_case_exceptions: &'s [String],
+}
+
+impl<'s, 'c> LintContext<'s, 'c> {
     pub fn new(
         sess: &'s Session,
         with_description: bool,
-        config: InlineConfig,
+        with_json_emitter: bool,
+        config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
     ) -> Self {
-        Self { sess, with_description, inline_config: config, active_lints }
+        Self { sess, with_description, with_json_emitter, config, active_lints }
     }
 
     pub fn session(&self) -> &'s Session {
@@ -80,18 +89,24 @@ impl<'s> LintContext<'s> {
 
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag.help(lint.help());
+        } else {
+            diag = diag.help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -101,7 +116,7 @@ impl<'s> LintContext<'s> {
     /// For Diff snippets, if no span is provided, it will use the lint's span.
     /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
@@ -124,14 +139,21 @@ impl<'s> LintContext<'s> {
         };
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .highlighted_note(snippet.to_note(self))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag
+                .note(snippet.to_note(self).iter().map(|l| l.0.as_str()).collect::<String>())
+                .help(lint.help());
+        } else {
+            diag = diag.highlighted_note(snippet.to_note(self)).help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -187,7 +209,7 @@ pub enum Snippet {
 }
 
 impl Snippet {
-    pub fn to_note(self, ctx: &LintContext<'_>) -> Vec<(DiagMsg, Style)> {
+    pub fn to_note(self, ctx: &LintContext) -> Vec<(DiagMsg, Style)> {
         let mut output = if let Some(desc) = self.desc() {
             vec![(DiagMsg::from(desc), Style::NoStyle), (DiagMsg::from("\n\n"), Style::NoStyle)]
         } else {
@@ -245,4 +267,9 @@ impl Snippet {
 
         &s[byte_offset..]
     }
+}
+
+/// Creates a hyperlink of the input url.
+fn hyperlink(url: &'static str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
 }

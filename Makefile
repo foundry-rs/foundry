@@ -77,6 +77,15 @@ docker-build-prepare: ## Prepare the Docker build environment.
 
 ##@ Test
 
+## Run unit/doc tests and generate html coverage report in `target/llvm-cov/html` folder.
+## Notice that `llvm-cov` supports doc tests only in nightly builds because the `--doc` flag 
+## is unstable (https://github.com/taiki-e/cargo-llvm-cov/issues/2).
+.PHONY: test-coverage
+test-coverage: 
+	cargo +nightly llvm-cov --no-report nextest -E 'kind(test) & !test(/\b(issue|ext_integration)/)' && \
+	cargo +nightly llvm-cov --no-report --doc && \
+	cargo +nightly llvm-cov report --doctests --open
+
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
@@ -108,7 +117,7 @@ lint-clippy: ## Run clippy on the codebase.
 .PHONY: lint-typos
 lint-typos: ## Run typos on the codebase.
 	@command -v typos >/dev/null || { \
-		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos" \
+		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos"; \
 		exit 1; \
 	}
 	typos

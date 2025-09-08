@@ -90,14 +90,7 @@ pub fn subscriber() {
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
-    const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Hyper
-        "hyper=off",
-        "hyper_util=off",
-        "h2=off",
-        // Tokio
-        "mio=off",
-    ];
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
@@ -197,6 +190,14 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
 /// Returns the current time as a [`Duration`] since the Unix epoch.
 pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
+}
+
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
 }
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
@@ -318,12 +319,10 @@ pub struct Git<'a> {
 }
 
 impl<'a> Git<'a> {
-    #[inline]
     pub fn new(root: &'a Path) -> Self {
         Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
-    #[inline]
     pub fn from_config(config: &'a Config) -> Self {
         Self::new(config.root.as_path())
     }
@@ -388,18 +387,15 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    #[inline]
     pub fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    #[inline]
     pub fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
@@ -411,6 +407,11 @@ impl<'a> Git<'a> {
             .arg(tag)
             .exec()
             .map(drop)
+    }
+
+    /// Returns the current HEAD commit hash of the current branch.
+    pub fn head(self) -> Result<String> {
+        self.cmd().args(["rev-parse", "HEAD"]).get_stdout_lossy()
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
@@ -487,6 +488,10 @@ impl<'a> Git<'a> {
 
     pub fn is_in_repo(self) -> std::io::Result<bool> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
+    }
+
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

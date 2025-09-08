@@ -37,13 +37,37 @@ pub struct InitArgs {
     #[arg(long, conflicts_with = "template")]
     pub vscode: bool,
 
+    /// Initialize a Vyper project template.
+    #[arg(long, conflicts_with = "template")]
+    pub vyper: bool,
+
+    /// Use the parent git repository instead of initializing a new one.
+    /// Only valid if the target is in a git repository.
+    #[arg(long, conflicts_with = "template")]
+    pub use_parent_git: bool,
+
+    /// Do not create example contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
+    #[arg(long, conflicts_with = "template")]
+    pub empty: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, template, branch, install, offline, force, vscode } = self;
+        let Self {
+            root,
+            template,
+            branch,
+            install,
+            offline,
+            force,
+            vscode,
+            use_parent_git,
+            vyper,
+            empty,
+        } = self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
 
         // create the root dir if it does not exist
@@ -118,15 +142,58 @@ impl InitArgs {
             let script = root.join("script");
             fs::create_dir_all(&script)?;
 
-            // write the contract file
-            let contract_path = src.join("Counter.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.sol"))?;
-            // write the tests
-            let contract_path = test.join("Counter.t.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.t.sol"))?;
-            // write the script
-            let contract_path = script.join("Counter.s.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.s.sol"))?;
+            // Only create example contracts if not disabled
+            if !empty {
+                if vyper {
+                    // write the contract file
+                    let contract_path = src.join("Counter.vy");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/vyper/CounterTemplate.vy"),
+                    )?;
+                    let interface_path = src.join("ICounter.sol");
+                    fs::write(
+                        interface_path,
+                        include_str!("../../assets/vyper/ICounterTemplate.sol"),
+                    )?;
+
+                    // write the tests
+                    let contract_path = test.join("Counter.t.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/vyper/CounterTemplate.t.sol"),
+                    )?;
+
+                    // write the script
+                    let contract_path = script.join("Counter.s.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/vyper/CounterTemplate.s.sol"),
+                    )?;
+                } else {
+                    // write the contract file
+                    let contract_path = src.join("Counter.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.sol"),
+                    )?;
+
+                    // write the tests
+                    let contract_path = test.join("Counter.t.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.t.sol"),
+                    )?;
+
+                    // write the script
+                    let contract_path = script.join("Counter.s.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/solidity/CounterTemplate.s.sol"),
+                    )?;
+                }
+            }
+
             // Write the default README file
             let readme_path = root.join("README.md");
             fs::write(readme_path, include_str!("../../assets/README.md"))?;
@@ -141,7 +208,7 @@ impl InitArgs {
 
             // set up the repo
             if !no_git {
-                init_git_repo(git, commit)?;
+                init_git_repo(git, commit, use_parent_git, vyper)?;
             }
 
             // install forge-std
@@ -166,14 +233,15 @@ impl InitArgs {
     }
 }
 
-/// Initialises `root` as a git repository, if it isn't one already.
+/// Initialises `root` as a git repository, if it isn't one already, unless 'use_parent_git' is
+/// true.
 ///
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
 /// Commits everything in `root` if `commit` is true.
-fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
-    // git init
-    if !git.is_in_repo()? {
+fn init_git_repo(git: Git<'_>, commit: bool, use_parent_git: bool, vyper: bool) -> Result<()> {
+    // `git init`
+    if !git.is_in_repo()? || (!use_parent_git && !git.is_repo_root()?) {
         git.init()?;
     }
 
@@ -187,7 +255,12 @@ fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
     let workflow = git.root.join(".github/workflows/test.yml");
     if !workflow.exists() {
         fs::create_dir_all(workflow.parent().unwrap())?;
-        fs::write(workflow, include_str!("../../assets/workflowTemplate.yml"))?;
+
+        if vyper {
+            fs::write(workflow, include_str!("../../assets/vyper/workflowTemplate.yml"))?;
+        } else {
+            fs::write(workflow, include_str!("../../assets/solidity/workflowTemplate.yml"))?;
+        }
     }
 
     // commit everything
