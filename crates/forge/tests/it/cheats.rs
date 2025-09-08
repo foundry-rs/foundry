@@ -25,7 +25,9 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
     }
 
     if cfg!(feature = "isolate-by-default") {
-        filter = filter.exclude_contracts("(LastCallGasDefaultTest|MockFunctionTest|WithSeed)");
+        filter = filter.exclude_contracts(
+            "(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|RecordAccount)",
+        );
     }
 
     let runner = test_data.runner_with(|config| {

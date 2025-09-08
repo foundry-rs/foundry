@@ -1492,10 +1492,11 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                     .as_ref()
                                     .and_then(|slots| slots.get(&storage_access.account));
 
-                                let mut slot_info = layout.and_then(|layout| {
+                                let slot_info = layout.and_then(|layout| {
                                     let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                        || {
+                                    decoder
+                                        .identify(&storage_access.slot, mapping_slots)
+                                        .or_else(|| {
                                             // Create a map of new values for bytes/string
                                             // identification. These values are used to determine
                                             // the length of the data which helps determine how many
@@ -1508,26 +1509,25 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                                 &storage_access.slot,
                                                 &current_base_slot_values,
                                             )
-                                        },
-                                    )
+                                        })
+                                        .map(|mut info| {
+                                            // Always decode values first
+                                            info.decode_values(
+                                                storage_access.previousValue,
+                                                storage_access.newValue,
+                                            );
+
+                                            // Then handle long bytes/strings if applicable
+                                            if info.is_bytes_or_string() {
+                                                info.decode_bytes_or_string_values(
+                                                    &storage_access.slot,
+                                                    &raw_changes_by_slot,
+                                                );
+                                            }
+
+                                            info
+                                        })
                                 });
-
-                                // Decode values if we have slot info
-                                if let Some(info) = &mut slot_info {
-                                    // Always decode values first
-                                    info.decode_values(
-                                        storage_access.previousValue,
-                                        storage_access.newValue,
-                                    );
-
-                                    // Then handle long bytes/strings if applicable
-                                    if info.is_bytes_or_string() {
-                                        info.decode_bytes_or_string_values(
-                                            &storage_access.slot,
-                                            &raw_changes_by_slot,
-                                        );
-                                    }
-                                }
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
