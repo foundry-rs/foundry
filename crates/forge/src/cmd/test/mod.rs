@@ -38,7 +38,7 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::PathBuf,
     sync::{Arc, mpsc::channel},
@@ -808,7 +808,9 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        if self.rerun && let Some(pairs) = last_run_failures_qualified(config) {
+        if self.rerun
+            && let Some(pairs) = last_run_failures_qualified(config)
+        {
             filter.qualified_failures = Some(pairs);
         }
         if filter.path_pattern.is_some() {
@@ -901,11 +903,19 @@ struct TestSuiteFailures {
 fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, String)>> {
     let content = fs::read_to_string(&config.test_failures_file).ok()?;
     let entries: Vec<TestSuiteFailures> = serde_json::from_str(&content).ok()?;
-    let pairs = entries
-        .into_iter()
-        .flat_map(|e| e.failures.into_iter().map(move |t| (e.test_suite.clone(), t)))
-        .collect::<Vec<_>>();
-    if pairs.is_empty() { None } else { Some(pairs) }
+    // Normalize to bare names and deduplicate while preserving order.
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for e in entries.into_iter() {
+        for t in e.failures.into_iter() {
+            let bare = t.split('(').next().unwrap_or(&t).to_string();
+            let key = (e.test_suite.clone(), bare.clone());
+            if seen.insert(key.clone()) {
+                out.push(key);
+            }
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 // Legacy regex-based rerun cache reader removed; rerun now uses JSON-qualified pairs.
@@ -920,12 +930,20 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     for (suite_name, suite) in &outcome.results {
         let mut names = Vec::new();
         for (sig, result) in &suite.test_results {
-            if result.status.is_failure() && let Some(name) = sig.split('(').next() {
+            if result.status.is_failure()
+                && let Some(name) = sig.split('(').next()
+            {
                 names.push(name.to_string());
             }
         }
         if !names.is_empty() {
-            by_suite.insert(get_contract_name(suite_name).to_string(), names);
+            names.sort_unstable();
+            names.dedup();
+            let suite_key = get_contract_name(suite_name).to_string();
+            let entry = by_suite.entry(suite_key).or_default();
+            entry.extend(names);
+            entry.sort_unstable();
+            entry.dedup();
         }
     }
     if by_suite.is_empty() {

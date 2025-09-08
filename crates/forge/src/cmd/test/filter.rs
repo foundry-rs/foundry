@@ -146,10 +146,11 @@ impl TestFilter for FilterArgs {
     }
 
     fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        let bare = test_name.split('(').next().unwrap_or(test_name);
         if let Some(pairs) = &self.qualified_failures {
-            return pairs.iter().any(|(c, t)| c == contract_name && t == test_name);
+            return pairs.iter().any(|(c, t)| c == contract_name && t == bare);
         }
-        self.matches_contract(contract_name) && self.matches_test(test_name)
+        self.matches_contract(contract_name) && self.matches_test(bare)
     }
 }
 

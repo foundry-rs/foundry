@@ -592,8 +592,7 @@ pub(crate) fn is_matching_test_in_context(
     if !func.is_any_test() {
         return false;
     }
-    let signature = func.signature();
-    let test_name = signature.split('(').next().unwrap_or(&signature);
+    let test_name = func.name.as_str();
     let contract_name = artifact_id.name.as_str();
     filter.matches_qualified_test(contract_name, test_name)
 }

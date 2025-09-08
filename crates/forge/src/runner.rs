@@ -373,12 +373,8 @@ impl<'a> ContractRunner<'a> {
             .abi
             .functions()
             .filter(|func| {
-                if !func.is_any_test() {
-                    return false;
-                }
-                let signature = func.signature();
-                let test_name = signature.split('(').next().unwrap_or(&signature);
-                filter.matches_qualified_test(contract_name, test_name)
+                func.is_any_test()
+                    && filter.matches_qualified_test(contract_name, func.name.as_str())
             })
             .collect::<Vec<_>>();
         debug!(
