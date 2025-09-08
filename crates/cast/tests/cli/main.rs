@@ -3929,3 +3929,54 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
     ])
     .assert_success();
 });
+
+// tests that cast call properly applies multiple state diff overrides
+// <https://github.com/foundry-rs/foundry/issues/11551>
+casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "call",
+        "--trace",
+        "--from",
+        "0xf6F444fD3B0088c1375671c05A7513661beFa4e6",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0xe75235b8",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::getThreshold()
+...
+
+"#]]);
+
+    cmd.cast_fuse().args([
+        "call",
+        "--trace",
+        "--from",
+        "0x2066901073a33ba2500274704aB04763875cF210",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0x2f54bf6e0000000000000000000000002066901073a33ba2500274704ab04763875cf210",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
+...
+
+"#]]);
+});
