@@ -12,10 +12,7 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[cfg(feature = "aws-kms")]
-use {
-    alloy_signer_aws::AwsSigner, alloy_signer_aws::aws_config::BehaviorVersion,
-    alloy_signer_aws::aws_sdk_kms::Client as AwsClient,
-};
+use alloy_signer_aws::{AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
 use {
