@@ -14,7 +14,8 @@ contract StorageContract {
 
     // Bytes variables
     bytes public shortBytes; // Slot 5 (less than 32 bytes)
-    bytes public longBytes; // Slot 6 (32+ bytes, will use multiple slots)
+    mapping(address => uint256) public balances; // Slot 6 Inserted in between to make sure we can still properly identify the bytes
+    bytes public longBytes; // Slot 7 (32+ bytes, will use multiple slots)
 
     // String variables
     string public shortString; // Slot 7 (less than 32 bytes)
@@ -53,7 +54,10 @@ contract GetStorageSlotsTest is DSTest {
 
     function testGetStorageSlots() public {
         // Test 1: Simple variable
-        uint256[] memory slots = vm.getStorageSlots(address(storageContract), "value");
+        uint256[] memory slots = vm.getStorageSlots(
+            address(storageContract),
+            "value"
+        );
         assertEq(slots.length, 1);
         assertEq(slots[0], 0);
 
@@ -80,10 +84,10 @@ contract GetStorageSlotsTest is DSTest {
         slots = vm.getStorageSlots(address(storageContract), "longBytes");
         // Should return 5 slots: 1 base slot + 4 data slots
         assertEq(slots.length, 5);
-        assertEq(slots[0], 6); // Base slot
+        assertEq(slots[0], 7); // Base slot
 
         // Data slots start at keccak256(base_slot)
-        uint256 dataStart = uint256(keccak256(abi.encode(uint256(6))));
+        uint256 dataStart = uint256(keccak256(abi.encode(uint256(7))));
         assertEq(slots[1], dataStart);
         assertEq(slots[2], dataStart + 1);
         assertEq(slots[3], dataStart + 2);
