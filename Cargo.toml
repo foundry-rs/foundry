@@ -417,8 +417,8 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "dani/bump-solar" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
 ## solar
-# solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }

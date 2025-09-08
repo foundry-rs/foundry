@@ -964,6 +964,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b0f1e2f8ec4bff67c7e1867001ec452595daf315cce10c393b7d4274024f878"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4148,7 +4159,7 @@ dependencies = [
  "heck",
  "rayon",
  "solar-compiler",
- "solar-interface",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.16",
 ]
 
@@ -4499,8 +4510,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65bb5aabd4c628c89db350909672e723834009cf5ed3af5bffd50504f311e408"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4511,7 +4521,7 @@ dependencies = [
  "foundry-compilers-core",
  "fs_extra",
  "futures-util",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.9.2",
  "rayon",
@@ -4533,8 +4543,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e87be595faa8f44496f970d45bb7b6676a85002d6c955e9b6e06495002408168"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4543,8 +4552,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41e854b93aa40d9144e604a3abc86ce084f3185d07d4f1c5b323036ffcf58f04"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4559,15 +4567,13 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "tracing",
- "walkdir",
  "yansi",
 ]
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe557fdf36c54f2e612043524277d0597623a6a3153c8b33aa19a6596ab06158"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4581,8 +4587,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "972f228152765e199041a7c8fecc217b5ab4aade8e6bdd5ef62caa781a3cf239"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -9135,32 +9140,30 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06a528b6d7fb62bb6b99db5dc4ea6d4b85ee2ff910a3e952c9c2fbc9c5b68a23"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
  "either",
  "num-rational",
  "semver 1.0.26",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "strum 0.27.2",
 ]
 
 [[package]]
 name = "solar-compiler"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f726b10330517ecfa1e66e781ed55fb720ac02e3995453d14f6f90fe53ed8f63"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
- "solar-config",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
+ "solar-config 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-parse",
  "solar-sema",
 ]
@@ -9171,6 +9174,15 @@ version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0446799e12df8126895ec1721982c53df0149046e668cc7fc88efe27d1d59292"
 dependencies = [
+ "strum 0.27.2",
+]
+
+[[package]]
+name = "solar-config"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
+dependencies = [
+ "colorchoice",
  "strum 0.27.2",
 ]
 
@@ -9190,12 +9202,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-data-structures"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
+dependencies = [
+ "bumpalo",
+ "index_vec",
+ "indexmap 2.11.0",
+ "parking_lot",
+ "rayon",
+ "rustc-hash 2.1.1",
+ "smallvec",
+]
+
+[[package]]
 name = "solar-interface"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00512f582ca82c245e6f3d512db64a3c57f4c6cf164bfb578d3b6fc879a9f531"
 dependencies = [
- "annotate-snippets",
+ "annotate-snippets 0.11.5",
  "anstream",
  "anstyle",
  "const-hex",
@@ -9210,10 +9236,37 @@ dependencies = [
  "scoped-tls",
  "serde",
  "serde_json",
- "solar-config",
- "solar-data-structures",
- "solar-macros",
+ "solar-config 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-macros 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.16",
+ "tracing",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "solar-interface"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
+dependencies = [
+ "annotate-snippets 0.12.3",
+ "anstream",
+ "anstyle",
+ "derive_more",
+ "dunce",
+ "inturn",
+ "itertools 0.10.5",
+ "itoa",
+ "normalize-path",
+ "once_map",
+ "rayon",
+ "scoped-tls",
+ "serde",
+ "serde_json",
+ "solar-config 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9230,15 +9283,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-macros"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "solar-parse"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "247fbfe3c9f665c8c4bcc4e1a1123ca65213dab2b7dec77960068db8d6196c76"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.4",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9246,16 +9308,15 @@ dependencies = [
  "ruint",
  "smallvec",
  "solar-ast",
- "solar-data-structures",
- "solar-interface",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "tracing",
 ]
 
 [[package]]
 name = "solar-sema"
 version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1cc26771a9627566194b5fda0b8b3ff0f63ab71f028c7ed0d3cc07fb6b2e1f6"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#2839d705c41b3757dbc0389abfb8b805ce5cc01e"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9269,9 +9330,9 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-ast",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar.git?branch=main)",
  "solar-parse",
  "strum 0.27.2",
  "thread_local",
@@ -10346,7 +10407,7 @@ version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b56a6897cc4bb6f8daf1939b0b39cd9645856997f46f4d0b3e3cb7122dfe9251"
 dependencies = [
- "annotate-snippets",
+ "annotate-snippets 0.11.5",
  "anyhow",
  "bstr",
  "cargo-platform",
