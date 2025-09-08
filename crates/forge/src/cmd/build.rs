@@ -175,7 +175,7 @@ impl BuildArgs {
 
             if !input_files.is_empty() {
                 let compiler = output.parser().solc().compiler();
-                linter.lint(&input_files, &compiler);
+                linter.lint(&input_files, compiler);
             }
         }
 

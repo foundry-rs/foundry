@@ -22,7 +22,7 @@ use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
 /// Returns the range of the given span in the source map.
 #[track_caller]
 fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
-    source_map.span_to_source(span).unwrap().1
+    source_map.span_to_range(span).unwrap()
 }
 
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with

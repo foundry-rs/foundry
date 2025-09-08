@@ -152,11 +152,9 @@ impl SolidityHelper {
         let mut stack = vec![];
         for token in Cursor::new(input) {
             match token.kind {
-                OpenParen | OpenBrace | OpenBracket => stack.push(token.kind),
-                CloseParen | CloseBrace | CloseBracket => match (stack.pop(), token.kind) {
-                    (Some(OpenParen), CloseParen)
-                    | (Some(OpenBrace), CloseBrace)
-                    | (Some(OpenBracket), CloseBracket) => {}
+                OpenDelim(delim) => stack.push(delim),
+                CloseDelim(delim) => match (stack.pop(), delim) {
+                    (Some(open), close) if open == close => {}
                     (Some(wanted), _) => {
                         return ValidationResult::Invalid(Some(format!(
                             "Mismatched brackets: {wanted:?} is not properly closed"
