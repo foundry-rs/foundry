@@ -936,7 +936,7 @@ impl Cheatcode for getStorageSlotsCall {
         if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
         {
             return Err(fmt_err!(
-                "cannot get storage slots for variable {variableName} with mapping or dynamic array types"
+                "cannot get storage slots for variables with mapping or dynamic array types"
             ));
         }
 
