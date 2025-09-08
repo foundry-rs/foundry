@@ -203,4 +203,9 @@ contract NestedCallsTest is Test {
             }
         }
     }
+
+    function test_longCall() public {
+        uint256 fork =
+            vm.createSelectFork("polygon", bytes32(0xdeadc0ffeedeadbeef));
+    }
 }

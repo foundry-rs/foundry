@@ -815,7 +815,15 @@ impl<'ast> State<'_, 'ast> {
                 {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
-                        self.print_sep(Separator::Nbsp);
+                        let init_size = self.estimate_size(init.span);
+                        if init_size >= init_space_left - pre_init_size - 3
+                            && init_size < init_space_left - (self.ind as usize)
+                        {
+                            self.print_sep(Separator::Hardbreak);
+                            self.s.offset(self.ind);
+                        } else {
+                            self.print_sep(Separator::Nbsp);
+                        }
                     }
                 } else {
                     if !self.is_bol_or_only_ind() {
