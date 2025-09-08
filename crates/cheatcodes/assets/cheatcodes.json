@@ -6546,6 +6546,26 @@
     },
     {
       "func": {
+        "id": "getStorageSlots",
+        "description": "Returns an array of storage slots occupied by the specified variable.",
+        "declaration": "function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageSlots(address,string)",
+        "selector": "0xefa136d9",
+        "selectorBytes": [
+          239,
+          161,
+          54,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
         "declaration": "function getWallets() external view returns (address[] memory wallets);",

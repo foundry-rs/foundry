@@ -12,10 +12,15 @@ use serde::Serialize;
 use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tracing::trace;
 
-// Constants for storage type encodings
-const ENCODING_INPLACE: &str = "inplace";
-const ENCODING_MAPPING: &str = "mapping";
-const ENCODING_BYTES: &str = "bytes";
+/// "inplace" encoding type for variables that fit in one storage slot i.e 32 bytes
+pub const ENCODING_INPLACE: &str = "inplace";
+/// "mapping" encoding type for Solidity mappings, which use keccak256 hash-based storage
+pub const ENCODING_MAPPING: &str = "mapping";
+/// "bytes" encoding type for bytes and string types, which use either inplace or keccak256
+/// hash-based storage depending on length
+pub const ENCODING_BYTES: &str = "bytes";
+/// "dynamic_array" encoding type for dynamic arrays, which uses keccak256 hash-based storage
+pub const ENCODING_DYN_ARRAY: &str = "dynamic_array";
 
 /// Information about a storage slot including its label, type, and decoded values.
 #[derive(Serialize, Debug)]
