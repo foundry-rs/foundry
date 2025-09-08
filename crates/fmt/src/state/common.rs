@@ -77,8 +77,13 @@ impl<'ast> State<'_, 'ast> {
         debug_assert!(source.is_ascii(), "{source:?}");
 
         let config = self.config.number_underscore;
+        let is_dec = !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix));
 
-        let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
+        let (val, exp) = if !is_dec {
+            (source, "")
+        } else {
+            source.split_once(['e', 'E']).unwrap_or((source, ""))
+        };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
         let strip_underscores = !config.is_preserve();
@@ -88,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
 
         // strip any padded 0's
         let mut exp_sign = "";
-        if !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix)) {
+        if is_dec {
             val = val.trim_start_matches('0');
             fract = fract.trim_end_matches('0');
             (exp_sign, exp) =

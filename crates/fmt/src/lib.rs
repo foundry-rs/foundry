@@ -247,10 +247,14 @@ pub fn format_ast<'ast>(
         config.wrap_comments,
         if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
     );
-    let inline_config = parse_inline_config(gcx.sess, &comments, source.ast.as_ref().unwrap());
+    let inline_config = parse_inline_config(
+        gcx.sess,
+        &comments,
+        source.ast.as_ref().expect("unable to get the AST"),
+    );
 
     let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
-    state.print_source_unit(source.ast.as_ref().unwrap());
+    state.print_source_unit(source.ast.as_ref().expect("unable to get the AST"));
     state.s.eof()
 }
 

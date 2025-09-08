@@ -63,4 +63,14 @@ contract TryStatement {
             unknown.handleError();
         } catch {}
     }
+
+    function test_multiParam() {
+        Mock mock = new Mock();
+
+        try mock.add(2, 3) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
+    }
 }

@@ -1384,7 +1384,13 @@ impl<'ast> State<'_, 'ast> {
                     |this, e| this.print_expr(e),
                     get_span!(),
                     ListFormat::Compact { cmnts_break: true, with_space: false },
-                    false,
+                    // inline single-element expressions that are simple and fit
+                    if let [expr] = exprs {
+                        has_complex_successor(&expr.kind, true)
+                            || self.estimate_size(span) > self.space_left()
+                    } else {
+                        false
+                    },
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
@@ -1652,7 +1658,18 @@ impl<'ast> State<'_, 'ast> {
                         );
                         self.nbsp();
                     }
-                    self.print_block(block, *try_span);
+                    if block.is_empty() {
+                        self.print_block(block, *try_span);
+                        self.end();
+                    } else {
+                        self.print_word("{");
+                        self.end();
+                        self.print_block_without_braces(block, try_span.hi(), Some(self.ind));
+                        if self.cursor.enabled || self.cursor.pos < try_span.hi() {
+                            self.print_word("}");
+                            self.cursor.advance_to(try_span.hi(), true);
+                        }
+                    }
 
                     let mut skip_ind = false;
                     if self
@@ -1663,7 +1680,6 @@ impl<'ast> State<'_, 'ast> {
                         self.break_offset_if_not_bol(0, self.ind, false);
                         skip_ind = true;
                     };
-                    self.end();
 
                     let mut prev_block_multiline = self.is_multiline_block(block, false);
 

@@ -176,3 +176,16 @@ function argListRepro(address tokenIn, uint256 amountIn, bool data) {
         data
     );
 }
+
+contract NestedCallsTest is Test {
+    string constant errMsg = "User provided message";
+    uint256 constant maxDecimals = 77;
+
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_nestedCalls() public {
+        vm._expectCheatcodeRevert(
+            bytes(string.concat(errMsg, ": ", left, " != ", right))
+        );
+    }
+}
