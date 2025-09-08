@@ -188,4 +188,18 @@ contract NestedCallsTest is Test {
             bytes(string.concat(errMsg, ": ", left, " != ", right))
         );
     }
+
+    function test_assembly() public {
+        assembly {
+            function setJPoint(i, x, y, z) {
+                // We will multiply by `0x80` (i.e. `shl(7, i)`) instead
+                // since the memory expansion costs are cheaper than doing `mul(0x60, i)`.
+                // Also help combine the lookup expression for `u1` and `u2` in `jMultShamir`.
+                i := shl(7, i)
+                mstore(i, x)
+                mstore(add(i, returndatasize()), y)
+                mstore(add(i, 0x40), z)
+            }
+        }
+    }
 }

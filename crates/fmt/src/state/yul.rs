@@ -104,6 +104,10 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Continue => self.word("continue"),
             yul::StmtKind::FunctionDef(func) => {
                 let yul::Function { name, parameters, returns, body } = func;
+                let params_hi = parameters
+                    .last()
+                    .map_or(returns.first().map_or(span.hi(), |r| r.span.lo()), |p| p.span.hi());
+
                 self.cbox(0);
                 self.s.ibox(0);
                 self.word("function ");
@@ -111,7 +115,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_tuple(
                     parameters,
                     span.lo(),
-                    span.hi(),
+                    params_hi,
                     Self::print_ident,
                     get_span!(),
                     ListFormat::Consistent { cmnts_break: false, with_space: false },
@@ -126,8 +130,8 @@ impl<'ast> State<'_, 'ast> {
                 if has_returns {
                     self.commasep(
                         returns,
-                        stmt.span.lo(),
-                        stmt.span.hi(),
+                        returns.first().map_or(params_hi, |ret| ret.span.lo()),
+                        returns.last().map_or(span.hi(), |ret| ret.span.hi()),
                         Self::print_ident,
                         get_span!(),
                         ListFormat::Yul { sym_prev: Some("->"), sym_post: Some("{") },
