@@ -48,3 +48,9 @@ id = 1
 
 [[advancedTomlPath]]
 id = 2
+
+# Floating special values for tests
+nanFloat = nan
+infFloat = +inf
+neginfFloat = -inf
+
