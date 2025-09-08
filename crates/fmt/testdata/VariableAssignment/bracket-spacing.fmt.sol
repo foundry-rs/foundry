@@ -26,7 +26,7 @@ contract TestContract {
         allowance[from][msg.sender] = allowed;
     }
 
-    function testTryFfi() public {
+    function test_longAssignements() public {
         string[] memory inputs = new string[](3);
         inputs[0] = "bash";
         inputs[1] = "-c";

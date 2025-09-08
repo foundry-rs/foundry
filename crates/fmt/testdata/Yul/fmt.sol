@@ -129,7 +129,7 @@ contract Yul {
                 sstore(gByte(caller(), 0x5), 0x1)
                 sstore(
                     0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810,
-                    0x726F105396F2CA1CCeBD5BFC27B556699A07FFE7C2
+                    0x726F105396F2CA1CCEBD5BFC27B556699A07FFE7C2
                 )
             }
         }

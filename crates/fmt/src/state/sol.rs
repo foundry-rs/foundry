@@ -1091,7 +1091,12 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(lhs);
                 self.word(" =");
                 if matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
-                    && self.estimate_size(expr.span) > self.space_left()
+                    && self.estimate_size(rhs.span) > self.space_left()
+                {
+                    self.hardbreak_if_not_bol();
+                } else if matches!(rhs.kind, ast::ExprKind::Call(..))
+                    && self.estimate_size(rhs.span) > self.space_left()
+                    && self.estimate_size(rhs.span) < self.config.line_length
                 {
                     self.hardbreak_if_not_bol();
                 } else {
@@ -1394,7 +1399,7 @@ impl<'ast> State<'_, 'ast> {
                     // inline single-element expressions that are simple and fit
                     if let [expr] = exprs {
                         has_complex_successor(&expr.kind, true)
-                            || self.estimate_size(span) + 2 > self.space_left()
+                            || self.estimate_size(span) + 3 > self.space_left()
                     } else {
                         false
                     },
@@ -1725,7 +1730,10 @@ impl<'ast> State<'_, 'ast> {
                         self.print_word("{");
                         self.end();
                         self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
-                        self.print_word("}");
+                        if self.cursor.enabled || self.cursor.pos < try_span.hi() {
+                            self.print_word("}");
+                            self.cursor.advance_to(catch_span.hi(), true);
+                        }
 
                         prev_block_multiline = current_block_multiline;
                     }
