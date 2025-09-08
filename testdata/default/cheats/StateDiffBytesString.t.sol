@@ -56,57 +56,6 @@ contract StateDiffBytesStringTest is DSTest {
         bytesStringStorage = new BytesStringStorage();
     }
 
-    // function testShortStringStorage() public {
-    //     // Start recording state diffs
-    //     vm.startStateDiffRecording();
-
-    //     // Set a short string (less than 32 bytes)
-    //     bytesStringStorage.setShortString("Hello, World!");
-
-    //     // Get the state diff as string
-    //     string memory stateDiff = vm.getStateDiff();
-    //     emit log_string("State diff for short string:");
-    //     emit log_string(stateDiff);
-
-    //     // Get the state diff as JSON
-    //     string memory stateDiffJson = vm.getStateDiffJson();
-    //     emit log_string("State diff JSON for short string:");
-    //     emit log_string(stateDiffJson);
-
-    //     // Verify the JSON contains expected fields
-    //     assertTrue(vm.contains(stateDiffJson, '"label":"shortString"'));
-    //     assertTrue(vm.contains(stateDiffJson, '"type":"string"'));
-    //     assertTrue(vm.contains(stateDiffJson, '"decoded":'));
-
-    //     // Check that the decoded value contains our string
-    //     assertTrue(vm.contains(stateDiffJson, '"newValue":"Hello, World!"'));
-
-    //     // Stop recording
-    //     Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
-    //     assertTrue(accesses.length > 0);
-
-    //     // Verify storage access for shortString at slot 0
-    //     bool foundSlot = false;
-    //     for (uint256 i = 0; i < accesses.length; i++) {
-    //         if (accesses[i].account == address(bytesStringStorage)) {
-    //             for (
-    //                 uint256 j = 0;
-    //                 j < accesses[i].storageAccesses.length;
-    //                 j++
-    //             ) {
-    //                 if (
-    //                     accesses[i].storageAccesses[j].slot ==
-    //                     bytes32(uint256(0))
-    //                 ) {
-    //                     foundSlot = true;
-    //                     assertTrue(accesses[i].storageAccesses[j].isWrite);
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     assertTrue(foundSlot);
-    // }
-
     function testLongStringStorage() public {
         // Start recording state diffs
         vm.startStateDiffRecording();
@@ -267,29 +216,4 @@ contract StateDiffBytesStringTest is DSTest {
         // Stop recording
         vm.stopAndReturnStateDiff();
     }
-
-    // TODO: Remove
-    // function testEmptyBytesAndString() public {
-    //     // Start recording state diffs
-    //     vm.startStateDiffRecording();
-
-    //     // First set some values
-    //     bytesStringStorage.setShortString("Not empty");
-    //     bytesStringStorage.setShortBytes(hex"abcd");
-
-    //     // Then clear them
-    //     bytesStringStorage.setShortString("");
-    //     bytesStringStorage.setShortBytes("");
-
-    //     // Get the state diff as JSON
-    //     string memory stateDiffJson = vm.getStateDiffJson();
-    //     emit log_string("State diff JSON for empty values:");
-    //     emit log_string(stateDiffJson);
-
-    //     // Check that empty values are properly decoded
-    //     assertTrue(vm.contains(stateDiffJson, '"newValue":""'));
-
-    //     // Stop recording
-    //     vm.stopAndReturnStateDiff();
-    // }
 }
