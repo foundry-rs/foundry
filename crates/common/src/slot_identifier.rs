@@ -5,16 +5,17 @@
 
 use crate::mapping_slots::MappingSlots;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, U256, hex};
+use alloy_primitives::{B256, U256, hex, keccak256, map::B256Map};
 use foundry_common_fmt::format_token_raw;
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use serde::Serialize;
-use std::{str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tracing::trace;
 
 // Constants for storage type encodings
 const ENCODING_INPLACE: &str = "inplace";
 const ENCODING_MAPPING: &str = "mapping";
+const ENCODING_BYTES: &str = "bytes";
 
 /// Information about a storage slot including its label, type, and decoded values.
 #[derive(Serialize, Debug)]
@@ -67,6 +68,9 @@ pub struct StorageTypeInfo {
 
 impl SlotInfo {
     /// Decodes a single storage value based on the slot's type information.
+    ///
+    /// Note: For decoding [`DynSolType::Bytes`] or [`DynSolType::String`] that span multiple slots,
+    /// use [`SlotInfo::decode_bytes_or_string`].
     pub fn decode(&self, value: B256) -> Option<DynSolValue> {
         // Storage values are always 32 bytes, stored as a single word
         let mut actual_type = &self.slot_type.dyn_sol_type;
@@ -75,8 +79,184 @@ impl SlotInfo {
             actual_type = elem_type.as_ref();
         }
 
-        // Decode based on the actual type
-        actual_type.abi_decode(&value.0).ok()
+        // Special handling for bytes and string types
+        match actual_type {
+            DynSolType::Bytes | DynSolType::String => {
+                // Decode bytes/string from storage
+                // The last byte contains the length * 2 for short strings/bytes
+                // or length * 2 + 1 for long strings/bytes
+                let length_byte = value.0[31];
+
+                if length_byte & 1 == 0 {
+                    // Short string/bytes (less than 32 bytes)
+                    let length = (length_byte >> 1) as usize;
+                    // Extract data
+                    let data = if length == 0 { Vec::new() } else { value.0[0..length].to_vec() };
+
+                    // Create the appropriate value based on type
+                    if matches!(actual_type, DynSolType::String) {
+                        let str_val = if data.is_empty() {
+                            String::new()
+                        } else {
+                            String::from_utf8(data).unwrap_or_default()
+                        };
+                        Some(DynSolValue::String(str_val))
+                    } else {
+                        Some(DynSolValue::Bytes(data))
+                    }
+                } else {
+                    // Long string/bytes (32 bytes or more)
+                    // The actual data is stored at keccak256(slot)
+                    // Return None for long values - they need decode_bytes_or_string()
+                    None
+                }
+            }
+            _ => {
+                // Decode based on the actual type
+                actual_type.abi_decode(&value.0).ok()
+            }
+        }
+    }
+
+    /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
+    pub fn is_bytes_or_string(&self) -> bool {
+        matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
+    }
+
+    /// Decodes a [`DynSolType::Bytes`] or [`DynSolType::String`] value
+    /// that spans across multiple slots.
+    pub fn decode_bytes_or_string(
+        &mut self,
+        base_slot: &B256,
+        storage_values: &B256Map<B256>,
+    ) -> Option<DynSolValue> {
+        // Only process bytes/string types
+        if !self.is_bytes_or_string() {
+            return None;
+        }
+
+        // Try to handle as long bytes/string
+        self.aggregate_bytes_or_strings(base_slot, storage_values).map(|data| {
+            match self.slot_type.dyn_sol_type {
+                DynSolType::String => {
+                    DynSolValue::String(String::from_utf8(data).unwrap_or_default())
+                }
+                DynSolType::Bytes => DynSolValue::Bytes(data),
+                _ => unreachable!(),
+            }
+        })
+    }
+
+    /// Decodes both previous and new [`DynSolType::Bytes`] or [`DynSolType::String`] values
+    /// that span across multiple slots using state diff data.
+    ///
+    /// Accepts a mapping of storage_slot to (previous_value, new_value).
+    pub fn decode_bytes_or_string_values(
+        &mut self,
+        base_slot: &B256,
+        storage_accesses: &BTreeMap<B256, (B256, B256)>,
+    ) {
+        // Only process bytes/string types
+        if !self.is_bytes_or_string() {
+            return;
+        }
+
+        // Get both previous and new values from the storage accesses
+        if let Some((prev_base_value, new_base_value)) = storage_accesses.get(base_slot) {
+            // Reusable closure to decode bytes/string based on length encoding
+            let mut decode_value = |base_value: B256, is_new: bool| {
+                let length_byte = base_value.0[31];
+                if length_byte & 1 == 1 {
+                    // Long bytes/string - aggregate from multiple slots
+                    let value_map = storage_accesses
+                        .iter()
+                        .map(|(slot, (prev, new))| (*slot, if is_new { *new } else { *prev }))
+                        .collect::<B256Map<_>>();
+                    self.decode_bytes_or_string(base_slot, &value_map)
+                } else {
+                    // Short bytes/string - decode directly from base slot
+                    self.decode(base_value)
+                }
+            };
+
+            // Decode previous value
+            let prev_decoded = decode_value(*prev_base_value, false);
+
+            // Decode new value
+            let new_decoded = decode_value(*new_base_value, true);
+
+            // Set decoded values if both were successfully decoded
+            if let (Some(prev), Some(new)) = (prev_decoded, new_decoded) {
+                self.decoded = Some(DecodedSlotValues { previous_value: prev, new_value: new });
+            }
+        }
+    }
+
+    /// Aggregates a [`DynSolType::Bytes`] or [`DynSolType::String`] value that spans across
+    /// multiple slots by looking up the length in the base_slot.
+    ///
+    /// Returns the aggregated raw bytes.
+    fn aggregate_bytes_or_strings(
+        &mut self,
+        base_slot: &B256,
+        storage_values: &B256Map<B256>,
+    ) -> Option<Vec<u8>> {
+        if !self.is_bytes_or_string() {
+            return None;
+        }
+
+        // Check if it's a long bytes/string by looking at the base value
+        if let Some(base_value) = storage_values.get(base_slot) {
+            let length_byte = base_value.0[31];
+
+            // Check if value is long
+            if length_byte & 1 == 1 {
+                // Long bytes/string - populate members
+                let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
+                let num_slots = length.to::<usize>().div_ceil(32).min(256);
+                let data_start = U256::from_be_bytes(keccak256(base_slot.0).0);
+
+                let mut members = Vec::new();
+                let mut full_data = Vec::with_capacity(length.to::<usize>());
+
+                for i in 0..num_slots {
+                    let data_slot = B256::from(data_start + U256::from(i));
+                    let data_slot_u256 = data_start + U256::from(i);
+
+                    // Create member info for this data slot with indexed label
+                    let member_info = Self {
+                        label: format!("{}[{}]", self.label, i),
+                        slot_type: StorageTypeInfo {
+                            label: self.slot_type.label.clone(),
+                            dyn_sol_type: DynSolType::FixedBytes(32),
+                        },
+                        offset: 0,
+                        slot: data_slot_u256.to_string(),
+                        members: None,
+                        decoded: None,
+                        keys: None,
+                    };
+
+                    if let Some(value) = storage_values.get(&data_slot) {
+                        // Collect data
+                        let bytes_to_take =
+                            std::cmp::min(32, length.to::<usize>() - full_data.len());
+                        full_data.extend_from_slice(&value.0[..bytes_to_take]);
+                    }
+
+                    members.push(member_info);
+                }
+
+                // Set the members field
+                if !members.is_empty() {
+                    self.members = Some(members);
+                }
+
+                return Some(full_data);
+            }
+        }
+
+        None
     }
 
     /// Decodes storage values (previous and new) and populates the decoded field.
@@ -124,6 +304,8 @@ impl SlotInfo {
             // For structs with members, we don't need a top-level decoded value
         } else {
             // For non-struct types, decode directly
+            // Note: decode() returns None for long bytes/strings, which will be handled by
+            // decode_bytes_or_string()
             if let (Some(prev), Some(new)) = (self.decode(previous_value), self.decode(new_value)) {
                 self.decoded = Some(DecodedSlotValues { previous_value: prev, new_value: new });
             }
@@ -267,10 +449,44 @@ impl SlotIdentifier {
                 }
             } else if storage_type.encoding == ENCODING_MAPPING
                 && let Some(mapping_slots) = mapping_slots
-                && let Some(slot_info) =
+                && let Some(info) =
                     self.handle_mapping(storage, storage_type, slot, &slot_str, mapping_slots)
             {
-                return Some(slot_info);
+                return Some(info);
+            }
+        }
+
+        None
+    }
+
+    /// Identifies a bytes or string storage slot by checking all bytes/string variables
+    /// in the storage layout and using their base slot values from the provided storage changes.
+    ///
+    /// # Arguments
+    /// * `slot` - The slot being identified
+    /// * `storage_values` - Map of storage slots to their current values
+    pub fn identify_bytes_or_string(
+        &self,
+        slot: &B256,
+        storage_values: &B256Map<B256>,
+    ) -> Option<SlotInfo> {
+        let slot_u256 = U256::from_be_bytes(slot.0);
+        let slot_str = slot_u256.to_string();
+
+        // Search through all bytes/string variables in the storage layout
+        for storage in &self.storage_layout.storage {
+            if let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type)
+                && storage_type.encoding == ENCODING_BYTES
+            {
+                let Some(base_slot) = U256::from_str(&storage.slot).map(B256::from).ok() else {
+                    continue;
+                };
+                // Get the base slot value from storage_values
+                if let Some(base_value) = storage_values.get(&base_slot)
+                    && let Some(info) = self.handle_bytes_string(slot_u256, &slot_str, base_value)
+                {
+                    return Some(info);
+                }
             }
         }
 
@@ -610,6 +826,102 @@ impl SlotIdentifier {
             decoded: None,
             keys: Some(decoded_keys),
         })
+    }
+
+    /// Handles identification of bytes/string storage slots.
+    ///
+    /// Bytes and strings in Solidity use a special storage layout:
+    /// - Short values (<32 bytes): stored in the same slot with length * 2
+    /// - Long values (>=32 bytes): length * 2 + 1 in main slot, data at keccak256(slot)
+    ///
+    /// This function checks if the given slot is:
+    /// 1. A main slot for a bytes/string variable
+    /// 2. A data slot for any long bytes/string variable in the storage layout
+    ///
+    /// # Arguments
+    /// * `slot` - The accessed slot being identified
+    /// * `slot_str` - String representation of the slot for output
+    /// * `base_slot_value` - The value at the base slot (used to determine length for long
+    ///   bytes/strings)
+    fn handle_bytes_string(
+        &self,
+        slot: U256,
+        slot_str: &str,
+        base_slot_value: &B256,
+    ) -> Option<SlotInfo> {
+        for storage in &self.storage_layout.storage {
+            // Get the type information and base slot
+            let Some(storage_type) = self.storage_layout.types.get(&storage.storage_type) else {
+                continue;
+            };
+
+            // Skip if not bytes or string encoding
+            if storage_type.encoding != ENCODING_BYTES {
+                continue;
+            }
+
+            // Check if this is the main slot
+            let base_slot = U256::from_str(&storage.slot).ok()?;
+            if slot == base_slot {
+                // Parse the type to get the correct DynSolType
+                let dyn_type = if storage_type.label == "string" {
+                    DynSolType::String
+                } else if storage_type.label == "bytes" {
+                    DynSolType::Bytes
+                } else {
+                    continue;
+                };
+
+                return Some(SlotInfo {
+                    label: storage.label.clone(),
+                    slot_type: StorageTypeInfo {
+                        label: storage_type.label.clone(),
+                        dyn_sol_type: dyn_type,
+                    },
+                    offset: storage.offset,
+                    slot: slot_str.to_string(),
+                    members: None,
+                    decoded: None,
+                    keys: None,
+                });
+            }
+
+            // Check if it could be a data slot for this long bytes/string
+            // Calculate where data slots would start for this variable
+            let data_start =
+                U256::from_be_bytes(alloy_primitives::keccak256(base_slot.to_be_bytes::<32>()).0);
+
+            // Get the length from the base slot value to calculate exact number of slots
+            // For long bytes/strings, the length is stored as (length * 2 + 1) in the base slot
+            let length_byte = base_slot_value.0[31];
+            if length_byte & 1 == 1 {
+                // It's a long bytes/string
+                let length = U256::from_be_bytes(base_slot_value.0) >> 1;
+                // Calculate number of slots needed (round up)
+                let num_slots = (length + U256::from(31)) / U256::from(32);
+
+                // Check if our slot is within the data region
+                if slot >= data_start && slot < data_start + num_slots {
+                    let slot_index = (slot - data_start).to::<usize>();
+
+                    return Some(SlotInfo {
+                        label: format!("{}[{}]", storage.label, slot_index),
+                        slot_type: StorageTypeInfo {
+                            label: storage_type.label.clone(),
+                            // Type is assigned as FixedBytes(32) for data slots
+                            dyn_sol_type: DynSolType::FixedBytes(32),
+                        },
+                        offset: 0,
+                        slot: slot_str.to_string(),
+                        members: None,
+                        decoded: None,
+                        keys: None,
+                    });
+                }
+            }
+        }
+
+        None
     }
 
     fn resolve_mapping_type(&self, type_ref: &str) -> Option<(Vec<String>, String, String)> {
