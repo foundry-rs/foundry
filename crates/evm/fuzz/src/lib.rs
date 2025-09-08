@@ -199,7 +199,7 @@ impl fmt::Display for BaseCounterExample {
 }
 
 /// The outcome of a fuzz test
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FuzzTestResult {
     /// we keep this for the debugger
     pub first_case: FuzzCase,

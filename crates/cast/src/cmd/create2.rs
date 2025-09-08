@@ -154,7 +154,7 @@ impl Create2Args {
         if let Some(suffix) = ends_with {
             regexs.push(format!(
                 r"{}$",
-                get_regex_hex_string(suffix).wrap_err("invalid prefix hex provided")?
+                get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?
             ))
         }
 
