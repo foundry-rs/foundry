@@ -1429,7 +1429,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                                 &current_base_slot_values,
                                             )
                                         })
-                                        .and_then(|mut info| {
+                                        .map(|mut info| {
                                             // Always decode values first
                                             info.decode_values(
                                                 storage_access.previousValue,
@@ -1444,7 +1444,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                                 );
                                             }
 
-                                            Some(info)
+                                            info
                                         })
                                 });
 
