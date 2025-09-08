@@ -172,6 +172,7 @@ impl VerificationProviderType {
         &self,
         key: Option<&str>,
         chain: Option<Chain>,
+        has_url: bool,
     ) -> Result<Box<dyn VerificationProvider>> {
         let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
         // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
@@ -198,8 +199,11 @@ impl VerificationProviderType {
         }
 
         // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
-        //    verifier.
+        //    verifier and make sure an URL was specified.
         if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+            if !has_url {
+                eyre::bail!("No verifier URL specified for verifier {}", self);
+            }
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
