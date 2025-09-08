@@ -1089,8 +1089,14 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => {
                 self.s.ibox(if has_complex_successor(&rhs.kind, false) { 0 } else { self.ind });
                 self.print_expr(lhs);
-                self.word(" = ");
-                self.neverbreak();
+                self.word(" =");
+                if matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
+                    && self.estimate_size(expr.span) > self.space_left()
+                {
+                    self.hardbreak_if_not_bol();
+                } else {
+                    self.nbsp();
+                }
                 self.print_expr(rhs);
                 self.end();
             }

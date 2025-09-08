@@ -24,4 +24,12 @@ contract TestContract {
         uint256 allowed = allowance[from][msg.sender];
         allowance[from][msg.sender] = allowed;
     }
+
+    function testTryFfi() public {
+        string[] memory inputs = new string[](3);
+        inputs[0] = "bash";
+        inputs[1] = "-c";
+        inputs[2] =
+            "echo -n 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000966666920776f726b730000000000000000000000000000000000000000000000";
+    }
 }
