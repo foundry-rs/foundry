@@ -59,16 +59,16 @@ impl<'ast> State<'_, 'ast> {
                 self.ibox(0);
 
                 self.word("for ");
-                self.print_yul_block(init, span, self.can_yul_block_be_inlined(init), false);
+                self.print_yul_block(init, init.span, self.can_yul_block_be_inlined(init), false);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, span, self.can_yul_block_be_inlined(step), false);
+                self.print_yul_block(step, step.span, self.can_yul_block_be_inlined(step), false);
 
                 self.space();
-                self.print_yul_block(body, span, self.can_yul_block_be_inlined(body), false);
+                self.print_yul_block(body, body.span, self.can_yul_block_be_inlined(body), false);
 
                 self.end();
             }

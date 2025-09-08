@@ -1854,9 +1854,15 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
+            // Reset cache for nested (child) stmts within this (parent) block.
+            let inline_parent = self.single_line_stmt.take();
+
             self.print_word("{");
             self.print_block_without_braces(stmts, pos_hi, Some(self.ind));
             self.print_word("}");
+
+            // Restore cache for the rest of stmts within the same height.
+            self.single_line_stmt = inline_parent;
         }
     }
 

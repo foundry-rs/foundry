@@ -189,7 +189,7 @@ contract NestedCallsTest is Test {
         );
     }
 
-    function test_assembly() public {
+    function test_assemblyFnComments() public {
         assembly {
             function setJPoint(i, x, y, z) {
                 // We will multiply by `0x80` (i.e. `shl(7, i)`) instead
