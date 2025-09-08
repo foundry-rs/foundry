@@ -90,24 +90,19 @@ impl SlotInfo {
                 if length_byte & 1 == 0 {
                     // Short string/bytes (less than 32 bytes)
                     let length = (length_byte >> 1) as usize;
-                    if length == 0 {
-                        let empty = if matches!(actual_type, DynSolType::String) {
-                            DynSolValue::String(String::new())
-                        } else {
-                            DynSolValue::Bytes(Vec::new())
-                        };
-                        return Some(empty);
-                    }
+                    // Extract data
+                    let data = if length == 0 { Vec::new() } else { value.0[0..length].to_vec() };
 
-                    // Data is stored in the same slot, left-aligned
-                    let data = &value.0[0..length];
-
+                    // Create the appropriate value based on type
                     if matches!(actual_type, DynSolType::String) {
-                        // For strings, convert bytes to UTF-8
-                        String::from_utf8(data.to_vec()).ok().map(DynSolValue::String)
+                        let str_val = if data.is_empty() {
+                            String::new()
+                        } else {
+                            String::from_utf8(data).unwrap_or_default()
+                        };
+                        Some(DynSolValue::String(str_val))
                     } else {
-                        // For bytes, return raw bytes
-                        Some(DynSolValue::Bytes(data.to_vec()))
+                        Some(DynSolValue::Bytes(data))
                     }
                 } else {
                     // Long string/bytes (32 bytes or more)
@@ -141,17 +136,15 @@ impl SlotInfo {
         }
 
         // Try to handle as long bytes/string
-        if let Some(data) = self.aggregate_bytes_or_strings(base_slot, storage_values) {
-            // Decode the full long bytes/string value
-            if matches!(self.slot_type.dyn_sol_type, DynSolType::String) {
-                let str_val = String::from_utf8(data).unwrap_or_default();
-                Some(DynSolValue::String(str_val))
-            } else {
-                Some(DynSolValue::Bytes(data))
+        self.aggregate_bytes_or_strings(base_slot, storage_values).map(|data| {
+            match self.slot_type.dyn_sol_type {
+                DynSolType::String => {
+                    DynSolValue::String(String::from_utf8(data).unwrap_or_default())
+                }
+                DynSolType::Bytes => DynSolValue::Bytes(data),
+                _ => unreachable!(),
             }
-        } else {
-            None
-        }
+        })
     }
 
     /// Decodes both previous and new [`DynSolType::Bytes`] or [`DynSolType::String`] values
@@ -170,34 +163,27 @@ impl SlotInfo {
 
         // Get both previous and new values from the storage accesses
         if let Some((prev_base_value, new_base_value)) = storage_accesses.get(base_slot) {
-            let prev_length_byte = prev_base_value.0[31];
-            let new_length_byte = new_base_value.0[31];
+            // Reusable closure to decode bytes/string based on length encoding
+            let mut decode_value = |base_value: B256, is_new: bool| {
+                let length_byte = base_value.0[31];
+                if length_byte & 1 == 1 {
+                    // Long bytes/string - aggregate from multiple slots
+                    let value_map = storage_accesses
+                        .iter()
+                        .map(|(slot, (prev, new))| (*slot, if is_new { *new } else { *prev }))
+                        .collect::<B256Map<_>>();
+                    self.decode_bytes_or_string(base_slot, &value_map)
+                } else {
+                    // Short bytes/string - decode directly from base slot
+                    self.decode(base_value)
+                }
+            };
 
             // Decode previous value
-            let prev_decoded = if prev_length_byte & 1 == 1 {
-                // Long bytes/string - aggregate from multiple slots
-                let prev_map = storage_accesses
-                    .iter()
-                    .map(|(slot, (prev_val, _))| (*slot, *prev_val))
-                    .collect::<B256Map<_>>();
-                self.decode_bytes_or_string(base_slot, &prev_map)
-            } else {
-                // Short bytes/string - decode directly from base slot
-                self.decode(*prev_base_value)
-            };
+            let prev_decoded = decode_value(*prev_base_value, false);
 
-            // Decode new value and populate members if it's long
-            let new_decoded = if new_length_byte & 1 == 1 {
-                // Long bytes/string - aggregate from multiple slots
-                let new_map = storage_accesses
-                    .iter()
-                    .map(|(slot, (_, new_val))| (*slot, *new_val))
-                    .collect::<B256Map<_>>();
-                self.decode_bytes_or_string(base_slot, &new_map)
-            } else {
-                // Short bytes/string - decode directly from base slot
-                self.decode(*new_base_value)
-            };
+            // Decode new value
+            let new_decoded = decode_value(*new_base_value, true);
 
             // Set decoded values if both were successfully decoded
             if let (Some(prev), Some(new)) = (prev_decoded, new_decoded) {
