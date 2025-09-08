@@ -6,7 +6,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{LoadConfig, cache_local_signatures},
 };
-use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors, shell};
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
@@ -103,7 +103,7 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
@@ -114,7 +114,7 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref(), &output)
+            self.lint(&project, &config, self.paths.as_deref(), &mut output)
                 .map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
@@ -126,7 +126,7 @@ impl BuildArgs {
         project: &Project,
         config: &Config,
         files: Option<&[PathBuf]>,
-        output: &ProjectCompileOutput,
+        output: &mut ProjectCompileOutput,
     ) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
@@ -174,7 +174,11 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
-                let compiler = output.parser().solc().compiler();
+                let compiler = output.parser_mut().solc_mut().compiler_mut();
+                compiler.enter_mut(|c| {
+                    let _ = c.lower_asts();
+                });
+                convert_solar_errors(compiler.dcx())?;
                 linter.lint(&input_files, compiler);
             }
         }

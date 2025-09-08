@@ -1,3 +1,4 @@
+use crate::errors::convert_solar_errors;
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::SolcLanguage,
@@ -97,8 +98,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         });
 
         // Warn if any diagnostics emitted during content parsing.
-        if let Err(err) = compiler.sess().emitted_errors().unwrap() {
-            warn!("failed preprocessing:\n{err}");
+        if let Err(err) = convert_solar_errors(compiler.dcx()) {
+            warn!(%err, "failed preprocessing");
         }
 
         Ok(())
