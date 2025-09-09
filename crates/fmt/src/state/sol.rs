@@ -1174,7 +1174,14 @@ impl<'ast> State<'_, 'ast> {
                     self.word(bin_op.kind.to_str());
                     self.word("=");
                 } else {
-                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo())) {
+                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo()))
+                        && self
+                            .print_comments(
+                                bin_op.span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            )
+                            .is_none_or(|cmnt| cmnt.is_mixed())
+                    {
                         if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow)
                         {
                             self.space_if_not_bol();
