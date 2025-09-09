@@ -117,7 +117,6 @@ use revm::{
         result::{ExecutionResult, Output, ResultAndState},
     },
     database::{CacheDB, WrapDatabaseRef},
-    handler::EthPrecompiles,
     interpreter::InstructionResult,
     precompile::{
         PrecompileId, PrecompileSpecId, Precompiles,
