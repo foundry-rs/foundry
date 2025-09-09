@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
 import {
     symbol0 as mySymbol,
     symbol1 as myOtherSymbol,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
 // forge-lint: disable-start(mixed-case-variable)
 contract UnsafeTypecast {
     // Unsigned upcasts are always safe.
