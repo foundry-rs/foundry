@@ -322,8 +322,8 @@ impl<'sess> State<'sess, '_> {
             if cmnt.style.is_blank() {
                 match config.skip_blanks {
                     Some(Skip::All) => continue,
-                    Some(Skip::Leading { resetable })
-                        if is_leading || (!resetable && last_style.is_none()) =>
+                    Some(Skip::Leading { resettable })
+                        if is_leading || (!resettable && last_style.is_none()) =>
                     {
                         continue;
                     }
@@ -653,7 +653,7 @@ impl<'sess> State<'sess, '_> {
 #[derive(Clone, Copy)]
 enum Skip {
     All,
-    Leading { resetable: bool },
+    Leading { resettable: bool },
     Trailing,
     LeadingNoReset,
 }
@@ -677,8 +677,8 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::All), ..Default::default() }
     }
 
-    pub(crate) fn skip_leading_ws(resetable: bool) -> Self {
-        Self { skip_blanks: Some(Skip::Leading { resetable }), ..Default::default() }
+    pub(crate) fn skip_leading_ws(resettable: bool) -> Self {
+        Self { skip_blanks: Some(Skip::Leading { resettable }), ..Default::default() }
     }
 
     pub(crate) fn skip_trailing_ws() -> Self {

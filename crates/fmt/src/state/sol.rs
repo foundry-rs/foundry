@@ -1139,11 +1139,10 @@ impl<'ast> State<'_, 'ast> {
                 {
                     self.print_sep(Separator::Nbsp);
                     self.neverbreak();
-                } else if matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
-                    && overflows
+                } else if (matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
+                    || (matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
+                        && overflows)
                 {
-                    self.print_sep(Separator::Space);
-                } else if matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone {
                     self.print_sep(Separator::Space);
                 } else {
                     self.print_sep(Separator::Nbsp);
@@ -1575,13 +1574,12 @@ impl<'ast> State<'_, 'ast> {
                 {
                     self.print_sep(Separator::Space);
                     self.ibox(0);
-                    self.print_expr(expr);
                 } else {
                     self.print_sep(Separator::Nbsp);
                     self.neverbreak();
                     self.s.ibox(-self.ind);
-                    self.print_expr(expr);
                 }
+                self.print_expr(expr);
                 self.end();
                 self.end();
             }
@@ -1745,6 +1743,8 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.print_word("{");
                         self.end();
+                        self.neverbreak();
+                        self.print_trailing_comment_no_break(try_span.lo(), None);
                         self.print_block_without_braces(block, try_span.hi(), Some(self.ind));
                         if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                             self.print_word("}");
@@ -1798,6 +1798,7 @@ impl<'ast> State<'_, 'ast> {
                         }
                         self.print_word("{");
                         self.end();
+                        self.print_trailing_comment_no_break(catch_span.lo(), None);
                         self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
                         if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                             self.print_word("}");
