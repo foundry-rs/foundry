@@ -12,18 +12,15 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[cfg(feature = "aws-kms")]
-use {
-    alloy_signer_aws::AwsSigner, alloy_signer_aws::aws_config::BehaviorVersion,
-    alloy_signer_aws::aws_sdk_kms::Client as AwsClient,
-};
+use alloy_signer_aws::{AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
-use {
-    alloy_signer_gcp::gcloud_sdk::{
+use alloy_signer_gcp::{
+    GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier,
+    gcloud_sdk::{
         GoogleApi,
         google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
     },
-    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
 };
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
