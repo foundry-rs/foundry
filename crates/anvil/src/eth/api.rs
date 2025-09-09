@@ -1477,15 +1477,23 @@ impl EthApi {
         Ok(false)
     }
 
+    /// Returns the current configuration of the chain.
+    ///
+    /// Note: the activation timestamp is always 0 as the configuration is set at genesis.
+    /// Note: the `fork_id` is always `0x00000000` as this node does not participate in any forking
+    /// on the network.
+    /// Note: the `next` and `last` fields are always `null` as this node does not participate in
+    /// any forking on the network.
+    ///
+    /// Handler for ETH RPC call: `eth_config`
     pub fn config(&self) -> Result<EthConfig> {
         node_info!("eth_config");
-
         Ok(EthConfig {
             current: EthForkConfig {
                 activation_time: 0,
                 blob_schedule: self.backend.blob_params(),
                 chain_id: self.backend.env().read().evm_env.cfg_env.chain_id,
-                fork_id: Bytes::from_static(b"0x"),
+                fork_id: Bytes::from_static(b"0x00000000"),
                 precompiles: self.backend.precompiles(),
                 system_contracts: self.backend.system_contracts(),
             },
