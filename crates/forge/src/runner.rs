@@ -2,7 +2,8 @@
 
 use crate::{
     MultiContractRunner, TestFilter,
-    fuzz::BaseCounterExample,
+    coverage::HitMaps,
+    fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{SuiteResult, TestResult, TestSetup},
@@ -640,6 +641,8 @@ impl<'a> FunctionRunner<'a> {
             fixtures_len as u32,
         );
 
+        let mut result = FuzzTestResult::default();
+
         for i in 0..fixtures_len {
             if self.tcfg.fail_fast.should_stop() {
                 return self.result;
@@ -671,24 +674,33 @@ impl<'a> FunctionRunner<'a> {
                 }
             };
 
+            result.gas_by_case.push((raw_call_result.gas_used, raw_call_result.stipend));
+            result.logs.extend(raw_call_result.logs.clone());
+            result.labels.extend(raw_call_result.labels.clone());
+            HitMaps::merge_opt(&mut result.line_coverage, raw_call_result.line_coverage.clone());
+
             let is_success =
                 self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
             // Record counterexample if test fails.
             if !is_success {
-                self.result.counterexample =
+                result.counterexample =
                     Some(CounterExample::Single(BaseCounterExample::from_fuzz_call(
                         Bytes::from(func.abi_encode_input(&args).unwrap()),
                         args,
                         raw_call_result.traces.clone(),
                     )));
-                self.result.single_result(false, reason, raw_call_result);
+                result.reason = reason;
+                result.traces = raw_call_result.traces;
+                self.result.table_result(result);
                 return self.result;
             }
 
             // If it's the last iteration and all other runs succeeded, then use last call result
             // for logs and traces.
             if i == fixtures_len - 1 {
-                self.result.single_result(true, None, raw_call_result);
+                result.success = true;
+                result.traces = raw_call_result.traces;
+                self.result.table_result(result);
                 return self.result;
             }
         }

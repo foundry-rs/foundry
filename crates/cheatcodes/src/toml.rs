@@ -234,7 +234,10 @@ pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
             _ => JsonValue::String(s),
         },
         TomlValue::Integer(i) => JsonValue::Number(i.into()),
-        TomlValue::Float(f) => JsonValue::Number(serde_json::Number::from_f64(f).unwrap()),
+        TomlValue::Float(f) => match serde_json::Number::from_f64(f) {
+            Some(n) => JsonValue::Number(n),
+            None => JsonValue::String(f.to_string()),
+        },
         TomlValue::Boolean(b) => JsonValue::Bool(b),
         TomlValue::Array(a) => JsonValue::Array(a.into_iter().map(toml_to_json_value).collect()),
         TomlValue::Table(t) => {

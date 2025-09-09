@@ -320,6 +320,7 @@ interface Vm {
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
+    function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
     function getWallets() external view returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
