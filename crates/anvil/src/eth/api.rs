@@ -36,8 +36,7 @@ use alloy_consensus::{
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
-    eip7840::BlobParams,
-    eip7910::{EthConfig, EthForkConfig, SystemContract},
+    eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
@@ -97,9 +96,9 @@ use revm::{
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
-    primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, hardfork::SpecId},
+    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
     try_join,
@@ -1477,7 +1476,8 @@ impl EthApi {
         Ok(false)
     }
 
-    /// Returns the current configuration of the chain. This is useful to
+    /// Returns the current configuration of the chain.
+    /// This is useful for finding out what precompiles and system contracts are available.
     ///
     /// Note: the activation timestamp is always 0 as the configuration is set at genesis.
     /// Note: the `fork_id` is always `0x00000000` as this node does not participate in any forking

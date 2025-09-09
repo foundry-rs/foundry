@@ -1660,6 +1660,7 @@ async fn test_config_with_cancun_hardfork() {
         blob_base_cost: 0,
     };
 
+    // <= Cancun precompiles
     let expected_precompiles = [
         address!("0000000000000000000000000000000000000001"),
         address!("0000000000000000000000000000000000000002"),
@@ -1704,6 +1705,7 @@ async fn test_config_with_prague_hardfork_with_celo() {
         blob_base_cost: 0,
     };
 
+    // <= Prague + Celo precompiles
     let expected_precompiles = [
         address!("0000000000000000000000000000000000000001"),
         address!("0000000000000000000000000000000000000002"),
@@ -1763,6 +1765,7 @@ async fn test_config_with_osaka_hardfork() {
         blob_base_cost: 8192,
     };
 
+    // <= Osaka precompiles
     let expected_precompiles = [
         address!("0000000000000000000000000000000000000001"),
         address!("0000000000000000000000000000000000000002"),
@@ -1846,6 +1849,7 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
         blob_base_cost: 8192,
     };
 
+    // <= Osaka precompiles + custom precompile
     let expected_precompiles = [
         address!("0000000000000000000000000000000000000001"),
         address!("0000000000000000000000000000000000000002"),
