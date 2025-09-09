@@ -263,6 +263,71 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(test_library_backtrace, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    
+    prj.add_source("MathLibrary.sol", include_str!("../fixtures/backtraces/MathLibrary.sol"));
+    prj.add_source("UtilityLibraries.sol", include_str!("../fixtures/backtraces/UtilityLibraries.sol"));
+    prj.add_source("LibraryConsumer.sol", include_str!("../fixtures/backtraces/LibraryConsumer.sol"));
+    
+    prj.add_test("LibraryBacktrace.t.sol", include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"));
+    
+    let output = cmd.args(["test", "-vvv"]).assert_failure();
+    
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+...
+Ran 6 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
+[FAIL: DivisionByZero()] testComplexCalculationFailure() ([GAS])
+...
+Backtrace:
+  at MathLibrary (src/MathLibrary.sol:11:68)
+  at LibraryConsumer.complexCalculation (src/LibraryConsumer.sol:55:76)
+  at LibraryBacktraceTest.testComplexCalculationFailure (test/LibraryBacktrace.t.sol:42:80)
+
+[FAIL: EmptyString()] testEmptyStringReverts() ([GAS])
+...
+Backtrace:
+  at StringLibrary (src/UtilityLibraries.sol:8:6)
+  at LibraryConsumer.processText (src/LibraryConsumer.sol:40:60)
+  at LibraryBacktraceTest.testEmptyStringReverts (test/LibraryBacktrace.t.sol:31:56)
+
+[FAIL: DivisionByZero()] testLibraryDivisionByZero() ([GAS])
+...
+Backtrace:
+  at MathLibrary (src/MathLibrary.sol:11:68)
+  at LibraryConsumer.divide (src/LibraryConsumer.sol:17:87)
+  at LibraryBacktraceTest.testLibraryDivisionByZero (test/LibraryBacktrace.t.sol:16:59)
+
+[FAIL: InvalidPercentage()] testLibraryInvalidPercentage() ([GAS])
+...
+Backtrace:
+  at MathLibrary (src/MathLibrary.sol:23:63)
+  at LibraryConsumer.getPercentage (src/LibraryConsumer.sol:32:51)
+  at LibraryBacktraceTest.testLibraryInvalidPercentage (test/LibraryBacktrace.t.sol:26:62)
+
+[FAIL: Underflow()] testLibraryUnderflow() ([GAS])
+...
+Backtrace:
+  at MathLibrary (src/MathLibrary.sol:17:64)
+  at LibraryConsumer.subtract (src/LibraryConsumer.sol:23:89)
+  at LibraryBacktraceTest.testLibraryUnderflow (test/LibraryBacktrace.t.sol:21:54)
+
+[FAIL: InvalidNumber()] testZeroNumberReverts() ([GAS])
+...
+Backtrace:
+  at NumberLibrary (src/UtilityLibraries.sol:27:6)
+  at LibraryConsumer.processNumber (src/LibraryConsumer.sol:45:88)
+  at LibraryBacktraceTest.testZeroNumberReverts (test/LibraryBacktrace.t.sol:36:55)
+
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
