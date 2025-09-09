@@ -568,6 +568,7 @@ impl<'ast> State<'_, 'ast> {
                     if header.modifiers.is_empty()
                         && header.override_.is_none()
                         && returns.as_ref().is_none_or(|r| r.is_empty())
+                        && (header.visibility().is_none() || body.is_empty())
                     {
                         self.nbsp();
                     } else {
