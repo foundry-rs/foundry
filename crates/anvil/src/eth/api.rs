@@ -1477,7 +1477,7 @@ impl EthApi {
         Ok(false)
     }
 
-    /// Returns the current configuration of the chain.
+    /// Returns the current configuration of the chain. This is useful to
     ///
     /// Note: the activation timestamp is always 0 as the configuration is set at genesis.
     /// Note: the `fork_id` is always `0x00000000` as this node does not participate in any forking
@@ -1493,7 +1493,7 @@ impl EthApi {
                 activation_time: 0,
                 blob_schedule: self.backend.blob_params(),
                 chain_id: self.backend.env().read().evm_env.cfg_env.chain_id,
-                fork_id: Bytes::from_static(b"0x00000000"),
+                fork_id: Bytes::from_static(&[0; 4]),
                 precompiles: self.backend.precompiles(),
                 system_contracts: self.backend.system_contracts(),
             },
