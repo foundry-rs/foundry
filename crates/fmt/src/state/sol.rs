@@ -120,7 +120,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         let add_zero_break = if skip_ws {
-            self.print_comments(span.lo(), CommentConfig::skip_leading_ws())
+            self.print_comments(span.lo(), CommentConfig::skip_leading_ws(false))
         } else {
             self.print_comments(span.lo(), CommentConfig::default())
         }
@@ -315,7 +315,7 @@ impl<'ast> State<'_, 'ast> {
             }
             let body_lo = body[0].span.lo();
             if self.peek_comment_before(body_lo).is_some() {
-                self.print_comments(body_lo, CommentConfig::skip_leading_ws());
+                self.print_comments(body_lo, CommentConfig::skip_leading_ws(true));
             }
 
             let mut is_first = true;
@@ -1188,7 +1188,11 @@ impl<'ast> State<'_, 'ast> {
                 // box expressions with complex successors to accommodate their own indentation
                 if !is_child && is_parent {
                     if has_complex_successor(&rhs.kind, true) {
-                        self.s.ibox(-self.ind);
+                        if matches!(kind, ast::ExprKind::Assign(..)) {
+                            self.s.ibox(-self.ind);
+                        } else {
+                            self.s.ibox(0);
+                        }
                     } else if has_complex_successor(&rhs.kind, false) {
                         self.s.ibox(0);
                     }

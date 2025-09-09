@@ -204,6 +204,18 @@ contract NestedCallsTest is Test {
         }
     }
 
+    function test_binOpsInsideNestedBlocks() public {
+        for (uint256 i = 0; i < steps.length; i++) {
+            if (
+                step.opcode == 0x52
+                    && /*MSTORE*/ step.stack[0] == testContract.memPtr() // MSTORE offset
+                && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
+            ) {
+                mstoreCalled = true;
+            }
+        }
+    }
+
     function test_longCall() public {
         uint256 fork =
             vm.createSelectFork("polygon", bytes32(0xdeadc0ffeedeadbeef));
