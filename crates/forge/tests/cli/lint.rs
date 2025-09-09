@@ -481,7 +481,7 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
     prj.add_source("CounterBWithLints", COUNTER_B);
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
-    cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
+    cmd.forge_fuse().args(["build", "-j1"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:20
   |
