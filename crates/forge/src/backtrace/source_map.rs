@@ -1,9 +1,9 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::Bytes;
-use foundry_compilers::artifacts::sourcemap::SourceMap;
+use foundry_compilers::artifacts::{ast::Ast, sourcemap::SourceMap};
 use foundry_evm_core::ic::IcPcMap;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 /// Source data for a single artifact/contract.
 /// Contains all the data needed to generate backtraces for a contract.
@@ -15,6 +15,12 @@ pub struct SourceData {
     pub sources: Vec<(PathBuf, String)>,
     /// Deployed bytecode for accurate PC mapping
     pub bytecode: Bytes,
+    /// AST of the contract
+    pub ast: Option<Arc<Ast>>,
+    /// Library sources: (source_path, library_name, byte_range) tuples
+    /// e.g., ("src/UtilityLibraries.sol", "StringUtils", Some((100, 500)))
+    /// The byte range is (start, end) in the source file
+    pub library_sources: HashSet<(PathBuf, String, Option<(usize, usize)>)>,
 }
 
 /// Maps program counters to source locations.

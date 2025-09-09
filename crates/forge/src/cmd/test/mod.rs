@@ -27,7 +27,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::output_selection::OutputSelection,
+    artifacts::{Node, NodeType, output_selection::OutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -46,7 +46,7 @@ use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
@@ -271,6 +271,11 @@ impl TestArgs {
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
+        }
+
+        // If backtraces are enabled (verbosity >= 3), ensure AST is generated for library detection
+        if evm_opts.verbosity >= 3 && !config.ast {
+            config.ast = true;
         }
 
         // Set up the project.
@@ -1141,33 +1146,95 @@ fn collect_source_data(
             }
         });
 
+        // Get the AST for this artifact
+        let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
+
+        // Extract library source paths and their byte ranges from AST
+        let library_sources = ast
+            .as_ref()
+            .map(|ast| {
+                let mut library_names = HashSet::new();
+                find_using_directives(&ast.nodes, &mut library_names);
+
+                output
+                    .artifact_ids()
+                    .filter_map(|(lib_id, lib_artifact)| {
+                        if !library_names.contains(&lib_id.name) {
+                            return None;
+                        }
+
+                        // Try contract AST first, then library's own AST
+                        let lib_node = find_library_node(&ast.nodes, &lib_id.name).or_else(|| {
+                            lib_artifact
+                                .ast
+                                .as_ref()
+                                .and_then(|lib_ast| find_library_node(&lib_ast.nodes, &lib_id.name))
+                        });
+
+                        // Extract byte range from node
+                        let byte_range = lib_node.and_then(|node| {
+                            let length = node.src.length.filter(|&l| l > 0)?;
+                            Some((node.src.start, node.src.start + length))
+                        });
+
+                        // Convert to relative path from project root
+                        let relative_path =
+                            lib_id.source.strip_prefix(root).unwrap_or(&lib_id.source);
+
+                        Some((relative_path.to_path_buf(), lib_id.name.clone(), byte_range))
+                    })
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
         // Only create SourceData if we have all required components
-        match (source_map, bytecode) {
-            (Some(source_map), Some(bytecode)) if !sources.is_empty() => {
-                source_data.insert(
-                    id.clone(),
-                    SourceData { source_map, sources: sources.clone(), bytecode },
-                );
-            }
-            (source_map, bytecode) => {
-                // Log what's missing for debugging
-                if source_map.is_none() {
-                    tracing::debug!("No source map for artifact {}", id.name);
-                }
-                if sources.is_empty() {
-                    tracing::debug!(
-                        "No sources found for build_id {} (artifact {})",
-                        build_id,
-                        id.name
-                    );
-                }
-                if bytecode.is_none() {
-                    tracing::debug!("No bytecode for artifact {}", id.name);
-                }
-            }
+        if let (Some(source_map), Some(bytecode)) = (source_map, bytecode)
+            && !sources.is_empty()
+        {
+            source_data.insert(
+                id.clone(),
+                SourceData { source_map, sources: sources.clone(), bytecode, ast, library_sources },
+            );
         }
     }
     source_data
+}
+
+/// Searches for [`NodeTypes::UsingForDirective`] in the AST in order to collect the libraries being
+/// used.
+fn find_using_directives(nodes: &[Node], library_names: &mut HashSet<String>) {
+    for node in nodes {
+        if node.node_type == NodeType::UsingForDirective {
+            // Extract the library name from the directive
+            if let Some(lib_name_value) = node.other.get("libraryName")
+                && let Some(lib_name_obj) = lib_name_value.as_object()
+                && let Some(name_value) = lib_name_obj.get("name")
+                && let serde_json::Value::String(name) = name_value
+            {
+                library_names.insert(name.clone());
+            }
+        }
+        // Recursively check child nodes
+        find_using_directives(&node.nodes, library_names);
+    }
+}
+
+/// Checks if the node is a library definition with the given name
+fn ast_lib_filter(node: &Node, target_name: &str) -> bool {
+    node.node_type == NodeType::ContractDefinition
+        && node.other.get("contractKind").and_then(|v| v.as_str()) == Some("library")
+        && node.other.get("name").and_then(|v| v.as_str()) == Some(target_name)
+}
+
+/// Recursively finds a library node in the AST
+fn find_library_node<'a>(nodes: &'a [Node], target_name: &str) -> Option<&'a Node> {
+    nodes.iter().find_map(|node| {
+        if ast_lib_filter(node, target_name) {
+            Some(node)
+        } else {
+            find_library_node(&node.nodes, target_name)
+        }
+    })
 }
 
 #[cfg(test)]
