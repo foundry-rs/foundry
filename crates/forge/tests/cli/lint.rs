@@ -126,7 +126,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -151,10 +151,10 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:18
+ [FILE]:9:14
   |
-9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+9 |     function functionMIXEDCaseInfo() public {}
+  |              ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -209,10 +209,10 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:18
+ [FILE]:9:14
   |
-9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+9 |     function functionMIXEDCaseInfo() public {}
+  |              ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -240,7 +240,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -269,7 +269,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
   [FILE]:13:26
    |
 13 |         uint256 result = 8 >> localValue;
-   |                          ---------------
+   |                          ^^^^^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
@@ -299,7 +299,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -463,10 +463,10 @@ forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
 note[unused-import]: unused imports should be removed
- [FILE]:8:14
+ [FILE]:8:10
   |
-8 |     import { _PascalCaseInfo } from "./ContractWithLints.sol";
-  |              ---------------
+8 | import { _PascalCaseInfo } from "./ContractWithLints.sol";
+  |          ^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
@@ -483,37 +483,36 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
+ [FILE]:6:20
   |
-6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
+6 |     uint256 public CounterB_Fail_Lint;
+  |                    ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
+ [FILE]:6:20
   |
-6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
+6 |     uint256 public CounterA_Fail_Lint;
+  |                    ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
     // Only contract CounterBWithLints that we build should be linted.
-    cmd.forge_fuse().args(["build", "src/CounterBWithLints.sol"]).assert_success().stderr_eq(str![
-        [r#"
+    let args = ["build", "src/CounterBWithLints.sol"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
+ [FILE]:6:20
   |
-6 |         uint256 public CounterB_Fail_Lint;
-  |                        ------------------
+6 |     uint256 public CounterB_Fail_Lint;
+  |                    ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
-"#]
-    ]);
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11392>
@@ -566,54 +565,55 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
     cmd.arg("lint").arg("--json").assert_json_stderr(true,
         str![[r#"
-            {
-              "$message_type": "diag",
-              "message": "wrap modifier logic to reduce code size",
-              "code": {
-                "code": "unwrapped-modifier-logic",
-                "explanation": null
-              },
-              "level": "note",
-              "spans": [
-                {
-                  "file_name": "[..]",
-                  "byte_start": 183,
-                  "byte_end": 192,
-                  "line_start": 8,
-                  "line_end": 8,
-                  "column_start": 22,
-                  "column_end": 31,
-                  "is_primary": true,
-                  "text": [
-                    {
-                      "text": "            modifier onlyOwner() {",
-                      "highlight_start": 22,
-                      "highlight_end": 31
-                    }
-                  ],
-                  "label": null
-                }
-              ],
-              "children": [
-                {
-                  "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
-                  "code": null,
-                  "level": "note",
-                  "spans": [],
-                  "children": [],
-                  "rendered": null
-                },
-                {
-                  "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
-                  "code": null,
-                  "level": "help",
-                  "spans": [],
-                  "children": [],
-                  "rendered": null
-                }
-              ],
-              "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |                      ---------\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n"
-            }
+{
+  "$message_type": "diagnostic",
+  "message": "wrap modifier logic to reduce code size",
+  "code": {
+    "code": "unwrapped-modifier-logic",
+    "explanation": null
+  },
+  "level": "note",
+  "spans": [
+    {
+      "file_name": "src/UnwrappedModifierTest.sol",
+      "byte_start": 183,
+      "byte_end": 192,
+      "line_start": 8,
+      "line_end": 8,
+      "column_start": 22,
+      "column_end": 31,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "            modifier onlyOwner() {",
+          "highlight_start": 22,
+          "highlight_end": 31
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null
+    }
+  ],
+  "children": [
+    {
+      "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
+      "code": null,
+      "level": "note",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    },
+    {
+      "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+      "code": null,
+      "level": "help",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    }
+  ],
+  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n  |                      ^^^^^^^^^\n          \n"
+}
 "#]],
 );
 });

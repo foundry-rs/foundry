@@ -244,9 +244,9 @@ impl<'a> Linter for SolidityLinter<'a> {
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
         });
+        let sess = compiler.sess_mut();
+        sess.dcx.set_flags_mut(|f| f.track_diagnostics = false);
         if ui_testing {
-            let sess = compiler.sess_mut();
-            sess.dcx.set_flags_mut(|f| f.track_diagnostics = false);
             sess.opts.unstable.ui_testing = true;
             sess.reconfigure();
         }
@@ -260,6 +260,7 @@ impl<'a> Linter for SolidityLinter<'a> {
             let gcx = compiler.gcx();
 
             input.par_iter().for_each(|path| {
+                let path = &self.path_config.root.join(path);
                 let Some((_, ast_source)) = gcx.get_ast_source(path) else {
                     panic!("AST source not found for {}", path.display());
                 };
