@@ -34,7 +34,11 @@ use alloy_consensus::{
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{
+    eip2718::Encodable2718,
+    eip7840::BlobParams,
+    eip7910::{EthConfig, EthForkConfig, SystemContract},
+};
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
     AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
@@ -93,9 +97,9 @@ use revm::{
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
-    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
+    primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, hardfork::SpecId},
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
     try_join,
@@ -313,6 +317,7 @@ impl EthApi {
             EthRequest::EthGetLogs(filter) => self.logs(filter).await.to_rpc_result(),
             EthRequest::EthGetWork(_) => self.work().to_rpc_result(),
             EthRequest::EthSyncing(_) => self.syncing().to_rpc_result(),
+            EthRequest::EthConfig(_) => self.config().to_rpc_result(),
             EthRequest::EthSubmitWork(nonce, pow, digest) => {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
             }
@@ -1470,6 +1475,23 @@ impl EthApi {
     pub fn syncing(&self) -> Result<bool> {
         node_info!("eth_syncing");
         Ok(false)
+    }
+
+    pub fn config(&self) -> Result<EthConfig> {
+        node_info!("eth_config");
+
+        Ok(EthConfig {
+            current: EthForkConfig {
+                activation_time: 0,
+                blob_schedule: self.backend.blob_params(),
+                chain_id: self.backend.env().read().evm_env.cfg_env.chain_id,
+                fork_id: Bytes::from_static(b"0x"),
+                precompiles: self.backend.precompiles(),
+                system_contracts: self.backend.system_contracts(),
+            },
+            next: None,
+            last: None,
+        })
     }
 
     /// Used for submitting a proof-of-work solution.
