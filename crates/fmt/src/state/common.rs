@@ -10,6 +10,36 @@ use solar::parse::{
 };
 use std::{borrow::Cow, fmt::Debug};
 
+pub(crate) trait LitExt<'ast> {
+    fn is_str_concatenation(&self) -> bool;
+}
+
+impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
+    /// Checks if a the input literal is a string literal with comma-separated parts.
+    ///
+    /// This heuristic is a strong indicator of string concatenation, such as:
+    /// `string memory s = "a," "b," "c";`
+    fn is_str_concatenation(&self) -> bool {
+        if !matches!(self.kind, ast::LitKind::Str(..)) {
+            return false;
+        }
+
+        let mut has_parts = false;
+        let mut iter = self.literals().peekable();
+        while let Some((_span, symbol)) = iter.next() {
+            if iter.peek().is_some() {
+                has_parts = true;
+
+                if !symbol.as_str().contains(',') {
+                    return false;
+                }
+            }
+        }
+
+        has_parts
+    }
+}
+
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
     pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
@@ -20,9 +50,8 @@ impl<'ast> State<'_, 'ast> {
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
-                self.cbox(0);
+                self.s.ibox(if lit.is_str_concatenation() { self.ind } else { 0 });
                 for (pos, (span, symbol)) in lit.literals().delimited() {
-                    self.ibox(0);
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
@@ -34,7 +63,6 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.neverbreak();
                     }
-                    self.end();
                 }
                 self.end();
             }

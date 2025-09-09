@@ -35,6 +35,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: bool,
     member_expr: bool,
     var_init: bool,
+    fn_body: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -121,6 +122,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: false,
             member_expr: false,
             var_init: false,
+            fn_body: false,
         }
     }
 

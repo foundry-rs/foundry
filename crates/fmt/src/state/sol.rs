@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::pp::SIZE_INFINITY;
+use crate::{pp::SIZE_INFINITY, state::common::LitExt};
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::parse::{
@@ -332,7 +332,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_ws())
+            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
                 && self.config.contract_new_lines
                 && !cmnt.is_blank()
             {
@@ -544,6 +544,10 @@ impl<'ast> State<'_, 'ast> {
 
         // Print fn body
         if let Some(body) = body {
+            // update cache
+            let cache = self.fn_body;
+            self.fn_body = true;
+
             if self.handle_span(self.cursor.span(body_span.lo()), false) {
                 // Print spacing if necessary. Updates cursor.
             } else {
@@ -584,6 +588,9 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word("}");
                 self.cursor.advance_to(body_span.hi(), true);
             }
+
+            // restore cache
+            self.fn_body = cache;
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
@@ -593,6 +600,7 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_word(";");
         }
+        self.fn_body = false;
 
         if let Some(cmnt) = self.peek_trailing_comment(body_span.hi(), None) {
             if cmnt.is_doc {
@@ -724,7 +732,12 @@ impl<'ast> State<'_, 'ast> {
         // have double breaks (which should have double indentation) or not.
         // Alternatively, we could achieve the same behavior with a new box group that supports
         // "continuation" which would only increase indentation if its parent box broke.
-        let init_space_left = self.space_left();
+        let init_space_left = std::cmp::min(
+            self.space_left(),
+            self.config.line_length
+                - if self.contract.is_some() { self.config.tab_width } else { 0 }
+                - if self.fn_body { self.config.tab_width } else { 0 },
+        );
         let mut pre_init_size = self.estimate_size(ty.span);
 
         // Non-elementary types use commasep which has its own padding.
@@ -800,7 +813,13 @@ impl<'ast> State<'_, 'ast> {
                 self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
             }
 
-            if is_binary_expr(&init.kind) {
+            if let ast::ExprKind::Lit(lit, ..) = &init.kind
+                && lit.is_str_concatenation()
+            {
+                self.print_sep(Separator::Nbsp);
+                self.neverbreak();
+                self.print_expr(init);
+            } else if is_binary_expr(&init.kind) {
                 if !self.is_bol_or_only_ind() {
                     Separator::Space.print(&mut self.s, &mut self.cursor);
                 }
@@ -809,17 +828,18 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_expr(init);
             } else {
-                self.s.ibox(if pre_init_size + 3 > init_space_left { self.ind } else { 0 });
+                self.s.ibox(if pre_init_size + 4 >= init_space_left { self.ind } else { 0 });
                 if has_complex_successor(&init.kind, true)
                     && !matches!(&init.kind, ast::ExprKind::Member(..))
                 {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
-                        if init_size >= init_space_left - pre_init_size - 3
-                            && init_size < init_space_left - (self.ind as usize)
+                        if init_size + pre_init_size + 4 >= init_space_left
+                            && init_size + 1 + self.config.tab_width < init_space_left
+                            && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {
-                            self.print_sep(Separator::Hardbreak);
+                            self.print_sep(Separator::Space);
                             self.s.offset(self.ind);
                         } else {
                             self.print_sep(Separator::Nbsp);
@@ -1095,25 +1115,44 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
-                self.s.ibox(if has_complex_successor(&rhs.kind, false) { 0 } else { self.ind });
+                let space_left = self.space_left();
+                let lhs_size = self.estimate_size(lhs.span);
+                let rhs_size = self.estimate_size(rhs.span);
+                // 'lhs' + ' = ' + 'rhs' + ';'
+                let overflows = rhs_size + lhs_size + 4 > space_left;
+                let fits_alone = rhs_size <= space_left - self.config.tab_width;
+
+                self.s.ibox(
+                    if has_complex_successor(&rhs.kind, false)
+                        && !(matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
+                    {
+                        0
+                    } else {
+                        self.ind
+                    },
+                );
                 self.print_expr(lhs);
                 self.word(" =");
-                if matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
-                    && self.estimate_size(rhs.span) > self.space_left()
+
+                if let ast::ExprKind::Lit(lit, ..) = &rhs.kind
+                    && lit.is_str_concatenation()
                 {
-                    self.hardbreak_if_not_bol();
-                } else if matches!(rhs.kind, ast::ExprKind::Call(..))
-                    && self.estimate_size(rhs.span) > self.space_left()
-                    && self.estimate_size(rhs.span) < self.config.line_length
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                } else if matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
+                    && overflows
                 {
-                    self.hardbreak_if_not_bol();
+                    self.print_sep(Separator::Space);
+                } else if matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone {
+                    self.print_sep(Separator::Space);
                 } else {
-                    self.nbsp();
+                    self.print_sep(Separator::Nbsp);
                     self.neverbreak();
                 }
                 self.print_expr(rhs);
                 self.end();
             }
+
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
             | ast::ExprKind::Binary(lhs, bin_op, rhs) => {
                 let is_parent = matches!(lhs.kind, ast::ExprKind::Binary(..))
@@ -1175,8 +1214,15 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Call(expr, call_args) => {
+                let space_left = self.space_left();
+                let expr_size = self.estimate_size(expr.span);
+                let args_size = self.estimate_size(call_args.span);
+
                 self.print_expr(expr);
-                self.print_call_args(call_args);
+                self.print_call_args(
+                    call_args,
+                    call_args.len() == 1 && args_size + 2 + expr_size > space_left,
+                );
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
@@ -1295,7 +1341,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args);
+                self.print_call_args(args, false);
             }
             ast::ExprKind::Ternary(cond, then, els) => {
                 self.s.cbox(self.ind);
@@ -1385,11 +1431,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(arguments);
+            self.print_call_args(arguments, false);
         }
     }
 
-    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>) {
+    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>, break_single_no_cmnts: bool) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
             return;
@@ -1404,13 +1450,7 @@ impl<'ast> State<'_, 'ast> {
                     |this, e| this.print_expr(e),
                     get_span!(),
                     ListFormat::Compact { cmnts_break: true, with_space: false },
-                    // inline single-element expressions that are simple and fit
-                    if let [expr] = exprs {
-                        has_complex_successor(&expr.kind, true)
-                            || self.estimate_size(span) + 3 > self.space_left()
-                    } else {
-                        false
-                    },
+                    break_single_no_cmnts,
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
@@ -1507,6 +1547,10 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
             ast::StmtKind::DeclMulti(vars, expr) => {
+                let space_left = self.space_left();
+
+                self.s.ibox(self.ind);
+                self.s.ibox(-self.ind);
                 self.print_tuple(
                     vars,
                     span.lo(),
@@ -1520,9 +1564,22 @@ impl<'ast> State<'_, 'ast> {
                     ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
-                self.word(" = ");
-                self.neverbreak();
-                self.print_expr(expr);
+                self.end();
+                self.word(" =");
+                if self.estimate_size(expr.span) + self.config.tab_width
+                    <= std::cmp::max(space_left, self.space_left())
+                {
+                    self.print_sep(Separator::Space);
+                    self.ibox(0);
+                    self.print_expr(expr);
+                } else {
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                    self.s.ibox(-self.ind);
+                    self.print_expr(expr);
+                }
+                self.end();
+                self.end();
             }
             ast::StmtKind::Block(stmts) => self.print_block(stmts, span),
             ast::StmtKind::Break => self.word("break"),
@@ -1795,7 +1852,16 @@ impl<'ast> State<'_, 'ast> {
         // clause: `self.print_if_cond("if", cond, cond.span.hi());`
         if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), true) {
             self.print_if_cond("if", cond, then.span.lo());
-            self.print_sep(Separator::Space);
+            // if empty block without comments, ensure braces are inlined
+            if let ast::StmtKind::Block(block) = &then.kind
+                && block.is_empty()
+                && self.peek_comment_before(then.span.hi()).is_none()
+            {
+                self.neverbreak();
+                self.print_sep(Separator::Nbsp);
+            } else {
+                self.print_sep(Separator::Space);
+            }
         }
         self.end();
         self.print_stmt_as_block(then, then.span.hi(), inline);
@@ -1833,7 +1899,7 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.print_path(path, false);
-        self.print_call_args(args);
+        self.print_call_args(args, false);
     }
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {

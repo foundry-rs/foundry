@@ -155,4 +155,10 @@ contract IfStatement {
             }
         }
     }
+
+    function test_emptyIfBlock() external {
+        if (block.number < 10) {} else {
+            revert();
+        }
+    }
 }
