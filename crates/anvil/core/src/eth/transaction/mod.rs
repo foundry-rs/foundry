@@ -1,25 +1,25 @@
 //! Transaction related types
 use alloy_consensus::{
+    transaction::{
+        eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
+        Recovered, TxEip7702,
+    },
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
     TxEnvelope, TxLegacy, TxReceipt, Typed2718,
-    transaction::{
-        Recovered, TxEip7702,
-        eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-    },
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
-use alloy_primitives::{Address, B256, Bloom, Bytes, Log, Signature, TxHash, TxKind, U64, U256};
-use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
+use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
-    request::TransactionRequest, trace::otterscan::OtsReceipt,
+    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, ConversionError,
+    Transaction as RpcTransaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_alloy_consensus::{OpDepositReceipt, TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -1094,16 +1094,9 @@ pub struct TransactionInfo {
     pub gas_used: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DepositReceipt<T = Receipt<alloy_primitives::Log>> {
-    #[serde(flatten)]
-    pub inner: ReceiptWithBloom<T>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub deposit_nonce: Option<u64>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub deposit_receipt_version: Option<u64>,
-}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DepositReceipt(pub OpDepositReceipt);
 
 impl DepositReceipt {
     fn payload_len(&self) -> usize {
@@ -1153,7 +1146,7 @@ impl DepositReceipt {
         let deposit_nonce_version =
             remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
 
-        let this = Self {
+        let op_receipt = OpDepositReceipt {
             inner: ReceiptWithBloom {
                 receipt: Receipt { status, cumulative_gas_used, logs },
                 logs_bloom,
@@ -1161,6 +1154,7 @@ impl DepositReceipt {
             deposit_nonce,
             deposit_receipt_version: deposit_nonce_version,
         };
+        let this = DepositReceipt(op_receipt);
 
         let consumed = started_len - b.len();
         if consumed != rlp_head.payload_length {
@@ -1478,19 +1472,24 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x02 => TypedReceipt::EIP1559(receipt_with_bloom),
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
             0x04 => TypedReceipt::EIP7702(receipt_with_bloom),
-            0x7E => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: other
-                    .get_deserialized::<U64>("depositNonce")
-                    .transpose()
-                    .ok()?
-                    .map(|v| v.to()),
-                deposit_receipt_version: other
-                    .get_deserialized::<U64>("depositReceiptVersion")
-                    .transpose()
-                    .ok()?
-                    .map(|v| v.to()),
-            }),
+            0x7E => {
+                let op_receipt = OpDepositReceipt {
+                    inner: receipt_with_bloom,
+                    deposit_nonce: other
+                        .get_deserialized::<U64>("depositNonce")
+                        .transpose()
+                        .ok()?
+                        .map(|v| v.to()),
+                    deposit_receipt_version: other
+                        .get_deserialized::<U64>("depositReceiptVersion")
+                        .transpose()
+                        .ok()?
+                        .map(|v| v.to()),
+                };
+
+                TypedReceipt::Deposit(DepositReceipt(op_receipt))
+            }
+
             _ => return None,
         },
     })
@@ -1499,7 +1498,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{LogData, b256, hex};
+    use alloy_primitives::{b256, hex, LogData};
     use std::str::FromStr;
 
     // <https://github.com/foundry-rs/foundry/issues/10852>
