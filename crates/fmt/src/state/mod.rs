@@ -322,11 +322,8 @@ impl<'sess> State<'sess, '_> {
             if cmnt.style.is_blank() {
                 match config.skip_blanks {
                     Some(Skip::All) => continue,
-                    Some(Skip::Leading { resettable })
-                        if is_leading || (!resettable && last_style.is_none()) =>
-                    {
-                        continue;
-                    }
+                    Some(Skip::Leading { resettable: true }) if is_leading => continue,
+                    Some(Skip::Leading { resettable: false }) if last_style.is_none() => continue,
                     Some(Skip::Trailing) => {
                         buffered_blank = Some(cmnt);
                         continue;
