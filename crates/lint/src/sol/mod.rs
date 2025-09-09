@@ -5,12 +5,12 @@ use crate::{
         LinterConfig,
     },
 };
-use foundry_common::comments::Comments;
+use foundry_common::{comments::Comments, errors::convert_solar_errors};
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::prelude::*;
 use solar::{
-    ast::{self as ast, visit::Visit as VisitAST},
+    ast::{self as ast, visit::Visit as _},
     interface::{
         Session,
         diagnostics::{self, HumanEmitter, JsonEmitter},
@@ -18,7 +18,7 @@ use solar::{
     },
     sema::{
         Compiler, Gcx,
-        hir::{self, Visit as VisitHIR},
+        hir::{self, Visit as _},
     },
 };
 use std::{
@@ -233,19 +233,30 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn lint(&self, input: &[PathBuf], compiler: &Compiler) {
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+        let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
+
         let sm = compiler.sess().clone_source_map();
-        let dcx = compiler.dcx();
-        let prev_emitter = dcx.set_emitter(if self.with_json_emitter {
+        let prev_emitter = compiler.dcx().set_emitter(if self.with_json_emitter {
             let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
-            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(false);
+            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(ui_testing);
             Box::new(json_emitter)
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
         });
-        dcx.set_flags(|f| f.track_diagnostics = false);
+        if ui_testing {
+            let sess = compiler.sess_mut();
+            sess.dcx.set_flags_mut(|f| f.track_diagnostics = false);
+            sess.opts.unstable.ui_testing = true;
+            sess.reconfigure();
+        }
 
-        compiler.enter(|compiler| {
+        compiler.enter_mut(|compiler| -> eyre::Result<()> {
+            if compiler.gcx().stage() == Some(solar::config::CompilerStage::Parsing) {
+                let _ = compiler.lower_asts();
+                convert_solar_errors(compiler.dcx())?;
+            }
+
             let gcx = compiler.gcx();
 
             input.par_iter().for_each(|path| {
@@ -262,9 +273,18 @@ impl<'a> Linter for SolidityLinter<'a> {
                 };
                 let _ = self.process_source_hir(gcx, hir_source_id, &hir_source.file);
             });
-        });
 
-        dcx.set_emitter(prev_emitter);
+            Ok(())
+        })?;
+
+        let sess = compiler.sess_mut();
+        sess.dcx.set_emitter(prev_emitter);
+        if ui_testing {
+            sess.opts.unstable.ui_testing = false;
+            sess.reconfigure();
+        }
+
+        convert_solar_errors(compiler.dcx())
     }
 }
 

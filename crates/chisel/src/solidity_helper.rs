@@ -156,13 +156,15 @@ impl SolidityHelper {
                 CloseDelim(delim) => match (stack.pop(), delim) {
                     (Some(open), close) if open == close => {}
                     (Some(wanted), _) => {
+                        let wanted = wanted.to_open_str();
                         return ValidationResult::Invalid(Some(format!(
-                            "Mismatched brackets: {wanted:?} is not properly closed"
+                            "Mismatched brackets: `{wanted}` is not properly closed"
                         )));
                     }
                     (None, c) => {
+                        let c = c.to_close_str();
                         return ValidationResult::Invalid(Some(format!(
-                            "Mismatched brackets: {c:?} is unpaired"
+                            "Mismatched brackets: `{c}` is unpaired"
                         )));
                     }
                 },

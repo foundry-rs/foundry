@@ -31,7 +31,7 @@ pub trait Linter: Send + Sync {
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &Compiler);
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()>;
 }
 
 pub trait Lint {

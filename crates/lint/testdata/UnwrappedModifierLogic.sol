@@ -6,7 +6,7 @@ library Lib {
 }
 
 contract C {
-    function onlyOwner() public {}
+    function onlyOwner(address sender) public {}
 }
 
 /**

@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{FoundryPathExt, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
@@ -116,11 +116,7 @@ impl LintArgs {
 
         let mut output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();
-        compiler.enter_mut(|c| {
-            let _ = c.lower_asts();
-        });
-        convert_solar_errors(compiler.dcx())?;
-        linter.lint(&input, compiler);
+        linter.lint(&input, compiler)?;
 
         Ok(())
     }

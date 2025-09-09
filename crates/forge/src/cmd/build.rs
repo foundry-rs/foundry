@@ -6,7 +6,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{LoadConfig, cache_local_signatures},
 };
-use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors, shell};
+use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
@@ -175,11 +175,7 @@ impl BuildArgs {
 
             if !input_files.is_empty() {
                 let compiler = output.parser_mut().solc_mut().compiler_mut();
-                compiler.enter_mut(|c| {
-                    let _ = c.lower_asts();
-                });
-                convert_solar_errors(compiler.dcx())?;
-                linter.lint(&input_files, compiler);
+                linter.lint(&input_files, compiler)?;
             }
         }
 
