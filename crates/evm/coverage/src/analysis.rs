@@ -5,10 +5,14 @@ use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, visit::Visit, yul},
-    data_structures::Never,
+    data_structures::{Never, map::FxHashSet},
     interface::{Session, Span},
 };
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{
+    ops::{ControlFlow, Range},
+    path::PathBuf,
+    sync::Arc,
+};
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone)]
@@ -23,8 +27,8 @@ struct ContractVisitor<'a> {
 
     /// The current branch ID
     branch_id: u32,
-    /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
-    last_line: u32,
+    /// Set of all lines to ensure we don't push duplicate lines
+    all_lines: FxHashSet<u32>,
 
     /// Coverage items
     items: Vec<CoverageItem>,
@@ -32,7 +36,14 @@ struct ContractVisitor<'a> {
 
 impl<'a> ContractVisitor<'a> {
     fn new(source_id: u32, sess: &'a Session, contract_name: Arc<str>) -> Self {
-        Self { source_id, sess, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
+        Self {
+            source_id,
+            sess,
+            contract_name,
+            branch_id: 0,
+            all_lines: Default::default(),
+            items: Vec::new(),
+        }
     }
 
     /// Filter out all items if the contract has any test functions.
@@ -74,6 +85,10 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
+    fn push_stmt(&mut self, span: Span) {
+        self.push_item_kind(CoverageItemKind::Statement, span);
+    }
+
     /// Creates a coverage item for a given kind and source location. Pushes item to the internal
     /// collection (plus additional coverage line if item is a statement).
     fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) {
@@ -81,34 +96,57 @@ impl<'a> ContractVisitor<'a> {
 
         // Push a line item if we haven't already.
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
-        if self.last_line < item.loc.lines.start {
+        let line = item.loc.lines.start;
+        if self.all_lines.insert(line) {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
-                loc: item.loc.clone(),
+                loc: SourceLocation {
+                    source_id: item.loc.source_id,
+                    contract_name: item.loc.contract_name.clone(),
+                    bytes: self.byte_range_of_line(span, line),
+                    lines: line..line + 1,
+                },
                 hits: 0,
             });
-            self.last_line = item.loc.lines.start;
         }
 
         self.items.push(item);
     }
 
-    fn source_location_for(&self, span: Span) -> SourceLocation {
-        let bytes_usize = self.sess.source_map().span_to_source(span).unwrap().1;
-        let bytes = bytes_usize.start as u32..bytes_usize.end as u32;
+    fn byte_range_of_line(&self, span: Span, line: u32) -> Range<u32> {
+        let file = self.sess.source_map().lookup_byte_offset(span.lo());
+        let line_idx = line as usize - 1;
+        let byte_start = file.sf.lines()[line_idx].0;
+        let byte_end = file.sf.lines()[line_idx + 1].0;
+        byte_start..byte_end
+    }
 
+    fn source_location_for(&self, span: Span) -> SourceLocation {
+        SourceLocation {
+            source_id: self.source_id as usize,
+            contract_name: self.contract_name.clone(),
+            bytes: self.byte_range(span),
+            lines: self.line_range(span),
+        }
+    }
+
+    fn byte_range(&self, span: Span) -> Range<u32> {
+        let bytes_usize = self.sess.source_map().span_to_source(span).unwrap().1;
+        bytes_usize.start as u32..bytes_usize.end as u32
+    }
+
+    fn line_range(&self, span: Span) -> Range<u32> {
         let lines = self.sess.source_map().span_to_lines(span).unwrap().lines;
         assert!(!lines.is_empty());
         let first = lines.first().unwrap();
         let last = lines.last().unwrap();
-        let lines = first.line_index as u32 + 1..last.line_index as u32 + 2;
+        first.line_index as u32 + 1..last.line_index as u32 + 2
+    }
 
-        SourceLocation {
-            source_id: self.source_id as usize,
-            contract_name: self.contract_name.clone(),
-            bytes,
-            lines,
-        }
+    fn next_branch_id(&mut self) -> u32 {
+        let id = self.branch_id;
+        self.branch_id = id + 1;
+        id
     }
 }
 
@@ -142,24 +180,17 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
 
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         match &stmt.kind {
-            StmtKind::Assembly(_) | StmtKind::Block(_) | StmtKind::UncheckedBlock(_) => {
-                self.walk_stmt(stmt)?
-            }
             StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Emit(..)
             | StmtKind::Revert(..)
             | StmtKind::Return(_)
             | StmtKind::DeclSingle(_)
-            | StmtKind::DeclMulti(..) => {
-                self.push_item_kind(CoverageItemKind::Statement, stmt.span);
-            }
-            // Skip placeholder statements as they are never referenced in source maps.
-            StmtKind::Placeholder => {}
-            StmtKind::If(cond, then_stmt, else_stmt) => {
-                self.visit_expr(cond)?;
-                let branch_id = self.branch_id;
-                self.branch_id += 1;
+            | StmtKind::DeclMulti(..) => self.push_stmt(stmt.span),
+
+            StmtKind::If(_cond, then_stmt, else_stmt) => {
+                let branch_id = self.next_branch_id();
+
                 // Add branch coverage items only if one of true/branch bodies contains statements.
                 if stmt_has_statements(then_stmt)
                     || else_stmt.as_ref().is_some_and(|s| stmt_has_statements(s))
@@ -183,45 +214,41 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
                         );
                     }
                 }
-
-                self.visit_stmt(then_stmt)?;
-                if let Some(else_stmt) = else_stmt {
-                    self.visit_stmt(else_stmt)?;
-                }
             }
-            StmtKind::Try(ast::StmtTry { expr, clauses }) => {
-                self.visit_expr(expr)?;
-                let branch_id = self.branch_id;
-                self.branch_id += 1;
+
+            StmtKind::Try(ast::StmtTry { expr: _, clauses }) => {
+                let branch_id = self.next_branch_id();
 
                 let mut path_id = 0;
                 for catch in clauses.iter() {
                     let ast::TryCatchClause { span, name: _, args, block } = catch;
                     let span = if path_id == 0 { stmt.span.to(*span) } else { *span };
-                    self.visit_parameter_list(args)?;
                     if path_id == 0 || has_statements(Some(block)) {
                         self.push_item_kind(
                             CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: true },
                             span,
                         );
                         path_id += 1;
-                        self.visit_block(block)?;
                     } else if !args.is_empty() {
                         // Add coverage for clause with parameters and empty statements.
                         // (`catch (bytes memory reason) {}`).
                         // Catch all clause without statements is ignored (`catch {}`).
-                        self.push_item_kind(CoverageItemKind::Statement, span);
-                        self.visit_block(block)?;
+                        self.push_stmt(span);
                     }
                 }
             }
-            StmtKind::DoWhile(..)
+
+            // Skip placeholder statements as they are never referenced in source maps.
+            StmtKind::Assembly(_)
+            | StmtKind::Block(_)
+            | StmtKind::UncheckedBlock(_)
+            | StmtKind::Placeholder
             | StmtKind::Expr(_)
-            | StmtKind::For { .. }
-            | StmtKind::While(..) => self.walk_stmt(stmt)?,
+            | StmtKind::While(..)
+            | StmtKind::DoWhile(..)
+            | StmtKind::For { .. } => {}
         }
-        // Intentionally do not walk all statements.
-        ControlFlow::Continue(())
+        self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -230,20 +257,19 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
             | ExprKind::Unary(..)
             | ExprKind::Binary(..)
             | ExprKind::Ternary(..) => {
-                self.push_item_kind(CoverageItemKind::Statement, expr.span);
+                self.push_stmt(expr.span);
                 if matches!(expr.kind, ExprKind::Binary(..)) {
                     return self.walk_expr(expr);
                 }
             }
             ExprKind::Call(callee, _args) => {
-                self.push_item_kind(CoverageItemKind::Statement, expr.span);
+                self.push_stmt(expr.span);
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
                     // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                     if ident.as_str() == "require" {
-                        let branch_id = self.branch_id;
-                        self.branch_id += 1;
+                        let branch_id = self.next_branch_id();
                         self.push_item_kind(
                             CoverageItemKind::Branch {
                                 branch_id,
@@ -278,53 +304,40 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
             | StmtKind::Leave
             | StmtKind::Break
             | StmtKind::Continue => {
-                self.push_item_kind(CoverageItemKind::Statement, stmt.span);
+                self.push_stmt(stmt.span);
             }
-            StmtKind::If(cond, block) => {
-                self.visit_yul_expr(cond)?;
-                let branch_id = self.branch_id;
-                self.branch_id += 1;
+            StmtKind::If(..) => {
+                let branch_id = self.next_branch_id();
                 self.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
                     stmt.span,
                 );
-                self.visit_yul_block(block)?;
             }
-            StmtKind::For { init, cond, step, body } => {
-                self.visit_yul_block(init)?;
-                self.visit_yul_expr(cond)?;
-                self.visit_yul_block(step)?;
-                self.push_item_kind(CoverageItemKind::Statement, body.span);
-                self.visit_yul_block(body)?;
+            StmtKind::For { body, .. } => {
+                self.push_stmt(body.span);
             }
             StmtKind::Switch(switch) => {
                 for case in switch.branches.iter() {
-                    self.push_item_kind(CoverageItemKind::Statement, case.body.span);
-                    self.visit_yul_block(&case.body)?;
+                    self.push_stmt(case.body.span);
                 }
                 if let Some(default) = &switch.default_case {
-                    self.push_item_kind(CoverageItemKind::Statement, default.span);
-                    self.visit_yul_block(default)?;
+                    self.push_stmt(default.span);
                 }
             }
             StmtKind::FunctionDef(func) => {
                 let name = func.name.as_str();
                 self.push_item_kind(CoverageItemKind::Function { name: name.into() }, stmt.span);
-                self.visit_yul_block(&func.body)?;
             }
-            StmtKind::Block(_) | StmtKind::Expr(_) => self.walk_yul_stmt(stmt)?,
+            StmtKind::Block(_) | StmtKind::Expr(_) => {}
         }
-        // Intentionally do not walk all statements.
-        ControlFlow::Continue(())
+        self.walk_yul_stmt(stmt)
     }
 
     fn visit_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         use yul::ExprKind;
         match &expr.kind {
             ExprKind::Path(_) | ExprKind::Lit(_) => {}
-            ExprKind::Call(_) => {
-                self.push_item_kind(CoverageItemKind::Statement, expr.span);
-            }
+            ExprKind::Call(_) => self.push_stmt(expr.span),
         }
         // Intentionally do not walk all expressions.
         ControlFlow::Continue(())
@@ -388,6 +401,7 @@ impl SourceAnalysis {
                         let _ = visitor.visit_item_contract(contract);
                         visitor.clear_if_test();
                         visitor.disambiguate_functions();
+                        visitor.items.sort();
                         Ok(visitor.items)
                     });
                     items.map(move |items| items.map(|items| (source_id, items)))

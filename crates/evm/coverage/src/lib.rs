@@ -334,6 +334,39 @@ pub enum CoverageItemKind {
     },
 }
 
+impl PartialEq for CoverageItemKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.ord_key() == other.ord_key()
+    }
+}
+
+impl Eq for CoverageItemKind {}
+
+impl PartialOrd for CoverageItemKind {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CoverageItemKind {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ord_key().cmp(&other.ord_key())
+    }
+}
+
+impl CoverageItemKind {
+    fn ord_key(&self) -> impl Ord + use<> {
+        match *self {
+            CoverageItemKind::Line => (0, 0),
+            CoverageItemKind::Statement => (1, 0),
+            CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: _ } => {
+                (2, branch_id + path_id)
+            }
+            CoverageItemKind::Function { name: _ } => (3, 0),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CoverageItem {
     /// The coverage item kind.
@@ -342,6 +375,39 @@ pub struct CoverageItem {
     pub loc: SourceLocation,
     /// The number of times this item was hit.
     pub hits: u32,
+}
+
+impl PartialEq for CoverageItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.ord_key() == other.ord_key()
+    }
+}
+
+impl Eq for CoverageItem {}
+
+impl PartialOrd for CoverageItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CoverageItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ord_key().cmp(&other.ord_key())
+    }
+}
+
+impl CoverageItem {
+    fn ord_key(&self) -> impl Ord + use<> {
+        (
+            self.loc.source_id,
+            self.loc.lines.start,
+            self.loc.bytes.start,
+            self.loc.lines.end,
+            self.loc.bytes.end,
+            self.kind.ord_key(),
+        )
+    }
 }
 
 impl Display for CoverageItem {
