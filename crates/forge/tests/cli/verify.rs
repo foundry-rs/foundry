@@ -314,3 +314,49 @@ forgetest!(can_guess_constructor_args, |prj, cmd| {
 forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
     verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
 });
+
+// Tests that verify properly validates verifier arguments.
+// <https://github.com/foundry-rs/foundry/issues/11430>
+forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
+    // No verifier URL.
+    cmd.args([
+        "verify-contract",
+        "--rpc-url",
+        "https://rpc.sepolia-api.lisk.com",
+        "--verifier",
+        "blockscout",
+        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+        "src/Counter.sol:Counter",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: No verifier URL specified for verifier blockscout
+
+"#]]);
+
+    // Unknown Etherscan chain.
+    cmd.forge_fuse()
+        .args([
+            "verify-contract",
+            "--rpc-url",
+            "https://rpc.sepolia-api.lisk.com",
+            "--verifier",
+            "etherscan",
+            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "src/Counter.sol:Counter",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No known Etherscan API URL for chain `4202`. To fix this, please:
+1. Specify a `url` 
+2. Verify the chain `4202` is correct
+
+"#]]);
+
+    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stdout_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+
+Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+
+"#]]);
+});
