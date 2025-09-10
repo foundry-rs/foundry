@@ -106,11 +106,11 @@ jobs:
           set -euo pipefail
 
           echo "Artifacts in foundry_artifacts:"
-          ls -la ../foundry_artifacts || true
+          ls -la "${{ runner.temp }}/foundry_artifacts" || true
 
           # Derive RELEASE_VERSION from any foundry artifact we downloaded
           # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
-          first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
+          first_file=$(ls "${{ runner.temp }}/foundry_artifacts/foundry_"* 2>/dev/null | head -n1 || true)
           if [[ -z "${first_file}" ]]; then
             echo "No foundry artifacts found to publish" >&2
             exit 1
@@ -130,7 +130,7 @@ jobs:
           set -euo pipefail
           mkdir -p tmp
 
-          FILE_PREFIX="../foundry_artifacts/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
+          FILE_PREFIX="${{ runner.temp }}/foundry_artifacts/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
           if [[ -f "${FILE_PREFIX}.zip" ]]; then
             echo "Extracting ${FILE_PREFIX}.zip"
             if ! command -v unzip >/dev/null 2>&1; then
