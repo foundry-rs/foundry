@@ -159,7 +159,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         source_map: &SourceMap,
         mut find_next_item: impl FnMut(BytePos) -> Option<Span>,
     ) -> Self {
-        let mut cfg = InlineConfig::<I>::new();
+        let mut cfg = Self::new();
         let mut disabled_blocks = HashMap::new();
 
         let mut prev_sp = Span::DUMMY;
@@ -369,7 +369,7 @@ mod tests {
     use super::*;
 
     impl DisabledRange<usize> {
-        fn to_byte_pos(&self) -> DisabledRange<BytePos> {
+        fn to_byte_pos(self) -> DisabledRange<BytePos> {
             DisabledRange::<BytePos> {
                 lo: BytePos::from_usize(self.lo),
                 hi: BytePos::from_usize(self.hi),
