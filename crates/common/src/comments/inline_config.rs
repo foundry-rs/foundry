@@ -1,23 +1,28 @@
 use solar::{
-    interface::{SourceMap, Span},
+    interface::{BytePos, RelativeBytePos, SourceMap, Span},
     parse::ast::{self, Item, SourceUnit, visit::Visit as VisitAst},
     sema::hir::{self, Visit as VisitHir},
 };
-use std::{collections::HashMap, hash::Hash, marker::PhantomData, ops::ControlFlow};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    hash::Hash,
+    marker::PhantomData,
+    ops::ControlFlow,
+};
 
 /// A disabled formatting range. `loose` designates that the range includes any loc which
-/// may start in between start and end, whereas the strict version requires that
+/// may start in between start and end (inclusive), whereas the strict version requires that
 /// `range.start >= loc.start <=> loc.end <= range.end`
 #[derive(Debug, Clone, Copy)]
-struct DisabledRange {
-    start: usize,
-    end: usize,
+struct DisabledRange<T = BytePos> {
+    lo: T,
+    hi: T,
     loose: bool,
 }
 
-impl DisabledRange {
-    fn includes(&self, range: std::ops::Range<usize>) -> bool {
-        range.start >= self.start && (if self.loose { range.start } else { range.end } <= self.end)
+impl DisabledRange<BytePos> {
+    fn includes(&self, span: Span) -> bool {
+        span.lo() >= self.lo && (if self.loose { span.lo() } else { span.hi() } <= self.hi)
     }
 }
 
@@ -169,10 +174,10 @@ impl<I: ItemIdIterator> InlineConfig<I> {
     fn build(
         items: impl IntoIterator<Item = (Span, InlineConfigItem<I>)>,
         source_map: &SourceMap,
-        mut find_next_item: impl FnMut(usize) -> Option<Span>,
+        mut find_next_item: impl FnMut(BytePos) -> Option<Span>,
     ) -> Self {
-        let mut disabled_ranges: HashMap<I::Item, Vec<DisabledRange>> = HashMap::new();
-        let mut disabled_blocks: HashMap<I::Item, (usize, usize, usize)> = HashMap::new();
+        let mut cfg = InlineConfig::<I>::new();
+        let mut disabled_blocks = HashMap::new();
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -181,93 +186,109 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                 prev_sp = sp;
             }
 
-            let Ok((file, comment_range)) = source_map.span_to_source(sp) else { continue };
-            let src = file.src.as_str();
-            match item {
-                InlineConfigItem::DisableNextItem(ids) => {
-                    if let Some(next_item) = find_next_item(sp.hi().to_usize()) {
-                        for id in ids.into_iter() {
-                            disabled_ranges.entry(id).or_default().push(DisabledRange {
-                                start: next_item.lo().to_usize(),
-                                end: next_item.hi().to_usize(),
+            cfg.disable_item(sp, item, source_map, &mut disabled_blocks, &mut find_next_item);
+        }
+
+        for (id, (_, lo, hi)) in disabled_blocks {
+            cfg.disable(id, DisabledRange { lo, hi, loose: false });
+        }
+
+        cfg
+    }
+
+    fn new() -> Self {
+        Self { disabled_ranges: HashMap::new() }
+    }
+
+    fn disable_many(&mut self, ids: I, range: DisabledRange) {
+        for id in ids.into_iter() {
+            self.disable(id, range);
+        }
+    }
+
+    fn disable(&mut self, id: I::Item, range: DisabledRange) {
+        self.disabled_ranges.entry(id).or_default().push(range);
+    }
+
+    fn disable_item(
+        &mut self,
+        span: Span,
+        item: InlineConfigItem<I>,
+        source_map: &SourceMap,
+        disabled_blocks: &mut HashMap<I::Item, (usize, BytePos, BytePos)>,
+        find_next_item: &mut dyn FnMut(BytePos) -> Option<Span>,
+    ) {
+        let (file, comment_range) = source_map.span_to_source(span).unwrap();
+        let src = file.src.as_str();
+
+        match item {
+            InlineConfigItem::DisableNextItem(ids) => {
+                if let Some(next_item) = find_next_item(span.hi()) {
+                    self.disable_many(
+                        ids,
+                        DisabledRange { lo: next_item.lo(), hi: next_item.hi(), loose: false },
+                    );
+                }
+            }
+            InlineConfigItem::DisableLine(ids) => {
+                let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                let end = src[comment_range.end..]
+                    .find('\n')
+                    .map_or(src.len(), |i| comment_range.end + i);
+                self.disable_many(
+                    ids,
+                    DisabledRange {
+                        lo: file.absolute_position(RelativeBytePos::from_usize(start)),
+                        hi: file.absolute_position(RelativeBytePos::from_usize(end)),
+                        loose: false,
+                    },
+                );
+            }
+            InlineConfigItem::DisableNextLine(ids) => {
+                if let Some(offset) = src[comment_range.end..].find('\n') {
+                    let next_line = comment_range.end + offset + 1;
+                    if next_line < src.len() {
+                        let end = src[next_line..].find('\n').map_or(src.len(), |i| next_line + i);
+                        self.disable_many(
+                            ids,
+                            DisabledRange {
+                                lo: file.absolute_position(RelativeBytePos::from_usize(
+                                    comment_range.start,
+                                )),
+                                hi: file.absolute_position(RelativeBytePos::from_usize(end)),
                                 loose: false,
-                            });
-                        }
+                            },
+                        );
                     }
                 }
-                InlineConfigItem::DisableLine(ids) => {
-                    let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
-                    let end = src[comment_range.end..]
-                        .find('\n')
-                        .map_or(src.len(), |i| comment_range.end + i);
+            }
 
-                    for id in ids.into_iter() {
-                        disabled_ranges.entry(id).or_default().push(DisabledRange {
-                            start: start + file.start_pos.to_usize(),
-                            end: end + file.start_pos.to_usize(),
-                            loose: false,
-                        })
-                    }
+            InlineConfigItem::DisableStart(ids) => {
+                for id in ids.into_iter() {
+                    disabled_blocks.entry(id).and_modify(|(depth, _, _)| *depth += 1).or_insert((
+                        1,
+                        span.lo(),
+                        // Use file end as fallback for unclosed blocks
+                        file.absolute_position(RelativeBytePos::from_usize(src.len())),
+                    ));
                 }
-                InlineConfigItem::DisableNextLine(ids) => {
-                    if let Some(offset) = src[comment_range.end..].find('\n') {
-                        let next_line = comment_range.end + offset + 1;
-                        if next_line < src.len() {
-                            let end =
-                                src[next_line..].find('\n').map_or(src.len(), |i| next_line + i);
-                            for id in ids.into_iter() {
-                                disabled_ranges.entry(id).or_default().push(DisabledRange {
-                                    start: comment_range.start + file.start_pos.to_usize(),
-                                    end: end + file.start_pos.to_usize(),
-                                    loose: false,
-                                })
-                            }
-                        }
-                    }
-                }
-                InlineConfigItem::DisableStart(ids) => {
-                    for id in ids.into_iter() {
-                        disabled_blocks
-                            .entry(id)
-                            .and_modify(|(_, depth, _)| *depth += 1)
-                            .or_insert((
-                                sp.lo().to_usize(),
-                                1,
-                                // Use file end as fallback for unclosed blocks
-                                file.start_pos.to_usize() + src.len(),
-                            ));
-                    }
-                }
-                InlineConfigItem::DisableEnd(ids) => {
-                    for id in ids.into_iter() {
-                        if let Some((start, depth, _)) = disabled_blocks.get_mut(&id) {
-                            *depth = depth.saturating_sub(1);
+            }
+            InlineConfigItem::DisableEnd(ids) => {
+                for id in ids.into_iter() {
+                    if let Entry::Occupied(mut entry) = disabled_blocks.entry(id) {
+                        let (depth, lo, _) = entry.get_mut();
+                        *depth = depth.saturating_sub(1);
 
-                            if *depth == 0 {
-                                let start = *start;
-                                _ = disabled_blocks.remove(&id);
+                        if *depth == 0 {
+                            let lo = *lo;
+                            let (id, _) = entry.remove_entry();
 
-                                disabled_ranges.entry(id).or_default().push(DisabledRange {
-                                    start,
-                                    end: sp.hi().to_usize(),
-                                    loose: false,
-                                })
-                            }
+                            self.disable(id, DisabledRange { lo, hi: span.hi(), loose: false });
                         }
                     }
                 }
             }
         }
-
-        for (id, (start, _, file_end)) in disabled_blocks {
-            disabled_ranges.entry(id).or_default().push(DisabledRange {
-                start,
-                end: file_end,
-                loose: false,
-            });
-        }
-
-        Self { disabled_ranges }
     }
 }
 
@@ -282,7 +303,7 @@ where
         I: ItemIdIterator<Item = ()>,
     {
         if let Some(ranges) = self.disabled_ranges.get(&()) {
-            return ranges.iter().any(|range| range.includes(span.to_range()));
+            return ranges.iter().any(|range| range.includes(span));
         }
         false
     }
@@ -293,14 +314,16 @@ where
     where
         I::Item: std::borrow::Borrow<str>,
     {
-        if let Some(ranges) = self.disabled_ranges.get(id)
-            && ranges.iter().any(|range| range.includes(span.to_range()))
-        {
-            return true;
-        }
+        self.is_disabled_with_id_inner(span, id)
+            || (id != "all" && self.is_disabled_with_id_inner(span, "all"))
+    }
 
-        if let Some(ranges) = self.disabled_ranges.get("all")
-            && ranges.iter().any(|range| range.includes(span.to_range()))
+    fn is_disabled_with_id_inner(&self, span: Span, id: &str) -> bool
+    where
+        I::Item: std::borrow::Borrow<str>,
+    {
+        if let Some(ranges) = self.disabled_ranges.get(id)
+            && ranges.iter().any(|range| range.includes(span))
         {
             return true;
         }
@@ -309,16 +332,32 @@ where
     }
 }
 
+macro_rules! find_next_item {
+    ($self:expr, $x:expr, $span:expr, $walk:ident) => {{
+        let span = $span;
+        // If the item is *entirely* before the offset, skip traversing it.
+        if span.hi() < $self.offset {
+            return ControlFlow::Continue(());
+        }
+        // Check if this item starts after the offset.
+        if span.lo() > $self.offset {
+            return ControlFlow::Break(span);
+        }
+        // Otherwise, continue traversing inside this item.
+        $self.$walk($x)
+    }};
+}
+
 /// An AST visitor that finds the first `Item` that starts after a given offset.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct NextItemFinderAst<'ast> {
     /// The offset to search after.
-    offset: usize,
+    offset: BytePos,
     _pd: PhantomData<&'ast ()>,
 }
 
 impl<'ast> NextItemFinderAst<'ast> {
-    fn new(offset: usize) -> Self {
+    fn new(offset: BytePos) -> Self {
         Self { offset, _pd: PhantomData }
     }
 
@@ -335,23 +374,18 @@ impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
     type BreakValue = Span;
 
     fn visit_item(&mut self, item: &'ast Item<'ast>) -> ControlFlow<Self::BreakValue> {
-        // Check if this item starts after the offset.
-        if item.span.lo().to_usize() > self.offset {
-            return ControlFlow::Break(item.span);
-        }
-
-        // Otherwise, continue traversing inside this item.
-        self.walk_item(item)
+        find_next_item!(self, item, item.span, walk_item)
     }
 
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
-        // Check if this stmt starts after the offset.
-        if stmt.span.lo().to_usize() > self.offset {
-            return ControlFlow::Break(stmt.span);
-        }
+        find_next_item!(self, stmt, stmt.span, walk_stmt)
+    }
 
-        // Otherwise, continue traversing inside this stmt.
-        self.walk_stmt(stmt)
+    fn visit_yul_stmt(
+        &mut self,
+        stmt: &'ast ast::yul::Stmt<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        find_next_item!(self, stmt, stmt.span, walk_yul_stmt)
     }
 }
 
@@ -360,11 +394,11 @@ impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
 struct NextItemFinderHir<'hir> {
     hir: &'hir hir::Hir<'hir>,
     /// The offset to search after.
-    offset: usize,
+    offset: BytePos,
 }
 
 impl<'hir> NextItemFinderHir<'hir> {
-    fn new(offset: usize, hir: &'hir hir::Hir<'hir>) -> Self {
+    fn new(offset: BytePos, hir: &'hir hir::Hir<'hir>) -> Self {
         Self { offset, hir }
     }
 
@@ -385,18 +419,11 @@ impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
     }
 
     fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
-        // Check if this item starts after the offset.
-        if item.span().lo().to_usize() > self.offset {
-            return ControlFlow::Break(item.span());
-        }
+        find_next_item!(self, item, item.span(), walk_item)
+    }
 
-        // If the item is before the offset, skip traverse.
-        if item.span().hi().to_usize() < self.offset {
-            return ControlFlow::Continue(());
-        }
-
-        // Otherwise, continue traversing inside this item.
-        self.walk_item(item)
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        find_next_item!(self, stmt, stmt.span, walk_stmt)
     }
 }
 
@@ -404,16 +431,33 @@ impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
 mod tests {
     use super::*;
 
+    impl DisabledRange<usize> {
+        fn to_byte_pos(&self) -> DisabledRange<BytePos> {
+            DisabledRange::<BytePos> {
+                lo: BytePos::from_usize(self.lo),
+                hi: BytePos::from_usize(self.hi),
+                loose: self.loose,
+            }
+        }
+
+        fn includes(&self, range: std::ops::Range<usize>) -> bool {
+            self.to_byte_pos().includes(Span::new(
+                BytePos::from_usize(range.start),
+                BytePos::from_usize(range.end),
+            ))
+        }
+    }
+
     #[test]
     fn test_disabled_range_includes() {
         // Strict mode - requires full containment
-        let strict = DisabledRange { start: 10, end: 20, loose: false };
+        let strict = DisabledRange { lo: 10, hi: 20, loose: false };
         assert!(strict.includes(10..20));
         assert!(strict.includes(12..18));
         assert!(!strict.includes(5..15)); // Partial overlap fails
 
         // Loose mode - only checks start position
-        let loose = DisabledRange { start: 10, end: 20, loose: true };
+        let loose = DisabledRange { lo: 10, hi: 20, loose: true };
         assert!(loose.includes(10..25)); // Start in range
         assert!(!loose.includes(5..15)); // Start before range
     }
