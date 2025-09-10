@@ -6,7 +6,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 
 ## Architecture
 
-The formatter's is built on top of [Solar](https://github.com/paradigmxyz/solar), and the architecture is based on a Wadler-style pretty-printing engine. The formatting process consists of two main steps:
+The formatter is built on top of [Solar](https://github.com/paradigmxyz/solar), and the architecture is based on a Wadler-style pretty-printing engine. The formatting process consists of two main steps:
 
 1.  **Parsing**: The Solidity source code is parsed using **`solar`** into an **Abstract Syntax Tree (AST)**. The AST is a tree representation of the code's syntactic structure.
 2.  **Printing**: The AST is traversed by a visitor, which generates a stream of abstract tokens that are then processed by a pretty-printing engine to produce the final formatted code.
