@@ -1,7 +1,10 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
-    backtrace::{extract_backtrace, source_map::SourceData},
+    backtrace::{
+        extract_backtrace,
+        source_map::{LibraryInfo, SourceData},
+    },
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -13,7 +16,7 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
-use alloy_primitives::{U256, map::foldhash::HashMap};
+use alloy_primitives::{Address, U256, map::foldhash::HashMap};
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -27,7 +30,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{Node, NodeType, output_selection::OutputSelection},
+    artifacts::{Libraries, Node, NodeType, output_selection::OutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -506,7 +509,7 @@ impl TestArgs {
 
         // Collect source information for backtraces (only if verbosity >= 3)
         let source_data = if verbosity >= 3 {
-            collect_source_data(output, &config.root)
+            collect_source_data(output, &config.root, config.parsed_libraries()?)
         } else {
             Default::default()
         };
@@ -695,28 +698,36 @@ impl TestArgs {
                         // Convert source data to address-based for backtrace extraction
                         let mut address_to_source_data = HashMap::default();
 
-                        tracing::debug!(
-                            "contracts_by_address has {} entries",
-                            contracts_by_address.len()
-                        );
-                        tracing::debug!("source_data has {} entries", source_data.len());
-
                         for (addr, (contract_identifier, _)) in &contracts_by_address {
                             // Find source data for this contract
-                            tracing::debug!(
-                                "Looking for source data for contract {} at address {}",
-                                contract_identifier,
-                                addr
-                            );
                             for (artifact_id, data) in &source_data {
                                 // Match on full identifier (source:name)
                                 if artifact_id.identifier() == *contract_identifier {
-                                    tracing::debug!(
-                                        "Found source data for {} at {}",
-                                        contract_identifier,
-                                        addr
-                                    );
                                     address_to_source_data.insert(*addr, data.clone());
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Also add linked libraries to the address mapping
+                        // First, find all linked libraries and their addresses from library_sources
+                        let mut linked_lib_addresses = HashMap::default();
+                        for data in source_data.values() {
+                            for lib_info in &data.library_sources {
+                                if lib_info.is_linked()
+                                    && let Some(lib_addr) = lib_info.address
+                                {
+                                    linked_lib_addresses.insert(lib_info.name.clone(), lib_addr);
+                                }
+                            }
+                        }
+
+                        // Now find source data for each linked library
+                        for (lib_name, lib_addr) in linked_lib_addresses {
+                            // Find the artifact for this library name
+                            for (artifact_id, data) in &source_data {
+                                if artifact_id.name == lib_name {
+                                    address_to_source_data.insert(lib_addr, data.clone());
                                     break;
                                 }
                             }
@@ -1064,6 +1075,7 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 fn collect_source_data(
     output: &ProjectCompileOutput,
     root: &Path,
+    external_libs: Libraries,
 ) -> HashMap<ArtifactId, SourceData> {
     let mut source_data = HashMap::default();
 
@@ -1141,7 +1153,6 @@ fn collect_source_data(
 
                 sources
             } else {
-                tracing::debug!("No build context found for build_id {}", build_id);
                 Vec::new()
             }
         });
@@ -1150,42 +1161,60 @@ fn collect_source_data(
         let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
 
         // Extract library source paths and their byte ranges from AST
-        let library_sources = ast
-            .as_ref()
-            .map(|ast| {
-                let mut library_names = HashSet::new();
-                find_using_directives(&ast.nodes, &mut library_names);
+        let mut library_sources = HashSet::new();
 
-                output
-                    .artifact_ids()
-                    .filter_map(|(lib_id, lib_artifact)| {
-                        if !library_names.contains(&lib_id.name) {
-                            return None;
-                        }
+        // Add internal libraries from AST
+        if let Some(ast) = ast.as_ref() {
+            let mut library_names = HashSet::new();
+            find_using_directives(&ast.nodes, &mut library_names);
 
-                        // Try contract AST first, then library's own AST
-                        let lib_node = find_library_node(&ast.nodes, &lib_id.name).or_else(|| {
-                            lib_artifact
-                                .ast
-                                .as_ref()
-                                .and_then(|lib_ast| find_library_node(&lib_ast.nodes, &lib_id.name))
-                        });
+            for (lib_id, lib_artifact) in output.artifact_ids() {
+                if !library_names.contains(&lib_id.name) {
+                    continue;
+                }
 
-                        // Extract byte range from node
-                        let byte_range = lib_node.and_then(|node| {
-                            let length = node.src.length.filter(|&l| l > 0)?;
-                            Some((node.src.start, node.src.start + length))
-                        });
+                // Try contract AST first, then library's own AST
+                let lib_node = find_library_node(&ast.nodes, &lib_id.name).or_else(|| {
+                    lib_artifact
+                        .ast
+                        .as_ref()
+                        .and_then(|lib_ast| find_library_node(&lib_ast.nodes, &lib_id.name))
+                });
 
-                        // Convert to relative path from project root
-                        let relative_path =
-                            lib_id.source.strip_prefix(root).unwrap_or(&lib_id.source);
+                // Extract byte range from node
+                let byte_range = lib_node.and_then(|node| {
+                    let length = node.src.length.filter(|&l| l > 0)?;
+                    Some((node.src.start, node.src.start + length))
+                });
 
-                        Some((relative_path.to_path_buf(), lib_id.name.clone(), byte_range))
-                    })
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
+                // Convert to relative path from project root
+                let relative_path = lib_id.source.strip_prefix(root).unwrap_or(&lib_id.source);
+
+                library_sources.insert(LibraryInfo::internal(
+                    relative_path.to_path_buf(),
+                    lib_id.name.clone(),
+                    byte_range,
+                ));
+            }
+        }
+
+        // Add linked libraries from configuration
+        if !external_libs.libs.is_empty() {
+            for (file, libs) in &external_libs.libs {
+                for (lib_name, lib_address_str) in libs {
+                    // Convert file path to relative path
+                    let lib_path = Path::new(file).strip_prefix(root).unwrap_or(Path::new(file));
+                    // Parse the address string to Address
+                    if let Ok(lib_address) = lib_address_str.parse::<Address>() {
+                        library_sources.insert(LibraryInfo::linked(
+                            lib_path.to_path_buf(),
+                            lib_name.clone(),
+                            lib_address,
+                        ));
+                    }
+                }
+            }
+        }
 
         // Only create SourceData if we have all required components
         if let (Some(source_map), Some(bytecode)) = (source_map, bytecode)
@@ -1193,10 +1222,56 @@ fn collect_source_data(
         {
             source_data.insert(
                 id.clone(),
-                SourceData { source_map, sources: sources.clone(), bytecode, ast, library_sources },
+                SourceData {
+                    source_map,
+                    sources: sources.clone(),
+                    bytecode,
+                    ast,
+                    library_sources: library_sources.clone(),
+                },
             );
         }
     }
+
+    // Add source data for linked libraries at their deployed addresses
+    if !external_libs.libs.is_empty() {
+        for libs in external_libs.libs.values() {
+            for lib_name in libs.keys() {
+                // Try to find the library artifact by name
+                for (id, artifact) in output.artifact_ids() {
+                    if id.name == *lib_name {
+                        // Get source data for the library
+                        if let Some(source_map) =
+                            artifact.get_source_map_deployed().and_then(|r| r.ok())
+                            && let Some(bytecode) = artifact
+                                .get_deployed_bytecode_bytes()
+                                .map(|b| b.into_owned())
+                                .filter(|b| !b.is_empty())
+                        {
+                            // Find sources for this library (similar to above)
+                            let sources =
+                                sources_by_build_id.values().next().cloned().unwrap_or_default();
+
+                            // Create SourceData for the library at its deployed address
+                            let lib_id = id.with_stripped_file_prefixes(root);
+                            source_data.insert(
+                                lib_id.clone(),
+                                SourceData {
+                                    source_map,
+                                    sources,
+                                    bytecode,
+                                    ast: None,
+                                    library_sources: Default::default(),
+                                },
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     source_data
 }
 

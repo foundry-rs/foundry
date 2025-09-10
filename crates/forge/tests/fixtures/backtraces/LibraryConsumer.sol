@@ -1,60 +1,77 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./MathLibrary.sol";
-import "./UtilityLibraries.sol";
+import "./libraries/InternalMathLib.sol";
+import "./libraries/ExternalMathLib.sol";
 
-/// @title LibraryConsumer - A contract that uses multiple libraries
+/// @title LibraryConsumer - A contract that uses both internal and external libraries
 contract LibraryConsumer {
-    using MathLibrary for uint256;
-    using StringLibrary for string;
-    using NumberLibrary for uint256;
-
+    using InternalMathLib for uint256;
+    
     uint256 public result;
-
-    /// @notice Divide two numbers using the library
-    function divide(uint256 a, uint256 b) public returns (uint256) {
-        result = MathLibrary.safeDiv(a, b);
+    
+    // Internal library functions (inlined into contract bytecode)
+    
+    /// @notice Perform division using internal library
+    function internalDivide(uint256 a, uint256 b) public returns (uint256) {
+        result = a.div(b);
         return result;
     }
-
-    /// @notice Subtract two numbers using the library
-    function subtract(uint256 a, uint256 b) public returns (uint256) {
-        result = MathLibrary.safeSub(a, b);
+    
+    /// @notice Perform multiplication using internal library
+    function internalMultiply(uint256 a, uint256 b) public returns (uint256) {
+        result = a.mul(b);
         return result;
     }
-
-    /// @notice Get percentage using the library
-    function getPercentage(
-        uint256 amount,
-        uint256 percentage
-    ) public returns (uint256) {
-        result = MathLibrary.calculatePercentage(amount, percentage);
+    
+    /// @notice Perform subtraction using internal library
+    function internalSubtract(uint256 a, uint256 b) public returns (uint256) {
+        result = a.sub(b);
         return result;
     }
-
-    /// @notice Process text using StringLibrary
-    function processText(
-        string memory text
-    ) public pure returns (string memory) {
-        return StringLibrary.requireNonEmpty(text);
+    
+    /// @notice Check positive value using internal library
+    function internalCheckPositive(uint256 value) public returns (uint256) {
+        result = InternalMathLib.requirePositive(value);
+        return result;
     }
-
-    /// @notice Process number using NumberLibrary
-    function processNumber(uint256 num) public pure returns (uint256) {
-        return NumberLibrary.requireNonZero(num);
+    
+    // External library functions (delegatecall to deployed library)
+    
+    /// @notice Perform division using external library
+    function externalDivide(uint256 a, uint256 b) public returns (uint256) {
+        result = ExternalMathLib.div(a, b);
+        return result;
     }
-
-    /// @notice Complex calculation that may fail at different points
-    function complexCalculation(
-        uint256 a,
-        uint256 b,
-        uint256 c
-    ) public returns (uint256) {
-        uint256 step1 = MathLibrary.safeSub(a, b);
-        uint256 step2 = MathLibrary.safeDiv(step1, c);
-        uint256 step3 = MathLibrary.calculatePercentage(step2, 50);
-        result = step3;
+    
+    /// @notice Perform multiplication using external library
+    function externalMultiply(uint256 a, uint256 b) public returns (uint256) {
+        result = ExternalMathLib.mul(a, b);
+        return result;
+    }
+    
+    /// @notice Perform subtraction using external library
+    function externalSubtract(uint256 a, uint256 b) public returns (uint256) {
+        result = ExternalMathLib.sub(a, b);
+        return result;
+    }
+    
+    /// @notice Check positive value using external library
+    function externalCheckPositive(uint256 value) public returns (uint256) {
+        result = ExternalMathLib.requirePositive(value);
+        return result;
+    }
+    
+    // Mixed usage example
+    
+    /// @notice Complex calculation using both libraries
+    function mixedCalculation(uint256 a, uint256 b, uint256 c) public returns (uint256) {
+        // First use internal library
+        uint256 step1 = a.sub(b);
+        // Then use external library
+        uint256 step2 = ExternalMathLib.div(step1, c);
+        // Back to internal
+        result = step2.mul(10);
         return result;
     }
 }

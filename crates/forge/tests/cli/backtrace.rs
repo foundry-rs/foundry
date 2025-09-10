@@ -266,64 +266,107 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 forgetest!(test_library_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
-    
-    prj.add_source("MathLibrary.sol", include_str!("../fixtures/backtraces/MathLibrary.sol"));
-    prj.add_source("UtilityLibraries.sol", include_str!("../fixtures/backtraces/UtilityLibraries.sol"));
-    prj.add_source("LibraryConsumer.sol", include_str!("../fixtures/backtraces/LibraryConsumer.sol"));
-    
-    prj.add_test("LibraryBacktrace.t.sol", include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"));
-    
-    let output = cmd.args(["test", "-vvv"]).assert_failure();
-    
+
+    // Add library source files
+    prj.add_source(
+        "libraries/InternalMathLib.sol",
+        include_str!("../fixtures/backtraces/libraries/InternalMathLib.sol"),
+    );
+    prj.add_source(
+        "libraries/ExternalMathLib.sol",
+        include_str!("../fixtures/backtraces/libraries/ExternalMathLib.sol"),
+    );
+    prj.add_source(
+        "LibraryConsumer.sol",
+        include_str!("../fixtures/backtraces/LibraryConsumer.sol"),
+    );
+
+    // Add test file
+    prj.add_test(
+        "LibraryBacktrace.t.sol",
+        include_str!("../fixtures/backtraces/LibraryBacktrace.t.sol"),
+    );
+
+    // Add foundry.toml configuration for linked library
+    let config = foundry_config::Config {
+        libraries: vec!["src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234567890123456789012345678901234567890".to_string()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    let output =
+        cmd.args(["test", "-vvv", "--match-contract", "LibraryBacktraceTest"]).assert_failure();
+
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-...
-Ran 6 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
-[FAIL: DivisionByZero()] testComplexCalculationFailure() ([GAS])
+Compiler run successful!
+
+Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
+[FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at MathLibrary (src/MathLibrary.sol:11:68)
-  at LibraryConsumer.complexCalculation (src/LibraryConsumer.sol:55:76)
-  at LibraryBacktraceTest.testComplexCalculationFailure (test/LibraryBacktrace.t.sol:42:80)
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
+  at LibraryConsumer.externalDivide (src/LibraryConsumer.sol:43:95)
+  at LibraryBacktraceTest.testExternalDivisionByZero (test/LibraryBacktrace.t.sol:49:60)
 
-[FAIL: EmptyString()] testEmptyStringReverts() ([GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11)] testExternalOverflow() ([GAS])
 ...
 Backtrace:
-  at StringLibrary (src/UtilityLibraries.sol:8:6)
-  at LibraryConsumer.processText (src/LibraryConsumer.sol:40:60)
-  at LibraryBacktraceTest.testEmptyStringReverts (test/LibraryBacktrace.t.sol:31:56)
+  at ExternalMathLib.mul
+  at LibraryConsumer.externalMultiply (src/LibraryConsumer.sol:49:97)
+  at LibraryBacktraceTest.testExternalOverflow (test/LibraryBacktrace.t.sol:59:54)
 
-[FAIL: DivisionByZero()] testLibraryDivisionByZero() ([GAS])
+[FAIL: ExternalMathLib: value must be positive] testExternalRequire() ([GAS])
 ...
 Backtrace:
-  at MathLibrary (src/MathLibrary.sol:11:68)
-  at LibraryConsumer.divide (src/LibraryConsumer.sol:17:87)
-  at LibraryBacktraceTest.testLibraryDivisionByZero (test/LibraryBacktrace.t.sol:16:59)
+  at ExternalMathLib.requirePositive (src/libraries/ExternalMathLib.sol:32:87)
+  at LibraryConsumer.externalCheckPositive (src/LibraryConsumer.sol:61:95)
+  at LibraryBacktraceTest.testExternalRequire (test/LibraryBacktrace.t.sol:64:53)
 
-[FAIL: InvalidPercentage()] testLibraryInvalidPercentage() ([GAS])
+[FAIL: Underflow()] testExternalUnderflow() ([GAS])
 ...
 Backtrace:
-  at MathLibrary (src/MathLibrary.sol:23:63)
-  at LibraryConsumer.getPercentage (src/LibraryConsumer.sol:32:51)
-  at LibraryBacktraceTest.testLibraryInvalidPercentage (test/LibraryBacktrace.t.sol:26:62)
+  at ExternalMathLib.sub (src/libraries/ExternalMathLib.sol:25:63)
+  at LibraryConsumer.externalSubtract (src/LibraryConsumer.sol:55:97)
+  at LibraryBacktraceTest.testExternalUnderflow (test/LibraryBacktrace.t.sol:54:55)
 
-[FAIL: Underflow()] testLibraryUnderflow() ([GAS])
+[FAIL: DivisionByZero()] testInternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at MathLibrary (src/MathLibrary.sol:17:64)
-  at LibraryConsumer.subtract (src/LibraryConsumer.sol:23:89)
-  at LibraryBacktraceTest.testLibraryUnderflow (test/LibraryBacktrace.t.sol:21:54)
+  at InternalMathLib (src/libraries/InternalMathLib.sol:11:48)
+  at LibraryConsumer.internalDivide (src/LibraryConsumer.sol:17:95)
+  at LibraryBacktraceTest.testInternalDivisionByZero (test/LibraryBacktrace.t.sol:27:60)
 
-[FAIL: InvalidNumber()] testZeroNumberReverts() ([GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11)] testInternalOverflow() ([GAS])
 ...
 Backtrace:
-  at NumberLibrary (src/UtilityLibraries.sol:27:6)
-  at LibraryConsumer.processNumber (src/LibraryConsumer.sol:45:88)
-  at LibraryBacktraceTest.testZeroNumberReverts (test/LibraryBacktrace.t.sol:36:55)
+  at LibraryConsumer.internalMultiply
+  at LibraryBacktraceTest.testInternalOverflow (test/LibraryBacktrace.t.sol:37:54)
 
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+[FAIL: InternalMathLib: value must be positive] testInternalRequire() ([GAS])
+Traces:
+...
+Backtrace:
+  at InternalMathLib (src/libraries/InternalMathLib.sol:32:87)
+  at LibraryConsumer.internalCheckPositive (src/LibraryConsumer.sol:35:95)
+  at LibraryBacktraceTest.testInternalRequire (test/LibraryBacktrace.t.sol:42:53)
+
+[FAIL: Underflow()] testInternalUnderflow() ([GAS])
+...
+Backtrace:
+  at InternalMathLib (src/libraries/InternalMathLib.sol:25:63)
+  at LibraryConsumer.internalSubtract (src/LibraryConsumer.sol:29:97)
+  at LibraryBacktraceTest.testInternalUnderflow (test/LibraryBacktrace.t.sol:32:55)
+
+[FAIL: DivisionByZero()] testMixedLibraryFailure() ([GAS])
+...
+Backtrace:
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
+  at LibraryConsumer.mixedCalculation (src/LibraryConsumer.sol:72:62)
+  at LibraryBacktraceTest.testMixedLibraryFailure (test/LibraryBacktrace.t.sol:72:105)
+
+Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 });

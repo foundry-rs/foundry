@@ -1,9 +1,44 @@
 //! Source map decoding and PC mapping utilities.
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use foundry_compilers::artifacts::{ast::Ast, sourcemap::SourceMap};
 use foundry_evm_core::ic::IcPcMap;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
+
+/// Information about a library used in a contract
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct LibraryInfo {
+    /// Path to the library source file
+    pub path: PathBuf,
+    /// Name of the library
+    pub name: String,
+    /// Byte range in the source file (for internal libraries with multiple in one file)
+    pub byte_range: Option<(usize, usize)>,
+    /// Address where the library is deployed (for linked/external libraries)
+    pub address: Option<Address>,
+}
+
+impl LibraryInfo {
+    /// Creates a new internal library info
+    pub fn internal(path: PathBuf, name: String, byte_range: Option<(usize, usize)>) -> Self {
+        Self { path, name, byte_range, address: None }
+    }
+
+    /// Creates a new linked/external library info
+    pub fn linked(path: PathBuf, name: String, address: Address) -> Self {
+        Self { path, name, byte_range: None, address: Some(address) }
+    }
+
+    /// Checks if this is a linked library
+    pub fn is_linked(&self) -> bool {
+        self.address.is_some()
+    }
+
+    /// Checks if the source location matches this library's path
+    pub fn matches_path(&self, source_path: &PathBuf) -> bool {
+        self.path == *source_path
+    }
+}
 
 /// Source data for a single artifact/contract.
 /// Contains all the data needed to generate backtraces for a contract.
@@ -17,10 +52,8 @@ pub struct SourceData {
     pub bytecode: Bytes,
     /// AST of the contract
     pub ast: Option<Arc<Ast>>,
-    /// Library sources: (source_path, library_name, byte_range) tuples
-    /// e.g., ("src/UtilityLibraries.sol", "StringUtils", Some((100, 500)))
-    /// The byte range is (start, end) in the source file
-    pub library_sources: HashSet<(PathBuf, String, Option<(usize, usize)>)>,
+    /// Library information for both internal and linked libraries
+    pub library_sources: HashSet<LibraryInfo>,
 }
 
 /// Maps program counters to source locations.

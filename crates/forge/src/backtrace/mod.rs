@@ -198,21 +198,21 @@ pub fn extract_backtrace(
         let contract_address = trace.address;
         let mut frame = BacktraceFrame::new(contract_address);
 
-        // Try to get source location from PC mapper
+        // Try to get source location from PC mapper for any contract (regular or linked library)
         if let Some(source_location) = trace.steps.last().and_then(|last_step| {
             pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
         }) {
-            // Check if this source location is in a library file
-            let is_library_file = source_data
+            // Check if this source location is in an internal library file
+            let is_internal_library = source_data
                 .get(&contract_address)
                 .map(|data| {
                     data.library_sources
                         .iter()
-                        .any(|(lib_path, _, _)| source_location.file == *lib_path)
+                        .any(|lib| !lib.is_linked() && lib.matches_path(&source_location.file))
                 })
                 .unwrap_or(false);
 
-            if is_library_file {
+            if is_internal_library {
                 if let Some((library_frame, contract_frame)) = handle_library_frames(
                     &source_location,
                     trace,
@@ -240,7 +240,21 @@ pub fn extract_backtrace(
             if let Some(label) = &decoded.label {
                 frame = frame.with_contract_name(label.clone());
             }
+        }
 
+        // If we don't have a contract name yet, check if this is a linked library
+        if frame.contract_name.is_none()
+            && let Some(lib_info) = source_data.values().find_map(|data| {
+                data.library_sources
+                    .iter()
+                    .find(|lib| lib.address == Some(contract_address) && lib.is_linked())
+            })
+        {
+            frame = frame.with_contract_name(lib_info.name.clone());
+        }
+
+        // Continue with function name from decoded trace
+        if let Some(decoded) = &trace.decoded {
             // Get function name from call_data
             if let Some(call_data) = &decoded.call_data {
                 // Use the signature from decoded call data. Remove args.
@@ -293,10 +307,7 @@ fn handle_library_frames(
                     source_data
                         .get(&contract_address)
                         .map(|data| {
-                            !data
-                                .library_sources
-                                .iter()
-                                .any(|(lib_path, _, _)| loc.file == *lib_path)
+                            !data.library_sources.iter().any(|lib| lib.matches_path(&loc.file))
                         })
                         .unwrap_or(true)
                 })
@@ -318,12 +329,12 @@ fn identify_library_for_location(
     source_location: &source_map::SourceLocation,
     data: &SourceData,
 ) -> Option<String> {
-    // Find libraries matching this source file
+    // Find libraries matching this source file (internal libraries only)
     let libs_in_file = data
         .library_sources
         .iter()
-        .filter(|(lib_path, _, _)| source_location.file == **lib_path)
-        .map(|(_, lib_name, range)| (lib_name.clone(), *range))
+        .filter(|lib| !lib.is_linked() && lib.matches_path(&source_location.file))
+        .map(|lib| (lib.name.clone(), lib.byte_range))
         .collect::<Vec<_>>();
 
     match libs_in_file.len() {
