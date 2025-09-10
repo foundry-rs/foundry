@@ -4,8 +4,9 @@ mod late;
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
 
+use eyre::Result;
 use foundry_compilers::Language;
-use foundry_config::lint::Severity;
+use foundry_config::{DenyLevel, lint::Severity};
 use solar::{
     interface::{
         Session, Span,
@@ -41,7 +42,9 @@ pub trait Linter: Send + Sync {
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
+    ///
+    /// Should return an error based on the configured [`DenyLevel`] and the emitted diagnostics.
+    fn lint(&self, input: &[PathBuf], deny: DenyLevel, compiler: &mut Compiler) -> Result<()>;
 }
 
 pub trait Lint {

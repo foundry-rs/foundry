@@ -7,7 +7,7 @@ use crate::{
 };
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::lint::Severity;
+use foundry_config::{DenyLevel, lint::Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as VisitAST},
@@ -56,6 +56,7 @@ pub struct SolidityLinter<'a> {
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
+    // lint-specific configuration
     mixed_case_exceptions: &'a [String],
 }
 
@@ -246,7 +247,12 @@ impl<'a> Linter for SolidityLinter<'a> {
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
     }
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) {
+    fn lint(
+        &self,
+        input: &[PathBuf],
+        deny: DenyLevel,
+        compiler: &mut Compiler,
+    ) -> eyre::Result<()> {
         compiler.enter_mut(|compiler| {
             let gcx = compiler.gcx();
 
@@ -268,6 +274,32 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
             });
         });
+
+        // Handle diagnostics and fail if necessary.
+        const MSG: &str = "aborting due to ";
+        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+            // Deny warnings.
+            (DenyLevel::Warnings, w, n) if w > 0 => {
+                if n > 0 {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
+                } else {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s)\n"))
+                }
+            }
+
+            // Deny any diagnostic.
+            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
+                (w, n) if w > 0 && n > 0 => {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
+                }
+                (w, 0) => Err(eyre::eyre!("{MSG}{w} linter warning(s)\n")),
+                (0, n) => Err(eyre::eyre!("{MSG}{n} linter note(s)\n")),
+                _ => unreachable!(),
+            },
+
+            // Otherwise, succeed.
+            _ => Ok(()),
+        }
     }
 }
 

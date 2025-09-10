@@ -107,7 +107,11 @@ etherscan_api_key = "YOURETHERSCANAPIKEY"
 # additional warnings can be added using their numeric error code: ["license", 1337]
 ignored_error_codes = ["license", "code-size"]
 ignored_warnings_from = ["path_to_ignore"]
-deny_warnings = false
+# Deny compiler warnings and/or notes with:
+# - "never": default behavior, no denial
+# - "warnings": warnings treated as errors
+# - "notes": notes and warnings treated as notes
+deny = "never"
 match_test = "Foo"
 no_match_test = "Bar"
 match_contract = "Foo"

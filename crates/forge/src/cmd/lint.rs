@@ -95,10 +95,7 @@ impl LintArgs {
         };
 
         // Override default severity config with user-defined severity
-        let severity = match self.severity {
-            Some(target) => target,
-            None => config.lint.severity.clone(),
-        };
+        let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
         if project.compiler.solc.is_none() {
             return Err(eyre!("Linting not supported for this language"));
@@ -120,7 +117,8 @@ impl LintArgs {
             let _ = compiler.lower_asts();
             Ok(())
         })?;
-        linter.lint(&input, &mut compiler);
+
+        linter.lint(&input, config.deny, &mut compiler)?;
 
         Ok(())
     }

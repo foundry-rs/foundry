@@ -1,5 +1,5 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{LintSeverity, LinterConfig};
+use foundry_config::{DenyLevel, LintSeverity, LinterConfig};
 
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -126,7 +126,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -154,7 +154,7 @@ note[mixed-case-function]: function names should use mixedCase
  [FILE]:9:18
   |
 9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+  |                  ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -212,7 +212,7 @@ note[mixed-case-function]: function names should use mixedCase
  [FILE]:9:18
   |
 9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+  |                  ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -240,7 +240,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -269,7 +269,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
   [FILE]:13:26
    |
 13 |         uint256 result = 8 >> localValue;
-   |                          ---------------
+   |                          ^^^^^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
@@ -299,7 +299,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -466,7 +466,7 @@ note[unused-import]: unused imports should be removed
  [FILE]:8:14
   |
 8 |     import { _PascalCaseInfo } from "./ContractWithLints.sol";
-  |              ---------------
+  |              ^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
@@ -486,7 +486,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:24
   |
 6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
+  |                        ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
@@ -494,7 +494,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:24
   |
 6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
+  |                        ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
@@ -507,7 +507,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:24
   |
 6 |         uint256 public CounterB_Fail_Lint;
-  |                        ------------------
+  |                        ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
@@ -567,7 +567,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     cmd.arg("lint").arg("--json").assert_json_stderr(true,
         str![[r#"
             {
-              "$message_type": "diag",
+              "$message_type": "diagnostic",
               "message": "wrap modifier logic to reduce code size",
               "code": {
                 "code": "unwrapped-modifier-logic",
@@ -612,10 +612,82 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
                   "rendered": null
                 }
               ],
-              "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |                      ---------\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n"
+              "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |                      ^^^^^^^^^\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n          \n"
             }
 "#]],
 );
+});
+
+forgetest!(can_fail_on_lints, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT);
+
+    // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
+
+    cmd.forge_fuse().arg("lint").assert_success(); // DenyLevel::Never (default)
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Warnings;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Notes;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny warnings"]).assert_failure();
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
+
+    // usage of `--deny-warnings` flag works, but emits a warning
+    cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure().stderr_eq(str![[r#"
+Warning: Key `--deny-warnings` is being deprecated in favor of `--deny warnings`. It will be removed in future versions.
+...
+
+"#]]);
+
+    // usage of `deny_warnings` config works, but emits a warning
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.default]
+deny_warnings = true
+"#,
+    );
+    cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[r#"
+Warning: Key `deny_warnings` is being deprecated in favor of `deny`. It will be removed in future versions.
+...
+
+"#]]);
+
+    // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
+
+    prj.update_config(|config| {
+        config.deny_warnings = false;
+        config.deny = DenyLevel::Never;
+        config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Warnings;
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Notes;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });
 
 // ------------------------------------------------------------------------------------------------
