@@ -790,6 +790,7 @@ impl<'ast> State<'_, 'ast> {
             pre_init_size += self.estimate_size(ident.span) + 1;
         }
         if let Some(init) = initializer {
+            let cache = self.var_init;
             self.var_init = true;
             self.print_word(" =");
             if override_.is_some() {
@@ -860,7 +861,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(init);
                 self.end();
             }
-            self.var_init = false;
+            self.var_init = cache;
         } else {
             self.end();
         }
@@ -1118,6 +1119,9 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
+                let cache = self.var_init;
+                self.var_init = true;
+
                 let space_left = self.space_left();
                 let lhs_size = self.estimate_size(lhs.span);
                 let rhs_size = self.estimate_size(rhs.span);
@@ -1157,6 +1161,7 @@ impl<'ast> State<'_, 'ast> {
                     self.print_expr(rhs);
                 }
                 self.end();
+                self.var_init = cache;
             }
 
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
@@ -1167,6 +1172,8 @@ impl<'ast> State<'_, 'ast> {
                 if !is_child && is_parent {
                     // top-level expression of the chain -> set cache
                     self.binary_expr = true;
+                    self.s.ibox(self.ind);
+                } else if !is_parent && is_comp_op(bin_op.kind) {
                     self.s.ibox(self.ind);
                 } else if !is_child || !is_parent {
                     self.ibox(0);
@@ -2397,6 +2404,32 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
 
 fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
+}
+
+fn is_comp_op(op_kind: ast::BinOpKind) -> bool {
+    match op_kind {
+        ast::BinOpKind::BitOr
+        | ast::BinOpKind::BitXor
+        | ast::BinOpKind::BitAnd
+        | ast::BinOpKind::Shl
+        | ast::BinOpKind::Shr
+        | ast::BinOpKind::Sar
+        | ast::BinOpKind::Add
+        | ast::BinOpKind::Sub
+        | ast::BinOpKind::Mul
+        | ast::BinOpKind::Div
+        | ast::BinOpKind::Rem
+        | ast::BinOpKind::Pow => false,
+
+        ast::BinOpKind::Lt
+        | ast::BinOpKind::Le
+        | ast::BinOpKind::Gt
+        | ast::BinOpKind::Ge
+        | ast::BinOpKind::Eq
+        | ast::BinOpKind::Ne
+        | ast::BinOpKind::Or
+        | ast::BinOpKind::And => true,
+    }
 }
 
 fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
