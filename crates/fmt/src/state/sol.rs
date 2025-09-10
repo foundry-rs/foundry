@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::pp::SIZE_INFINITY;
+use crate::{pp::SIZE_INFINITY, state::common::LitExt};
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::parse::{
@@ -120,7 +120,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         let add_zero_break = if skip_ws {
-            self.print_comments(span.lo(), CommentConfig::skip_leading_ws())
+            self.print_comments(span.lo(), CommentConfig::skip_leading_ws(false))
         } else {
             self.print_comments(span.lo(), CommentConfig::default())
         }
@@ -315,7 +315,7 @@ impl<'ast> State<'_, 'ast> {
             }
             let body_lo = body[0].span.lo();
             if self.peek_comment_before(body_lo).is_some() {
-                self.print_comments(body_lo, CommentConfig::skip_leading_ws());
+                self.print_comments(body_lo, CommentConfig::skip_leading_ws(true));
             }
 
             let mut is_first = true;
@@ -332,7 +332,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_ws())
+            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
                 && self.config.contract_new_lines
                 && !cmnt.is_blank()
             {
@@ -544,6 +544,10 @@ impl<'ast> State<'_, 'ast> {
 
         // Print fn body
         if let Some(body) = body {
+            // update cache
+            let cache = self.fn_body;
+            self.fn_body = true;
+
             if self.handle_span(self.cursor.span(body_span.lo()), false) {
                 // Print spacing if necessary. Updates cursor.
             } else {
@@ -564,6 +568,7 @@ impl<'ast> State<'_, 'ast> {
                     if header.modifiers.is_empty()
                         && header.override_.is_none()
                         && returns.as_ref().is_none_or(|r| r.is_empty())
+                        && (header.visibility().is_none() || body.is_empty())
                     {
                         self.nbsp();
                     } else {
@@ -584,6 +589,9 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word("}");
                 self.cursor.advance_to(body_span.hi(), true);
             }
+
+            // restore cache
+            self.fn_body = cache;
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
@@ -593,6 +601,7 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_word(";");
         }
+        self.fn_body = false;
 
         if let Some(cmnt) = self.peek_trailing_comment(body_span.hi(), None) {
             if cmnt.is_doc {
@@ -724,7 +733,12 @@ impl<'ast> State<'_, 'ast> {
         // have double breaks (which should have double indentation) or not.
         // Alternatively, we could achieve the same behavior with a new box group that supports
         // "continuation" which would only increase indentation if its parent box broke.
-        let init_space_left = self.space_left();
+        let init_space_left = std::cmp::min(
+            self.space_left(),
+            self.config.line_length
+                - if self.contract.is_some() { self.config.tab_width } else { 0 }
+                - if self.fn_body { self.config.tab_width } else { 0 },
+        );
         let mut pre_init_size = self.estimate_size(ty.span);
 
         // Non-elementary types use commasep which has its own padding.
@@ -800,7 +814,15 @@ impl<'ast> State<'_, 'ast> {
                 self.break_offset_if_not_bol(SIZE_INFINITY as usize, self.ind, false);
             }
 
-            if is_binary_expr(&init.kind) {
+            if let ast::ExprKind::Lit(lit, ..) = &init.kind
+                && lit.is_str_concatenation()
+            {
+                self.print_sep(Separator::Nbsp);
+                self.neverbreak();
+                self.s.ibox(self.ind);
+                self.print_expr(init);
+                self.end();
+            } else if is_binary_expr(&init.kind) {
                 if !self.is_bol_or_only_ind() {
                     Separator::Space.print(&mut self.s, &mut self.cursor);
                 }
@@ -809,13 +831,22 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_expr(init);
             } else {
-                self.s.ibox(if pre_init_size + 3 > init_space_left { self.ind } else { 0 });
+                self.s.ibox(if pre_init_size + 4 >= init_space_left { self.ind } else { 0 });
                 if has_complex_successor(&init.kind, true)
                     && !matches!(&init.kind, ast::ExprKind::Member(..))
                 {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
-                        self.print_sep(Separator::Nbsp);
+                        let init_size = self.estimate_size(init.span);
+                        if init_size + pre_init_size + 4 >= init_space_left
+                            && init_size + 1 + self.config.tab_width < init_space_left
+                            && !self.has_comment_between(init.span.lo(), init.span.hi())
+                        {
+                            self.print_sep(Separator::Space);
+                            self.s.offset(self.ind);
+                        } else {
+                            self.print_sep(Separator::Nbsp);
+                        }
                     }
                 } else {
                     if !self.is_bol_or_only_ind() {
@@ -1087,13 +1118,47 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
-                self.s.ibox(if has_complex_successor(&rhs.kind, false) { 0 } else { self.ind });
+                let space_left = self.space_left();
+                let lhs_size = self.estimate_size(lhs.span);
+                let rhs_size = self.estimate_size(rhs.span);
+                // 'lhs' + ' = ' + 'rhs' + ';'
+                let overflows = rhs_size + lhs_size + 4 > space_left;
+                let fits_alone = rhs_size <= space_left - self.config.tab_width;
+
+                self.s.ibox(
+                    if has_complex_successor(&rhs.kind, false)
+                        && !(matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
+                    {
+                        0
+                    } else {
+                        self.ind
+                    },
+                );
                 self.print_expr(lhs);
-                self.word(" = ");
-                self.neverbreak();
-                self.print_expr(rhs);
+                self.word(" =");
+
+                if let ast::ExprKind::Lit(lit, ..) = &rhs.kind
+                    && lit.is_str_concatenation()
+                {
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                    self.s.ibox(self.ind);
+                    self.print_expr(rhs);
+                    self.end();
+                } else if (matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
+                    || (matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
+                        && overflows)
+                {
+                    self.print_sep(Separator::Space);
+                    self.print_expr(rhs);
+                } else {
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                    self.print_expr(rhs);
+                }
                 self.end();
             }
+
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
             | ast::ExprKind::Binary(lhs, bin_op, rhs) => {
                 let is_parent = matches!(lhs.kind, ast::ExprKind::Binary(..))
@@ -1115,7 +1180,14 @@ impl<'ast> State<'_, 'ast> {
                     self.word(bin_op.kind.to_str());
                     self.word("=");
                 } else {
-                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo())) {
+                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo()))
+                        && self
+                            .print_comments(
+                                bin_op.span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            )
+                            .is_none_or(|cmnt| cmnt.is_mixed())
+                    {
                         if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow)
                         {
                             self.space_if_not_bol();
@@ -1129,7 +1201,11 @@ impl<'ast> State<'_, 'ast> {
                 // box expressions with complex successors to accommodate their own indentation
                 if !is_child && is_parent {
                     if has_complex_successor(&rhs.kind, true) {
-                        self.s.ibox(-self.ind);
+                        if matches!(kind, ast::ExprKind::Assign(..)) {
+                            self.s.ibox(-self.ind);
+                        } else {
+                            self.s.ibox(0);
+                        }
                     } else if has_complex_successor(&rhs.kind, false) {
                         self.s.ibox(0);
                     }
@@ -1155,8 +1231,15 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Call(expr, call_args) => {
+                let space_left = self.space_left();
+                let expr_size = self.estimate_size(expr.span);
+                let args_size = self.estimate_size(call_args.span);
+
                 self.print_expr(expr);
-                self.print_call_args(call_args);
+                self.print_call_args(
+                    call_args,
+                    call_args.len() == 1 && args_size + 2 + expr_size > space_left,
+                );
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
@@ -1275,7 +1358,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args);
+                self.print_call_args(args, false);
             }
             ast::ExprKind::Ternary(cond, then, els) => {
                 self.s.cbox(self.ind);
@@ -1365,11 +1448,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(arguments);
+            self.print_call_args(arguments, false);
         }
     }
 
-    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>) {
+    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>, break_single_no_cmnts: bool) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
             return;
@@ -1384,7 +1467,7 @@ impl<'ast> State<'_, 'ast> {
                     |this, e| this.print_expr(e),
                     get_span!(),
                     ListFormat::Compact { cmnts_break: true, with_space: false },
-                    false,
+                    break_single_no_cmnts,
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
@@ -1481,6 +1564,10 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
             ast::StmtKind::DeclMulti(vars, expr) => {
+                let space_left = self.space_left();
+
+                self.s.ibox(self.ind);
+                self.s.ibox(-self.ind);
                 self.print_tuple(
                     vars,
                     span.lo(),
@@ -1494,9 +1581,21 @@ impl<'ast> State<'_, 'ast> {
                     ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
-                self.word(" = ");
-                self.neverbreak();
+                self.end();
+                self.word(" =");
+                if self.estimate_size(expr.span) + self.config.tab_width
+                    <= std::cmp::max(space_left, self.space_left())
+                {
+                    self.print_sep(Separator::Space);
+                    self.ibox(0);
+                } else {
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                    self.s.ibox(-self.ind);
+                }
                 self.print_expr(expr);
+                self.end();
+                self.end();
             }
             ast::StmtKind::Block(stmts) => self.print_block(stmts, span),
             ast::StmtKind::Break => self.word("break"),
@@ -1652,7 +1751,20 @@ impl<'ast> State<'_, 'ast> {
                         );
                         self.nbsp();
                     }
-                    self.print_block(block, *try_span);
+                    if block.is_empty() {
+                        self.print_block(block, *try_span);
+                        self.end();
+                    } else {
+                        self.print_word("{");
+                        self.end();
+                        self.neverbreak();
+                        self.print_trailing_comment_no_break(try_span.lo(), None);
+                        self.print_block_without_braces(block, try_span.hi(), Some(self.ind));
+                        if self.cursor.enabled || self.cursor.pos < try_span.hi() {
+                            self.print_word("}");
+                            self.cursor.advance_to(try_span.hi(), true);
+                        }
+                    }
 
                     let mut skip_ind = false;
                     if self
@@ -1663,7 +1775,6 @@ impl<'ast> State<'_, 'ast> {
                         self.break_offset_if_not_bol(0, self.ind, false);
                         skip_ind = true;
                     };
-                    self.end();
 
                     let mut prev_block_multiline = self.is_multiline_block(block, false);
 
@@ -1701,8 +1812,12 @@ impl<'ast> State<'_, 'ast> {
                         }
                         self.print_word("{");
                         self.end();
+                        self.print_trailing_comment_no_break(catch_span.lo(), None);
                         self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
-                        self.print_word("}");
+                        if self.cursor.enabled || self.cursor.pos < try_span.hi() {
+                            self.print_word("}");
+                            self.cursor.advance_to(catch_span.hi(), true);
+                        }
 
                         prev_block_multiline = current_block_multiline;
                     }
@@ -1756,7 +1871,16 @@ impl<'ast> State<'_, 'ast> {
         // clause: `self.print_if_cond("if", cond, cond.span.hi());`
         if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), true) {
             self.print_if_cond("if", cond, then.span.lo());
-            self.print_sep(Separator::Space);
+            // if empty block without comments, ensure braces are inlined
+            if let ast::StmtKind::Block(block) = &then.kind
+                && block.is_empty()
+                && self.peek_comment_before(then.span.hi()).is_none()
+            {
+                self.neverbreak();
+                self.print_sep(Separator::Nbsp);
+            } else {
+                self.print_sep(Separator::Space);
+            }
         }
         self.end();
         self.print_stmt_as_block(then, then.span.hi(), inline);
@@ -1794,7 +1918,7 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.print_path(path, false);
-        self.print_call_args(args);
+        self.print_call_args(args, false);
     }
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
@@ -1838,9 +1962,15 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
+            // Reset cache for nested (child) stmts within this (parent) block.
+            let inline_parent = self.single_line_stmt.take();
+
             self.print_word("{");
             self.print_block_without_braces(stmts, pos_hi, Some(self.ind));
             self.print_word("}");
+
+            // Restore cache for the rest of stmts within the same height.
+            self.single_line_stmt = inline_parent;
         }
     }
 

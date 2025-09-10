@@ -706,4 +706,11 @@ contract FunctionOverrides is
     {
         a = 1;
     }
+
+    function simple(
+        address _target,
+        bytes memory _payload
+    ) internal {
+        a = 1;
+    }
 }

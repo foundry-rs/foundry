@@ -20,7 +20,6 @@ members = [
     "crates/evm/fuzz/",
     "crates/evm/traces/",
     "crates/fmt/",
-    "crates/fmt-2/",
     "crates/forge/",
     "crates/script-sequence/",
     "crates/macros/",

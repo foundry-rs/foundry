@@ -13,7 +13,7 @@ use solar::parse::{
     interface::{BytePos, SourceMap},
     token,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 mod common;
 mod sol;
@@ -25,7 +25,7 @@ pub(super) struct State<'sess, 'ast> {
 
     sm: &'sess SourceMap,
     pub(super) comments: Comments,
-    config: FormatterConfig,
+    config: Arc<FormatterConfig>,
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
@@ -35,6 +35,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: bool,
     member_expr: bool,
     var_init: bool,
+    fn_body: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -96,7 +97,7 @@ impl Separator {
 impl<'sess> State<'sess, '_> {
     pub(super) fn new(
         sm: &'sess SourceMap,
-        config: FormatterConfig,
+        config: Arc<FormatterConfig>,
         inline_config: InlineConfig<()>,
         comments: Comments,
     ) -> Self {
@@ -121,6 +122,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: false,
             member_expr: false,
             var_init: false,
+            fn_body: false,
         }
     }
 
@@ -320,7 +322,8 @@ impl<'sess> State<'sess, '_> {
             if cmnt.style.is_blank() {
                 match config.skip_blanks {
                     Some(Skip::All) => continue,
-                    Some(Skip::Leading) if is_leading => continue,
+                    Some(Skip::Leading { resettable: true }) if is_leading => continue,
+                    Some(Skip::Leading { resettable: false }) if last_style.is_none() => continue,
                     Some(Skip::Trailing) => {
                         buffered_blank = Some(cmnt);
                         continue;
@@ -647,8 +650,9 @@ impl<'sess> State<'sess, '_> {
 #[derive(Clone, Copy)]
 enum Skip {
     All,
-    Leading,
+    Leading { resettable: bool },
     Trailing,
+    LeadingNoReset,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -670,8 +674,8 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::All), ..Default::default() }
     }
 
-    pub(crate) fn skip_leading_ws() -> Self {
-        Self { skip_blanks: Some(Skip::Leading), ..Default::default() }
+    pub(crate) fn skip_leading_ws(resettable: bool) -> Self {
+        Self { skip_blanks: Some(Skip::Leading { resettable }), ..Default::default() }
     }
 
     pub(crate) fn skip_trailing_ws() -> Self {

@@ -2,7 +2,7 @@
 
 #![allow(dead_code, clippy::disallowed_macros)]
 
-use std::{io::Read, path::PathBuf};
+use std::{io::Read, path::PathBuf, sync::Arc};
 
 use foundry_common::compile::ProjectCompiler;
 
@@ -31,7 +31,7 @@ fn main() {
     };
     let compiler = output.parser_mut().solc_mut().compiler_mut();
 
-    let result = forge_fmt_2::format_source(&src, path.as_deref(), config.fmt, compiler);
+    let result = forge_fmt::format_source(&src, path.as_deref(), Arc::new(config.fmt), compiler);
     if let Some(formatted) = result.ok_ref() {
         print!("{formatted}");
     }

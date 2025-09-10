@@ -177,3 +177,60 @@ function argListRepro(address tokenIn, uint256 amountIn, bool data) {
         data
     );
 }
+
+contract NestedCallsTest is Test {
+    string constant errMsg = "User provided message";
+    uint256 constant maxDecimals = 77;
+
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_nestedCalls() public {
+        vm._expectCheatcodeRevert(
+            bytes(string.concat(errMsg, ": ", left, " != ", right))
+        );
+    }
+
+    function test_assemblyFnComments() public {
+        assembly {
+            function setJPoint(i, x, y, z) {
+                // We will multiply by `0x80` (i.e. `shl(7, i)`) instead
+                // since the memory expansion costs are cheaper than doing `mul(0x60, i)`.
+                // Also help combine the lookup expression for `u1` and `u2` in `jMultShamir`.
+                i := shl(7, i)
+                mstore(i, x)
+                mstore(add(i, returndatasize()), y)
+                mstore(add(i, 0x40), z)
+            }
+        }
+    }
+
+    function test_binOpsInsideNestedBlocks() public {
+        for (uint256 i = 0; i < steps.length; i++) {
+            if (
+                step.opcode == 0x52
+                    && /*MSTORE*/ step.stack[0] == testContract.memPtr() // MSTORE offset
+                    && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
+            ) {
+                mstoreCalled = true;
+            }
+        }
+    }
+
+    function test_longCall() public {
+        uint256 fork =
+            vm.createSelectFork("polygon", bytes32(0xdeadc0ffeedeadbeef));
+
+        vm._expectCheatcodeRevert("short msg doesn't break");
+        vm._expectCheatcodeRevert(
+            "failed parsing as `uint256`: missing hex prefix for hex string"
+        );
+
+        bytes4[] memory targets = new bytes4[](0);
+        targets[0] =
+            FuzzArtifactSelector("TargetArtifactSelectors.t.sol:Hi", selectors);
+
+        ConstructorVictim victim = new ConstructorVictim(
+            sender, "msg.sender", "not set during prank"
+        );
+    }
+}

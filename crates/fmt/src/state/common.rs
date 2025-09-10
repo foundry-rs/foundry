@@ -10,6 +10,17 @@ use solar::parse::{
 };
 use std::{borrow::Cow, fmt::Debug};
 
+pub(crate) trait LitExt<'ast> {
+    fn is_str_concatenation(&self) -> bool;
+}
+
+impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
+    /// Checks if a the input literal is a string literal with multiple parts.
+    fn is_str_concatenation(&self) -> bool {
+        if let ast::LitKind::Str(_, _, parts) = &self.kind { !parts.is_empty() } else { false }
+    }
+}
+
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
     pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
@@ -20,9 +31,8 @@ impl<'ast> State<'_, 'ast> {
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
-                self.cbox(0);
+                self.s.ibox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
-                    self.ibox(0);
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
@@ -34,7 +44,6 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.neverbreak();
                     }
-                    self.end();
                 }
                 self.end();
             }
@@ -77,8 +86,13 @@ impl<'ast> State<'_, 'ast> {
         debug_assert!(source.is_ascii(), "{source:?}");
 
         let config = self.config.number_underscore;
+        let is_dec = !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix));
 
-        let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
+        let (val, exp) = if !is_dec {
+            (source, "")
+        } else {
+            source.split_once(['e', 'E']).unwrap_or((source, ""))
+        };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
         let strip_underscores = !config.is_preserve();
@@ -88,7 +102,7 @@ impl<'ast> State<'_, 'ast> {
 
         // strip any padded 0's
         let mut exp_sign = "";
-        if !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix)) {
+        if is_dec {
             val = val.trim_start_matches('0');
             fract = fract.trim_end_matches('0');
             (exp_sign, exp) =
