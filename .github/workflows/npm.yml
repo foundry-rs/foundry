@@ -60,13 +60,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Create Artifact Temp Directory
+        run: mkdir -p ${{ runner.temp }}/foundry_artifacts
+
       - name: Download Release Assets
         uses: actions/download-artifact@v5
         with:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
           pattern: "foundry_*"
-          path: foundry_artifacts
+          path: ${{ runner.temp }}/foundry_artifacts
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
@@ -148,7 +151,7 @@ jobs:
         working-directory: ./npm
         run: |
           set -euo pipefail
-          PKG_DIR="./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
+          PKG_DIR="${{ runner.temp }}/foundry_artifacts/@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
           BIN="$PKG_DIR/bin/forge"
           if [[ "${{ matrix.os }}" == "win32" ]]; then
             BIN="$PKG_DIR/bin/forge.exe"
@@ -178,12 +181,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          ls -la ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          ARTIFACT_PATH="${{ runner.temp }}/foundry_artifacts/@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
+          ls -la "$ARTIFACT_PATH"
 
-          bun ./scripts/publish.ts ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          bun ./scripts/publish.ts "$ARTIFACT_PATH"
 
           echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-
   publish-meta:
     permissions:
       actions: read
