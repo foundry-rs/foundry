@@ -1,3 +1,4 @@
+import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from '#const.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import * as NodeHttp from 'node:http'
@@ -6,24 +7,21 @@ import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as NodeZlib from 'node:zlib'
-import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from './const.js'
 
 const __dirname = NodePath.dirname(fileURLToPath(import.meta.url))
 const fallbackBinaryPath = NodePath.join(__dirname, BINARY_NAME)
 
 const require = NodeModule.createRequire(import.meta.url)
 
-function isLocalhostHost(hostname: string) {
-  // Accept typical localhost variants by default
-  return (
-    hostname === 'localhost'
-    || hostname === '127.0.0.1'
-    || hostname === '::1'
-  )
-}
+// Accept typical localhost variants by default
+const isLocalhostHost = (hostname: string) => (
+  hostname === 'localhost'
+  || hostname === '127.0.0.1'
+  || hostname === '::1'
+)
 
+// Enforce HTTPS except for localhost, unless explicitly allowed
 function ensureSecureUrl(urlString: string, purpose: string) {
-  // Enforce HTTPS except for localhost, unless explicitly allowed
   try {
     const url = new URL(urlString)
     if (url.protocol === 'http:') {
@@ -36,24 +34,22 @@ function ensureSecureUrl(urlString: string, purpose: string) {
       }
     }
   } catch {
-    // If parsing fails, be conservative and do nothing here; request will likely fail anyway
+    // If parsing fails, the request will fail so no need to do anything here
   }
 }
 
 function makeRequest(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    // Security guard: only allow http for localhost unless explicitly overridden
     ensureSecureUrl(url, 'HTTP request')
 
     const client = url.startsWith('https:') ? NodeHttps : NodeHttp
     client
       .get(url, response => {
         if (response?.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
-          const chunks: Buffer[] = []
+          const chunks: Array<Buffer> = []
+
           response.on('data', chunk => chunks.push(chunk))
-          response.on('end', () => {
-            resolve(Buffer.concat(chunks))
-          })
+          response.on('end', () => resolve(Buffer.concat(chunks)))
         } else if (
           response?.statusCode
           && response.statusCode >= 300
@@ -63,41 +59,41 @@ function makeRequest(url: string): Promise<Buffer> {
           // Follow redirects
           const redirected = (() => {
             try {
-              return new URL(response.headers.location!, url).href
+              return new URL(response.headers.location, url).href
             } catch {
-              return response.headers.location as string
+              return response.headers.location
             }
           })()
           makeRequest(redirected).then(resolve, reject)
         } else {
           reject(
             new Error(
-              `npm responded with status code ${response.statusCode} when downloading the package!`
+              `Package registry responded with status code ${response.statusCode} when downloading the package.`
             )
           )
         }
       })
-      .on('error', error => {
-        reject(error)
-      })
+      .on('error', error => reject(error))
   })
 }
 
-function encodePackageNameForRegistry(name: string) {
-  // Scoped package names should be percent-encoded
-  // e.g. @scope/pkg -> %40scope%2Fpkg
-  return name.startsWith('@') ? encodeURIComponent(name) : name
-}
+/**
+ * Scoped package names should be percent-encoded
+ * e.g. @scope/pkg -> %40scope%2Fpkg
+ */
+const encodePackageNameForRegistry = (name: string) => name.startsWith('@') ? encodeURIComponent(name) : name
 
+/**
+ * Tar archives are organized in 512 byte blocks.
+ * Blocks can either be header blocks or data blocks.
+ * Header blocks contain file names of the archive in the first 100 bytes, terminated by a null byte.
+ * The size of a file is contained in bytes 124-135 of a header block and in octal format.
+ * The following blocks will be data blocks containing the file.
+ */
 function extractFileFromTarball(
   tarballBuffer: Buffer<ArrayBufferLike>,
   filepath: string
 ): Buffer<ArrayBufferLike> {
-  // Tar archives are organized in 512 byte blocks.
-  // Blocks can either be header blocks or data blocks.
-  // Header blocks contain file names of the archive in the first 100 bytes, terminated by a null byte.
-  // The size of a file is contained in bytes 124-135 of a header block and in octal format.
-  // The following blocks will be data blocks containing the file.
   let offset = 0
   while (offset < tarballBuffer.length) {
     const header = tarballBuffer.subarray(offset, offset + 512)
@@ -115,10 +111,10 @@ function extractFileFromTarball(
   throw new Error(`File ${filepath} not found in tarball`)
 }
 
-async function downloadBinaryFromNpm() {
+async function downloadBinaryFromRegistry() {
   const registryUrl = getRegistryUrl().replace(/\/$/, '')
-  // Security guard: only allow http registries for localhost unless explicitly overridden
   ensureSecureUrl(registryUrl, 'registry URL')
+
   const encodedName = encodePackageNameForRegistry(PLATFORM_SPECIFIC_PACKAGE_NAME)
 
   // Determine which version to fetch: prefer the version pinned in optionalDependencies
@@ -154,9 +150,12 @@ async function downloadBinaryFromNpm() {
     colors.reset
   )
 
-  // Download the tarball of the right binary distribution package
-  const tarballDownloadBuffer = await makeRequest(dist.tarball) // Verify integrity: prefer SRI integrity (sha512/sha256/sha1),
-   // fallback to legacy dist.shasum (sha1 hex). Fail if neither unless explicitly allowed.
+  /**
+   * Download the tarball of the right binary distribution package
+   * Verify integrity: prefer SRI integrity (sha512/sha256/sha1),
+   * fallback to legacy dist.shasum (sha1 hex). Fail if neither unless explicitly allowed.
+   */
+  const tarballDownloadBuffer = await makeRequest(dist.tarball)
   ;(() => {
     let verified = false
 
@@ -229,7 +228,7 @@ if (!PLATFORM_SPECIFIC_PACKAGE_NAME)
 // Skip downloading the binary if it was already installed via optionalDependencies
 if (!isPlatformSpecificPackageInstalled()) {
   console.log('Platform specific package not found. Will manually download binary.')
-  downloadBinaryFromNpm()
+  downloadBinaryFromRegistry()
 } else {
   console.log('Platform specific package already installed. Skipping manual download.')
 }
