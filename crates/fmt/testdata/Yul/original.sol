@@ -67,7 +67,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,
@@ -137,5 +137,10 @@ contract Yul {
         }
 
         assembly { a := 1 /* some really really really long comment that should not fit in one line */  }
+
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            // do something
+        }
     }
 }

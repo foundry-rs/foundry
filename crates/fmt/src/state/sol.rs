@@ -1551,7 +1551,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_tuple(
                             flags,
                             span.lo(),
-                            span.hi(),
+                            block.span.lo(),
                             Self::print_ast_str_lit,
                             get_span!(),
                             ListFormat::Consistent { cmnts_break: false, with_space: false },
@@ -1746,7 +1746,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_word("returns ");
                         self.print_parameter_list(
                             args,
-                            *try_span,
+                            args.span.with_hi(block.span.lo()),
                             ListFormat::Compact { cmnts_break: false, with_space: false },
                         );
                         self.nbsp();
@@ -1807,7 +1807,11 @@ impl<'ast> State<'_, 'ast> {
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
-                            self.print_parameter_list(args, *catch_span, ListFormat::Inline);
+                            self.print_parameter_list(
+                                args,
+                                args.span.with_hi(block.span.lo()),
+                                ListFormat::Inline,
+                            );
                             self.nbsp();
                         }
                         self.print_word("{");

@@ -80,4 +80,17 @@ contract TryStatement {
             require(keccak256(err) == keccak256(ERROR_MESSAGE));
         }
     }
+
+    function test_multiComment() {
+        try vm.envString("API_KEY") returns (string memory) {
+            console2.log("Forked Ethereum mainnet");
+            // Fork mainnet at a specific block for consistency
+            vm.createSelectFork(vm.rpcUrl("mainnet"), 21_900_000);
+            // do something
+        } catch {
+            /* sadness */
+            // more sadness
+            revert();
+        }
+    }
 }
