@@ -224,6 +224,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {
+                    // TODO(dani, 0xrusowski): this was loose before
                     self.disable_many(
                         ids,
                         DisabledRange { lo: next_item.lo(), hi: next_item.hi(), loose: false },
@@ -292,36 +293,28 @@ impl<I: ItemIdIterator> InlineConfig<I> {
     }
 }
 
-impl<I> InlineConfig<I>
-where
-    I: ItemIdIterator,
-    I::Item: Clone + Eq + Hash,
-{
+impl InlineConfig<()> {
     /// Checks if a span is disabled (only applicable when inline config doesn't require an id).
-    pub fn is_disabled(&self, span: Span) -> bool
-    where
-        I: ItemIdIterator<Item = ()>,
-    {
+    pub fn is_disabled(&self, span: Span) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(&()) {
             return ranges.iter().any(|range| range.includes(span));
         }
         false
     }
+}
 
+impl<I: ItemIdIterator> InlineConfig<I>
+where
+    I::Item: std::borrow::Borrow<str>,
+{
     /// Checks if a span is disabled for a specific id. Also checks against "all", which disables
     /// all rules.
-    pub fn is_disabled_with_id(&self, span: Span, id: &str) -> bool
-    where
-        I::Item: std::borrow::Borrow<str>,
-    {
-        self.is_disabled_with_id_inner(span, id)
-            || (id != "all" && self.is_disabled_with_id_inner(span, "all"))
+    pub fn is_id_disabled(&self, span: Span, id: &str) -> bool {
+        self.is_id_disabled_inner(span, id)
+            || (id != "all" && self.is_id_disabled_inner(span, "all"))
     }
 
-    fn is_disabled_with_id_inner(&self, span: Span, id: &str) -> bool
-    where
-        I::Item: std::borrow::Borrow<str>,
-    {
+    fn is_id_disabled_inner(&self, span: Span, id: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(id)
             && ranges.iter().any(|range| range.includes(span))
         {

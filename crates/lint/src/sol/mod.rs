@@ -1,11 +1,11 @@
-use crate::{
-    inline_config::{InlineConfig, InlineConfigItem},
-    linter::{
-        EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
-        LinterConfig,
-    },
+use crate::linter::{
+    EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
+    LinterConfig,
 };
-use foundry_common::comments::Comments;
+use foundry_common::comments::{
+    Comments,
+    inline_config::{InlineConfig, InlineConfigItem},
+};
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::prelude::*;
@@ -102,7 +102,7 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    fn config(&self, inline: InlineConfig) -> LinterConfig<'_> {
+    fn config(&self, inline: InlineConfig<Vec<String>>) -> LinterConfig<'_> {
         LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
     }
 
@@ -280,7 +280,7 @@ fn parse_inline_config<'ast, 'hir>(
     sess: &Session,
     comments: &Comments,
     source: InlineConfigSource<'ast, 'hir>,
-) -> InlineConfig {
+) -> InlineConfig<Vec<String>> {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
         if let Some(prefix) = comment.prefix() {
