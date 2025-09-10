@@ -1,12 +1,10 @@
 use solar::{
     interface::{BytePos, RelativeBytePos, SourceMap, Span},
-    parse::ast::{self, Item, SourceUnit, visit::Visit as VisitAst},
-    sema::hir::{self, Visit as VisitHir},
+    parse::ast::{self, Visit},
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
     hash::Hash,
-    marker::PhantomData,
     ops::ControlFlow,
 };
 
@@ -150,25 +148,10 @@ impl<I: ItemIdIterator> InlineConfig<I> {
     /// Panics if `items` is not sorted in ascending order of [`Span`]s.
     pub fn from_ast<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem<I>)>,
-        ast: &'ast SourceUnit<'ast>,
+        ast: &'ast ast::SourceUnit<'ast>,
         source_map: &SourceMap,
     ) -> Self {
-        Self::build(items, source_map, |offset| NextItemFinderAst::new(offset).find(ast))
-    }
-
-    /// Build a new inline config with an iterator of inline config items and their locations in a
-    /// source file.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `items` is not sorted in ascending order of [`Span`]s.
-    pub fn from_hir<'hir>(
-        items: impl IntoIterator<Item = (Span, InlineConfigItem<I>)>,
-        hir: &'hir hir::Hir<'hir>,
-        source_id: hir::SourceId,
-        source_map: &SourceMap,
-    ) -> Self {
-        Self::build(items, source_map, |offset| NextItemFinderHir::new(offset, hir).find(source_id))
+        Self::build(items, source_map, |offset| NextItemFinder::new(offset).find(ast))
     }
 
     fn build(
@@ -343,19 +326,18 @@ macro_rules! find_next_item {
 
 /// An AST visitor that finds the first `Item` that starts after a given offset.
 #[derive(Debug)]
-struct NextItemFinderAst<'ast> {
+struct NextItemFinder {
     /// The offset to search after.
     offset: BytePos,
-    _pd: PhantomData<&'ast ()>,
 }
 
-impl<'ast> NextItemFinderAst<'ast> {
+impl NextItemFinder {
     fn new(offset: BytePos) -> Self {
-        Self { offset, _pd: PhantomData }
+        Self { offset }
     }
 
     /// Finds the next AST item or statement which a span that begins after the `offset`.
-    fn find(&mut self, ast: &'ast SourceUnit<'ast>) -> Option<Span> {
+    fn find<'ast>(&mut self, ast: &'ast ast::SourceUnit<'ast>) -> Option<Span> {
         match self.visit_source_unit(ast) {
             ControlFlow::Break(span) => Some(span),
             ControlFlow::Continue(()) => None,
@@ -363,10 +345,10 @@ impl<'ast> NextItemFinderAst<'ast> {
     }
 }
 
-impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
+impl<'ast> ast::Visit<'ast> for NextItemFinder {
     type BreakValue = Span;
 
-    fn visit_item(&mut self, item: &'ast Item<'ast>) -> ControlFlow<Self::BreakValue> {
+    fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
         find_next_item!(self, item, item.span, walk_item)
     }
 
@@ -379,44 +361,6 @@ impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
         stmt: &'ast ast::yul::Stmt<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         find_next_item!(self, stmt, stmt.span, walk_yul_stmt)
-    }
-}
-
-/// A HIR visitor that finds the first `Item` that starts after a given offset.
-#[derive(Debug)]
-struct NextItemFinderHir<'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    /// The offset to search after.
-    offset: BytePos,
-}
-
-impl<'hir> NextItemFinderHir<'hir> {
-    fn new(offset: BytePos, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { offset, hir }
-    }
-
-    /// Finds the next HIR item which a span that begins after the `offset`.
-    fn find(&mut self, id: hir::SourceId) -> Option<Span> {
-        match self.visit_nested_source(id) {
-            ControlFlow::Break(span) => Some(span),
-            ControlFlow::Continue(()) => None,
-        }
-    }
-}
-
-impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
-    type BreakValue = Span;
-
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
-    }
-
-    fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
-        find_next_item!(self, item, item.span(), walk_item)
-    }
-
-    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        find_next_item!(self, stmt, stmt.span, walk_stmt)
     }
 }
 

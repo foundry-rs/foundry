@@ -59,7 +59,7 @@ pub struct LintContext<'s, 'c> {
 }
 
 pub struct LinterConfig<'s> {
-    pub inline: InlineConfig<Vec<String>>,
+    pub inline: &'s InlineConfig<Vec<String>>,
     pub mixed_case_exceptions: &'s [String],
 }
 
