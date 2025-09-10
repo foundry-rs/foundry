@@ -2578,7 +2578,7 @@ gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
 maxFeePerBlobGas     
 maxFeePerGas         
-maxPriorityFeePerGas
+maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
