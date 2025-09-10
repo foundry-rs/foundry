@@ -819,7 +819,9 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.print_sep(Separator::Nbsp);
                 self.neverbreak();
+                self.s.ibox(self.ind);
                 self.print_expr(init);
+                self.end();
             } else if is_binary_expr(&init.kind) {
                 if !self.is_bol_or_only_ind() {
                     Separator::Space.print(&mut self.s, &mut self.cursor);
@@ -1140,16 +1142,20 @@ impl<'ast> State<'_, 'ast> {
                 {
                     self.print_sep(Separator::Nbsp);
                     self.neverbreak();
+                    self.s.ibox(self.ind);
+                    self.print_expr(rhs);
+                    self.end();
                 } else if (matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
                     || (matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
                         && overflows)
                 {
                     self.print_sep(Separator::Space);
+                    self.print_expr(rhs);
                 } else {
                     self.print_sep(Separator::Nbsp);
                     self.neverbreak();
+                    self.print_expr(rhs);
                 }
-                self.print_expr(rhs);
                 self.end();
             }
 

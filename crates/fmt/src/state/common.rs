@@ -15,28 +15,9 @@ pub(crate) trait LitExt<'ast> {
 }
 
 impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
-    /// Checks if a the input literal is a string literal with comma-separated parts.
-    ///
-    /// This heuristic is a strong indicator of string concatenation, such as:
-    /// `string memory s = "a," "b," "c";`
+    /// Checks if a the input literal is a string literal with mulitple parts.
     fn is_str_concatenation(&self) -> bool {
-        if !matches!(self.kind, ast::LitKind::Str(..)) {
-            return false;
-        }
-
-        let mut has_parts = false;
-        let mut iter = self.literals().peekable();
-        while let Some((_span, symbol)) = iter.next() {
-            if iter.peek().is_some() {
-                has_parts = true;
-
-                if !symbol.as_str().contains(',') {
-                    return false;
-                }
-            }
-        }
-
-        has_parts
+        if let ast::LitKind::Str(_, _, parts) = &self.kind { !parts.is_empty() } else { false }
     }
 }
 
@@ -50,7 +31,7 @@ impl<'ast> State<'_, 'ast> {
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
-                self.s.ibox(if lit.is_str_concatenation() { self.ind } else { 0 });
+                self.s.ibox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
