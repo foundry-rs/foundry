@@ -49,7 +49,11 @@ pub struct StorageArgs {
 
     /// The storage slot number. If not provided, it gets the full storage layout.
     #[arg(value_parser = parse_slot)]
-    slot: Option<B256>,
+    base_slot: Option<B256>,
+
+    /// The storage offset from the base slot. If not provided, it is assumed to be zero.
+    #[arg(value_parser = str::parse::<U256>, default_value_t = U256::ZERO)]
+    offset: U256,
 
     /// The known proxy address. If provided, the storage layout is retrieved from this address.
     #[arg(long,value_parser = NameOrAddress::from_str)]
@@ -91,14 +95,22 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let config = self.load_config()?;
 
-        let Self { address, slot, block, build, .. } = self;
+        let Self { address, base_slot, offset, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
         // Slot was provided, perform a simple RPC call
-        if let Some(slot) = slot {
+        if let Some(slot) = base_slot {
             let cast = Cast::new(provider);
-            sh_println!("{}", cast.storage(address, slot, block).await?)?;
+            sh_println!(
+                "{}",
+                cast.storage(
+                    address,
+                    (Into::<U256>::into(slot).saturating_add(offset)).into(),
+                    block
+                )
+                .await?
+            )?;
             return Ok(());
         }
 

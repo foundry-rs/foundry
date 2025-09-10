@@ -492,6 +492,22 @@ impl Executor {
         self.transact_with_env(env)
     }
 
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization last.
+    pub fn transact_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        env.tx.set_signed_authorization(authorization_list);
+        env.tx.tx_type = 4;
+        self.transact_with_env(env)
+    }
+
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.

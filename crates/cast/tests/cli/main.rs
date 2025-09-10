@@ -1907,6 +1907,40 @@ casttest!(storage, |_prj, cmd| {
 0x000000000000000000000000000000000000000000000000000000174876e800
 
 "#]]);
+
+    let decimal_slot_offset_from_total_supply_slot = "0x08";
+    let decimal_slot_offset_from_total_supply_slot_uint = "8";
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
+
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot_uint,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>

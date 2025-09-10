@@ -47,7 +47,7 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
     # Add the foundryup directory to the path and ensure the old PATH variables remain.
     # If the shell is fish, echo fish_add_path instead of export.
     if [[ "$PREF_SHELL" == "fish" ]]; then
-        echo >> "$PROFILE" && echo "fish_add_path -a $FOUNDRY_BIN_DIR" >> "$PROFILE"
+        echo >> "$PROFILE" && echo "fish_add_path -a \"$FOUNDRY_BIN_DIR\"" >> "$PROFILE"
     else
         echo >> "$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> "$PROFILE"
     fi

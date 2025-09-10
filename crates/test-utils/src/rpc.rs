@@ -25,14 +25,14 @@ shuffled_list!(
     HTTP_ARCHIVE_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/rpc",
+        "eu-central-mainnet.rpc.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
     HTTP_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/rpc",
+        "eu-central-mainnet.rpc.ithaca.xyz/rpc",
         "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
@@ -40,14 +40,14 @@ shuffled_list!(
     WS_ARCHIVE_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/ws",
+        "eu-central-mainnet.rpc.ithaca.xyz/ws",
     ],
 );
 shuffled_list!(
     WS_DOMAINS,
     vec![
         //
-        "reth-ethereum.ithaca.xyz/ws",
+        "eu-central-mainnet.rpc.ithaca.xyz/ws",
         "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );

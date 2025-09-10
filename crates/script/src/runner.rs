@@ -299,13 +299,13 @@ impl ScriptRunner {
         authorization_list: Option<Vec<SignedAuthorization>>,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = if let Some(authorization_list) = authorization_list {
+        let mut res = if let Some(authorization_list) = &authorization_list {
             self.executor.call_raw_with_authorization(
                 from,
                 to,
                 calldata.clone(),
                 value,
-                authorization_list,
+                authorization_list.clone(),
             )?
         } else {
             self.executor.call_raw(from, to, calldata.clone(), value)?
@@ -319,7 +319,17 @@ impl ScriptRunner {
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
-            res = self.executor.transact_raw(from, to, calldata, value)?;
+            res = if let Some(authorization_list) = authorization_list {
+                self.executor.transact_raw_with_authorization(
+                    from,
+                    to,
+                    calldata,
+                    value,
+                    authorization_list,
+                )?
+            } else {
+                self.executor.transact_raw(from, to, calldata, value)?
+            }
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, transactions, .. } = res;
