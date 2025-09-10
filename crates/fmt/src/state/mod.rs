@@ -235,18 +235,7 @@ impl State<'_, '_> {
             return;
         }
 
-        // Check if buffer was recently flushed - if so, don't advance cursor
-        // as it may cause picking up already-printed characters
-        if self.s.is_buffer_empty() {
-            match sep {
-                Separator::Nbsp => self.s.nbsp(),
-                Separator::Space => self.s.space(),
-                Separator::Hardbreak => self.s.hardbreak(),
-                Separator::SpaceOrNbsp(breaks) => self.s.space_or_nbsp(breaks),
-            }
-        } else {
-            sep.print(&mut self.s, &mut self.cursor);
-        }
+        sep.print(&mut self.s, &mut self.cursor);
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
