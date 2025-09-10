@@ -463,15 +463,21 @@ impl<'sess> State<'sess, '_> {
                 let Some(mut prefix) = cmnt.prefix() else { return };
                 config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
                 for (pos, line) in cmnt.lines.into_iter().delimited() {
+                    let hb = |this: &mut Self| {
+                        this.hardbreak();
+                        if pos.is_last {
+                            this.cursor.advance(1);
+                        }
+                    };
                     if line.is_empty() {
-                        self.hardbreak();
+                        hb(self);
                         continue;
                     }
                     if pos.is_first {
                         self.ibox(config.offset);
                         if self.config.wrap_comments && cmnt.is_doc && matches!(prefix, "/**") {
                             self.word(prefix);
-                            self.hardbreak();
+                            hb(self);
                             prefix = " * ";
                             continue;
                         }
@@ -485,7 +491,7 @@ impl<'sess> State<'sess, '_> {
                     if pos.is_last {
                         self.end();
                     }
-                    self.print_sep(Separator::Hardbreak);
+                    hb(self);
                 }
             }
             CommentStyle::Trailing => {
