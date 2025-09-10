@@ -60,7 +60,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Create Artifact Temp Directory
+      - name: Create Temporary Directory for Artifacts
         run: mkdir -p ${{ runner.temp }}/foundry_artifacts
 
       - name: Download Release Assets
