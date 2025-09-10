@@ -4,7 +4,7 @@ use super::{
     CommentConfig, State,
     common::{BlockFormat, ListFormat},
 };
-use solar::parse::ast::{Span, yul};
+use solar::parse::ast::{self, Span, yul};
 
 #[rustfmt::skip]
 macro_rules! get_span {
@@ -178,7 +178,13 @@ impl<'ast> State<'_, 'ast> {
         match kind {
             yul::ExprKind::Path(path) => self.print_path(path, false),
             yul::ExprKind::Call(call) => self.print_yul_expr_call(call),
-            yul::ExprKind::Lit(lit) => self.print_lit(lit),
+            yul::ExprKind::Lit(lit) => {
+                if matches!(&lit.kind, ast::LitKind::Address(_)) {
+                    self.print_span_cold(lit.span);
+                } else {
+                    self.print_lit(lit);
+                }
+            }
         }
     }
 
