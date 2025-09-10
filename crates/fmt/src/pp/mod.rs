@@ -146,6 +146,10 @@ impl Printer {
         self.last_token_still_buffered().or(self.last_printed.as_ref())
     }
 
+    pub(crate) fn is_buffer_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     pub(crate) fn last_token_still_buffered(&self) -> Option<&Token> {
         if self.buf.is_empty() {
             return None;
@@ -155,6 +159,9 @@ impl Printer {
 
     /// Be very careful with this!
     pub(crate) fn replace_last_token_still_buffered(&mut self, token: Token) {
+        if self.buf.is_empty() {
+            return;
+        }
         self.buf.last_mut().token = token;
     }
 
@@ -267,6 +274,10 @@ impl Printer {
 
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
+        if self.buf.is_empty() {
+            return;
+        }
+
         match &mut self.buf.last_mut().token {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
