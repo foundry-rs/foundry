@@ -147,11 +147,21 @@ fn format_inner(
 
     // Second pass formatting
     let second_result = format_once(config, compiler, &|sess| {
+        // Need a new name since we can't overwrite the original file.
+        let prev_sf = mk_file(sess)?;
+        let new_name = match &prev_sf.name {
+            solar::interface::source_map::FileName::Real(path) => {
+                path.with_extension("again.sol").into()
+            }
+            solar::interface::source_map::FileName::Stdin => {
+                solar::interface::source_map::FileName::Custom("stdin-again".to_string())
+            }
+            solar::interface::source_map::FileName::Custom(name) => {
+                solar::interface::source_map::FileName::Custom(format!("{name}-again"))
+            }
+        };
         sess.source_map()
-            .new_source_file(
-                solar::parse::interface::source_map::FileName::Custom("format-again".to_string()),
-                first_formatted,
-            )
+            .new_source_file(new_name, first_formatted)
             .map_err(|e| sess.dcx.err(e.to_string()).emit())
     });
 
@@ -200,28 +210,14 @@ fn format_once(
     let res = compiler.enter_mut(|c| -> solar::interface::Result<String> {
         let mut pcx = c.parse();
         pcx.set_resolve_imports(false);
-
         let file = mk_file(c.sess())?;
-        let file_path = file.name.as_real();
-
-        if let Some(path) = file_path {
-            pcx.load_files(&[path.to_path_buf()])?;
-        } else {
-            // Fallback for non-file sources like stdin
-            pcx.add_file(file.to_owned());
-        }
+        pcx.add_file(file.clone());
         pcx.parse();
+        c.dcx().has_errors()?;
 
         let gcx = c.gcx();
-        // Iterate over `gcx.sources` to find the correct `SourceUnit`
-        let source = if let Some(path) = file_path {
-            gcx.sources.iter().find(|su| su.file.name.as_real() == Some(path))
-        } else {
-            gcx.sources.first()
-        }
-        .ok_or_else(|| c.dcx().bug("no source file parsed").emit())?;
-
-        Ok(format_ast(&gcx, source, config))
+        let (_, source) = gcx.get_ast_source(&file.name).unwrap();
+        Ok(format_ast(gcx, source, config).expect("unable to format AST"))
     });
 
     let diagnostics = compiler.sess().dcx.emitted_diagnostics().unwrap();
@@ -236,10 +232,10 @@ fn format_once(
 
 // A parallel-safe "worker" function.
 pub fn format_ast<'ast>(
-    gcx: &Gcx<'ast>,
+    gcx: Gcx<'ast>,
     source: &'ast Source<'ast>,
     config: Arc<FormatterConfig>,
-) -> String {
+) -> Option<String> {
     let comments = Comments::new(
         &source.file,
         gcx.sess.source_map(),
@@ -247,15 +243,12 @@ pub fn format_ast<'ast>(
         config.wrap_comments,
         if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
     );
-    let inline_config = parse_inline_config(
-        gcx.sess,
-        &comments,
-        source.ast.as_ref().expect("unable to get the AST"),
-    );
+    let ast = source.ast.as_ref()?;
+    let inline_config = parse_inline_config(gcx.sess, &comments, ast);
 
     let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
-    state.print_source_unit(source.ast.as_ref().expect("unable to get the AST"));
-    state.s.eof()
+    state.print_source_unit(ast);
+    Some(state.s.eof())
 }
 
 fn parse_inline_config<'ast>(

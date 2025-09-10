@@ -139,22 +139,13 @@ impl FmtArgs {
             solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
         );
 
-        // Disable import resolution, load files, and parse them.
-        if compiler
-            .enter_mut(|c| -> solar::interface::Result<()> {
-                let mut pcx = c.parse();
-                pcx.set_resolve_imports(false);
-                pcx.load_files(paths_to_fmt)?;
-                pcx.parse();
-                Ok(())
-            })
-            .is_err()
-        {
-            eyre::bail!("unable to parse sources");
-        }
+        // Parse, format, and check the diffs.
+        let res = compiler.enter_mut(|c| -> Result<()> {
+            let mut pcx = c.parse();
+            pcx.set_resolve_imports(false);
+            let _ = pcx.par_load_files(paths_to_fmt);
+            pcx.parse();
 
-        // Format and, if necessary, check the diffs.
-        let res = compiler.enter(|c| -> Result<()> {
             let gcx = c.gcx();
             let fmt_config = Arc::new(config.fmt);
             let diffs: Vec<String> = gcx
@@ -164,7 +155,7 @@ impl FmtArgs {
                 .filter_map(|source_unit| {
                     let path = source_unit.file.name.as_real()?;
                     let original = &source_unit.file.src;
-                    let formatted = forge_fmt::format_ast(&gcx, source_unit, fmt_config.clone());
+                    let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
 
                     if original.as_str() == formatted {
                         return None;
@@ -207,8 +198,10 @@ impl FmtArgs {
             }
             Ok(())
         });
-
         res?;
+
+        // TODO(dani): convert solar errors
+
         Ok(())
     }
 
