@@ -2797,16 +2797,16 @@ Simulated On-chain Traces:
   [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
     └─ ← [Return] 481 bytes of code
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
 

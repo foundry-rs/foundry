@@ -1,11 +1,11 @@
-use crate::{
-    inline_config::{InlineConfig, InlineConfigItem},
-    linter::{
-        EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
-        LinterConfig,
-    },
+use crate::linter::{
+    EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
+    LinterConfig,
 };
-use foundry_common::comments::Comments;
+use foundry_common::comments::{
+    Comments,
+    inline_config::{InlineConfig, InlineConfigItem},
+};
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::prelude::*;
@@ -14,7 +14,6 @@ use solar::{
     interface::{
         Session,
         diagnostics::{self, HumanEmitter, JsonEmitter},
-        source_map::{FileName, SourceFile},
     },
     sema::{
         Compiler, Gcx,
@@ -102,7 +101,7 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    fn config(&self, inline: InlineConfig) -> LinterConfig<'_> {
+    fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
         LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
     }
 
@@ -116,8 +115,8 @@ impl<'a> SolidityLinter<'a> {
         &self,
         sess: &'gcx Session,
         ast: &'gcx ast::SourceUnit<'gcx>,
-        file: &SourceFile,
         path: &Path,
+        inline_config: &InlineConfig<Vec<String>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -148,10 +147,6 @@ impl<'a> SolidityLinter<'a> {
                 (passes, ids)
             });
 
-        // Process the inline-config
-        let comments = Comments::new(file, sess.source_map(), false, false, None);
-        let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
-
         // Initialize and run the early lint visitor
         let ctx = LintContext::new(
             sess,
@@ -171,7 +166,8 @@ impl<'a> SolidityLinter<'a> {
         &self,
         gcx: Gcx<'gcx>,
         source_id: hir::SourceId,
-        file: &'gcx SourceFile,
+        path: &Path,
+        inline_config: &InlineConfig<Vec<String>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -180,9 +176,7 @@ impl<'a> SolidityLinter<'a> {
         passes_and_lints.extend(info::create_late_lint_passes());
 
         // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
-        if let FileName::Real(path) = &file.name
-            && !self.path_config.is_test_or_script(path)
-        {
+        if !self.path_config.is_test_or_script(path) {
             passes_and_lints.extend(gas::create_late_lint_passes());
             passes_and_lints.extend(codesize::create_late_lint_passes());
         }
@@ -203,14 +197,6 @@ impl<'a> SolidityLinter<'a> {
 
                 (passes, ids)
             });
-
-        // Process the inline-config
-        let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
-        let inline_config = parse_inline_config(
-            gcx.sess,
-            &comments,
-            InlineConfigSource::Hir((&gcx.hir, source_id)),
-        );
 
         // Run late lint visitor
         let ctx = LintContext::new(
@@ -250,37 +236,33 @@ impl<'a> Linter for SolidityLinter<'a> {
         compiler.enter_mut(|compiler| {
             let gcx = compiler.gcx();
 
-            // Early lints.
-            gcx.sources.raw.par_iter().for_each(|source| {
-                if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_ast(gcx.sess, ast, &source.file, path);
-                }
-            });
+            input.par_iter().for_each(|path| {
+                let path = &self.path_config.root.join(path);
+                let Some((_, ast_source)) = gcx.get_ast_source(path) else {
+                    panic!("AST source not found for {}", path.display());
+                };
+                let Some(ast) = &ast_source.ast else {
+                    panic!("AST missing for {}", path.display());
+                };
+                let file = &ast_source.file;
+                let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
+                let inline_config = parse_inline_config(gcx.sess, &comments, ast);
+                let _ = self.process_source_ast(gcx.sess, ast, path, &inline_config);
 
-            // Late lints.
-            gcx.hir.par_sources_enumerated().for_each(|(source_id, source)| {
-                if let FileName::Real(path) = &source.file.name
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_hir(gcx, source_id, &source.file);
-                }
+                let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
+                    panic!("HIR source not found for {}", path.display());
+                };
+                let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
             });
         });
     }
 }
 
-enum InlineConfigSource<'ast, 'hir> {
-    Ast(&'ast ast::SourceUnit<'ast>),
-    Hir((&'hir hir::Hir<'hir>, hir::SourceId)),
-}
-
-fn parse_inline_config<'ast, 'hir>(
+fn parse_inline_config<'ast>(
     sess: &Session,
     comments: &Comments,
-    source: InlineConfigSource<'ast, 'hir>,
-) -> InlineConfig {
+    ast: &'ast ast::SourceUnit<'ast>,
+) -> InlineConfig<Vec<String>> {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
         if let Some(prefix) = comment.prefix() {
@@ -300,12 +282,7 @@ fn parse_inline_config<'ast, 'hir>(
         }
     });
 
-    match source {
-        InlineConfigSource::Ast(ast) => InlineConfig::from_ast(items, ast, sess.source_map()),
-        InlineConfigSource::Hir((hir, id)) => {
-            InlineConfig::from_hir(items, hir, id, sess.source_map())
-        }
-    }
+    InlineConfig::from_ast(items, ast, sess.source_map())
 }
 
 #[derive(Error, Debug)]
