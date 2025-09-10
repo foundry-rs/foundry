@@ -76,6 +76,7 @@ async fn test_launch_fork() {
 
 /// Smoke test that forking workings with websockets
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "not supported by temp node"]
 async fn test_launch_fork_ws() {
     let rpc_url = foundry_test_utils::rpc::next_ws_archive_rpc_url();
     let runner = TEST_DATA_DEFAULT.forked_runner(&rpc_url).await;
