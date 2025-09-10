@@ -6,7 +6,12 @@ on:
   pull_request:
     branches: ["master"]
   schedule:
-    - cron: "30 12 * * 0"
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   analyze:
@@ -24,12 +29,10 @@ jobs:
         include:
           - language: actions
             build-mode: none
-          - language: rust
-            build-mode: none
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
