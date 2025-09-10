@@ -15,7 +15,7 @@ pub(crate) trait LitExt<'ast> {
 }
 
 impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
-    /// Checks if a the input literal is a string literal with mulitple parts.
+    /// Checks if a the input literal is a string literal with multiple parts.
     fn is_str_concatenation(&self) -> bool {
         if let ast::LitKind::Str(_, _, parts) = &self.kind { !parts.is_empty() } else { false }
     }
