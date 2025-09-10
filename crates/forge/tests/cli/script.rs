@@ -2559,13 +2559,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2574,11 +2574,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -2797,16 +2797,16 @@ Simulated On-chain Traces:
   [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
     └─ ← [Return] 481 bytes of code
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
 
