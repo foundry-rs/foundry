@@ -9,26 +9,272 @@ mod solidity;
 pub mod source_map;
 
 pub use solidity::{PcToSourceMapper, SourceLocation};
-pub use source_map::PcSourceMapper;
-
-use crate::backtrace::source_map::SourceData;
+pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
 
 /// A Solidity stack trace for a test failure.
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct Backtrace {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     pub frames: Vec<BacktraceFrame>,
+    /// Source data mapped by contract address
+    source_data: HashMap<Address, SourceData>,
+    /// PC to source mappers for each contract
+    pc_mappers: HashMap<Address, PcSourceMapper>,
 }
 
 impl Backtrace {
-    /// Creates a new backtrace with the given frames.
-    pub fn new(frames: Vec<BacktraceFrame>) -> Self {
-        Self { frames }
+    /// Creates a new empty backtrace.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Returns true if the backtrace is empty.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
+    }
+
+    /// Builds contract address mapping from decoded traces in the arena.
+    /// Returns a mapping of address to (contract_identifier, bytecode).
+    /// The contract_identifier is just the label from decoded trace - the caller
+    /// needs to match this against known contracts to get the full identifier.
+    pub fn build_contracts_mapping(
+        arena: &SparsedTraceArena,
+    ) -> HashMap<Address, (String, Vec<u8>)> {
+        let mut contracts_by_address = HashMap::default();
+        
+        // Extract decoded contract info from traces
+        for node in arena.arena.nodes() {
+            if let Some(decoded) = &node.trace.decoded {
+                if let Some(label) = &decoded.label {
+                    // Store the label - caller will need to resolve to full identifier
+                    contracts_by_address.insert(
+                        node.trace.address,
+                        (label.clone(), Vec::new()),
+                    );
+                }
+            }
+        }
+        
+        contracts_by_address
+    }
+
+    /// Sets source data from pre-collected artifacts.
+    pub fn with_source_data(
+        &mut self,
+        contracts_by_address: &HashMap<Address, (String, Vec<u8>)>,
+        source_data_by_artifact: &HashMap<String, SourceData>,
+    ) {
+        // Map source data to contract addresses
+        for (addr, (contract_identifier, _)) in contracts_by_address {
+            if let Some(data) = source_data_by_artifact.get(contract_identifier) {
+                self.source_data.insert(*addr, data.clone());
+            }
+        }
+
+        // Add linked libraries to the address mapping
+        let mut linked_lib_addresses: HashMap<String, Address> = HashMap::default();
+        for data in source_data_by_artifact.values() {
+            for lib_info in &data.library_sources {
+                if lib_info.is_linked() {
+                    if let Some(lib_addr) = lib_info.address {
+                        linked_lib_addresses.insert(lib_info.name.clone(), lib_addr);
+                    }
+                }
+            }
+        }
+
+        // Map linked library source data to their deployed addresses
+        for (lib_name, lib_addr) in linked_lib_addresses {
+            // Find matching artifact by checking if identifier ends with the library name
+            for (identifier, data) in source_data_by_artifact {
+                if identifier.ends_with(&format!(":{}", lib_name)) || identifier == &lib_name {
+                    self.source_data.insert(lib_addr, data.clone());
+                    break;
+                }
+            }
+        }
+
+        // Build PC source mappers for each contract
+        for (addr, data) in &self.source_data {
+            self.pc_mappers.insert(
+                *addr,
+                PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
+            );
+        }
+    }
+
+    /// Extracts backtrace frames from a trace arena.
+    pub fn extract_frames(&mut self, arena: &SparsedTraceArena) -> bool {
+        let resolved_arena = &arena.arena;
+
+        if resolved_arena.nodes().is_empty() {
+            return false;
+        }
+
+        // Find the deepest failed node (where the actual revert happened)
+        let mut deepest_failed_idx = None;
+        let mut max_depth = 0;
+
+        for (idx, node) in resolved_arena.nodes().iter().enumerate() {
+            if !node.trace.success && node.trace.depth >= max_depth {
+                max_depth = node.trace.depth;
+                deepest_failed_idx = Some(idx);
+            }
+        }
+
+        let Some(deepest_idx) = deepest_failed_idx else {
+            return false;
+        };
+
+        // Build the call stack by walking from the deepest node back to root
+        let mut frames = Vec::new();
+        let mut current_idx = Some(deepest_idx);
+
+        while let Some(idx) = current_idx {
+            let node = &resolved_arena.nodes()[idx];
+            let trace = &node.trace;
+
+            if let Some(frame) = self.create_frame(trace) {
+                // Check if this is an internal library frame that needs special handling
+                if let Some((library_frame, contract_frame)) =
+                    self.handle_internal_library_frame(&frame, trace)
+                {
+                    frames.push(library_frame);
+                    frames.push(contract_frame);
+                } else {
+                    frames.push(frame);
+                }
+            }
+
+            current_idx = node.parent;
+        }
+
+        self.frames = frames;
+        !self.frames.is_empty()
+    }
+
+    /// Creates a frame from a call trace.
+    fn create_frame(&self, trace: &CallTrace) -> Option<BacktraceFrame> {
+        let contract_address = trace.address;
+        let mut frame = BacktraceFrame::new(contract_address);
+
+        // Try to get source location from PC mapper
+        if let Some(source_location) = trace.steps.last().and_then(|last_step| {
+            self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
+        }) {
+            frame = frame.with_source_location(
+                source_location.file,
+                source_location.line,
+                source_location.column,
+            );
+        }
+
+        // Add contract name from decoded trace or linked library info
+        if let Some(decoded) = &trace.decoded {
+            if let Some(label) = &decoded.label {
+                frame = frame.with_contract_name(label.clone());
+            }
+        }
+
+        // If no contract name yet, check if this is a linked library
+        if frame.contract_name.is_none() {
+            if let Some(lib_info) = self.find_linked_library(contract_address) {
+                frame = frame.with_contract_name(lib_info.name.clone());
+            }
+        }
+
+        // Add function name from decoded trace
+        if let Some(decoded) = &trace.decoded {
+            if let Some(call_data) = &decoded.call_data {
+                let sig = &call_data.signature;
+                let func_name =
+                    if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
+                frame = frame.with_function_name(func_name.to_string());
+            }
+        }
+
+        Some(frame)
+    }
+
+    /// Handles internal library frames that need special treatment.
+    fn handle_internal_library_frame(
+        &self,
+        frame: &BacktraceFrame,
+        trace: &CallTrace,
+    ) -> Option<(BacktraceFrame, BacktraceFrame)> {
+        let contract_address = trace.address;
+
+        // Check if this frame is in an internal library
+        let source_location = frame.file.as_ref()?;
+        let data = self.source_data.get(&contract_address)?;
+
+        let is_internal_library = data
+            .library_sources
+            .iter()
+            .any(|lib| !lib.is_linked() && lib.matches_path(source_location));
+
+        if !is_internal_library {
+            return None;
+        }
+
+        // Identify which library
+        let library_name = identify_library_for_location_with_path(source_location, data)?;
+
+        let library_frame = BacktraceFrame::new(contract_address)
+            .with_contract_name(library_name)
+            .with_source_location(
+                source_location.clone(),
+                frame.line.unwrap_or(0),
+                frame.column.unwrap_or(0),
+            );
+
+        // Find where in the contract the library was called
+        let contract_call_location = trace
+            .steps
+            .iter()
+            .rev()
+            .skip(1) // Skip the last step (already in library)
+            .find_map(|step| {
+                self.pc_mappers.get(&contract_address).and_then(|m| {
+                    m.map_pc(step.pc).filter(|loc| {
+                        // Check if this step is NOT in a library file
+                        !data.library_sources.iter().any(|lib| lib.matches_path(&loc.file))
+                    })
+                })
+            })?;
+
+        let mut contract_frame = BacktraceFrame::new(contract_address).with_source_location(
+            contract_call_location.file,
+            contract_call_location.line,
+            contract_call_location.column,
+        );
+        
+        // Add contract and function names to the contract frame
+        if let Some(contract_name) = &frame.contract_name {
+            contract_frame = contract_frame.with_contract_name(contract_name.clone());
+        }
+        if let Some(function_name) = &frame.function_name {
+            contract_frame = contract_frame.with_function_name(function_name.clone());
+        }
+
+        Some((library_frame, contract_frame))
+    }
+
+    /// Finds a linked library by address.
+    fn find_linked_library(&self, address: Address) -> Option<&LibraryInfo> {
+        self.source_data.values().find_map(|data| {
+            data.library_sources.iter().find(|lib| lib.address == Some(address) && lib.is_linked())
+        })
+    }
+}
+
+impl fmt::Debug for Backtrace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Backtrace")
+            .field("frames", &self.frames)
+            .field("source_data_count", &self.source_data.len())
+            .field("pc_mappers_count", &self.pc_mappers.len())
+            .finish()
     }
 }
 
@@ -153,187 +399,16 @@ impl fmt::Display for BacktraceFrame {
     }
 }
 
-/// Extracts a backtrace from a [`SparsedTraceArena`] using source data.
-pub fn extract_backtrace(
-    arena: &SparsedTraceArena,
-    source_data: &HashMap<Address, SourceData>,
-) -> Option<Backtrace> {
-    let resolved_arena = &arena.arena;
-
-    if resolved_arena.nodes().is_empty() {
-        return None;
-    }
-
-    // Build PC source mappers for each contract
-    let mut pc_mappers = HashMap::default();
-
-    for (addr, data) in source_data {
-        pc_mappers.insert(
-            *addr,
-            PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
-        );
-    }
-
-    // Find the deepest failed node (where the actual revert happened)
-    let mut deepest_failed_idx = None;
-    let mut max_depth = 0;
-
-    for (idx, node) in resolved_arena.nodes().iter().enumerate() {
-        if !node.trace.success && node.trace.depth >= max_depth {
-            max_depth = node.trace.depth;
-            deepest_failed_idx = Some(idx);
-        }
-    }
-
-    let deepest_idx = deepest_failed_idx?;
-
-    // Build the call stack by walking from the deepest node back to root
-    let mut frames = Vec::new();
-    let mut current_idx = Some(deepest_idx);
-
-    while let Some(idx) = current_idx {
-        let node = &resolved_arena.nodes()[idx];
-        let trace = &node.trace;
-
-        let contract_address = trace.address;
-        let mut frame = BacktraceFrame::new(contract_address);
-
-        // Try to get source location from PC mapper for any contract (regular or linked library)
-        if let Some(source_location) = trace.steps.last().and_then(|last_step| {
-            pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
-        }) {
-            // Check if this source location is in an internal library file
-            let is_internal_library = source_data
-                .get(&contract_address)
-                .map(|data| {
-                    data.library_sources
-                        .iter()
-                        .any(|lib| !lib.is_linked() && lib.matches_path(&source_location.file))
-                })
-                .unwrap_or(false);
-
-            if is_internal_library {
-                if let Some((library_frame, contract_frame)) = handle_library_frames(
-                    &source_location,
-                    trace,
-                    contract_address,
-                    source_data,
-                    &pc_mappers,
-                ) {
-                    // Push the library frame
-                    frames.push(library_frame);
-                    // Use the contract frame with the call location
-                    frame = contract_frame;
-                }
-            } else {
-                frame = frame.with_source_location(
-                    source_location.file.clone(),
-                    source_location.line,
-                    source_location.column,
-                );
-            }
-        }
-
-        // Add contract and function names from decoded trace
-        if let Some(decoded) = &trace.decoded {
-            // Get contract name from label
-            if let Some(label) = &decoded.label {
-                frame = frame.with_contract_name(label.clone());
-            }
-        }
-
-        // If we don't have a contract name yet, check if this is a linked library
-        if frame.contract_name.is_none()
-            && let Some(lib_info) = source_data.values().find_map(|data| {
-                data.library_sources
-                    .iter()
-                    .find(|lib| lib.address == Some(contract_address) && lib.is_linked())
-            })
-        {
-            frame = frame.with_contract_name(lib_info.name.clone());
-        }
-
-        // Continue with function name from decoded trace
-        if let Some(decoded) = &trace.decoded {
-            // Get function name from call_data
-            if let Some(call_data) = &decoded.call_data {
-                // Use the signature from decoded call data. Remove args.
-                let sig = &call_data.signature;
-                let func_name =
-                    if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
-                frame = frame.with_function_name(func_name.to_string());
-            }
-        }
-        frames.push(frame);
-
-        // Move to parent node
-        current_idx = node.parent;
-    }
-    if !frames.is_empty() { Some(Backtrace::new(frames)) } else { None }
-}
-
-/// Handles library frame creation - identifies library and finds contract call location.
-/// Returns (library_frame, contract_frame) or None if library can't be identified.
-fn handle_library_frames(
-    source_location: &source_map::SourceLocation,
-    trace: &CallTrace,
-    contract_address: Address,
-    source_data: &HashMap<Address, SourceData>,
-    pc_mappers: &HashMap<Address, PcSourceMapper>,
-) -> Option<(BacktraceFrame, BacktraceFrame)> {
-    // Try to identify which specific library
-    let library_name = source_data
-        .get(&contract_address)
-        .and_then(|data| identify_library_for_location(source_location, data))?;
-
-    let library_frame = BacktraceFrame::new(contract_address)
-        .with_contract_name(library_name)
-        .with_source_location(
-            source_location.file.clone(),
-            source_location.line,
-            source_location.column,
-        );
-
-    // Find where in the contract the library was called
-    let contract_call_location = trace
-        .steps
-        .iter()
-        .rev()
-        .skip(1) // Skip the last step (already in library)
-        .find_map(|step| {
-            pc_mappers.get(&contract_address).and_then(|m| {
-                m.map_pc(step.pc).filter(|loc| {
-                    // Check if this step is NOT in a library file
-                    source_data
-                        .get(&contract_address)
-                        .map(|data| {
-                            !data.library_sources.iter().any(|lib| lib.matches_path(&loc.file))
-                        })
-                        .unwrap_or(true)
-                })
-            })
-        })?;
-
-    let contract_frame = BacktraceFrame::new(contract_address).with_source_location(
-        contract_call_location.file,
-        contract_call_location.line,
-        contract_call_location.column,
-    );
-
-    Some((library_frame, contract_frame))
-}
-
-/// Identifies which library contains a source location when multiple libraries exist in the same
-/// file.
-fn identify_library_for_location(
-    source_location: &source_map::SourceLocation,
+/// Helper function to identify which library contains a source location using a PathBuf.
+fn identify_library_for_location_with_path(
+    source_path: &PathBuf,
     data: &SourceData,
 ) -> Option<String> {
     // Find libraries matching this source file (internal libraries only)
     let libs_in_file = data
         .library_sources
         .iter()
-        .filter(|lib| !lib.is_linked() && lib.matches_path(&source_location.file))
+        .filter(|lib| !lib.is_linked() && lib.matches_path(source_path))
         .map(|lib| (lib.name.clone(), lib.byte_range))
         .collect::<Vec<_>>();
 
@@ -341,49 +416,9 @@ fn identify_library_for_location(
         0 => None,
         1 => Some(libs_in_file[0].0.clone()),
         _ => {
-            // Multiple libraries in the same file - need to calculate byte offset and check ranges
-            // First, try to find the source content to calculate byte offset
-            let byte_offset = data
-                .sources
-                .iter()
-                .find(|(path, _)| source_location.file == *path)
-                .and_then(|(_, content)| calculate_byte_offset(content, source_location));
-
-            // Now find the library that contains this byte offset
-            byte_offset.and_then(|offset| {
-                libs_in_file
-                    .iter()
-                    .find(|(_, range)| {
-                        range.is_some_and(|(start, end)| offset >= start && offset < end)
-                    })
-                    .map(|(name, _)| name.clone())
-            })
+            // For now, just return the first library if multiple exist
+            // A more sophisticated implementation would use byte offsets
+            Some(libs_in_file[0].0.clone())
         }
     }
-}
-
-/// Calculates the byte offset in source content from line and column numbers.
-fn calculate_byte_offset(
-    content: &str,
-    source_location: &source_map::SourceLocation,
-) -> Option<usize> {
-    let mut offset = 0;
-    let mut current_line = 1;
-    let mut current_col = 1;
-
-    for ch in content.chars() {
-        if current_line == source_location.line {
-            if current_col == source_location.column {
-                return Some(offset);
-            }
-            current_col += 1;
-        }
-
-        if ch == '\n' {
-            current_line += 1;
-            current_col = 1;
-        }
-        offset += ch.len_utf8();
-    }
-    None
 }

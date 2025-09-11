@@ -1,10 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
-    backtrace::{
-        extract_backtrace,
-        source_map::{LibraryInfo, SourceData},
-    },
+    backtrace::Backtrace,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -16,7 +13,7 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
-use alloy_primitives::{Address, U256, map::foldhash::HashMap};
+use alloy_primitives::{U256, map::HashMap};
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -25,12 +22,11 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    ContractsByAddress, EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs,
-    fs, shell,
+    EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{Libraries, Node, NodeType, output_selection::OutputSelection},
+    ProjectCompileOutput,
+    artifacts::output_selection::OutputSelection,
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -51,7 +47,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
@@ -507,12 +503,75 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
-        // Collect source information for backtraces (only if verbosity >= 3)
-        let source_data = if verbosity >= 3 {
-            collect_source_data(output, &config.root, config.parsed_libraries()?)
-        } else {
-            Default::default()
-        };
+        // Collect source data for all artifacts (only if verbosity >= 3)
+        let mut source_data_by_artifact: HashMap<String, crate::backtrace::source_map::SourceData> = Default::default();
+        
+        // First, collect all internal libraries globally from all artifacts
+        let mut all_internal_libraries = HashSet::new();
+        if verbosity >= 3 {
+            // Collect all library artifacts
+            for (lib_id, lib_artifact) in output.artifact_ids() {
+                // Check if this is a library artifact
+                if let Some(ast) = &lib_artifact.ast {
+                    for node in &ast.nodes {
+                        if node.node_type == foundry_compilers::artifacts::ast::NodeType::ContractDefinition {
+                            let is_library = node.other.get("contractKind")
+                                .and_then(|v| v.as_str())
+                                .map(|kind| kind == "library")
+                                .unwrap_or(false);
+                            
+                            if is_library {
+                                if let Some(name) = node.other.get("name").and_then(|v| v.as_str()) {
+                                    let byte_range = node.src.length.filter(|&l| l > 0)
+                                        .map(|length| (node.src.start, node.src.start + length));
+                                    
+                                    let lib_path = lib_id.source.strip_prefix(&config.root)
+                                        .unwrap_or(&lib_id.source)
+                                        .to_path_buf();
+                                    
+                                    all_internal_libraries.insert(crate::backtrace::source_map::LibraryInfo::internal(
+                                        lib_path,
+                                        name.to_string(),
+                                        byte_range,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            for (artifact_id, artifact) in output.artifact_ids() {
+                // Find the build_id for this specific artifact
+                let build_id = output
+                    .compiled_artifacts()
+                    .artifact_files()
+                    .chain(output.cached_artifacts().artifact_files())
+                    .find(|af| {
+                        // Match by checking if this artifact file corresponds to the same artifact
+                        std::ptr::eq(&raw const af.artifact, artifact as *const _)
+                    })
+                    .map(|af| af.build_id.clone());
+
+                let Some(build_id) = build_id else {
+                    continue;
+                };
+
+                if let Some(mut data) = crate::backtrace::source_map::collect_source_data(
+                    artifact,
+                    output,
+                    &config,
+                    &build_id,
+                ) {
+                    // Add global libraries to this artifact's source data
+                    data.library_sources.extend(all_internal_libraries.clone());
+                    
+                    // Use the stripped identifier for consistency
+                    let id = artifact_id.with_stripped_file_prefixes(&config.root);
+                    source_data_by_artifact.insert(id.identifier(), data);
+                }
+            }
+        }
 
         let libraries = runner.libraries.clone();
 
@@ -677,65 +736,27 @@ impl TestArgs {
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
                     {
                         // Build contracts mapping from decoded traces
-                        let mut contracts_by_address = ContractsByAddress::new();
-                        for node in arena.arena.nodes() {
-                            if let Some(decoded) = &node.trace.decoded
-                                && let Some(contract_name) = &decoded.label
-                            {
-                                // Find the ABI for this contract
-                                for (artifact_id, contract_data) in known_contracts.iter() {
-                                    if artifact_id.name == *contract_name {
-                                        contracts_by_address.insert(
-                                            node.trace.address,
-                                            (artifact_id.identifier(), contract_data.abi.clone()),
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Convert source data to address-based for backtrace extraction
-                        let mut address_to_source_data = HashMap::default();
-
-                        for (addr, (contract_identifier, _)) in &contracts_by_address {
-                            // Find source data for this contract
-                            for (artifact_id, data) in &source_data {
-                                // Match on full identifier (source:name)
-                                if artifact_id.identifier() == *contract_identifier {
-                                    address_to_source_data.insert(*addr, data.clone());
+                        let mut contracts_by_address = Backtrace::build_contracts_mapping(arena);
+                        
+                        // Resolve labels to full contract identifiers using known_contracts
+                        for (addr, (label, _)) in contracts_by_address.clone() {
+                            // Find the full identifier for this contract label
+                            for (artifact_id, _contract_data) in known_contracts.iter() {
+                                if artifact_id.name == label {
+                                    contracts_by_address.insert(
+                                        addr,
+                                        (artifact_id.identifier(), Vec::new()),
+                                    );
                                     break;
                                 }
                             }
                         }
 
-                        // Also add linked libraries to the address mapping
-                        // First, find all linked libraries and their addresses from library_sources
-                        let mut linked_lib_addresses = HashMap::default();
-                        for data in source_data.values() {
-                            for lib_info in &data.library_sources {
-                                if lib_info.is_linked()
-                                    && let Some(lib_addr) = lib_info.address
-                                {
-                                    linked_lib_addresses.insert(lib_info.name.clone(), lib_addr);
-                                }
-                            }
-                        }
+                        // Create backtrace with pre-collected source data
+                        let mut backtrace = Backtrace::new();
+                        backtrace.with_source_data(&contracts_by_address, &source_data_by_artifact);
 
-                        // Now find source data for each linked library
-                        for (lib_name, lib_addr) in linked_lib_addresses {
-                            // Find the artifact for this library name
-                            for (artifact_id, data) in &source_data {
-                                if artifact_id.name == lib_name {
-                                    address_to_source_data.insert(lib_addr, data.clone());
-                                    break;
-                                }
-                            }
-                        }
-
-                        if let Some(backtrace) = extract_backtrace(arena, &address_to_source_data)
-                            && !backtrace.is_empty()
-                        {
+                        if backtrace.extract_frames(arena) && !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;
                         }
                     }
@@ -1068,248 +1089,6 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
     }
     junit_report.set_time(total_duration);
     junit_report
-}
-
-/// Collects source data such as source maps, deployed bytecode and source content for backtrace
-/// support from the compilation output.
-fn collect_source_data(
-    output: &ProjectCompileOutput,
-    root: &Path,
-    external_libs: Libraries,
-) -> HashMap<ArtifactId, SourceData> {
-    let mut source_data = HashMap::default();
-
-    // Cache for build_id -> sources mapping to avoid reprocessing
-    let mut sources_by_build_id: HashMap<String, Vec<(PathBuf, String)>> = HashMap::default();
-
-    // Use the same approach as artifact_ids() - iterate directly through the artifacts
-    for (id, artifact) in output.artifact_ids() {
-        let id = id.with_stripped_file_prefixes(root);
-
-        // Extract all the data we need for backtraces
-        let source_map = artifact.get_source_map_deployed().and_then(|r| r.ok());
-        let bytecode = artifact
-            .get_deployed_bytecode_bytes()
-            .map(|b| b.into_owned())
-            .filter(|b| !b.is_empty());
-
-        // Find the build_id for this artifact by looking through the artifact files
-        let build_id = output
-            .compiled_artifacts()
-            .artifact_files()
-            .chain(output.cached_artifacts().artifact_files())
-            .find(|af| {
-                // Match by checking if this artifact file corresponds to the same artifact
-                // Check if the artifact pointer is the same
-                std::ptr::eq(&raw const af.artifact, artifact as *const _)
-            })
-            .map(|af| af.build_id.clone());
-
-        let Some(build_id) = build_id else {
-            trace!(artifact = ?id.identifier(), "no build_id found");
-            continue;
-        };
-
-        // Get or compute sources for this build_id
-        let sources = sources_by_build_id.entry(build_id.clone()).or_insert_with(|| {
-            // Get the build context for this build_id
-            if let Some(build_context) =
-                output.builds().find(|(bid, _)| *bid == &build_id).map(|(_, ctx)| ctx)
-            {
-                // Build ordered sources from the build context
-                let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
-
-                for (source_id, source_path) in &build_context.source_id_to_path {
-                    // Read source content from file
-                    let full_path = if source_path.is_absolute() {
-                        source_path.clone()
-                    } else {
-                        root.join(source_path)
-                    };
-
-                    let source_content =
-                        foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
-
-                    // Convert path to relative PathBuf
-                    let path_buf =
-                        source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
-
-                    ordered_sources.push((*source_id, path_buf, source_content));
-                }
-
-                // Sort by source ID to ensure proper ordering (important for source map indices)
-                ordered_sources.sort_by_key(|(id, _, _)| *id);
-
-                // Build the final sources vector in the correct order
-                let mut sources = Vec::new();
-                for (id, path_buf, content) in ordered_sources {
-                    // Ensure we have space for this source ID
-                    let idx = id as usize;
-                    if sources.len() <= idx {
-                        sources.resize(idx + 1, (PathBuf::new(), String::new()));
-                    }
-                    sources[idx] = (path_buf, content);
-                }
-
-                sources
-            } else {
-                Vec::new()
-            }
-        });
-
-        // Get the AST for this artifact
-        let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
-
-        // Extract library source paths and their byte ranges from AST
-        let mut library_sources = HashSet::new();
-
-        // Add internal libraries from AST
-        if let Some(ast) = ast.as_ref() {
-            let mut library_names = HashSet::new();
-            find_using_directives(&ast.nodes, &mut library_names);
-
-            for (lib_id, lib_artifact) in output.artifact_ids() {
-                if !library_names.contains(&lib_id.name) {
-                    continue;
-                }
-
-                // Try contract AST first, then library's own AST
-                let lib_node = find_library_node(&ast.nodes, &lib_id.name).or_else(|| {
-                    lib_artifact
-                        .ast
-                        .as_ref()
-                        .and_then(|lib_ast| find_library_node(&lib_ast.nodes, &lib_id.name))
-                });
-
-                // Extract byte range from node
-                let byte_range = lib_node.and_then(|node| {
-                    let length = node.src.length.filter(|&l| l > 0)?;
-                    Some((node.src.start, node.src.start + length))
-                });
-
-                // Convert to relative path from project root
-                let relative_path = lib_id.source.strip_prefix(root).unwrap_or(&lib_id.source);
-
-                library_sources.insert(LibraryInfo::internal(
-                    relative_path.to_path_buf(),
-                    lib_id.name.clone(),
-                    byte_range,
-                ));
-            }
-        }
-
-        // Add linked libraries from configuration
-        if !external_libs.libs.is_empty() {
-            for (file, libs) in &external_libs.libs {
-                for (lib_name, lib_address_str) in libs {
-                    // Convert file path to relative path
-                    let lib_path = Path::new(file).strip_prefix(root).unwrap_or(Path::new(file));
-                    // Parse the address string to Address
-                    if let Ok(lib_address) = lib_address_str.parse::<Address>() {
-                        library_sources.insert(LibraryInfo::linked(
-                            lib_path.to_path_buf(),
-                            lib_name.clone(),
-                            lib_address,
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Only create SourceData if we have all required components
-        if let (Some(source_map), Some(bytecode)) = (source_map, bytecode)
-            && !sources.is_empty()
-        {
-            source_data.insert(
-                id.clone(),
-                SourceData {
-                    source_map,
-                    sources: sources.clone(),
-                    bytecode,
-                    ast,
-                    library_sources: library_sources.clone(),
-                },
-            );
-        }
-    }
-
-    // Add source data for linked libraries at their deployed addresses
-    if !external_libs.libs.is_empty() {
-        for libs in external_libs.libs.values() {
-            for lib_name in libs.keys() {
-                // Try to find the library artifact by name
-                for (id, artifact) in output.artifact_ids() {
-                    if id.name == *lib_name {
-                        // Get source data for the library
-                        if let Some(source_map) =
-                            artifact.get_source_map_deployed().and_then(|r| r.ok())
-                            && let Some(bytecode) = artifact
-                                .get_deployed_bytecode_bytes()
-                                .map(|b| b.into_owned())
-                                .filter(|b| !b.is_empty())
-                        {
-                            // Find sources for this library (similar to above)
-                            let sources =
-                                sources_by_build_id.values().next().cloned().unwrap_or_default();
-
-                            // Create SourceData for the library at its deployed address
-                            let lib_id = id.with_stripped_file_prefixes(root);
-                            source_data.insert(
-                                lib_id.clone(),
-                                SourceData {
-                                    source_map,
-                                    sources,
-                                    bytecode,
-                                    ast: None,
-                                    library_sources: Default::default(),
-                                },
-                            );
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    source_data
-}
-
-/// Searches for [`NodeTypes::UsingForDirective`] in the AST in order to collect the libraries being
-/// used.
-fn find_using_directives(nodes: &[Node], library_names: &mut HashSet<String>) {
-    for node in nodes {
-        if node.node_type == NodeType::UsingForDirective {
-            // Extract the library name from the directive
-            if let Some(lib_name_value) = node.other.get("libraryName")
-                && let Some(lib_name_obj) = lib_name_value.as_object()
-                && let Some(name_value) = lib_name_obj.get("name")
-                && let serde_json::Value::String(name) = name_value
-            {
-                library_names.insert(name.clone());
-            }
-        }
-        // Recursively check child nodes
-        find_using_directives(&node.nodes, library_names);
-    }
-}
-
-/// Checks if the node is a library definition with the given name
-fn ast_lib_filter(node: &Node, target_name: &str) -> bool {
-    node.node_type == NodeType::ContractDefinition
-        && node.other.get("contractKind").and_then(|v| v.as_str()) == Some("library")
-        && node.other.get("name").and_then(|v| v.as_str()) == Some(target_name)
-}
-
-/// Recursively finds a library node in the AST
-fn find_library_node<'a>(nodes: &'a [Node], target_name: &str) -> Option<&'a Node> {
-    nodes.iter().find_map(|node| {
-        if ast_lib_filter(node, target_name) {
-            Some(node)
-        } else {
-            find_library_node(&node.nodes, target_name)
-        }
-    })
 }
 
 #[cfg(test)]

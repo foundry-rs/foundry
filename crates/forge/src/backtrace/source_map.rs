@@ -1,7 +1,10 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::{Address, Bytes};
-use foundry_compilers::artifacts::{ast::Ast, sourcemap::SourceMap};
+use foundry_compilers::{
+    Artifact,
+    artifacts::{ast::Ast, sourcemap::SourceMap},
+};
 use foundry_evm_core::ic::IcPcMap;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
@@ -183,6 +186,15 @@ impl PcSourceMapper {
     }
 }
 
+impl std::fmt::Debug for PcSourceMapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PcSourceMapper")
+            .field("sources_count", &self.sources.len())
+            .field("ic_pc_map_size", &self.ic_pc_map.inner.len())
+            .finish()
+    }
+}
+
 /// Represents a location in source code.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
@@ -202,3 +214,84 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
     }
     offsets
 }
+
+/// Collects source data for a single artifact.
+pub fn collect_source_data(
+    artifact: &foundry_compilers::artifacts::ConfigurableContractArtifact,
+    output: &foundry_compilers::ProjectCompileOutput,
+    config: &foundry_config::Config,
+    build_id: &str,
+) -> Option<SourceData> {
+    // Get source map and bytecode
+    let source_map = artifact.get_source_map_deployed()?.ok()?;
+    let bytecode = artifact.get_deployed_bytecode_bytes()?.into_owned();
+
+    if bytecode.is_empty() {
+        return None;
+    }
+
+    // Get AST
+    let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
+
+    // Get sources for this build
+    let root = config.root.as_path();
+    let mut sources = Vec::new();
+
+    // Get the build context for this build_id
+    if let Some(build_context) =
+        output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)
+    {
+        // Build ordered sources from the build context
+        let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
+
+        for (source_id, source_path) in &build_context.source_id_to_path {
+            // Read source content from file
+            let full_path = if source_path.is_absolute() {
+                source_path.clone()
+            } else {
+                root.join(source_path)
+            };
+
+            let source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+
+            // Convert path to relative PathBuf
+            let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
+
+            ordered_sources.push((*source_id, path_buf, source_content));
+        }
+
+        // Sort by source ID to ensure proper ordering
+        ordered_sources.sort_by_key(|(id, _, _)| *id);
+
+        // Build the final sources vector in the correct order
+        for (id, path_buf, content) in ordered_sources {
+            let idx = id as usize;
+            if sources.len() <= idx {
+                sources.resize(idx + 1, (PathBuf::new(), String::new()));
+            }
+            sources[idx] = (path_buf, content);
+        }
+    }
+
+    // Initialize empty library sources - will be populated from outside
+    let mut library_sources = HashSet::new();
+
+    // Add linked libraries from config
+    if !config.libraries.is_empty() {
+        let libs = &config.libraries;
+        for lib_spec in libs {
+            // Parse library spec format: "path/to/file.sol:LibraryName:0xAddress"
+            let parts: Vec<&str> = lib_spec.split(':').collect();
+            if parts.len() == 3 {
+                let path = PathBuf::from(parts[0]);
+                let name = parts[1].to_string();
+                if let Ok(address) = parts[2].parse() {
+                    library_sources.insert(LibraryInfo::linked(path, name, address));
+                }
+            }
+        }
+    }
+
+    Some(SourceData { source_map, sources, bytecode: bytecode.into(), ast, library_sources })
+}
+
