@@ -964,6 +964,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b0f1e2f8ec4bff67c7e1867001ec452595daf315cce10c393b7d4274024f878"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,6 +1515,26 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "async-lsp"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c1c85c4bb41706ad1f8338e39fa725a24bc642be41140a38d818c93b9ae91f5"
+dependencies = [
+ "futures",
+ "lsp-types",
+ "pin-project-lite",
+ "rustix 1.0.8",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "waitpid-any",
 ]
 
 [[package]]
@@ -3160,6 +3191,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crop"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fa28d21af9044d49bcfb1eceddeeb9fadc6a17207c6a1bf0d841ef0bd9ad36e"
+dependencies = [
+ "str_indices",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4084,6 +4124,7 @@ dependencies = [
  "similar",
  "similar-asserts",
  "solar-compiler",
+ "solar-lsp",
  "soldeer-commands",
  "strum 0.27.2",
  "svm-rs",
@@ -4148,7 +4189,7 @@ dependencies = [
  "heck",
  "rayon",
  "solar-compiler",
- "solar-interface",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.16",
 ]
 
@@ -6332,6 +6373,19 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lsp-types"
+version = "0.95.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e34d33a8e9b006cd3fc4fe69a921affa097bae4bb65f76271f4644f9a334365"
+dependencies = [
+ "bitflags 1.3.2",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "url",
+]
 
 [[package]]
 name = "mac"
@@ -8831,6 +8885,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_repr"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9140,9 +9205,25 @@ dependencies = [
  "either",
  "num-rational",
  "semver 1.0.26",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-macros 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "strum 0.27.2",
+]
+
+[[package]]
+name = "solar-ast"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "alloy-primitives",
+ "bumpalo",
+ "either",
+ "num-rational",
+ "semver 1.0.26",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
  "strum 0.27.2",
 ]
 
@@ -9153,13 +9234,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f726b10330517ecfa1e66e781ed55fb720ac02e3995453d14f6f90fe53ed8f63"
 dependencies = [
  "alloy-primitives",
- "solar-ast",
- "solar-config",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
- "solar-parse",
- "solar-sema",
+ "solar-ast 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-config 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-macros 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-parse 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-sema 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -9169,6 +9250,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0446799e12df8126895ec1721982c53df0149046e668cc7fc88efe27d1d59292"
 dependencies = [
  "strum 0.27.2",
+]
+
+[[package]]
+name = "solar-config"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "colorchoice",
+ "strum 0.27.2",
+ "vergen",
 ]
 
 [[package]]
@@ -9187,12 +9278,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-data-structures"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "bumpalo",
+ "index_vec",
+ "indexmap 2.11.0",
+ "parking_lot",
+ "rayon",
+ "rustc-hash 2.1.1",
+ "smallvec",
+]
+
+[[package]]
 name = "solar-interface"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00512f582ca82c245e6f3d512db64a3c57f4c6cf164bfb578d3b6fc879a9f531"
 dependencies = [
- "annotate-snippets",
+ "annotate-snippets 0.11.5",
  "anstream",
  "anstyle",
  "const-hex",
@@ -9207,12 +9312,59 @@ dependencies = [
  "scoped-tls",
  "serde",
  "serde_json",
- "solar-config",
- "solar-data-structures",
- "solar-macros",
+ "solar-config 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-macros 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.16",
  "tracing",
  "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "solar-interface"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "annotate-snippets 0.12.3",
+ "anstream",
+ "anstyle",
+ "derive_more",
+ "dunce",
+ "inturn",
+ "itertools 0.10.5",
+ "itoa",
+ "normalize-path",
+ "once_map",
+ "rayon",
+ "scoped-tls",
+ "serde",
+ "serde_json",
+ "solar-config 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "thiserror 1.0.69",
+ "tracing",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "solar-lsp"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "async-lsp",
+ "crop",
+ "lsp-types",
+ "normalize-path",
+ "serde",
+ "serde_json",
+ "solar-config 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-sema 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -9220,6 +9372,16 @@ name = "solar-macros"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73ecd98081d2aa15f8747a484a772e059df5359c2936e8caa8fd18ecc51e4a8e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "solar-macros"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9242,9 +9404,30 @@ dependencies = [
  "num-traits",
  "ruint",
  "smallvec",
- "solar-ast",
- "solar-data-structures",
- "solar-interface",
+ "solar-ast 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
+]
+
+[[package]]
+name = "solar-parse"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "alloy-primitives",
+ "bitflags 2.9.4",
+ "bumpalo",
+ "itertools 0.10.5",
+ "memchr",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "ruint",
+ "smallvec",
+ "solar-ast 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
  "tracing",
 ]
 
@@ -9265,11 +9448,37 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "solar-ast",
- "solar-data-structures",
- "solar-interface",
- "solar-macros",
- "solar-parse",
+ "solar-ast 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-data-structures 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-interface 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-macros 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-parse 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "strum 0.27.2",
+ "thread_local",
+ "tracing",
+]
+
+[[package]]
+name = "solar-sema"
+version = "0.1.6"
+source = "git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding#55f30f8c30fd2f2217e614a23f3c0b0188e22d3a"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "bitflags 2.9.4",
+ "bumpalo",
+ "derive_more",
+ "either",
+ "once_map",
+ "paste",
+ "rayon",
+ "serde",
+ "serde_json",
+ "solar-ast 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-data-structures 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-interface 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-macros 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
+ "solar-parse 0.1.6 (git+https://github.com/paradigmxyz/solar?branch=onbjerg%2Flsp-scaffolding)",
  "strum 0.27.2",
  "thread_local",
  "tracing",
@@ -9363,6 +9572,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "str_indices"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
 
 [[package]]
 name = "str_stack"
@@ -9949,6 +10164,7 @@ checksum = "14307c986784f72ef81c89db7d9e28d6ac26d16213b109ea501696195e6e3ce5"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",
@@ -10343,7 +10559,7 @@ version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b56a6897cc4bb6f8daf1939b0b39cd9645856997f46f4d0b3e3cb7122dfe9251"
 dependencies = [
- "annotate-snippets",
+ "annotate-snippets 0.11.5",
  "anyhow",
  "bstr",
  "cargo-platform",
@@ -10601,7 +10817,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2990d9ea5967266ea0ccf413a4aa5c42a93dbcfda9cb49a97de6931726b12566"
 dependencies = [
  "anyhow",
+ "cargo_metadata",
  "cfg-if",
+ "regex",
  "rustversion",
  "time",
 ]
@@ -10634,6 +10852,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "waitpid-any"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18aa3ce681e189f125c4c1e1388c03285e2fd434ef52c7203084012ac29c5e4a"
+dependencies = [
+ "rustix 1.0.8",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
