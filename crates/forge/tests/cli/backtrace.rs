@@ -334,7 +334,7 @@ Backtrace:
 [FAIL: DivisionByZero()] testInternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at InternalMathLib (src/libraries/InternalMathLib.sol:11:48)
+  at InternalMathLib.internalDivide (src/libraries/InternalMathLib.sol:11:48)
   at LibraryConsumer.internalDivide (src/LibraryConsumer.sol:17:95)
   at LibraryBacktraceTest.testInternalDivisionByZero (test/LibraryBacktrace.t.sol:27:60)
 
@@ -348,14 +348,14 @@ Backtrace:
 Traces:
 ...
 Backtrace:
-  at InternalMathLib (src/libraries/InternalMathLib.sol:32:87)
+  at InternalMathLib.internalCheckPositive (src/libraries/InternalMathLib.sol:32:87)
   at LibraryConsumer.internalCheckPositive (src/LibraryConsumer.sol:35:95)
   at LibraryBacktraceTest.testInternalRequire (test/LibraryBacktrace.t.sol:42:53)
 
 [FAIL: Underflow()] testInternalUnderflow() ([GAS])
 ...
 Backtrace:
-  at InternalMathLib (src/libraries/InternalMathLib.sol:25:63)
+  at InternalMathLib.internalSubtract (src/libraries/InternalMathLib.sol:25:63)
   at LibraryConsumer.internalSubtract (src/LibraryConsumer.sol:29:97)
   at LibraryBacktraceTest.testInternalUnderflow (test/LibraryBacktrace.t.sol:32:55)
 

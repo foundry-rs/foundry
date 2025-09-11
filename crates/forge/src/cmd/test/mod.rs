@@ -503,13 +503,11 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
-        // Collect source data for all artifacts (only if verbosity >= 3)
-        let mut source_data_by_artifact: HashMap<String, crate::backtrace::source_map::SourceData> =
-            Default::default();
+        // Closure to collect source data
+        let collect_source_data = || {
+            let mut source_data = HashMap::default();
+            let mut library_sources = alloy_primitives::map::HashSet::default();
 
-        // First, collect all libraries globally from all artifacts (both internal and linked)
-        let mut all_library_sources = alloy_primitives::map::HashSet::default();
-        if verbosity >= 3 {
             // Collect linked libraries from config
             for lib_mapping in &config.libraries {
                 // Parse library mappings like
@@ -524,13 +522,11 @@ impl TestArgs {
                             .strip_prefix(&config.root)
                             .unwrap_or(std::path::Path::new(path_str))
                             .to_path_buf();
-                        all_library_sources.insert(
-                            crate::backtrace::source_map::LibraryInfo::linked(
-                                lib_path,
-                                lib_name.to_string(),
-                                addr,
-                            ),
-                        );
+                        library_sources.insert(crate::backtrace::source_map::LibraryInfo::linked(
+                            lib_path,
+                            lib_name.to_string(),
+                            addr,
+                        ));
                     }
                 }
             }
@@ -565,7 +561,7 @@ impl TestArgs {
                                     .unwrap_or(&lib_id.source)
                                     .to_path_buf();
 
-                                all_library_sources.insert(
+                                library_sources.insert(
                                     crate::backtrace::source_map::LibraryInfo::internal(
                                         lib_path,
                                         name.to_string(),
@@ -599,10 +595,12 @@ impl TestArgs {
                 ) {
                     // Use the stripped identifier for consistency
                     let id = artifact_id.with_stripped_file_prefixes(&config.root);
-                    source_data_by_artifact.insert(id.identifier(), data);
+                    source_data.insert(id.identifier(), data);
                 }
             }
-        }
+
+            (source_data, library_sources)
+        };
 
         let libraries = runner.libraries.clone();
 
@@ -762,6 +760,10 @@ impl TestArgs {
                     && result.status == TestStatus::Failure
                     && !result.traces.is_empty()
                 {
+                    // Lazily collect source data on first failure
+
+                    let (sources, libs) = collect_source_data();
+
                     // Find the execution trace (the actual test, not setup)
                     if let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
@@ -782,12 +784,8 @@ impl TestArgs {
                         }
 
                         // Create backtrace with pre-collected source data and library sources
-                        let mut backtrace = Backtrace::new();
-                        backtrace.with_source_data(
-                            &contracts_by_address,
-                            &source_data_by_artifact,
-                            all_library_sources.clone(),
-                        );
+                        let mut backtrace = Backtrace::default();
+                        backtrace.with_source_data(&contracts_by_address, &sources, libs);
 
                         if backtrace.extract_frames(arena) && !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;

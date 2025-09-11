@@ -28,11 +28,6 @@ pub struct Backtrace {
 }
 
 impl Backtrace {
-    /// Creates a new empty backtrace.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns true if the backtrace is empty.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()

@@ -184,16 +184,6 @@ impl PcSourceMapper {
         Some((line + 1, column + 1))
     }
 }
-
-impl std::fmt::Debug for PcSourceMapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PcSourceMapper")
-            .field("sources_count", &self.sources.len())
-            .field("ic_pc_map_size", &self.ic_pc_map.inner.len())
-            .finish()
-    }
-}
-
 /// Represents a location in source code.
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
