@@ -371,6 +371,66 @@ Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "libraries/MultipleLibraries.sol",
+        include_str!("../fixtures/backtraces/libraries/MultipleLibraries.sol"),
+    );
+    prj.add_source(
+        "MultipleLibraryConsumer.sol",
+        include_str!("../fixtures/backtraces/MultipleLibraryConsumer.sol"),
+    );
+
+    prj.add_test(
+        "MultipleLibraryBacktrace.t.sol",
+        include_str!("../fixtures/backtraces/MultipleLibraryBacktrace.t.sol"),
+    );
+
+    let output = cmd
+        .args(["test", "-vvv", "--match-contract", "MultipleLibraryBacktraceTest"])
+        .assert_failure();
+
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
+[FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
+...
+Backtrace:
+  at FirstMathLib.useAllLibraries (src/libraries/MultipleLibraries.sol:8:10)
+  at MultipleLibraryConsumer.useAllLibraries (src/MultipleLibraryConsumer.sol:34:114)
+  at MultipleLibraryBacktraceTest.testAllLibrariesFirstFails (test/MultipleLibraryBacktrace.t.sol:31:60)
+
+[FAIL: FirstLibError()] testFirstLibraryError() ([GAS])
+...
+Backtrace:
+  at FirstMathLib.useFirstLib (src/libraries/MultipleLibraries.sol:8:10)
+  at MultipleLibraryConsumer.useFirstLib (src/MultipleLibraryConsumer.sol:16:92)
+  at MultipleLibraryBacktraceTest.testFirstLibraryError (test/MultipleLibraryBacktrace.t.sol:16:55)
+
+[FAIL: SecondLibError()] testSecondLibraryError() ([GAS])
+...
+Backtrace:
+  at SecondMathLib.useSecondLib (src/libraries/MultipleLibraries.sol:24:10)
+  at MultipleLibraryConsumer.useSecondLib (src/MultipleLibraryConsumer.sol:22:93)
+  at MultipleLibraryBacktraceTest.testSecondLibraryError (test/MultipleLibraryBacktrace.t.sol:21:56)
+
+[FAIL: ThirdLibError()] testThirdLibraryError() ([GAS])
+...
+Backtrace:
+  at ThirdMathLib.useThirdLib (src/libraries/MultipleLibraries.sol:40:10)
+  at MultipleLibraryConsumer.useThirdLib (src/MultipleLibraryConsumer.sol:28:92)
+  at MultipleLibraryBacktraceTest.testThirdLibraryError (test/MultipleLibraryBacktrace.t.sol:26:55)
+
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

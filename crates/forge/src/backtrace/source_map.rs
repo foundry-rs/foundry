@@ -6,7 +6,7 @@ use foundry_compilers::{
     artifacts::{ast::Ast, sourcemap::SourceMap},
 };
 use foundry_evm_core::ic::IcPcMap;
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 /// Information about a library used in a contract
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -55,8 +55,6 @@ pub struct SourceData {
     pub bytecode: Bytes,
     /// AST of the contract
     pub ast: Option<Arc<Ast>>,
-    /// Library information for both internal and linked libraries
-    pub library_sources: HashSet<LibraryInfo>,
 }
 
 /// Maps program counters to source locations.
@@ -149,6 +147,7 @@ impl PcSourceMapper {
             line,
             column,
             length: element.length() as usize,
+            offset,
         })
     }
 
@@ -202,6 +201,9 @@ pub struct SourceLocation {
     pub line: usize,
     pub column: usize,
     pub length: usize,
+    /// Byte offset in the source file
+    /// This specifically useful when one source file contains multiple contracts / libraries.
+    pub offset: usize,
 }
 
 /// Computes line offset positions in source content.
@@ -273,25 +275,5 @@ pub fn collect_source_data(
         }
     }
 
-    // Initialize empty library sources - will be populated from outside
-    let mut library_sources = HashSet::new();
-
-    // Add linked libraries from config
-    if !config.libraries.is_empty() {
-        let libs = &config.libraries;
-        for lib_spec in libs {
-            // Parse library spec format: "path/to/file.sol:LibraryName:0xAddress"
-            let parts: Vec<&str> = lib_spec.split(':').collect();
-            if parts.len() == 3 {
-                let path = PathBuf::from(parts[0]);
-                let name = parts[1].to_string();
-                if let Ok(address) = parts[2].parse() {
-                    library_sources.insert(LibraryInfo::linked(path, name, address));
-                }
-            }
-        }
-    }
-
-    Some(SourceData { source_map, sources, bytecode: bytecode.into(), ast, library_sources })
+    Some(SourceData { source_map, sources, bytecode, ast })
 }
-

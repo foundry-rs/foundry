@@ -45,7 +45,7 @@ use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::PathBuf,
     sync::{Arc, mpsc::channel},
@@ -504,43 +504,80 @@ impl TestArgs {
         let known_contracts = runner.known_contracts.clone();
 
         // Collect source data for all artifacts (only if verbosity >= 3)
-        let mut source_data_by_artifact: HashMap<String, crate::backtrace::source_map::SourceData> = Default::default();
-        
-        // First, collect all internal libraries globally from all artifacts
-        let mut all_internal_libraries = HashSet::new();
+        let mut source_data_by_artifact: HashMap<String, crate::backtrace::source_map::SourceData> =
+            Default::default();
+
+        // First, collect all libraries globally from all artifacts (both internal and linked)
+        let mut all_library_sources = alloy_primitives::map::HashSet::default();
         if verbosity >= 3 {
+            // Collect linked libraries from config
+            for lib_mapping in &config.libraries {
+                // Parse library mappings like
+                // "src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234..."
+                let parts: Vec<&str> = lib_mapping.split(':').collect();
+                if parts.len() == 3 {
+                    let path_str = parts[0];
+                    let lib_name = parts[1];
+                    let addr_str = parts[2];
+                    if let Ok(addr) = addr_str.parse::<alloy_primitives::Address>() {
+                        let lib_path = std::path::Path::new(path_str)
+                            .strip_prefix(&config.root)
+                            .unwrap_or(std::path::Path::new(path_str))
+                            .to_path_buf();
+                        all_library_sources.insert(
+                            crate::backtrace::source_map::LibraryInfo::linked(
+                                lib_path,
+                                lib_name.to_string(),
+                                addr,
+                            ),
+                        );
+                    }
+                }
+            }
+
             // Collect all library artifacts
             for (lib_id, lib_artifact) in output.artifact_ids() {
                 // Check if this is a library artifact
                 if let Some(ast) = &lib_artifact.ast {
                     for node in &ast.nodes {
-                        if node.node_type == foundry_compilers::artifacts::ast::NodeType::ContractDefinition {
-                            let is_library = node.other.get("contractKind")
+                        if node.node_type
+                            == foundry_compilers::artifacts::ast::NodeType::ContractDefinition
+                        {
+                            let is_library = node
+                                .other
+                                .get("contractKind")
                                 .and_then(|v| v.as_str())
                                 .map(|kind| kind == "library")
                                 .unwrap_or(false);
-                            
-                            if is_library {
-                                if let Some(name) = node.other.get("name").and_then(|v| v.as_str()) {
-                                    let byte_range = node.src.length.filter(|&l| l > 0)
-                                        .map(|length| (node.src.start, node.src.start + length));
-                                    
-                                    let lib_path = lib_id.source.strip_prefix(&config.root)
-                                        .unwrap_or(&lib_id.source)
-                                        .to_path_buf();
-                                    
-                                    all_internal_libraries.insert(crate::backtrace::source_map::LibraryInfo::internal(
+
+                            if is_library
+                                && let Some(name) = node.other.get("name").and_then(|v| v.as_str())
+                            {
+                                let byte_range = node
+                                    .src
+                                    .length
+                                    .filter(|&l| l > 0)
+                                    .map(|length| (node.src.start, node.src.start + length));
+
+                                let lib_path = lib_id
+                                    .source
+                                    .strip_prefix(&config.root)
+                                    .unwrap_or(&lib_id.source)
+                                    .to_path_buf();
+
+                                all_library_sources.insert(
+                                    crate::backtrace::source_map::LibraryInfo::internal(
                                         lib_path,
                                         name.to_string(),
                                         byte_range,
-                                    ));
-                                }
+                                    ),
+                                );
                             }
                         }
                     }
                 }
             }
-            
+
             for (artifact_id, artifact) in output.artifact_ids() {
                 // Find the build_id for this specific artifact
                 let build_id = output
@@ -557,15 +594,9 @@ impl TestArgs {
                     continue;
                 };
 
-                if let Some(mut data) = crate::backtrace::source_map::collect_source_data(
-                    artifact,
-                    output,
-                    &config,
-                    &build_id,
+                if let Some(data) = crate::backtrace::source_map::collect_source_data(
+                    artifact, output, &config, &build_id,
                 ) {
-                    // Add global libraries to this artifact's source data
-                    data.library_sources.extend(all_internal_libraries.clone());
-                    
                     // Use the stripped identifier for consistency
                     let id = artifact_id.with_stripped_file_prefixes(&config.root);
                     source_data_by_artifact.insert(id.identifier(), data);
@@ -737,24 +768,26 @@ impl TestArgs {
                     {
                         // Build contracts mapping from decoded traces
                         let mut contracts_by_address = Backtrace::build_contracts_mapping(arena);
-                        
+
                         // Resolve labels to full contract identifiers using known_contracts
                         for (addr, (label, _)) in contracts_by_address.clone() {
                             // Find the full identifier for this contract label
                             for (artifact_id, _contract_data) in known_contracts.iter() {
                                 if artifact_id.name == label {
-                                    contracts_by_address.insert(
-                                        addr,
-                                        (artifact_id.identifier(), Vec::new()),
-                                    );
+                                    contracts_by_address
+                                        .insert(addr, (artifact_id.identifier(), Vec::new()));
                                     break;
                                 }
                             }
                         }
 
-                        // Create backtrace with pre-collected source data
+                        // Create backtrace with pre-collected source data and library sources
                         let mut backtrace = Backtrace::new();
-                        backtrace.with_source_data(&contracts_by_address, &source_data_by_artifact);
+                        backtrace.with_source_data(
+                            &contracts_by_address,
+                            &source_data_by_artifact,
+                            all_library_sources.clone(),
+                        );
 
                         if backtrace.extract_frames(arena) && !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;
