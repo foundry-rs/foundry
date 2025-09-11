@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, visit::Visit, yul},
     data_structures::{Never, map::FxHashSet},
-    interface::{Session, Span},
+    interface::{BytePos, Session, Span},
 };
 use std::{
     ops::{ControlFlow, Range},
@@ -62,10 +62,6 @@ impl<'a> ContractVisitor<'a> {
 
     /// Disambiguate functions with the same name in the same contract.
     fn disambiguate_functions(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-
         let mut dups = HashMap::<_, Vec<usize>>::default();
         for (i, item) in self.items.iter().enumerate() {
             if let CoverageItemKind::Function { name } = &item.kind {
@@ -85,6 +81,31 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
+    fn push_lines(&mut self) {
+        let mut lines = Vec::new();
+        for &line in &self.all_lines {
+            let mut first_item_in_line = None;
+            let mut first_stmt_in_line = None;
+            for item in &self.items {
+                if item.loc.lines.start == line {
+                    first_item_in_line = Some(item);
+                    if matches!(item.kind, CoverageItemKind::Statement) {
+                        first_stmt_in_line = Some(item);
+                    }
+                }
+            }
+            let reference_item = first_item_in_line
+                .or(first_stmt_in_line)
+                .unwrap_or_else(|| panic!("no associated item for line {line}"));
+            lines.push(CoverageItem {
+                kind: CoverageItemKind::Line,
+                loc: reference_item.loc.clone(),
+                hits: 0,
+            });
+        }
+        self.items.extend(lines);
+    }
+
     fn push_stmt(&mut self, span: Span) {
         self.push_item_kind(CoverageItemKind::Statement, span);
     }
@@ -94,34 +115,23 @@ impl<'a> ContractVisitor<'a> {
     fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) {
         let item = CoverageItem { kind, loc: self.source_location_for(span), hits: 0 };
 
-        // Push a line item if we haven't already.
+        // Register a line item if we haven't already.
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
-        let line = item.loc.lines.start;
-        if self.all_lines.insert(line) {
-            self.items.push(CoverageItem {
-                kind: CoverageItemKind::Line,
-                loc: SourceLocation {
-                    source_id: item.loc.source_id,
-                    contract_name: item.loc.contract_name.clone(),
-                    bytes: self.byte_range_of_line(span, line),
-                    lines: line..line + 1,
-                },
-                hits: 0,
-            });
-        }
+        self.all_lines.insert(item.loc.lines.start);
 
         self.items.push(item);
     }
 
-    fn byte_range_of_line(&self, span: Span, line: u32) -> Range<u32> {
-        let file = self.sess.source_map().lookup_byte_offset(span.lo());
-        let line_idx = line as usize - 1;
-        let byte_start = file.sf.lines()[line_idx].0;
-        let byte_end = file.sf.lines()[line_idx + 1].0;
-        byte_start..byte_end
-    }
+    fn source_location_for(&self, mut span: Span) -> SourceLocation {
+        // Statements' ranges in the solc source map do not include the semicolon.
+        if let Ok(snippet) = self.sess.source_map().span_to_snippet(span)
+            && let Some(stripped) = snippet.strip_suffix(';')
+        {
+            let stripped = stripped.trim_end();
+            let skipped = snippet.len() - stripped.len();
+            span = span.with_hi(span.hi() - BytePos::from_usize(skipped));
+        }
 
-    fn source_location_for(&self, span: Span) -> SourceLocation {
         SourceLocation {
             source_id: self.source_id as usize,
             contract_name: self.contract_name.clone(),
@@ -318,6 +328,7 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
             }
             StmtKind::Switch(switch) => {
                 for case in switch.branches.iter() {
+                    self.push_stmt(case.constant.span);
                     self.push_stmt(case.body.span);
                 }
                 if let Some(default) = &switch.default_case {
@@ -400,8 +411,11 @@ impl SourceAnalysis {
                         let mut visitor = ContractVisitor::new(source_id, compiler.sess(), name);
                         let _ = visitor.visit_item_contract(contract);
                         visitor.clear_if_test();
-                        visitor.disambiguate_functions();
-                        visitor.items.sort();
+                        if !visitor.items.is_empty() {
+                            visitor.disambiguate_functions();
+                            visitor.push_lines();
+                            visitor.items.sort();
+                        }
                         Ok(visitor.items)
                     });
                     items.map(move |items| items.map(|items| (source_id, items)))
