@@ -499,6 +499,10 @@ pub struct Cheatcodes {
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
     pub signatures_identifier: Option<SignaturesIdentifier>,
+    /// Determine if broadcasted call has fixed gas by tracking checking that CALL is preceded by
+    /// GAS opcode. Set to option true when GAS opcode seen and to option false if next opcode is
+    /// CALL.
+    pub is_fixed_gas_limit: Option<bool>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -554,6 +558,7 @@ impl Cheatcodes {
             deprecated: Default::default(),
             wallets: Default::default(),
             signatures_identifier: SignaturesIdentifier::new(true).ok(),
+            is_fixed_gas_limit: Default::default(),
         }
     }
 
@@ -852,8 +857,12 @@ impl Cheatcodes {
                         });
                     }
 
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
-
+                    let mut is_fixed_gas_limit = self.is_fixed_gas_limit.take().unwrap_or_default();
+                    // Additional check as transfers in forge scripts seem to be estimated at 2300
+                    // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
+                    if call.gas_limit < 21000 {
+                        is_fixed_gas_limit = false;
+                    };
                     let input = TransactionInput::new(call.input.bytes(ecx));
 
                     let account =
@@ -1075,6 +1084,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         self.pc = interpreter.bytecode.pc();
 
+        if self.broadcast.is_some() {
+            self.record_gas_limit_opcode(interpreter);
+        }
+
         // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
             self.meter_gas(interpreter);
@@ -1115,6 +1128,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        if self.broadcast.is_some() {
+            self.set_gas_limit_type(interpreter);
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1612,8 +1629,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             if curr_depth == broadcast.depth {
                 input.set_caller(broadcast.new_origin);
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
-
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: ecx.journaled_state.database.active_fork_url(),
@@ -1623,7 +1638,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         value: Some(input.value()),
                         input: TransactionInput::new(input.init_code()),
                         nonce: Some(account.info.nonce),
-                        gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                         ..Default::default()
                     }
                     .into(),
@@ -2292,6 +2306,27 @@ impl Cheatcodes {
             (REVERT, 0, 1, false),
         );
     }
+
+    #[cold]
+    fn record_gas_limit_opcode(&mut self, interpreter: &mut Interpreter) {
+        if interpreter.bytecode.opcode() == op::GAS {
+            self.is_fixed_gas_limit = Some(true);
+        }
+    }
+
+    #[cold]
+    fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
+        if interpreter.bytecode.opcode() == op::CALL {
+            if self.is_fixed_gas_limit.is_some() {
+                // If GAS opcode was seen and current opcode is CALL then it doesn't have fixed gas
+                // limit.
+                self.is_fixed_gas_limit = Some(false);
+            } else {
+                // If GAS opcode wasn't seen then it has fixed call limit.
+                self.is_fixed_gas_limit = Some(true);
+            }
+        }
+    }
 }
 
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
@@ -2317,20 +2352,6 @@ fn disallowed_mem_write(
         Bytes::from(revert_string.into_bytes()),
         interpreter.gas,
     ));
-}
-
-// Determines if the gas limit on a given call was manually set in the script and should therefore
-// not be overwritten by later estimations
-fn check_if_fixed_gas_limit(ecx: &Ecx, call_gas_limit: u64) -> bool {
-    // If the gas limit was not set in the source code it is set to the estimated gas left at the
-    // time of the call, which should be rather close to configured gas limit.
-    // TODO: Find a way to reliably make this determination.
-    // For example by generating it in the compilation or EVM simulation process
-    ecx.tx.gas_limit > ecx.block.gas_limit &&
-        call_gas_limit <= ecx.block.gas_limit
-        // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
-        // gas too low" failure when simulated on chain
-        && call_gas_limit > 2300
 }
 
 /// Returns true if the kind of account access is a call.
