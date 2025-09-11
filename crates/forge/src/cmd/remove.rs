@@ -42,7 +42,9 @@ impl RemoveArgs {
         git.rm(self.force, &paths)?;
 
         // remove all the dependencies from .git/modules
-        for (Dependency { name, url, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
+        for (Dependency { name, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
+            // Get the URL from git submodule config instead of using the parsed dependency URL
+            let url = git.submodule_url(path).unwrap_or(None);
             sh_println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display())?;
             let _ = lockfile.remove(path);
             std::fs::remove_dir_all(git_modules.join(path))?;
