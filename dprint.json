@@ -17,7 +17,7 @@
     "**/tests/**",
     "node_modules",
     "changelog.json",
-    "**/test-data/**",
+    "**/testdata/**",
     "**/cheatcodes/**",
     "**/node_modules/**",
     ".github/scripts/**",

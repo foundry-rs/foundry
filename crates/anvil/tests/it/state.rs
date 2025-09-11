@@ -50,7 +50,7 @@ async fn can_load_state() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_existing_state_legacy() {
-    let state_file = "test-data/state-dump-legacy.json";
+    let state_file = "testdata/state-dump-legacy.json";
 
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
 
@@ -60,7 +60,7 @@ async fn can_load_existing_state_legacy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_existing_state_legacy_stress() {
-    let state_file = "test-data/state-dump-legacy-stress.json";
+    let state_file = "testdata/state-dump-legacy-stress.json";
 
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
 
@@ -70,7 +70,7 @@ async fn can_load_existing_state_legacy_stress() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_existing_state() {
-    let state_file = "test-data/state-dump.json";
+    let state_file = "testdata/state-dump.json";
 
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
 
@@ -325,7 +325,7 @@ async fn test_backward_compatibility_deserialization_v1_2() {
             "coinbase": "0x1234567890123456789012345678901234567890",
             "timestamp": "0x688c83b5",
             "gas_limit": "0x1c9c380",
-            "basefee": "0x3b9aca00",  
+            "basefee": "0x3b9aca00",
             "difficulty": "0x0",
             "prevrandao": "0xecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5",
             "blob_excess_gas_and_price": {

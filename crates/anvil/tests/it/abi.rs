@@ -4,20 +4,20 @@ use alloy_sol_types::sol;
 sol!(
     #[sol(rpc)]
     Greeter,
-    "test-data/greeter.json"
+    "testdata/greeter.json"
 );
 
 sol!(
     #[derive(Debug)]
     #[sol(rpc)]
     SimpleStorage,
-    "test-data/SimpleStorage.json"
+    "testdata/SimpleStorage.json"
 );
 
 sol!(
     #[sol(rpc)]
     Multicall,
-    "test-data/multicall.json"
+    "testdata/multicall.json"
 );
 
 sol!(

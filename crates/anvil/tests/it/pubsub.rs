@@ -31,7 +31,7 @@ async fn test_sub_new_heads() {
 sol!(
     #[sol(rpc)]
     EmitLogs,
-    "test-data/emit_logs.json"
+    "testdata/emit_logs.json"
 );
 // FIXME: Use .legacy() in tx when implemented in alloy
 #[tokio::test(flavor = "multi_thread")]
