@@ -1,6 +1,8 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
 use foundry_config::{LintSeverity, LinterConfig};
 
+mod geiger;
+
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
