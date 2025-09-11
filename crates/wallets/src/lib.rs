@@ -19,3 +19,6 @@ pub use multi_wallet::MultiWalletOpts;
 pub use raw_wallet::RawWalletOpts;
 pub use wallet::WalletOpts;
 pub use wallet_signer::{PendingSigner, WalletSigner};
+
+#[cfg(feature = "aws-kms")]
+use aws_config as _;

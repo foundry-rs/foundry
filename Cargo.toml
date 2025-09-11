@@ -227,12 +227,12 @@ alloy-pubsub = { version = "1.0.23", default-features = false }
 alloy-rpc-client = { version = "1.0.23", default-features = false }
 alloy-rpc-types = { version = "1.0.23", default-features = true }
 alloy-serde = { version = "1.0.23", default-features = false }
-alloy-signer = { version = "1.0.23", default-features = false }
-alloy-signer-aws = { version = "1.0.23", default-features = false }
-alloy-signer-gcp = { version = "1.0.23", default-features = false }
-alloy-signer-ledger = { version = "1.0.23", default-features = false }
-alloy-signer-local = { version = "1.0.23", default-features = false }
-alloy-signer-trezor = { version = "1.0.23", default-features = false }
+alloy-signer = { version = "1.0.30", default-features = false }
+alloy-signer-aws = { version = "1.0.30", default-features = false }
+alloy-signer-gcp = { version = "1.0.30", default-features = false }
+alloy-signer-ledger = { version = "1.0.30", default-features = false }
+alloy-signer-local = { version = "1.0.30", default-features = false }
+alloy-signer-trezor = { version = "1.0.30", default-features = false }
 alloy-transport = { version = "1.0.23", default-features = false }
 alloy-transport-http = { version = "1.0.23", default-features = false }
 alloy-transport-ipc = { version = "1.0.23", default-features = false }
@@ -292,8 +292,6 @@ tikv-jemallocator = "0.6"
 
 # misc
 auto_impl = "1"
-aws-config = { version = "1", default-features = true }
-aws-sdk-kms = { version = "1", default-features = false }
 bytes = "1.10"
 walkdir = "2"
 prettyplease = "0.2"

@@ -4234,7 +4234,6 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "serde_json",
  "syn 2.0.106",
 ]
 
@@ -4911,13 +4910,11 @@ dependencies = [
  "alloy-sol-types",
  "async-trait",
  "aws-config",
- "aws-sdk-kms",
  "clap",
  "derive_builder",
  "eth-keystore",
  "eyre",
  "foundry-config",
- "gcloud-sdk",
  "rpassword",
  "serde",
  "thiserror 2.0.16",
