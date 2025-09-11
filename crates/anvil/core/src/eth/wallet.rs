@@ -1,23 +1,24 @@
-use alloy_primitives::{Address, ChainId, U64, map::HashMap};
+use alloy_eip5792::DelegationCapability;
+use alloy_primitives::{ChainId, U64, map::HashMap};
 use serde::{Deserialize, Serialize};
 
-/// The capability to perform [EIP-7702][eip-7702] delegations, sponsored by the sequencer.
-///
-/// The sequencer will only perform delegations, and act on behalf of delegated accounts, if the
-/// account delegates to one of the addresses specified within this capability.
-///
-/// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct DelegationCapability {
-    /// A list of valid delegation contracts.
-    pub addresses: Vec<Address>,
-}
-
 /// Wallet capabilities for a specific chain.
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Capabilities {
     /// The capability to delegate.
     pub delegation: DelegationCapability,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self { delegation: DelegationCapability { addresses: Vec::new() } }
+    }
+}
+
+impl Capabilities {
+    pub fn from_addresses(addresses: Vec<alloy_primitives::Address>) -> Self {
+        Self { delegation: DelegationCapability { addresses } }
+    }
 }
 
 /// A map of wallet capabilities per chain ID.

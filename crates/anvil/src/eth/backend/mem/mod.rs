@@ -85,7 +85,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
-    wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+    wallet::{Capabilities, WalletCapabilities},
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -338,12 +338,8 @@ impl Backend {
             let mut capabilities = WalletCapabilities::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
-            capabilities.insert(
-                chain_id,
-                Capabilities {
-                    delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-                },
-            );
+            capabilities
+                .insert(chain_id, Capabilities::from_addresses(vec![P256_DELEGATION_CONTRACT]));
 
             let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
 

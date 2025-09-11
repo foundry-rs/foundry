@@ -174,6 +174,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-eip5792"
+version = "1.0.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0baba5cccea245cdf17fdb0aa4dabeb5aadb2f4239829c041900aa2f07c386a2"
+dependencies = [
+ "alloy-primitives",
+ "alloy-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alloy-eip7702"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,6 +1119,7 @@ version = "1.3.5"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-eip5792",
  "alloy-eips",
  "alloy-network",
  "alloy-primitives",
