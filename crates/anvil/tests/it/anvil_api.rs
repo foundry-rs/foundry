@@ -6,6 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_eip5792::wallet::DelegationCapability;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes, utils::Unit};
@@ -28,10 +29,11 @@ use anvil::{
 use anvil_core::{
     eth::{
         EthRequest,
-        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+        wallet::{Capabilities, WalletCapabilities},
     },
     types::{ReorgOptions, TransactionData},
 };
+
 use revm::primitives::hardfork::SpecId;
 use std::{
     str::FromStr,
