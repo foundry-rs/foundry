@@ -16,7 +16,7 @@ use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -149,7 +149,12 @@ impl Cheatcode for readFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::read_to_string(path)?.abi_encode())
+        let file = std::fs::OpenOptions::new().read(true).open(path)?;
+        file.lock_shared()?;
+        let mut contents = String::new();
+        (&file).read_to_string(&mut contents)?;
+        file.unlock()?;
+        Ok(contents.abi_encode())
     }
 }
 
@@ -157,7 +162,12 @@ impl Cheatcode for readFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::read(path)?.abi_encode())
+        let file = std::fs::OpenOptions::new().read(true).open(path)?;
+        file.lock_shared()?;
+        let mut buffer = Vec::with_capacity(file.metadata()?.len() as usize);
+        (&file).read_to_end(&mut buffer)?;
+        file.unlock()?;
+        Ok(buffer.abi_encode())
     }
 }
 
@@ -244,8 +254,9 @@ impl Cheatcode for writeLineCall {
 
         if state.fs_commit {
             let mut file = std::fs::OpenOptions::new().append(true).create(true).open(path)?;
-
+            file.lock()?;
             writeln!(file, "{line}")?;
+            file.unlock()?;
         }
 
         Ok(Default::default())
@@ -598,7 +609,11 @@ pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Re
     state.config.ensure_not_foundry_toml(&path)?;
 
     if state.fs_commit {
-        fs::write(path, contents)?;
+        let mut file =
+            std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+        file.lock()?;
+        file.write_all(contents)?;
+        file.unlock()?;
     }
 
     Ok(Default::default())
