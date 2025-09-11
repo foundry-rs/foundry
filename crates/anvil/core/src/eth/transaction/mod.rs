@@ -18,7 +18,9 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{OpDepositReceipt, TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::{
+    OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit, DEPOSIT_TX_TYPE_ID,
+};
 use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
@@ -1100,12 +1102,11 @@ pub struct DepositReceipt(pub OpDepositReceipt);
 
 impl DepositReceipt {
     fn payload_len(&self) -> usize {
-        self.inner.receipt.status.length()
-            + self.inner.receipt.cumulative_gas_used.length()
-            + self.inner.logs_bloom.length()
-            + self.inner.receipt.logs.length()
-            + self.deposit_nonce.map_or(0, |n| n.length())
-            + self.deposit_receipt_version.map_or(0, |n| n.length())
+        self.0.inner.status.length()
+            + self.0.inner.cumulative_gas_used.length()
+            + self.0.inner.logs.length()
+            + self.0.deposit_nonce.map_or(0, |n| n.length())
+            + self.0.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.
@@ -1116,14 +1117,14 @@ impl DepositReceipt {
     /// Encodes the receipt data.
     fn encode_fields(&self, out: &mut dyn BufMut) {
         self.receipt_rlp_header().encode(out);
-        self.inner.status().encode(out);
-        self.inner.receipt.cumulative_gas_used.encode(out);
-        self.inner.logs_bloom.encode(out);
-        self.inner.receipt.logs.encode(out);
-        if let Some(n) = self.deposit_nonce {
+        self.0.inner.status().encode(out);
+        self.0.inner.cumulative_gas_used.encode(out);
+        self.0.inner.logs.encode(out);
+
+        if let Some(n) = self.0.deposit_nonce {
             n.encode(out);
         }
-        if let Some(n) = self.deposit_receipt_version {
+        if let Some(n) = self.0.deposit_receipt_version {
             n.encode(out);
         }
     }
@@ -1140,22 +1141,19 @@ impl DepositReceipt {
 
         let status = Decodable::decode(b)?;
         let cumulative_gas_used = Decodable::decode(b)?;
-        let logs_bloom = Decodable::decode(b)?;
+        // let logs_bloom = Decodable::decode(b)?;
         let logs: Vec<Log> = Decodable::decode(b)?;
         let deposit_nonce = remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
         let deposit_nonce_version =
             remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
 
         let op_receipt = OpDepositReceipt {
-            inner: ReceiptWithBloom {
-                receipt: Receipt { status, cumulative_gas_used, logs },
-                logs_bloom,
-            },
+            inner: Receipt { status, cumulative_gas_used, logs },
             deposit_nonce,
             deposit_receipt_version: deposit_nonce_version,
         };
-        let this = DepositReceipt(op_receipt);
 
+        let this = DepositReceipt(op_receipt);
         let consumed = started_len - b.len();
         if consumed != rlp_head.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -1200,7 +1198,7 @@ pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(rename = "0x4", alias = "0x04")]
     EIP7702(ReceiptWithBloom<T>),
     #[serde(rename = "0x7E", alias = "0x7e")]
-    Deposit(DepositReceipt<T>),
+    Deposit(DepositReceipt),
 }
 
 impl<T> TypedReceipt<T> {
@@ -1473,8 +1471,8 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
             0x04 => TypedReceipt::EIP7702(receipt_with_bloom),
             0x7E => {
-                let op_receipt = OpDepositReceipt {
-                    inner: receipt_with_bloom,
+                let op_receipt = OpDepositReceipt::<alloy_rpc_types::Log> {
+                    inner: receipt_with_bloom.receipt,
                     deposit_nonce: other
                         .get_deserialized::<U64>("depositNonce")
                         .transpose()
