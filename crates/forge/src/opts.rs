@@ -2,8 +2,8 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
-    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
-    soldeer, test, tree, update,
+    lsp::LspArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
+    snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -135,6 +135,9 @@ pub enum ForgeSubcommand {
     /// Lint Solidity source files
     #[command(visible_alias = "l")]
     Lint(LintArgs),
+
+    /// Run the Solar language server.
+    Lsp(LspArgs),
 
     /// Get specialized information about a smart contract.
     #[command(visible_alias = "in")]
