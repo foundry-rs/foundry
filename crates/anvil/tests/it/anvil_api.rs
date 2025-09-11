@@ -6,7 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_eip5792::wallet::DelegationCapability;
+use alloy_eip5792::DelegationCapability;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes, utils::Unit};
