@@ -766,8 +766,7 @@ impl TestArgs {
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
                     {
                         // Create backtrace with pre-collected source data and library sources
-                        // The new constructor handles label resolution internally
-                        let mut backtrace = Backtrace::new(arena, sources, libs);
+                        let mut backtrace = Backtrace::new(arena, sources, libs, &known_contracts);
 
                         if backtrace.extract_frames(arena) && !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;

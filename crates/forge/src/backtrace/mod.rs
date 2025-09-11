@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address,
     map::{HashMap, HashSet},
 };
+use foundry_common::ContractsByArtifact;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
@@ -30,37 +31,42 @@ pub struct Backtrace {
 impl Backtrace {
     /// Creates a new backtrace with source data and library information.
     /// The sources HashMap should contain full contract identifiers as keys.
+    /// The known_contracts map is used to resolve labels to full identifiers.
     pub fn new(
         arena: &SparsedTraceArena,
         sources: HashMap<String, SourceData>,
         library_sources: HashSet<LibraryInfo>,
+        known_contracts: &ContractsByArtifact,
     ) -> Self {
         let mut backtrace = Self::default();
 
-        // Build contracts mapping from the arena to get labels
-        let contracts_by_address = Self::build_contracts_mapping(arena);
+        // Build contracts mapping from decoded traces
+        let mut contracts_by_address = HashMap::new();
+        for node in arena.arena.nodes() {
+            if let Some(decoded) = &node.trace.decoded
+                && let Some(label) = &decoded.label
+            {
+                contracts_by_address.insert(node.trace.address, label.clone());
+            }
+        }
 
-        // Create a resolved mapping with full identifiers
+        // Resolve labels to full identifiers using known_contracts
         let mut resolved_contracts = HashMap::default();
-
-        // Resolve labels to full identifiers by matching against source keys
-        for (addr, (label, bytecode)) in &contracts_by_address {
+        for (addr, label) in &contracts_by_address {
             let mut found = false;
-            // Find a source key that ends with ":ContractName" matching the label
-            for source_key in sources.keys() {
-                // Check if this source key matches the pattern "path:ContractName"
-                if let Some(contract_name) = source_key.split(':').last() {
-                    if contract_name == label {
-                        // Found a match - use the full identifier
-                        resolved_contracts.insert(*addr, (source_key.clone(), bytecode.clone()));
-                        found = true;
-                        break;
-                    }
+            
+            // Find the full identifier for this contract label
+            for (artifact_id, _) in known_contracts.iter() {
+                if artifact_id.name == *label {
+                    resolved_contracts.insert(*addr, artifact_id.identifier());
+                    found = true;
+                    break;
                 }
             }
+            
             // If no match found, keep the original label (might be needed for external contracts)
             if !found {
-                resolved_contracts.insert(*addr, (label.clone(), bytecode.clone()));
+                resolved_contracts.insert(*addr, label.clone());
             }
         }
 
@@ -100,7 +106,7 @@ impl Backtrace {
     /// Sets source data from pre-collected artifacts.
     pub fn with_source_data(
         &mut self,
-        contracts_by_address: &HashMap<Address, (String, Vec<u8>)>,
+        contracts_by_address: &HashMap<Address, String>,
         source_data_by_artifact: &HashMap<String, SourceData>,
         library_sources: HashSet<LibraryInfo>,
     ) {
@@ -108,7 +114,7 @@ impl Backtrace {
         self.library_sources = library_sources;
 
         // Map source data to contract addresses using the contract identifier.
-        for (addr, (contract_identifier, _)) in contracts_by_address {
+        for (addr, contract_identifier) in contracts_by_address {
             if let Some(data) = source_data_by_artifact.get(contract_identifier) {
                 self.source_data.insert(*addr, data.clone());
             }
