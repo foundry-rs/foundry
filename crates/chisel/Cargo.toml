@@ -19,6 +19,7 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
+forge-doc.workspace = true
 forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true

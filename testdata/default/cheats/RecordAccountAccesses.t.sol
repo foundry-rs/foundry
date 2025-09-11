@@ -1196,7 +1196,9 @@ contract RecordAccountAccessesTest is DSTest {
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
-                data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))),
+                data: abi.encodePacked(
+                    type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))
+                ),
                 reverted: false,
                 storageAccesses: new Vm.StorageAccess[](0),
                 depth: 3

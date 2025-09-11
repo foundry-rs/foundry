@@ -6,6 +6,5 @@
 // Feature.
 use solar_interface as _;
 
-pub mod inline_config;
 pub mod linter;
 pub mod sol;

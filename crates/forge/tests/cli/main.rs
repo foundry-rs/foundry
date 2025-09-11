@@ -32,4 +32,5 @@ mod verify_bytecode;
 mod version;
 
 mod ext_integration;
+mod fmt;
 mod test_optimizer;

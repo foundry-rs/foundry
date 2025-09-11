@@ -1,9 +1,9 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
     Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
+    solang_ext::SafeUnwrap,
 };
 use alloy_primitives::map::HashMap;
-use forge_fmt::solang_ext::SafeUnwrap;
 
 /// [`Inheritdoc`] preprocessor ID.
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");

@@ -408,7 +408,7 @@ contract ExpectEmitTest is DSTest {
     //     vm.expectEmit(true, true, true, true);
     //     emitter.doesNothing();
     //     emit Something(1, 2, 3, 4);
-
+    //
     //     // This should fail since `SomethingElse` in the test
     //     // and in the `Emitter` contract have differing
     //     // amounts of indexed topics.

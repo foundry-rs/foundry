@@ -5,8 +5,8 @@ import "SomeFile.sol" as SomeOtherFile;
 import 'SomeFile.sol' as SomeOtherFile;
 import "AnotherFile.sol" as SomeSymbol;
 import 'AnotherFile.sol' as SomeSymbol;
-import {symbol1 as alias, symbol2} from "File.sol";
-import {symbol1 as alias, symbol2} from 'File.sol';
+import {symbol1 as alias0, symbol2} from "File.sol";
+import {symbol1 as alias0, symbol2} from 'File.sol';
 import {
     symbol1 as alias1,
     symbol2 as alias2,

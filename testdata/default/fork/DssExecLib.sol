@@ -1356,8 +1356,8 @@ library DssExecLib {
         uint256 _end,
         uint256 _duration
     ) public returns (address) {
-        address lerp =
-            LerpFactoryLike(lerpFab()).newIlkLerp(_name, _target, _ilk, _what, _startTime, _start, _end, _duration);
+        address lerp = LerpFactoryLike(lerpFab())
+            .newIlkLerp(_name, _target, _ilk, _what, _startTime, _start, _end, _duration);
         Authorizable(_target).rely(lerp);
         LerpLike(lerp).tick();
         return lerp;

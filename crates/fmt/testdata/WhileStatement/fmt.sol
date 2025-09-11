@@ -42,8 +42,7 @@ contract WhileStatement {
 
         while (condition) doIt();
 
-        while (
-            // comment1
+        while ( // comment1
             condition
         ) doIt();
 

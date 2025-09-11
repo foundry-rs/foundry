@@ -67,7 +67,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,
@@ -128,8 +128,8 @@ contract Yul {
 
             function functionThatReturnsSevenValuesAndCanBeUsedInAssignment() -> v1, v2, v3, v4, v5, v6, v7 {}
 
-            let zero:u32 := 0:u32
-            let v:u256, t:u32 := sample(1, 2)
+            let zero := 0
+            let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7
@@ -137,5 +137,10 @@ contract Yul {
         }
 
         assembly { a := 1 /* some really really really long comment that should not fit in one line */  }
+
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            // do something
+        }
     }
 }
