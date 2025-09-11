@@ -8,19 +8,18 @@ use std::{
     ops::ControlFlow,
 };
 
-/// A disabled formatting range. `loose` designates that the range includes any loc which
-/// may start in between start and end (inclusive), whereas the strict version requires that
-/// `range.start >= loc.start <=> loc.end <= range.end`
+/// A disabled formatting range.
 #[derive(Debug, Clone, Copy)]
 struct DisabledRange<T = BytePos> {
+    /// Start position, inclusive.
     lo: T,
+    /// End position, inclusive.
     hi: T,
-    loose: bool,
 }
 
 impl DisabledRange<BytePos> {
     fn includes(&self, span: Span) -> bool {
-        span.lo() >= self.lo && (if self.loose { span.lo() } else { span.hi() } <= self.hi)
+        span.lo() >= self.lo && span.hi() <= self.hi
     }
 }
 
@@ -173,7 +172,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         }
 
         for (id, (_, lo, hi)) in disabled_blocks {
-            cfg.disable(id, DisabledRange { lo, hi, loose: false });
+            cfg.disable(id, DisabledRange { lo, hi });
         }
 
         cfg
@@ -207,10 +206,9 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {
-                    // TODO(dani, 0xrusowski): this was loose before
                     self.disable_many(
                         ids,
-                        DisabledRange { lo: next_item.lo(), hi: next_item.hi(), loose: false },
+                        DisabledRange { lo: next_item.lo(), hi: next_item.hi() },
                     );
                 }
             }
@@ -224,7 +222,6 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                     DisabledRange {
                         lo: file.absolute_position(RelativeBytePos::from_usize(start)),
                         hi: file.absolute_position(RelativeBytePos::from_usize(end)),
-                        loose: false,
                     },
                 );
             }
@@ -240,7 +237,6 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                                     comment_range.start,
                                 )),
                                 hi: file.absolute_position(RelativeBytePos::from_usize(end)),
-                                loose: false,
                             },
                         );
                     }
@@ -267,7 +263,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                             let lo = *lo;
                             let (id, _) = entry.remove_entry();
 
-                            self.disable(id, DisabledRange { lo, hi: span.hi(), loose: false });
+                            self.disable(id, DisabledRange { lo, hi: span.hi() });
                         }
                     }
                 }
@@ -373,7 +369,6 @@ mod tests {
             DisabledRange::<BytePos> {
                 lo: BytePos::from_usize(self.lo),
                 hi: BytePos::from_usize(self.hi),
-                loose: self.loose,
             }
         }
 
@@ -387,16 +382,10 @@ mod tests {
 
     #[test]
     fn test_disabled_range_includes() {
-        // Strict mode - requires full containment
-        let strict = DisabledRange { lo: 10, hi: 20, loose: false };
+        let strict = DisabledRange { lo: 10, hi: 20 };
         assert!(strict.includes(10..20));
         assert!(strict.includes(12..18));
         assert!(!strict.includes(5..15)); // Partial overlap fails
-
-        // Loose mode - only checks start position
-        let loose = DisabledRange { lo: 10, hi: 20, loose: true };
-        assert!(loose.includes(10..25)); // Start in range
-        assert!(!loose.includes(5..15)); // Start before range
     }
 
     #[test]
