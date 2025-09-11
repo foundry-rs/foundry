@@ -201,7 +201,7 @@ impl<'ast> State<'_, 'ast> {
         break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Option<Span> + Copy,
     {
         if self.handle_span(Span::new(pos_lo, pos_hi), true) {
             return;
@@ -264,7 +264,7 @@ impl<'ast> State<'_, 'ast> {
         get_span: S,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Option<Span> + Copy,
     {
         if self.handle_span(span, false) {
             return;
@@ -277,10 +277,84 @@ impl<'ast> State<'_, 'ast> {
             span.hi(),
             print,
             get_span,
-            ListFormat::Compact { cmnts_break: false, with_space: false },
+            ListFormat::Compact { cmnts_break: false, with_space: false, with_delimiters: true },
             false,
         );
         self.print_word("]");
+    }
+
+    pub(super) fn commasep_handle_opening<'a, T, S>(
+        &mut self,
+        values: &'a [T],
+        mut get_span: S,
+        format: ListFormat,
+    ) -> bool
+    where
+        S: FnMut(&T) -> Option<Span>,
+    {
+        // An empty list has no opening to format, so we can exit early.
+        if values.is_empty() {
+            return false;
+        }
+
+        let first_pos = if let Some(span) = values.first().and_then(&mut get_span) {
+            span.lo()
+        } else {
+            return false;
+        };
+
+        // Check for comments before the first item.
+        if let Some((cmnt_span, cmnt_style)) =
+            self.peek_comment_before(first_pos).map(|c| (c.span, c.style))
+        {
+            // Handle special formatting for disabled code with isolated comments.
+            if self.cursor.enabled
+                && self.inline_config.is_disabled(cmnt_span)
+                && cmnt_style.is_isolated()
+            {
+                self.print_sep(Separator::Hardbreak);
+                if !format.with_delimiters() {
+                    self.s.offset(self.ind);
+                }
+            };
+
+            // Apply spacing based on comment styles.
+            if let Some(last_style) = self.print_comments(
+                first_pos,
+                if format.with_delimiters() {
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+                } else {
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().offset(self.ind)
+                },
+            ) {
+                if cmnt_style.is_mixed() && last_style.is_mixed() {
+                    if format.breaks_comments() {
+                        self.hardbreak();
+                    } else {
+                        self.space();
+                    }
+                    if !format.with_delimiters() {
+                        self.s.offset(self.ind);
+                    }
+                } else if !cmnt_style.is_mixed() && last_style.is_mixed() {
+                    self.nbsp();
+                }
+            }
+
+            if self.cursor.enabled {
+                self.cursor.advance_to(first_pos, true);
+            }
+
+            return true;
+        }
+
+        if !values.is_empty() && !format.with_delimiters() {
+            self.zerobreak();
+            self.s.offset(self.ind);
+            return true;
+        }
+
+        false
     }
 
     pub(super) fn commasep<'a, T, P, S>(
@@ -294,7 +368,7 @@ impl<'ast> State<'_, 'ast> {
         break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Option<Span> + Copy,
     {
         if values.is_empty() {
             return;
@@ -304,49 +378,31 @@ impl<'ast> State<'_, 'ast> {
             && !break_single_no_cmnts
             && self.peek_comment_before(pos_hi).is_none();
 
-        self.s.cbox(self.ind);
-        let mut skip_first_break = is_single_without_cmnts;
-        if let Some(first_pos) = get_span(&values[0]).map(Span::lo) {
-            if let Some((span, style)) =
-                self.peek_comment_before(first_pos).map(|cmnt| (cmnt.span, cmnt.style))
-            {
-                if self.cursor.enabled
-                    && self.inline_config.is_disabled(span)
-                    && style.is_isolated()
-                {
-                    self.hardbreak();
-                }
-                let last_style = self.print_comments(
-                    first_pos,
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-                );
-                // If mixed comment before the 1st item, manually handle breaks.
-                match (style.is_mixed(), last_style.unwrap().is_mixed(), format.breaks_comments()) {
-                    (true, true, true) => self.hardbreak(),
-                    (true, true, false) => self.space(),
-                    (false, true, _) => self.nbsp(),
-                    _ => {}
-                };
-                skip_first_break = true;
+        let skip_first_break = if format.with_delimiters() {
+            self.s.cbox(self.ind);
+            if !is_single_without_cmnts || break_single_no_cmnts {
+                self.commasep_handle_opening(values, get_span, format)
+            } else {
+                true
             }
-            // Update cursor if previously enabled
-            if self.cursor.enabled {
-                self.cursor.advance_to(first_pos, true);
-            }
-        }
+        } else {
+            let res = self.commasep_handle_opening(values, get_span, format);
+            self.s.cbox(self.ind);
+            res
+        };
 
         if let Some(sym) = format.prev_symbol() {
             self.word_space(sym);
-        } else if !skip_first_break {
-            format.add_break(true, values.len(), &mut self.s);
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
+        } else if !skip_first_break {
+            format.add_break(true, values.len(), &mut self.s);
         }
         if format.is_compact() {
             self.s.cbox(0);
         }
 
-        let mut skip_last_break = is_single_without_cmnts;
+        let mut skip_last_break = is_single_without_cmnts || !format.with_delimiters();
         for (i, value) in values.iter().enumerate() {
             let (is_last, span) = (i == values.len() - 1, get_span(value));
             if let Some(span) = span
@@ -364,19 +420,27 @@ impl<'ast> State<'_, 'ast> {
             }
             let next_span = if is_last { None } else { get_span(&values[i + 1]) };
             let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
-            if !is_last
-                && format.breaks_comments()
-                && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
-                    let disabled = self.inline_config.is_disabled(cmnt.span);
-                    (cmnt.style.is_mixed() && !disabled) || (cmnt.style.is_isolated() && disabled)
-                })
-            {
-                self.hardbreak(); // trailing and isolated comments already hardbreak
+            if !is_last || format.with_delimiters() {
+                if format.breaks_comments()
+                    && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
+                        let disabled = self.inline_config.is_disabled(cmnt.span);
+                        (cmnt.style.is_mixed() && !disabled)
+                            || (cmnt.style.is_isolated() && disabled)
+                    })
+                {
+                    self.hardbreak(); // trailing and isolated comments already hardbreak
+                }
+
+                self.print_comments(
+                    next_pos,
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                );
+            } else {
+                if self
+                    .print_comments(next_pos, CommentConfig::skip_ws().no_breaks())
+                    .is_some_and(|cmn| cmn.is_isolated())
+                {}
             }
-            self.print_comments(
-                next_pos,
-                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-            );
 
             if is_last && self.is_bol_or_only_ind() {
                 // if a trailing comment is printed at the very end, we have to manually adjust
@@ -412,6 +476,10 @@ impl<'ast> State<'_, 'ast> {
         }
         self.end();
         self.cursor.advance_to(pos_hi, true);
+
+        if !format.with_delimiters() {
+            self.zerobreak();
+        }
     }
 
     pub(super) fn print_path(&mut self, path: &'ast ast::PathSlice, consistent_break: bool) {
@@ -624,10 +692,10 @@ pub(crate) enum ListFormat {
     /// on the `break_single` flag.
     AlwaysBreak { break_single: bool, with_space: bool },
     /// Breaks all elements if any break.
-    Consistent { cmnts_break: bool, with_space: bool },
+    Consistent { cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// Attempts to fit all elements in one line, before breaking consistently.
     /// The boolean indicates whether mixed comments should force a break.
-    Compact { cmnts_break: bool, with_space: bool },
+    Compact { cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// If the list contains just one element, it will print unboxed (will not break).
     /// Otherwise, will break consistently.
     Inline,
@@ -639,6 +707,15 @@ pub(crate) enum ListFormat {
 }
 
 impl ListFormat {
+    pub(crate) fn with_delimiters(&self) -> bool {
+        match self {
+            Self::AlwaysBreak { .. } | Self::Yul { .. } => true,
+            Self::Consistent { with_delimiters, .. } => *with_delimiters,
+            Self::Compact { with_delimiters, .. } => *with_delimiters,
+            Self::Inline => false,
+        }
+    }
+
     pub(crate) fn breaks_comments(&self) -> bool {
         match self {
             Self::AlwaysBreak { .. } | Self::Yul { .. } => true,

@@ -485,13 +485,19 @@ impl<'sess> State<'sess, '_> {
 
                     if self.config.wrap_comments {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
+                    } else if pos.is_last && !config.iso_no_break {
+                        self.word(line.trim_end().to_string());
                     } else {
                         self.word(line);
                     }
                     if pos.is_last {
                         self.end();
+                        if !config.iso_no_break {
+                            hb(self);
+                        }
+                    } else {
+                        hb(self);
                     }
-                    hb(self);
                 }
             }
             CommentStyle::Trailing => {
@@ -667,6 +673,9 @@ pub(crate) struct CommentConfig {
     skip_blanks: Option<Skip>,
     current_ind: isize,
     offset: isize,
+
+    // Config: isolated comments
+    iso_no_break: bool,
     // Config: trailing comments
     trailing_no_break: bool,
     // Config: mixed comments
@@ -693,6 +702,12 @@ impl CommentConfig {
         self
     }
 
+    pub(crate) fn no_breaks(mut self) -> Self {
+        self.iso_no_break = true;
+        self.trailing_no_break = true;
+        self.mixed_no_break = true;
+        self
+    }
     pub(crate) fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self

@@ -230,6 +230,9 @@ contract NestedCallsTest is Test {
         ConstructorVictim victim =
             new ConstructorVictim(sender, "msg.sender", "not set during prank");
 
+        emit IERC712View.Transfer(
+            Create3.predict(_salt, address(_deployer)), address(o), id
+        );
     }
 }
 
