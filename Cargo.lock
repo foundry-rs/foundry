@@ -590,7 +590,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -3825,7 +3825,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4507,8 +4507,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9680c6130ad623bf66b5b60a6fa0c9c0d435bca734e81b556d708fd619360fe"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4540,8 +4541,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1830843294da279e18c91f1f4b5b0c4d98dd10139f5aa7fd567669a0c686b484"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4549,8 +4551,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f4f5d561430b369c3e5a5fc8f2b10267d65c079a3bbf8573f5f75c0589c3f9f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4570,8 +4573,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49832706ce39801486109ad8a4d09505e1fbc5c2c3979b19efa5ea4883b6a2d4"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4584,8 +4588,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.19.1"
-source = "git+https://github.com/foundry-rs/compilers.git?branch=dani%2Fbump-solar#cb202814caed8f15e6f0fb0d6178fc6921f0bfee"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "170cbf86018f3c57b8d4f8f1d389abbbbcdf9c3ca5459c3107addbc300c857c8"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5481,7 +5486,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -7562,7 +7567,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -7575,7 +7580,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9120690fafc389a67ba3803df527d0ec9cbbc9cc45e4cc20b332996dfb672425"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -7689,7 +7694,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.16",
  "tokio",
  "tracing",
@@ -7726,9 +7731,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8444,7 +8449,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9135,8 +9140,9 @@ dependencies = [
 
 [[package]]
 name = "solar-ast"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bacae15e3ff9a01747580d0ee9816ff6a51fa26f190cdc51b46263d555f7333b"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9151,8 +9157,9 @@ dependencies = [
 
 [[package]]
 name = "solar-compiler"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbf8d32cb292fcb5aab4158bd3215f7e3515424acfe780e54283bd520abf395a"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -9166,8 +9173,9 @@ dependencies = [
 
 [[package]]
 name = "solar-config"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4f0368370d4e7bc45586dfa545867f6685c1d8ec46a29843031f0563c88e4ff"
 dependencies = [
  "colorchoice",
  "strum 0.27.2",
@@ -9175,8 +9183,9 @@ dependencies = [
 
 [[package]]
 name = "solar-data-structures"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e246a9af3cc34b40e7612b600a5495f70768bdd365f9fa338d64afb33a59a96b"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9189,8 +9198,9 @@ dependencies = [
 
 [[package]]
 name = "solar-interface"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77e2e4dec38bc1940946f8d303260920f57022dc5a558a3786c3b83e121c23c6"
 dependencies = [
  "annotate-snippets 0.12.3",
  "anstream",
@@ -9198,7 +9208,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9209,15 +9219,16 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
 
 [[package]]
 name = "solar-macros"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b3d7b35daa205064e7965584b3144b73b38acce2257c21d01e351b8f8812d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9226,13 +9237,14 @@ dependencies = [
 
 [[package]]
 name = "solar-parse"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54766e7b5696cdfad50c0ea325035dd106ed2377635f1eb45db3043b6d117373"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.4",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9247,8 +9259,9 @@ dependencies = [
 
 [[package]]
 name = "solar-sema"
-version = "0.1.6"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#943bcb66941146733c8632ccbe7c3edf95042a69"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "979354fd20a7ee6229d66d49a3c3ca1e37be0e780b5b6aa864109c327142b529"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9547,7 +9560,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -9655,7 +9668,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9675,7 +9688,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a43bddab41f8626c7bdaab872bbba75f8df5847b516d77c569c746e2ae5eb746"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10921,7 +10934,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0978bf7171b3d90bac376700cb56d606feb40f251a475a5d6634613564460b22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
