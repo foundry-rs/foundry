@@ -28,6 +28,48 @@ pub struct Backtrace {
 }
 
 impl Backtrace {
+    /// Creates a new backtrace with source data and library information.
+    /// The sources HashMap should contain full contract identifiers as keys.
+    pub fn new(
+        arena: &SparsedTraceArena,
+        sources: HashMap<String, SourceData>,
+        library_sources: HashSet<LibraryInfo>,
+    ) -> Self {
+        let mut backtrace = Self::default();
+
+        // Build contracts mapping from the arena to get labels
+        let contracts_by_address = Self::build_contracts_mapping(arena);
+
+        // Create a resolved mapping with full identifiers
+        let mut resolved_contracts = HashMap::default();
+
+        // Resolve labels to full identifiers by matching against source keys
+        for (addr, (label, bytecode)) in &contracts_by_address {
+            let mut found = false;
+            // Find a source key that ends with ":ContractName" matching the label
+            for source_key in sources.keys() {
+                // Check if this source key matches the pattern "path:ContractName"
+                if let Some(contract_name) = source_key.split(':').last() {
+                    if contract_name == label {
+                        // Found a match - use the full identifier
+                        resolved_contracts.insert(*addr, (source_key.clone(), bytecode.clone()));
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            // If no match found, keep the original label (might be needed for external contracts)
+            if !found {
+                resolved_contracts.insert(*addr, (label.clone(), bytecode.clone()));
+            }
+        }
+
+        // Use the resolved contracts with source data
+        backtrace.with_source_data(&resolved_contracts, &sources, library_sources);
+
+        backtrace
+    }
+
     /// Returns true if the backtrace is empty.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
@@ -65,7 +107,7 @@ impl Backtrace {
         // Store library sources globally
         self.library_sources = library_sources;
 
-        // Map source data to contract addresses
+        // Map source data to contract addresses using the contract identifier.
         for (addr, (contract_identifier, _)) in contracts_by_address {
             if let Some(data) = source_data_by_artifact.get(contract_identifier) {
                 self.source_data.insert(*addr, data.clone());
