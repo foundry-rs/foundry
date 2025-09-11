@@ -81,21 +81,17 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
+    fn sort(&mut self) {
+        self.items.sort();
+    }
+
     fn push_lines(&mut self) {
         let mut lines = Vec::new();
         for &line in &self.all_lines {
-            let mut first_item_in_line = None;
-            let mut first_stmt_in_line = None;
-            for item in &self.items {
-                if item.loc.lines.start == line {
-                    first_item_in_line = Some(item);
-                    if matches!(item.kind, CoverageItemKind::Statement) {
-                        first_stmt_in_line = Some(item);
-                    }
-                }
-            }
-            let reference_item = first_item_in_line
-                .or(first_stmt_in_line)
+            let reference_item = self
+                .items
+                .iter()
+                .find(|item| item.loc.lines.start == line)
                 .unwrap_or_else(|| panic!("no associated item for line {line}"));
             lines.push(CoverageItem {
                 kind: CoverageItemKind::Line,
@@ -141,12 +137,12 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn byte_range(&self, span: Span) -> Range<u32> {
-        let bytes_usize = self.sess.source_map().span_to_source(span).unwrap().1;
+        let bytes_usize = self.sess.source_map().span_to_source(span).unwrap().data;
         bytes_usize.start as u32..bytes_usize.end as u32
     }
 
     fn line_range(&self, span: Span) -> Range<u32> {
-        let lines = self.sess.source_map().span_to_lines(span).unwrap().lines;
+        let lines = self.sess.source_map().span_to_lines(span).unwrap().data;
         assert!(!lines.is_empty());
         let first = lines.first().unwrap();
         let last = lines.last().unwrap();
@@ -315,6 +311,8 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
             | StmtKind::Break
             | StmtKind::Continue => {
                 self.push_stmt(stmt.span);
+                // Don't walk assignments.
+                return ControlFlow::Continue(());
             }
             StmtKind::If(..) => {
                 let branch_id = self.next_branch_id();
@@ -328,7 +326,7 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
             }
             StmtKind::Switch(switch) => {
                 for case in switch.branches.iter() {
-                    self.push_stmt(case.constant.span);
+                    self.push_stmt(case.span);
                     self.push_stmt(case.body.span);
                 }
                 if let Some(default) = &switch.default_case {
@@ -413,8 +411,9 @@ impl SourceAnalysis {
                         visitor.clear_if_test();
                         if !visitor.items.is_empty() {
                             visitor.disambiguate_functions();
+                            visitor.sort();
                             visitor.push_lines();
-                            visitor.items.sort();
+                            visitor.sort();
                         }
                         Ok(visitor.items)
                     });

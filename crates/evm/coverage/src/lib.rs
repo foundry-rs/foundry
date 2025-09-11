@@ -357,12 +357,10 @@ impl Ord for CoverageItemKind {
 impl CoverageItemKind {
     fn ord_key(&self) -> impl Ord + use<> {
         match *self {
-            CoverageItemKind::Line => (0, 0),
-            CoverageItemKind::Statement => (1, 0),
-            CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: _ } => {
-                (2, branch_id + path_id)
-            }
-            CoverageItemKind::Function { name: _ } => (3, 0),
+            CoverageItemKind::Line => 0,
+            CoverageItemKind::Statement => 1,
+            CoverageItemKind::Branch { .. } => 2,
+            CoverageItemKind::Function { .. } => 3,
         }
     }
 }
@@ -408,10 +406,10 @@ impl CoverageItem {
         (
             self.loc.source_id,
             self.loc.lines.start,
-            self.loc.bytes.start,
             self.loc.lines.end,
-            self.loc.bytes.end,
             self.kind.ord_key(),
+            self.loc.bytes.start,
+            self.loc.bytes.end,
         )
     }
 
@@ -438,7 +436,7 @@ impl CoverageItem {
             {
                 write!(f, " -> ")?;
 
-                let max_len = 32;
+                let max_len = 64;
                 let max_half = max_len / 2;
 
                 if src.len() > max_len {
