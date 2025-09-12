@@ -372,7 +372,7 @@ impl<'a> Backtrace<'a> {
         let library_name = identify_library_for_location(
             source_location,
             frame.byte_offset,
-            &self.library_sources,
+            self.library_sources,
         )?;
 
         let mut library_frame = BacktraceFrame::new(contract_address)
