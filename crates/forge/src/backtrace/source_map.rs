@@ -244,7 +244,12 @@ pub fn collect_source_data(
                 root.join(source_path)
             };
 
-            let source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+            let mut source_content =
+                foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
+            // Normalize line endings.
+            if source_content.contains('\r') {
+                source_content = source_content.replace("\r\n", "\n");
+            }
 
             // Convert path to relative PathBuf
             let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();

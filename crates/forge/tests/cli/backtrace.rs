@@ -2,7 +2,6 @@
 
 use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
 
-#[cfg_attr(windows, ignore = "line numbers are different on windows")]
 forgetest!(test_backtraces, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -37,7 +36,7 @@ Backtrace:
 ...
 Backtrace:
   at DelegateTarget.compute (src/DelegateCall.sol:11:84)
-  at DelegateCaller.delegateCompute (src/DelegateCall.sol:33:20)
+  at DelegateCaller.delegateCompute (src/DelegateCall.sol:32:101)
   at BacktraceTest.testDelegateCallRequire (test/Backtrace.t.sol:82:57)
 
 [FAIL: Delegate call failed] testDelegateCallRevert() ([GAS])
@@ -84,7 +83,7 @@ Backtrace:
 ...
 Backtrace:
   at StaticTarget.compute (src/StaticCall.sol:11:77)
-  at StaticCaller.staticCompute (src/StaticCall.sol:32:20)
+  at StaticCaller.staticCompute (src/StaticCall.sol:30:124)
   at BacktraceTest.testStaticCallRequire (test/Backtrace.t.sol:92:60)
 
 [FAIL: Static call reverted] testStaticCallRevert() ([GAS])
@@ -99,7 +98,6 @@ Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[cfg_attr(windows, ignore = "line numbers are different on windows")]
 forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -265,7 +263,6 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[cfg_attr(windows, ignore = "line numbers are different on windows")]
 forgetest!(test_library_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -374,7 +371,6 @@ Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[cfg_attr(windows, ignore = "line numbers are different on windows")]
 forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     prj.insert_ds_test();
 
@@ -435,7 +431,6 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[cfg_attr(windows, ignore = "line numbers are different on windows")]
 forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -464,7 +459,7 @@ Ran 5 tests for test/ForkBacktrace.t.sol:ForkBacktraceTest
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
-  at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:38:20)
+  at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:36:126)
 
 [FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() ([GAS])
 ...
