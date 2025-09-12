@@ -219,10 +219,12 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 });
 
                 self.push_item_kind(CoverageItemKind::Function { name: name.into() }, item.span);
+                self.walk_item(item)?;
             }
             _ => {}
         }
-        self.walk_item(item)
+        // Only walk functions.
+        ControlFlow::Continue(())
     }
 
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
