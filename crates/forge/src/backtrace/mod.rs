@@ -96,12 +96,14 @@ impl BacktraceBuilder {
                 .compiled_artifacts()
                 .artifact_files()
                 .chain(output.cached_artifacts().artifact_files())
-                .find(|af| {
+                .find_map(|af| {
                     // Match by checking if this artifact file corresponds to the
                     // same artifact
-                    std::ptr::eq(&raw const af.artifact, artifact as *const _)
-                })
-                .map(|af| af.build_id.clone());
+                    if std::ptr::eq(&raw const af.artifact, artifact as *const _) {
+                        return Some(af.build_id.clone());
+                    }
+                    None
+                });
 
             let Some(build_id) = build_id else {
                 continue;
