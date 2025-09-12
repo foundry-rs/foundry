@@ -295,7 +295,7 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     prj.write_config(config);
 
     let output =
-        cmd.args(["test", "-vvv", "--match-contract", "LibraryBacktraceTest"]).assert_failure();
+        cmd.args(["test", "-vvv", "--ast", "--mc", "LibraryBacktraceTest"]).assert_failure();
 
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -389,7 +389,7 @@ forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     );
 
     let output = cmd
-        .args(["test", "-vvv", "--match-contract", "MultipleLibraryBacktraceTest"])
+        .args(["test", "-vvv", "--ast", "--mc", "MultipleLibraryBacktraceTest"])
         .assert_failure();
 
     output.stdout_eq(str![[r#"

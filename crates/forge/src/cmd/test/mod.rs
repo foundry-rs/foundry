@@ -272,12 +272,6 @@ impl TestArgs {
             config = self.load_config()?;
         }
 
-        // If backtraces are enabled (verbosity >= 3), ensure AST is generated for internal call
-        // detection
-        if evm_opts.verbosity >= 3 && !config.ast {
-            config.ast = true;
-        }
-
         // Set up the project.
         let project = config.project()?;
 
