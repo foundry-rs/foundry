@@ -9,15 +9,14 @@ use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
-
 mod solidity;
 pub mod source_map;
-
+use crate::backtrace::source_map::collect_source_data;
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
 
-use crate::backtrace::source_map::collect_source_data;
-
+/// Collects [`SourceData`] by [`ArtifactId`] and [`LibraryInfo`] and prepares for backtrace
+/// generation.
 pub struct BacktraceBuilder {
     /// Mapping of [`ArtifactId`] to [`SourceData`]
     pub sources: HashMap<ArtifactId, SourceData>,
@@ -116,15 +115,13 @@ impl BacktraceBuilder {
         Self { sources, library_sources }
     }
 
+    /// Generates a backtrace from a [`SparsedTraceArena`].
     pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace<'_> {
         // Resolve addresses to artifacts using trace labels and our source data
         let artifacts_by_address = self.resolve_addresses(arena);
 
-        let mut backtrace = Backtrace::new(
-            &artifacts_by_address,
-            &self.sources,
-            &self.library_sources,
-        );
+        let mut backtrace =
+            Backtrace::new(&artifacts_by_address, &self.sources, &self.library_sources);
 
         backtrace.extract_frames(arena);
 
@@ -156,6 +153,14 @@ impl BacktraceBuilder {
 }
 
 /// A Solidity stack trace for a test failure.
+///
+/// Generates a backtrace from a [`SparsedTraceArena`] by leveraging [`SourceData`] and
+/// [`LibraryInfo`].
+///
+/// It uses the program counter (PC) from the traces to map to a specific source location for the
+/// call.
+///
+/// Each step/call in the backtrace is classified as a [`BacktraceFrame`].
 pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
@@ -311,7 +316,11 @@ impl<'a> Backtrace<'a> {
         Some(frame)
     }
 
-    /// Handles internal library frames that need special treatment.
+    /// Handles frames that may be originating from an internal library for which bytecode gets
+    /// inlined.
+    ///
+    /// If so, it will return a tuple of two frames: the first is the internal library frame and the
+    /// second is the contract frame that called the library.
     fn handle_internal_library_frame(
         &self,
         frame: &BacktraceFrame,
