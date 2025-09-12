@@ -256,11 +256,16 @@ impl<'a> Linter for SolidityLinter<'a> {
                 let Some(ast) = &ast_source.ast else {
                     panic!("AST missing for {}", path.display());
                 };
+
+                // Parse inline config.
                 let file = &ast_source.file;
                 let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
                 let inline_config = parse_inline_config(gcx.sess, &comments, ast);
+
+                // Early lints.
                 let _ = self.process_source_ast(gcx.sess, ast, path, &inline_config);
 
+                // Late lints.
                 let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
                     panic!("HIR source not found for {}", path.display());
                 };
