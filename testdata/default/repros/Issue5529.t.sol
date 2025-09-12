@@ -20,7 +20,7 @@ contract Issue5529Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     Counter public counter;
-    address public constant default_create2_factory = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    address public constant default_create2_factory = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
 
     function testCreate2FactoryUsedInTests() public {
         address a = vm.computeCreate2Address(0, keccak256(type(Counter).creationCode), address(default_create2_factory));

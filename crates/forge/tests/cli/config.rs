@@ -1046,7 +1046,7 @@ unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
-legacy_assertions = false
+legacy_assertions = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed
 odyssey = false
 transaction_timeout = 120
 additional_compiler_profiles = []
@@ -1344,7 +1344,7 @@ exclude = []
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
   "vyper": {},
   "dependencies": null,
-  "soldeer": null,
+  "soldeer": null,0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed
   "assertions_revert": true,
   "legacy_assertions": false,
   "odyssey": false,
