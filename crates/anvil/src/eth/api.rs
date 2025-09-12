@@ -781,7 +781,7 @@ impl EthApi {
                 && fork.predates_fork(number)
             {
                 // if this predates the fork we need to fetch balance, nonce, code individually
-                // becasue the provider might not support this endpoint
+                // because the provider might not support this endpoint
                 let balance = self.balance(address, Some(number.into()));
                 let code = self.get_code(address, Some(number.into()));
                 let nonce = self.get_transaction_count(address, Some(number.into()));
