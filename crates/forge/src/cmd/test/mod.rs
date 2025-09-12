@@ -675,7 +675,7 @@ impl TestArgs {
                         && let Some(builder) = &backtrace_builder
                     {
                         // Create backtrace with pre-collected source data and library sources
-                        let backtrace = builder.from_traces(arena, &known_contracts);
+                        let backtrace = builder.from_traces(arena);
 
                         if !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;

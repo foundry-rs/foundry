@@ -4,8 +4,7 @@ use alloy_primitives::{
     Address,
     map::{HashMap, HashSet},
 };
-use foundry_common::ContractsByArtifact;
-use foundry_compilers::{ProjectCompileOutput, artifacts::NodeType};
+use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::NodeType};
 use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
@@ -20,10 +19,8 @@ pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
 use crate::backtrace::source_map::collect_source_data;
 
 pub struct BacktraceBuilder {
-    /// Mapping of [`ArtifactId::identifier`] i.e <source_path>:<contract_name> to [`SourceData`]
-    ///
-    /// [`ArtifactId::identifier`]: foundry_compilers::ArtifactId::identifier
-    pub source_data: HashMap<String, SourceData>,
+    /// Mapping of [`ArtifactId`] to [`SourceData`]
+    pub sources: HashMap<ArtifactId, SourceData>,
     /// Libraries part of the current source contracts both internal and linked/external libraries.
     pub library_sources: HashSet<LibraryInfo>,
 }
@@ -34,7 +31,7 @@ impl BacktraceBuilder {
     /// Collects the sources and libraries part of the current source contracts both internal and
     /// linked/external.
     pub fn new(output: &ProjectCompileOutput, config: &Config) -> Self {
-        let mut source_data = HashMap::default();
+        let mut sources = HashMap::default();
         let mut library_sources = HashSet::default();
 
         // Collect linked libraries from config
@@ -110,70 +107,51 @@ impl BacktraceBuilder {
             };
 
             if let Some(data) = collect_source_data(artifact, output, config, &build_id) {
-                // Use the stripped identifier for consistency
+                // Store with stripped artifact ID for consistency
                 let id = artifact_id.with_stripped_file_prefixes(&config.root);
-                source_data.insert(id.identifier(), data);
+                sources.insert(id, data);
             }
         }
 
-        Self { source_data, library_sources }
+        Self { sources, library_sources }
     }
 
-    pub fn from_traces(
-        &self,
-        arena: &SparsedTraceArena,
-        known_contracts: &ContractsByArtifact,
-    ) -> Backtrace<'_> {
-        let resolved_contracts = self.resolve_contracts(arena, known_contracts);
+    pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace<'_> {
+        // Resolve addresses to artifacts using trace labels and our source data
+        let artifacts_by_address = self.resolve_addresses(arena);
 
-        let mut backtrace =
-            Backtrace::new(&resolved_contracts, &self.source_data, &self.library_sources);
+        let mut backtrace = Backtrace::new(
+            &artifacts_by_address,
+            &self.sources,
+            &self.library_sources,
+        );
 
         backtrace.extract_frames(arena);
 
         backtrace
     }
 
-    /// Uses the [`SparsedTraceArena`] to map the contract addresses to their
-    /// [`ArtifactId::identifier`].
-    ///
-    /// [`ArtifactId::identifier`]: foundry_compilers::ArtifactId::identifier
-    fn resolve_contracts(
-        &self,
-        arena: &SparsedTraceArena,
-        known_contracts: &ContractsByArtifact,
-    ) -> HashMap<Address, String> {
+    /// Resolves contract addresses to [`ArtifactId`]s using trace labels and collected source data.
+    fn resolve_addresses(&self, arena: &SparsedTraceArena) -> HashMap<Address, ArtifactId> {
+        let mut artifacts_by_address = HashMap::default();
+
         // Build contracts mapping from decoded traces
-        let mut contracts_by_address = HashMap::new();
         for node in arena.arena.nodes() {
             if let Some(decoded) = &node.trace.decoded
                 && let Some(label) = &decoded.label
             {
-                contracts_by_address.insert(node.trace.address, label.clone());
-            }
-        }
-
-        // Resolve labels to full identifiers using known_contracts
-        let mut resolved_contracts = HashMap::default();
-        for (addr, label) in &contracts_by_address {
-            let mut found = false;
-
-            // Find the full identifier for this contract label
-            for (artifact_id, _) in known_contracts.iter() {
-                if artifact_id.name == *label {
-                    resolved_contracts.insert(*addr, artifact_id.identifier());
-                    found = true;
-                    break;
+                // Find the artifact ID for this contract label from our source data
+                for artifact_id in self.sources.keys() {
+                    if artifact_id.name == *label {
+                        // Store the artifact ID directly
+                        artifacts_by_address.insert(node.trace.address, artifact_id.clone());
+                        break;
+                    }
                 }
             }
-
-            // If no match found, keep the original label (might be needed for external contracts)
-            if !found {
-                resolved_contracts.insert(*addr, label.clone());
-            }
         }
 
-        resolved_contracts
+        artifacts_by_address
     }
 }
 
@@ -190,8 +168,8 @@ pub struct Backtrace<'a> {
 impl<'a> Backtrace<'a> {
     /// Sets source data from pre-collected artifacts.
     pub fn new(
-        contracts_by_address: &HashMap<Address, String>,
-        source_data_by_artifact: &HashMap<String, SourceData>,
+        artifacts_by_address: &HashMap<Address, ArtifactId>,
+        sources: &HashMap<ArtifactId, SourceData>,
         library_sources: &'a HashSet<LibraryInfo>,
     ) -> Self {
         // Store library sources globally
@@ -199,9 +177,9 @@ impl<'a> Backtrace<'a> {
             Self { frames: Vec::new(), pc_mappers: HashMap::default(), library_sources };
 
         let mut source_data = HashMap::new();
-        // Map source data to contract addresses using the contract identifier.
-        for (addr, contract_identifier) in contracts_by_address {
-            if let Some(data) = source_data_by_artifact.get(contract_identifier) {
+        // Map source data to contract addresses using the artifact ID.
+        for (addr, artifact_id) in artifacts_by_address {
+            if let Some(data) = sources.get(artifact_id) {
                 source_data.insert(*addr, data.clone());
             }
         }
@@ -218,9 +196,9 @@ impl<'a> Backtrace<'a> {
 
         // Map linked library source data to their deployed addresses
         for (lib_name, lib_addr) in linked_lib_addresses {
-            // Find matching artifact by checking if identifier ends with the library name
-            for (identifier, data) in source_data_by_artifact {
-                if identifier.ends_with(&format!(":{lib_name}")) || identifier == &lib_name {
+            // Find matching artifact by checking if the artifact name matches the library name
+            for (artifact_id, data) in sources {
+                if artifact_id.name == lib_name {
                     source_data.insert(lib_addr, data.clone());
                     break;
                 }
