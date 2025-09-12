@@ -398,9 +398,9 @@ impl Backend {
 
     /// Get the capabilities of the wallet.
     ///
-    /// Currently the only capability is [`DelegationCapability`].
+    /// Currently the only capability is delegation.
     ///
-    /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
+    /// See `anvil_core::eth::wallet::Capabilities` for construction helpers.
     pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
         self.capabilities.read().clone()
     }
@@ -414,7 +414,7 @@ impl Backend {
         self.executor_wallet.read().clone()
     }
 
-    /// Adds an address to the [`DelegationCapability`] of the wallet.
+    /// Adds an address to the wallet's delegation capability.
     pub(crate) fn add_capability(&self, address: Address) {
         let chain_id = self.env.read().evm_env.cfg_env.chain_id;
         let mut capabilities = self.capabilities.write();
