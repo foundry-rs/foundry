@@ -1,7 +1,8 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
-    backtrace::{Backtrace, LibraryInfo, source_map::collect_source_data},
+    backtrace::{Backtrace, BacktraceBuilder, LibraryInfo, source_map::collect_source_data},
+    cmd::test,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -50,7 +51,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
@@ -583,6 +584,14 @@ impl TestArgs {
                 }
             }
 
+            // Check if any failures to enable backtrace
+            let backtrace_builder = tests
+                .values()
+                .any(|res| {
+                    res.status.is_failure() && !silent && verbosity >= 3 && !res.traces.is_empty()
+                })
+                .then_some(BacktraceBuilder::new(output, config.as_ref()));
+
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
                 let show_traces =
@@ -664,109 +673,18 @@ impl TestArgs {
                     && result.status == TestStatus::Failure
                     && !result.traces.is_empty()
                 {
-                    // Lazily collect source data on first failure
-
-                    let (sources, libs) = {
-                        let mut source_data = HashMap::default();
-                        let mut library_sources = HashSet::default();
-
-                        // Collect linked libraries from config
-                        for lib_mapping in &config.libraries {
-                            // Parse library mappings like
-                            // "src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234..."
-                            let parts: Vec<&str> = lib_mapping.split(':').collect();
-                            if parts.len() == 3 {
-                                let path_str = parts[0];
-                                let lib_name = parts[1];
-                                let addr_str = parts[2];
-                                if let Ok(addr) = addr_str.parse::<Address>() {
-                                    let lib_path = std::path::Path::new(path_str)
-                                        .strip_prefix(&config.root)
-                                        .unwrap_or(std::path::Path::new(path_str))
-                                        .to_path_buf();
-                                    library_sources.insert(LibraryInfo::linked(
-                                        lib_path,
-                                        lib_name.to_string(),
-                                        addr,
-                                    ));
-                                }
-                            }
-                        }
-
-                        // Collect all library artifacts
-                        for (lib_id, lib_artifact) in output.artifact_ids() {
-                            // Check if this is a library artifact
-                            if let Some(ast) = &lib_artifact.ast {
-                                for node in &ast.nodes {
-                                    if node.node_type == NodeType::ContractDefinition {
-                                        let is_library = node
-                                            .other
-                                            .get("contractKind")
-                                            .and_then(|v| v.as_str())
-                                            .map(|kind| kind == "library")
-                                            .unwrap_or(false);
-
-                                        if is_library
-                                            && let Some(name) =
-                                                node.other.get("name").and_then(|v| v.as_str())
-                                        {
-                                            let byte_range =
-                                                node.src.length.filter(|&l| l > 0).map(|length| {
-                                                    (node.src.start, node.src.start + length)
-                                                });
-
-                                            let lib_path = lib_id
-                                                .source
-                                                .strip_prefix(&config.root)
-                                                .unwrap_or(&lib_id.source)
-                                                .to_path_buf();
-
-                                            library_sources.insert(LibraryInfo::internal(
-                                                lib_path,
-                                                name.to_string(),
-                                                byte_range,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        for (artifact_id, artifact) in output.artifact_ids() {
-                            // Find the build_id for this specific artifact
-                            let build_id = output
-                                .compiled_artifacts()
-                                .artifact_files()
-                                .chain(output.cached_artifacts().artifact_files())
-                                .find(|af| {
-                                    // Match by checking if this artifact file corresponds to the
-                                    // same artifact
-                                    std::ptr::eq(&raw const af.artifact, artifact as *const _)
-                                })
-                                .map(|af| af.build_id.clone());
-
-                            let Some(build_id) = build_id else {
-                                continue;
-                            };
-
-                            if let Some(data) =
-                                collect_source_data(artifact, output, &config, &build_id)
-                            {
-                                // Use the stripped identifier for consistency
-                                let id = artifact_id.with_stripped_file_prefixes(&config.root);
-                                source_data.insert(id.identifier(), data);
-                            }
-                        }
-
-                        (source_data, library_sources)
-                    };
-
                     // Find the execution trace (the actual test, not setup)
                     if let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                        && let Some(builder) = &backtrace_builder
                     {
                         // Create backtrace with pre-collected source data and library sources
-                        let mut backtrace = Backtrace::new(arena, sources, libs, &known_contracts);
+                        let mut backtrace = Backtrace::new(
+                            arena,
+                            builder.source_data.clone(),
+                            builder.library_sources.clone(),
+                            &known_contracts,
+                        );
 
                         if backtrace.extract_frames(arena) && !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;

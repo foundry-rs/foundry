@@ -5,8 +5,13 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use foundry_common::ContractsByArtifact;
+use foundry_compilers::{ProjectCompileOutput, artifacts::NodeType};
+use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 use yansi::Paint;
 
 mod solidity;
@@ -14,6 +19,116 @@ pub mod source_map;
 
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
+
+use crate::backtrace::source_map::collect_source_data;
+
+pub struct BacktraceBuilder {
+    /// Mapping of [`ArtifactId::identifier`] i.e <source_path>:<contract_name> to [`SourceData`]
+    ///
+    /// [`ArtifactId::identifier`]: foundry_compilers::ArtifactId::identifier
+    pub source_data: HashMap<String, SourceData>,
+    /// Libraries part of the current source contracts both internal and linked/external libraries.
+    pub library_sources: HashSet<LibraryInfo>,
+}
+
+impl BacktraceBuilder {
+    /// Instantiates a backtrace builder from a [`ProjectCompileOutput`] and [`Config`].
+    ///
+    /// Collects the sources and libraries part of the current source contracts both internal and
+    /// linked/external.
+    pub fn new(output: &ProjectCompileOutput, config: &Config) -> Self {
+        let mut source_data = HashMap::default();
+        let mut library_sources = HashSet::default();
+
+        // Collect linked libraries from config
+        for lib_mapping in &config.libraries {
+            // Parse library mappings like
+            // "src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234..."
+            let parts: Vec<&str> = lib_mapping.split(':').collect();
+            if parts.len() == 3 {
+                let path_str = parts[0];
+                let lib_name = parts[1];
+                let addr_str = parts[2];
+                if let Ok(addr) = addr_str.parse::<Address>() {
+                    let lib_path = Path::new(path_str)
+                        .strip_prefix(&config.root)
+                        .unwrap_or(Path::new(path_str))
+                        .to_path_buf();
+                    library_sources.insert(LibraryInfo::linked(
+                        lib_path,
+                        lib_name.to_string(),
+                        addr,
+                    ));
+                }
+            }
+        }
+
+        // Collect all library artifacts
+        for (lib_id, lib_artifact) in output.artifact_ids() {
+            // Check if this is a library artifact
+            if let Some(ast) = &lib_artifact.ast {
+                for node in &ast.nodes {
+                    if node.node_type == NodeType::ContractDefinition {
+                        let is_library = node
+                            .other
+                            .get("contractKind")
+                            .and_then(|v| v.as_str())
+                            .map(|kind| kind == "library")
+                            .unwrap_or(false);
+
+                        if is_library
+                            && let Some(name) = node.other.get("name").and_then(|v| v.as_str())
+                        {
+                            let byte_range = node
+                                .src
+                                .length
+                                .filter(|&l| l > 0)
+                                .map(|length| (node.src.start, node.src.start + length));
+
+                            let lib_path = lib_id
+                                .source
+                                .strip_prefix(&config.root)
+                                .unwrap_or(&lib_id.source)
+                                .to_path_buf();
+
+                            library_sources.insert(LibraryInfo::internal(
+                                lib_path,
+                                name.to_string(),
+                                byte_range,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (artifact_id, artifact) in output.artifact_ids() {
+            // Find the build_id for this specific artifact
+            let build_id = output
+                .compiled_artifacts()
+                .artifact_files()
+                .chain(output.cached_artifacts().artifact_files())
+                .find(|af| {
+                    // Match by checking if this artifact file corresponds to the
+                    // same artifact
+                    std::ptr::eq(&raw const af.artifact, artifact as *const _)
+                })
+                .map(|af| af.build_id.clone());
+
+            let Some(build_id) = build_id else {
+                continue;
+            };
+
+            if let Some(data) = collect_source_data(artifact, output, &config, &build_id) {
+                // Use the stripped identifier for consistency
+                let id = artifact_id.with_stripped_file_prefixes(&config.root);
+                source_data.insert(id.identifier(), data);
+            }
+        }
+
+        Self { source_data, library_sources }
+    }
+}
 
 /// A Solidity stack trace for a test failure.
 #[derive(Default)]
