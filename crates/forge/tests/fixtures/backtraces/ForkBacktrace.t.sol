@@ -32,9 +32,7 @@ contract ForkBacktraceTest is DSTest {
 
     function testDirectOnChainRevert() public {
         // Try to call transfer directly on USDC without having balance
-        (bool success,) = USDC.call(
-            abi.encodeWithSignature("transfer(address,uint256)", address(0xdead), 1000000)
-        );
+        (bool success,) = USDC.call(abi.encodeWithSignature("transfer(address,uint256)", address(0xdead), 1000000));
         require(success, "USDC transfer failed");
     }
 }
