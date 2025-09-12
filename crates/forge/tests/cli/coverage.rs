@@ -412,14 +412,14 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testAssertBranch() external {
-        AContract a = new AContract();
         bool result = a.checkA(10);
         assertTrue(result);
     }
 
     function testAssertRevertBranch() external {
-        AContract a = new AContract();
         vm.expectRevert();
         a.checkA(1);
     }
@@ -483,14 +483,14 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testRequireRevert() external {
-        AContract a = new AContract();
         vm.expectRevert(abi.encodePacked("reverted"));
         a.checkRequire(false);
     }
 
     function testRequireNoRevert() external {
-        AContract a = new AContract();
         a.checkRequire(true);
     }
 }
@@ -563,8 +563,9 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testFoo() public {
-        AContract a = new AContract();
         a.foo();
     }
 }
@@ -902,8 +903,9 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTypeConversionCoverage() external {
-        AContract a = new AContract();
         a.coverMe();
     }
 }
@@ -1270,13 +1272,13 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(true);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(false);
     }
 }
@@ -1357,15 +1359,15 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         bool[] memory isTrue = new bool[](1);
         isTrue[0] = true;
         a.execute(isTrue);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         bool[] memory isFalse = new bool[](1);
         isFalse[0] = false;
         a.execute(isFalse);
@@ -1635,8 +1637,9 @@ import "./test.sol";
 import "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function test_constructors() public {
-        AContract a = new AContract();
         address(a).call{value: 5}("");
         require(a.counter() == 5);
     }
