@@ -12,7 +12,7 @@ use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
@@ -98,7 +98,7 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let (paths, output) = {
+        let (paths, mut output) = {
             let (project, output) = self.build(&config)?;
             (project.paths, output)
         };
@@ -106,7 +106,7 @@ impl CoverageArgs {
         self.populate_reporters(&paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &output)?;
+        let report = self.prepare(&paths, &mut output)?;
 
         sh_println!("Running tests...")?;
         self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
@@ -184,9 +184,17 @@ impl CoverageArgs {
     fn prepare(
         &self,
         project_paths: &ProjectPathsConfig,
-        output: &ProjectCompileOutput,
+        output: &mut ProjectCompileOutput,
     ) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
+
+        output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+                let _ = compiler.lower_asts();
+            }
+            convert_solar_errors(compiler.dcx())
+        })?;
+        let output = &*output;
 
         // Collect source files.
         let mut versioned_sources = HashMap::<Version, SourceFiles>::default();

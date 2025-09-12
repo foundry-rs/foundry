@@ -4,9 +4,10 @@ use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
-    ast::{self, ExprKind, ItemKind, StmtKind, visit::Visit, yul},
+    ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashSet},
-    interface::{BytePos, Session, Span},
+    interface::{BytePos, Span},
+    sema::{Gcx, hir},
 };
 use std::{
     ops::{ControlFlow, Range},
@@ -16,48 +17,74 @@ use std::{
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone)]
-struct ContractVisitor<'a> {
+struct SourceVisitor<'gcx> {
     /// The source ID of the contract.
     source_id: u32,
     /// The solar session for span resolution.
-    sess: &'a Session,
+    gcx: Gcx<'gcx>,
 
     /// The name of the contract being walked.
     contract_name: Arc<str>,
 
     /// The current branch ID
     branch_id: u32,
-    /// Set of all lines to ensure we don't push duplicate lines
-    all_lines: FxHashSet<u32>,
 
     /// Coverage items
     items: Vec<CoverageItem>,
+
+    all_lines: Vec<u32>,
+    function_calls: Vec<Span>,
+    function_calls_set: FxHashSet<Span>,
 }
 
-impl<'a> ContractVisitor<'a> {
-    fn new(source_id: u32, sess: &'a Session, contract_name: Arc<str>) -> Self {
+struct SourceVisitorCheckpoint {
+    items: usize,
+    all_lines: usize,
+    function_calls: usize,
+}
+
+impl<'gcx> SourceVisitor<'gcx> {
+    fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
         Self {
             source_id,
-            sess,
-            contract_name,
+            gcx,
+            contract_name: Arc::default(),
             branch_id: 0,
             all_lines: Default::default(),
-            items: Vec::new(),
+            function_calls: Default::default(),
+            function_calls_set: Default::default(),
+            items: Default::default(),
         }
     }
 
-    /// Filter out all items if the contract has any test functions.
-    fn clear_if_test(&mut self) {
-        let has_tests = self.items.iter().any(|item| {
+    fn checkpoint(&self) -> SourceVisitorCheckpoint {
+        SourceVisitorCheckpoint {
+            items: self.items.len(),
+            all_lines: self.all_lines.len(),
+            function_calls: self.function_calls.len(),
+        }
+    }
+
+    fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
+        let SourceVisitorCheckpoint { items, all_lines, function_calls } = checkpoint;
+        self.items.truncate(items);
+        self.all_lines.truncate(all_lines);
+        self.function_calls.truncate(function_calls);
+    }
+
+    fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
+        let _ = ast::Visit::visit_item_contract(self, contract);
+    }
+
+    /// Returns `true` if the contract has any test functions.
+    fn has_tests(&self, checkpoint: &SourceVisitorCheckpoint) -> bool {
+        self.items[checkpoint.items..].iter().any(|item| {
             if let CoverageItemKind::Function { name } = &item.kind {
                 name.is_any_test()
             } else {
                 false
             }
-        });
-        if has_tests {
-            self.items = Vec::new();
-        }
+        })
     }
 
     /// Disambiguate functions with the same name in the same contract.
@@ -81,23 +108,29 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
+    fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
+        self.function_calls_set = self.function_calls.iter().copied().collect();
+        let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+    }
+
     fn sort(&mut self) {
         self.items.sort();
     }
 
     fn push_lines(&mut self) {
+        self.all_lines.sort_unstable();
+        self.all_lines.dedup();
         let mut lines = Vec::new();
         for &line in &self.all_lines {
-            let reference_item = self
-                .items
-                .iter()
-                .find(|item| item.loc.lines.start == line)
-                .unwrap_or_else(|| panic!("no associated item for line {line}"));
-            lines.push(CoverageItem {
-                kind: CoverageItemKind::Line,
-                loc: reference_item.loc.clone(),
-                hits: 0,
-            });
+            if let Some(reference_item) =
+                self.items.iter().find(|item| item.loc.lines.start == line)
+            {
+                lines.push(CoverageItem {
+                    kind: CoverageItemKind::Line,
+                    loc: reference_item.loc.clone(),
+                    hits: 0,
+                });
+            }
         }
         self.items.extend(lines);
     }
@@ -111,16 +144,15 @@ impl<'a> ContractVisitor<'a> {
     fn push_item_kind(&mut self, kind: CoverageItemKind, span: Span) {
         let item = CoverageItem { kind, loc: self.source_location_for(span), hits: 0 };
 
-        // Register a line item if we haven't already.
         debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
-        self.all_lines.insert(item.loc.lines.start);
+        self.all_lines.push(item.loc.lines.start);
 
         self.items.push(item);
     }
 
     fn source_location_for(&self, mut span: Span) -> SourceLocation {
         // Statements' ranges in the solc source map do not include the semicolon.
-        if let Ok(snippet) = self.sess.source_map().span_to_snippet(span)
+        if let Ok(snippet) = self.gcx.sess.source_map().span_to_snippet(span)
             && let Some(stripped) = snippet.strip_suffix(';')
         {
             let stripped = stripped.trim_end();
@@ -137,12 +169,12 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn byte_range(&self, span: Span) -> Range<u32> {
-        let bytes_usize = self.sess.source_map().span_to_source(span).unwrap().data;
+        let bytes_usize = self.gcx.sess.source_map().span_to_source(span).unwrap().data;
         bytes_usize.start as u32..bytes_usize.end as u32
     }
 
     fn line_range(&self, span: Span) -> Range<u32> {
-        let lines = self.sess.source_map().span_to_lines(span).unwrap().data;
+        let lines = self.gcx.sess.source_map().span_to_lines(span).unwrap().data;
         assert!(!lines.is_empty());
         let first = lines.first().unwrap();
         let last = lines.last().unwrap();
@@ -156,8 +188,16 @@ impl<'a> ContractVisitor<'a> {
     }
 }
 
-impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
+impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
     type BreakValue = Never;
+
+    fn visit_item_contract(
+        &mut self,
+        contract: &'ast ast::ItemContract<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        self.contract_name = contract.name.as_str().into();
+        self.walk_item_contract(contract)
+    }
 
     #[expect(clippy::single_match)]
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -272,7 +312,8 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
                 }
             }
             ExprKind::Call(callee, _args) => {
-                self.push_stmt(expr.span);
+                // Resolve later.
+                self.function_calls.push(expr.span);
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -353,6 +394,36 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
     }
 }
 
+impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if let hir::ExprKind::Call(lhs, ..) = &expr.kind
+            && self.function_calls_set.contains(&expr.span)
+            && is_regular_call(lhs)
+        {
+            self.push_stmt(expr.span);
+        }
+        self.walk_expr(expr)
+    }
+}
+
+// https://github.com/argotorg/solidity/blob/965166317bbc2b02067eb87f222a2dce9d24e289/libsolidity/ast/ASTAnnotations.h#L336-L341
+// https://github.com/argotorg/solidity/blob/965166317bbc2b02067eb87f222a2dce9d24e289/libsolidity/analysis/TypeChecker.cpp#L2720
+fn is_regular_call(lhs: &hir::Expr<'_>) -> bool {
+    match lhs.peel_parens().kind {
+        // StructConstructorCall
+        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Struct(_))]) => false,
+        // TypeConversion
+        hir::ExprKind::Type(_) => false,
+        _ => true,
+    }
+}
+
 fn has_statements(block: Option<&ast::Block<'_>>) -> bool {
     block.is_some_and(|block| !block.is_empty())
 }
@@ -393,34 +464,44 @@ impl SourceAnalysis {
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
             data.sources
                 .par_iter()
-                .flat_map_iter(|(&source_id, path)| {
+                .map(|(&source_id, path)| {
+                    let _guard = debug_span!("SourceAnalysis::new::visit", ?path).entered();
+
                     let (_, source) = compiler.gcx().get_ast_source(path).unwrap();
                     let ast = source.ast.as_ref().unwrap();
-                    let items = ast.items.iter().map(move |item| {
-                        let ItemKind::Contract(contract) = &item.kind else { return Ok(vec![]) };
+                    let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
+
+                    let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
+                    for item in ast.items.iter() {
+                        // Visit only top-level contracts.
+                        let ItemKind::Contract(contract) = &item.kind else { continue };
 
                         // Skip interfaces which have no function implementations.
                         if contract.kind.is_interface() {
-                            return Ok(vec![]);
+                            continue;
                         }
 
-                        let name: Arc<str> = contract.name.as_str().into();
-                        let _guard = debug_span!("visit_contract", %name).entered();
-                        let mut visitor = ContractVisitor::new(source_id, compiler.sess(), name);
-                        let _ = visitor.visit_item_contract(contract);
-                        visitor.clear_if_test();
-                        if !visitor.items.is_empty() {
-                            visitor.disambiguate_functions();
-                            visitor.sort();
-                            visitor.push_lines();
-                            visitor.sort();
+                        let checkpoint = visitor.checkpoint();
+                        visitor.visit_contract(contract);
+                        if visitor.has_tests(&checkpoint) {
+                            visitor.restore_checkpoint(checkpoint);
                         }
-                        Ok(visitor.items)
-                    });
-                    items.map(move |items| items.map(|items| (source_id, items)))
+                    }
+
+                    if !visitor.function_calls.is_empty() {
+                        visitor.resolve_function_calls(hir_source_id);
+                    }
+
+                    if !visitor.items.is_empty() {
+                        visitor.disambiguate_functions();
+                        visitor.sort();
+                        visitor.push_lines();
+                        visitor.sort();
+                    }
+                    (source_id, visitor.items)
                 })
-                .collect::<eyre::Result<Vec<(u32, Vec<CoverageItem>)>>>()
-        })?;
+                .collect::<Vec<(u32, Vec<CoverageItem>)>>()
+        });
 
         // Create mapping and merge items.
         sourced_items.sort_by_key(|(id, items)| (*id, items.first().map(|i| i.loc.bytes.start)));

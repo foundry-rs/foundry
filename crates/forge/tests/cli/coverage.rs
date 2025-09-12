@@ -1173,7 +1173,7 @@ contract B {
 contract C {
     function create() public {
         B b = new B{value: 1}(2);
-        b = (new B{value: 1})(2);
+        b = new B{value: 1}(2);
         b = (new B){value: 1}(2);
     }
 }
