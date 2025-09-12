@@ -1329,6 +1329,92 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+forgetest!(single_statement_loop, |prj, cmd| {
+    // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function ifBreakContinueIgnored(bool flag) external returns (uint256 sum) {
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) continue;
+            sum += i;
+        }
+
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) break;
+            sum += i;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testTrueCoverage() external {
+        a.ifBreakContinueIgnored(true);
+    }
+
+    function testFalseCoverage() external {
+        a.ifBreakContinueIgnored(false);
+    }
+}
+    "#,
+    );
+
+    // Assert 50% coverage for true branches.
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+---------------+---------------+---------------╮
+| File              | % Lines      | % Statements  | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+---------------+---------------+---------------|
+| Total             | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 50% coverage for false branches.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt", "testFalseCoverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 100% coverage (true/false branches properly covered).
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/8604
 forgetest!(branch_with_calldata_reads, |prj, cmd| {
     prj.insert_ds_test();
