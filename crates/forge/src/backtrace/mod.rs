@@ -8,10 +8,7 @@ use foundry_common::ContractsByArtifact;
 use foundry_compilers::{ProjectCompileOutput, artifacts::NodeType};
 use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-};
+use std::{fmt, path::PathBuf};
 use yansi::Paint;
 
 mod solidity;
@@ -50,10 +47,7 @@ impl BacktraceBuilder {
                 let lib_name = parts[1];
                 let addr_str = parts[2];
                 if let Ok(addr) = addr_str.parse::<Address>() {
-                    let lib_path = Path::new(path_str)
-                        .strip_prefix(&config.root)
-                        .unwrap_or(Path::new(path_str))
-                        .to_path_buf();
+                    let lib_path = PathBuf::from(path_str);
                     library_sources.insert(LibraryInfo::linked(
                         lib_path,
                         lib_name.to_string(),
@@ -63,10 +57,10 @@ impl BacktraceBuilder {
             }
         }
 
-        // Collect all library artifacts
-        for (lib_id, lib_artifact) in output.artifact_ids() {
-            // Check if this is a library artifact
-            if let Some(ast) = &lib_artifact.ast {
+        // Process all artifacts - collect both library info and source data
+        for (artifact_id, artifact) in output.artifact_ids() {
+            // Check if this is a library artifact and collect library info
+            if let Some(ast) = &artifact.ast {
                 for node in &ast.nodes {
                     if node.node_type == NodeType::ContractDefinition {
                         let is_library = node
@@ -85,10 +79,10 @@ impl BacktraceBuilder {
                                 .filter(|&l| l > 0)
                                 .map(|length| (node.src.start, node.src.start + length));
 
-                            let lib_path = lib_id
+                            let lib_path = artifact_id
                                 .source
                                 .strip_prefix(&config.root)
-                                .unwrap_or(&lib_id.source)
+                                .unwrap_or(&artifact_id.source)
                                 .to_path_buf();
 
                             library_sources.insert(LibraryInfo::internal(
@@ -100,9 +94,8 @@ impl BacktraceBuilder {
                     }
                 }
             }
-        }
 
-        for (artifact_id, artifact) in output.artifact_ids() {
+            // Collect source data for all artifacts (including libraries)
             // Find the build_id for this specific artifact
             let build_id = output
                 .compiled_artifacts()
