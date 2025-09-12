@@ -21,6 +21,7 @@ foundry-config.workspace = true
 
 solar.workspace = true
 
+eyre.workspace = true
 heck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true

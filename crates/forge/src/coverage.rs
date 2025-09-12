@@ -169,7 +169,7 @@ impl CoverageReporter for LcovReporter {
                         writeln!(
                             out,
                             "BRDA:{line},{branch_id},{path_id},{}",
-                            if hits == 0 { "-".to_string() } else { hits.to_string() }
+                            if hits == 0 { "-" } else { &hits.to_string() }
                         )?;
                     }
                 }

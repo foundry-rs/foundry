@@ -151,6 +151,11 @@ impl UpdateArgs {
         // checkout the submodules at the correct tags
         // Skip branches that were already updated above to avoid reverting to local branch
         for (path, dep_id) in foundry_lock.iter() {
+            // Ignore other dependencies if single update.
+            if !dep_overrides.is_empty() && !dep_overrides.contains_key(path) {
+                continue;
+            }
+
             // Skip branches that were already updated
             if dep_id.is_branch() && dep_id.overridden() {
                 continue;
