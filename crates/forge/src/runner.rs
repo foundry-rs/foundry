@@ -70,8 +70,6 @@ pub struct ContractRunner<'a> {
     tcfg: Cow<'a, TestRunnerConfig>,
     /// The parent runner.
     mcr: &'a MultiContractRunner,
-    /// Mapping of deployed contract addresses to their names and ABIs for backtrace support.
-    contracts_by_address: ContractsByAddress,
 }
 
 impl<'a> std::ops::Deref for ContractRunner<'a> {
@@ -102,7 +100,6 @@ impl<'a> ContractRunner<'a> {
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
-            contracts_by_address: ContractsByAddress::new(),
         }
     }
 
@@ -157,10 +154,6 @@ impl<'a> ContractRunner<'a> {
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
         result.address = address;
-
-        // Register the test contract in our mapping for backtrace support
-        self.contracts_by_address
-            .insert(address, (self.name.to_string(), self.contract.abi.clone()));
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction
