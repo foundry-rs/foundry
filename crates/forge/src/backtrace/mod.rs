@@ -38,21 +38,16 @@ impl BacktraceBuilder {
         let mut library_sources = HashSet::default();
 
         // Collect linked libraries from config
-        for lib_mapping in &config.libraries {
-            // Parse library mappings like
-            // "src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234..."
-            let parts: Vec<&str> = lib_mapping.split(':').collect();
-            if parts.len() == 3 {
-                let path_str = parts[0];
-                let lib_name = parts[1];
-                let addr_str = parts[2];
-                if let Ok(addr) = addr_str.parse::<Address>() {
-                    let lib_path = PathBuf::from(path_str);
-                    library_sources.insert(LibraryInfo::linked(
-                        lib_path,
-                        lib_name.to_string(),
-                        addr,
-                    ));
+        if let Ok(parsed_libs) = config.parsed_libraries() {
+            for (path, libs) in parsed_libs.libs {
+                for (lib_name, addr_str) in libs {
+                    if let Ok(addr) = addr_str.parse::<Address>() {
+                        library_sources.insert(LibraryInfo::linked(
+                            PathBuf::from(path.clone()),
+                            lib_name,
+                            addr,
+                        ));
+                    }
                 }
             }
         }

@@ -2,9 +2,10 @@
 
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::{
-    Artifact,
-    artifacts::{ast::Ast, sourcemap::SourceMap},
+    Artifact, ProjectCompileOutput,
+    artifacts::{ConfigurableContractArtifact, ast::Ast, sourcemap::SourceMap},
 };
+use foundry_config::Config;
 use foundry_evm_core::ic::IcPcMap;
 use std::{path::PathBuf, sync::Arc};
 
@@ -209,9 +210,9 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
 
 /// Collects source data for a single artifact.
 pub fn collect_source_data(
-    artifact: &foundry_compilers::artifacts::ConfigurableContractArtifact,
-    output: &foundry_compilers::ProjectCompileOutput,
-    config: &foundry_config::Config,
+    artifact: &ConfigurableContractArtifact,
+    output: &ProjectCompileOutput,
+    config: &Config,
     build_id: &str,
 ) -> Option<SourceData> {
     // Get source map and bytecode
@@ -222,7 +223,6 @@ pub fn collect_source_data(
         return None;
     }
 
-    // Get AST
     let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
 
     // Get sources for this build
