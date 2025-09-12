@@ -38,11 +38,7 @@ impl BacktraceBuilder {
             for (path, libs) in parsed_libs.libs {
                 for (lib_name, addr_str) in libs {
                     if let Ok(addr) = addr_str.parse::<Address>() {
-                        library_sources.insert(LibraryInfo::linked(
-                            PathBuf::from(path.clone()),
-                            lib_name,
-                            addr,
-                        ));
+                        library_sources.insert(LibraryInfo::linked(path.clone(), lib_name, addr));
                     }
                 }
             }
