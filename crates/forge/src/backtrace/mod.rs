@@ -119,7 +119,7 @@ impl BacktraceBuilder {
                 continue;
             };
 
-            if let Some(data) = collect_source_data(artifact, output, &config, &build_id) {
+            if let Some(data) = collect_source_data(artifact, output, config, &build_id) {
                 // Use the stripped identifier for consistency
                 let id = artifact_id.with_stripped_file_prefixes(&config.root);
                 source_data.insert(id.identifier(), data);
@@ -128,33 +128,31 @@ impl BacktraceBuilder {
 
         Self { source_data, library_sources }
     }
-}
 
-/// A Solidity stack trace for a test failure.
-#[derive(Default)]
-pub struct Backtrace {
-    /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
-    pub frames: Vec<BacktraceFrame>,
-    /// Source data mapped by contract address
-    source_data: HashMap<Address, SourceData>,
-    /// PC to source mappers for each contract
-    pc_mappers: HashMap<Address, PcSourceMapper>,
-    /// Library sources (both internal and linked libraries)
-    library_sources: HashSet<LibraryInfo>,
-}
-
-impl Backtrace {
-    /// Creates a new backtrace with source data and library information.
-    /// The sources HashMap should contain full contract identifiers as keys.
-    /// The known_contracts map is used to resolve labels to full identifiers.
-    pub fn new(
+    pub fn from_traces(
+        &self,
         arena: &SparsedTraceArena,
-        sources: HashMap<String, SourceData>,
-        library_sources: HashSet<LibraryInfo>,
         known_contracts: &ContractsByArtifact,
-    ) -> Self {
-        let mut backtrace = Self::default();
+    ) -> Backtrace {
+        let resolved_contracts = self.resolve_contracts(arena, known_contracts);
 
+        let mut backtrace =
+            Backtrace::new(&resolved_contracts, &self.source_data, self.library_sources.clone());
+
+        backtrace.extract_frames(arena);
+
+        backtrace
+    }
+
+    /// Uses the [`SparsedTraceArena`] to map the contract addresses to their
+    /// [`ArtifactId::identifier`].
+    ///
+    /// [`ArtifactId::identifier`]: foundry_compilers::ArtifactId::identifier
+    fn resolve_contracts(
+        &self,
+        arena: &SparsedTraceArena,
+        known_contracts: &ContractsByArtifact,
+    ) -> HashMap<Address, String> {
         // Build contracts mapping from decoded traces
         let mut contracts_by_address = HashMap::new();
         for node in arena.arena.nodes() {
@@ -185,59 +183,49 @@ impl Backtrace {
             }
         }
 
-        // Use the resolved contracts with source data
-        backtrace.with_source_data(&resolved_contracts, &sources, library_sources);
-
-        backtrace
+        resolved_contracts
     }
+}
 
+/// A Solidity stack trace for a test failure.
+#[derive(Default)]
+pub struct Backtrace {
+    /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
+    pub frames: Vec<BacktraceFrame>,
+    /// Source data mapped by contract address
+    source_data: HashMap<Address, SourceData>,
+    /// PC to source mappers for each contract
+    pc_mappers: HashMap<Address, PcSourceMapper>,
+    /// Library sources (both internal and linked libraries)
+    library_sources: HashSet<LibraryInfo>,
+}
+
+impl Backtrace {
     /// Returns true if the backtrace is empty.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    /// Builds contract address mapping from decoded traces in the arena.
-    /// Returns a mapping of address to (contract_identifier, bytecode).
-    /// The contract_identifier is just the label from decoded trace - the caller
-    /// needs to match this against known contracts to get the full identifier.
-    pub fn build_contracts_mapping(
-        arena: &SparsedTraceArena,
-    ) -> HashMap<Address, (String, Vec<u8>)> {
-        let mut contracts_by_address = HashMap::default();
-
-        // Extract decoded contract info from traces
-        for node in arena.arena.nodes() {
-            if let Some(decoded) = &node.trace.decoded
-                && let Some(label) = &decoded.label
-            {
-                // Store the label - caller will need to resolve to full identifier
-                contracts_by_address.insert(node.trace.address, (label.clone(), Vec::new()));
-            }
-        }
-
-        contracts_by_address
-    }
-
     /// Sets source data from pre-collected artifacts.
-    pub fn with_source_data(
-        &mut self,
+    pub fn new(
         contracts_by_address: &HashMap<Address, String>,
         source_data_by_artifact: &HashMap<String, SourceData>,
         library_sources: HashSet<LibraryInfo>,
-    ) {
+    ) -> Self {
         // Store library sources globally
-        self.library_sources = library_sources;
+        let mut backtrace = Self::default();
+        backtrace.library_sources = library_sources;
 
         // Map source data to contract addresses using the contract identifier.
         for (addr, contract_identifier) in contracts_by_address {
             if let Some(data) = source_data_by_artifact.get(contract_identifier) {
-                self.source_data.insert(*addr, data.clone());
+                backtrace.source_data.insert(*addr, data.clone());
             }
         }
 
         // Add linked libraries to the address mapping
         let mut linked_lib_addresses: HashMap<String, Address> = HashMap::default();
-        for lib_info in &self.library_sources {
+        for lib_info in &backtrace.library_sources {
             if lib_info.is_linked()
                 && let Some(lib_addr) = lib_info.address
             {
@@ -250,19 +238,21 @@ impl Backtrace {
             // Find matching artifact by checking if identifier ends with the library name
             for (identifier, data) in source_data_by_artifact {
                 if identifier.ends_with(&format!(":{lib_name}")) || identifier == &lib_name {
-                    self.source_data.insert(lib_addr, data.clone());
+                    backtrace.source_data.insert(lib_addr, data.clone());
                     break;
                 }
             }
         }
 
         // Build PC source mappers for each contract
-        for (addr, data) in &self.source_data {
-            self.pc_mappers.insert(
+        for (addr, data) in &backtrace.source_data {
+            backtrace.pc_mappers.insert(
                 *addr,
                 PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
             );
         }
+
+        backtrace
     }
 
     /// Extracts backtrace frames from a trace arena.

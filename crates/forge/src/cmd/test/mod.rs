@@ -1,8 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
-    backtrace::{Backtrace, BacktraceBuilder, LibraryInfo, source_map::collect_source_data},
-    cmd::test,
+    backtrace::BacktraceBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -14,10 +13,7 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
-use alloy_primitives::{
-    Address, U256,
-    map::{HashMap, foldhash::HashSet},
-};
+use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
@@ -30,7 +26,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::{NodeType, output_selection::OutputSelection},
+    artifacts::output_selection::OutputSelection,
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -51,7 +47,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
@@ -679,14 +675,9 @@ impl TestArgs {
                         && let Some(builder) = &backtrace_builder
                     {
                         // Create backtrace with pre-collected source data and library sources
-                        let mut backtrace = Backtrace::new(
-                            arena,
-                            builder.source_data.clone(),
-                            builder.library_sources.clone(),
-                            &known_contracts,
-                        );
+                        let backtrace = builder.from_traces(arena, &known_contracts);
 
-                        if backtrace.extract_frames(arena) && !backtrace.is_empty() {
+                        if !backtrace.is_empty() {
                             sh_println!("{}", backtrace)?;
                         }
                     }
