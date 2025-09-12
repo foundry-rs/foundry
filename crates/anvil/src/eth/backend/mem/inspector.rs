@@ -112,8 +112,8 @@ fn print_traces(tracer: TracingInspector, decoder: Arc<CallTraceDecoder>) {
     });
 
     let traces = SparsedTraceArena { arena, ignored: Default::default() };
-    node_info!("Traces:");
-    node_info!("{}", render_trace_arena_inner(&traces, false, true));
+    let trace = render_trace_arena_inner(&traces, false, true);
+    node_info!(Traces = %format!("\n{}", trace));
 }
 
 impl<CTX> Inspector<CTX, EthInterpreter> for AnvilInspector

@@ -105,6 +105,10 @@ pub struct RunArgs {
     /// Disable block gas limit check.
     #[arg(long)]
     pub disable_block_gas_limit: bool,
+
+    /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    #[arg(long)]
+    pub enable_tx_gas_limit: bool,
 }
 
 impl RunArgs {
@@ -162,6 +166,13 @@ impl RunArgs {
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
+        if !self.enable_tx_gas_limit {
+            env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+        }
+
         env.evm_env.cfg_env.limit_contract_code_size = None;
         env.evm_env.block_env.number = U256::from(tx_block_number);
 
