@@ -380,7 +380,12 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 let name = func.name.as_str();
                 self.push_item_kind(CoverageItemKind::Function { name: name.into() }, stmt.span);
             }
-            StmtKind::Block(_) | StmtKind::Expr(_) => {}
+            // TODO(dani): merge with Block below on next solar release: https://github.com/paradigmxyz/solar/pull/496
+            StmtKind::Expr(_) => {
+                self.push_stmt(stmt.span);
+                return ControlFlow::Continue(());
+            }
+            StmtKind::Block(_) => {}
         }
         self.walk_yul_stmt(stmt)
     }
