@@ -159,6 +159,7 @@ impl<'a> ContractVisitor<'a> {
 impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
     type BreakValue = Never;
 
+    #[expect(clippy::single_match)]
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
         match &item.kind {
             ItemKind::Function(func) => {

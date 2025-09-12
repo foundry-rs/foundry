@@ -357,10 +357,10 @@ impl Ord for CoverageItemKind {
 impl CoverageItemKind {
     fn ord_key(&self) -> impl Ord + use<> {
         match *self {
-            CoverageItemKind::Line => 0,
-            CoverageItemKind::Statement => 1,
-            CoverageItemKind::Branch { .. } => 2,
-            CoverageItemKind::Function { .. } => 3,
+            Self::Line => 0,
+            Self::Statement => 1,
+            Self::Branch { .. } => 2,
+            Self::Function { .. } => 3,
         }
     }
 }
