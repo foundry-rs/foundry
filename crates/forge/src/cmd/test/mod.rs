@@ -648,11 +648,7 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await;
-                        decoded_traces.push(render_trace_arena_inner(
-                            &arena.clone(),
-                            false,
-                            verbosity > 4,
-                        ));
+                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
 
