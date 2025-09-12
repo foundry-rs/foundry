@@ -325,12 +325,9 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
                 self.push_stmt(body.span);
             }
             StmtKind::Switch(switch) => {
-                for case in switch.branches.iter() {
+                for case in switch.cases.iter() {
                     self.push_stmt(case.span);
                     self.push_stmt(case.body.span);
-                }
-                if let Some(default) = &switch.default_case {
-                    self.push_stmt(default.span);
                 }
             }
             StmtKind::FunctionDef(func) => {
