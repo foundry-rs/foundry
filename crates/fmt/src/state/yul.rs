@@ -38,7 +38,11 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     |this, path| this.print_path(path, false),
                     get_span!(()),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
+                    ListFormat::Consistent {
+                        cmnts_break: false,
+                        with_space: false,
+                        with_delimiters: true,
+                    },
                     false,
                 );
                 self.word(" :=");
@@ -118,7 +122,11 @@ impl<'ast> State<'_, 'ast> {
                     params_hi,
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
+                    ListFormat::Consistent {
+                        cmnts_break: false,
+                        with_space: false,
+                        with_delimiters: true,
+                    },
                     false,
                 );
                 self.nbsp();
@@ -156,7 +164,11 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
+                    ListFormat::Consistent {
+                        cmnts_break: false,
+                        with_space: false,
+                        with_delimiters: true,
+                    },
                     false,
                 );
                 if let Some(expr) = expr {
@@ -197,7 +209,7 @@ impl<'ast> State<'_, 'ast> {
             Span::DUMMY.hi(),
             Self::print_yul_expr,
             get_span!(),
-            ListFormat::Consistent { cmnts_break: false, with_space: false },
+            ListFormat::Consistent { cmnts_break: false, with_space: false, with_delimiters: true },
             true,
         );
     }
