@@ -149,7 +149,9 @@ impl InlineConfig {
                 prev_sp = sp;
             }
 
-            let Ok((file, comment_range)) = source_map.span_to_source(sp) else { continue };
+            let Ok(source) = source_map.span_to_source(sp) else { continue };
+            let file = source.file;
+            let comment_range = source.data;
             let src = file.src.as_str();
             match item {
                 InlineConfigItem::DisableNextItem(lints) => {

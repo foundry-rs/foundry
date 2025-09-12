@@ -27,21 +27,11 @@ pub trait Linter: Send + Sync {
     /// The [`Lint`] type.
     type Lint: Lint;
 
-    /// Build a solar [`Compiler`] from the given linter config.
-    fn init(&self) -> Compiler {
-        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
-        self.configure(&mut compiler);
-        compiler
-    }
-
-    /// Configure a solar [`Compiler`] from the given linter config.
-    fn configure(&self, compiler: &mut Compiler);
-
     /// Run all lints.
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()>;
 }
 
 pub trait Lint {
