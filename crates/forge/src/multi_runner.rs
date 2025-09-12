@@ -43,8 +43,6 @@ use std::{
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
-    /// Deployed bytecode (runtime code)
-    pub deployed_bytecode: Option<Bytes>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -556,15 +554,8 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                // Get deployed bytecode as well
-                let deployed_bytecode = contract
-                    .get_deployed_bytecode_bytes()
-                    .map(|b| b.into_owned())
-                    .filter(|b| !b.is_empty());
-                deployable_contracts.insert(
-                    id.clone(),
-                    TestContract { abi: abi.clone().into_owned(), bytecode, deployed_bytecode },
-                );
+                deployable_contracts
+                    .insert(id.clone(), TestContract { abi: abi.clone().into_owned(), bytecode });
             }
         }
 
