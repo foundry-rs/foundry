@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.18;
 
 contract ScreamingSnakeCaseTest {
     uint256 constant _SCREAMING_SNAKE_CASE = 0;

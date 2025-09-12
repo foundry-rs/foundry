@@ -118,6 +118,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
+        enable_tx_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
@@ -1040,6 +1041,7 @@ sparse_mode = false
 build_info = false
 isolate = false
 disable_block_gas_limit = false
+enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
@@ -1335,6 +1337,7 @@ exclude = []
   ],
   "isolate": false,
   "disable_block_gas_limit": false,
+  "enable_tx_gas_limit": false,
   "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -1868,7 +1871,10 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>

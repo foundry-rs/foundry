@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.18;
 
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
@@ -97,10 +97,10 @@ contract UncheckedTransfer {
 }
 
 library Currency {
-    function transfer(Currency currency, address to, uint256 amount) internal {
+    function transfer(address currency, address to, uint256 amount) internal {
         // transfer and check output internally
     }
-    function transferFrom(Currency currency, address from, address to, uint256 amount) internal {
+    function transferFrom(address currency, address from, address to, uint256 amount) internal {
         // transfer and check output internally
     }
 }
@@ -108,10 +108,10 @@ library Currency {
 contract UncheckedTransferUsingCurrencyLib {
     using Currency for address;
 
-    Currency public token;
+    address public token;
     mapping(address => uint256) public balances;
 
-    constructor(Currency _token) {
+    constructor(address _token) {
         token = _token;
     }
 

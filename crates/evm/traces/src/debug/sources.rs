@@ -53,7 +53,7 @@ impl SourceData {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
                             contract_definitions.push((
                                 contract.name.to_string(),
-                                compiler.sess().source_map().span_to_source(item.span).unwrap().1,
+                                compiler.sess().source_map().span_to_range(item.span).unwrap(),
                             ));
                         }
                     }

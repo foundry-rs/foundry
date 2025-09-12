@@ -98,6 +98,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
@@ -443,6 +445,7 @@ impl Default for NodeConfig {
             chain_id: None,
             gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -619,6 +622,15 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
+        self
+    }
+
+    /// Enable tx gas limit check
+    ///
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    #[must_use]
+    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+        self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
@@ -1067,6 +1079,10 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
 
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;

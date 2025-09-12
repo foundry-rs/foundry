@@ -44,6 +44,16 @@ fn all_sources<E: private::ErrorChain + ?Sized>(err: &E) -> Vec<String> {
     err.chain().map(|cause| cause.to_string().trim().to_string()).collect()
 }
 
+/// Converts solar errors to an eyre error.
+pub fn convert_solar_errors(dcx: &solar::interface::diagnostics::DiagCtxt) -> eyre::Result<()> {
+    match dcx.emitted_errors() {
+        Some(Ok(())) => Ok(()),
+        Some(Err(e)) if !e.is_empty() => eyre::bail!("solar run failed:\n\n{e}"),
+        _ if dcx.has_errors().is_err() => eyre::bail!("solar run failed"),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

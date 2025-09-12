@@ -16,6 +16,7 @@ use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use eyre::Ok;
 use futures::{FutureExt, StreamExt, future::join_all};
+use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
@@ -1296,7 +1297,7 @@ async fn can_mine_multiple_in_block() {
 
 // ensures that the gas estimate is running on pending block by default
 #[tokio::test(flavor = "multi_thread")]
-async fn estimates_gas_prague() {
+async fn can_estimate_gas_prague() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
 
@@ -1307,4 +1308,76 @@ async fn estimates_gas_prague() {
         .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
     api.estimate_gas(WithOtherFields::new(req), None, EvmOverrides::default()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_enabled() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .enable_tx_gas_limit(true)
+            .with_hardfork(Some(EthereumHardfork::Osaka.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is rejected
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let err = provider.send_transaction(tx).await.unwrap_err().to_string();
+    assert!(
+        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        "{err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_disabled() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is accepted when the limit is disabled
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
 }

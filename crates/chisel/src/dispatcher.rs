@@ -528,14 +528,10 @@ impl ChiselDispatcher {
 /// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
 /// only contained trivia (comments, whitespace).
 fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
-    let mut current_pos = 0;
     let mut only_trivia = true;
     let mut new_input = Cow::Borrowed(input);
-    for token in solar::parse::Cursor::new(input) {
+    for (pos, token) in solar::parse::Cursor::new(input).with_position() {
         use RawTokenKind::*;
-
-        let pos = current_pos as usize;
-        current_pos += token.len;
 
         if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
             continue;

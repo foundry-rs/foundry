@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
 import {
     symbol0 as mySymbol,
     symbol1 as myOtherSymbol,
@@ -47,33 +50,29 @@ import * as Utils from "./auxiliary/ImportsUtils.sol";
 import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused imports should be removed
 
 
-contract UnusedImport is IContract, BaseContract {
+abstract contract UnusedImport is IContract, BaseContract {
     using mySymbol for address;
 
-    /// @inheritdoc docSymbol
     uint256 constant MY_CONSTANT = CONSTANT_0;
 
-    /**
-     * @inheritdoc docSymbol2
-     */
     struct FooBar {
         symbol3 foo;
         myOtherSymbol bar;
     }
 
-    /// @wrong docSymbolWrongTag
+    /// @dev docSymbolWrongTag
     SomeFile.Baz public myStruct;
     SomeFile2.Baz public myStruct2;
     symbol4 public myVar;
 
-    function foo(uint256 a, symbol5 b) public view override(BaseContract) returns (uint256) {
-        uint256 c = Utils.calculate(a, b);
+    function foo(uint256 a, symbol5 b) external override(BaseContract) returns (uint256) {
+        uint256 c = Utils.calculate(a, symbol5.unwrap(b));
         emit eventSymbol.foo(c);
         return c;
     }
 
     function convert(address addr) public pure returns (MyOtherType) {
         MyType a = MyType.wrap(123);
-        return MyOtherType.wrap(a);
+        return MyOtherType.wrap(MyType.unwrap(a));
     }
 }

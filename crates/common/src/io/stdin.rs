@@ -103,6 +103,9 @@ pub fn read_bytes(read_line: bool) -> Result<Vec<u8>> {
         // remove the trailing newline
         if let Some(b'\n') = buf.as_bytes().last() {
             buf.pop();
+            if let Some(b'\r') = buf.as_bytes().last() {
+                buf.pop();
+            }
         }
         Ok(buf.into_bytes())
     } else {

@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
 contract AsmKeccak256 {
 
     // constants are optimized by the compiler
     bytes32 constant HASH = keccak256("hello");
-    bytes32 constant OTHER_HASH = keccak256(0x1234);
+    bytes32 constant OTHER_HASH = keccak256(hex"1234");
 
     constructor(uint256 a, uint256 b, address c) {
         // forge-lint: disable-next-line(asm-keccak256)
@@ -12,7 +15,7 @@ contract AsmKeccak256 {
 
         // lints fire before the disabled block
         address c = address(1);
-        bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(c))); //~NOTE: inefficient hashing mechanism
+        bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(bytes20(c)))); //~NOTE: inefficient hashing mechanism
         uint256 MixedCase_Variable = 1; //~NOTE: mutable variables should use mixedCase
 
         // forge-lint: disable-start(asm-keccak256) -------------------------------------
@@ -34,7 +37,7 @@ contract AsmKeccak256 {
 
     // forge-lint: disable-next-item(asm-keccak256)
     function solidityHashDisabled(uint256 a, uint256 b) public view returns (bytes32) {
-        bytes32 hash = keccak256(a);
+        bytes32 hash = keccak256(abi.encodePacked(a));
         return keccak256(abi.encodePacked(a, b));
     }
 

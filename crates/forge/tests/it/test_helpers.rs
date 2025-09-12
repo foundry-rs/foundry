@@ -334,7 +334,7 @@ pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
-/// Data for tests requiring Prague support on Solc and EVM level.
+/// Data for tests requiring no specific version on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 

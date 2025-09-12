@@ -20,9 +20,8 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 
 solar.workspace = true
-# TODO: remove in next solar release: https://github.com/paradigmxyz/solar/pull/444
-solar-interface = { workspace = true, features = ["json"] }
 
+eyre.workspace = true
 heck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
