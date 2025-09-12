@@ -161,16 +161,10 @@ impl CloneArgs {
     /// * `enable_git` - whether to enable git for the project.
     /// * `quiet` - whether to print messages.
     pub(crate) fn init_an_empty_project(root: &Path, install: DependencyInstallOpts) -> Result<()> {
-        // let's try to init the project with default init args
-        let init_args = InitArgs { root: root.to_path_buf(), install, ..Default::default() };
+        // Initialize the project with empty set to true to avoid creating example contracts
+        let init_args =
+            InitArgs { root: root.to_path_buf(), install, empty: true, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
-
-        // remove the unnecessary example contracts
-        // XXX (ZZ): this is a temporary solution until we have a proper way to remove contracts,
-        // e.g., add a field in the InitArgs to control the example contract generation
-        fs::remove_file(root.join("src/Counter.sol"))?;
-        fs::remove_file(root.join("test/Counter.t.sol"))?;
-        fs::remove_file(root.join("script/Counter.s.sol"))?;
 
         Ok(())
     }

@@ -62,9 +62,8 @@ pub use endpoints::{
 };
 
 mod etherscan;
-use etherscan::{
-    EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
-};
+pub use etherscan::EtherscanConfigError;
+use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
 
 pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
@@ -488,8 +487,11 @@ pub struct Config {
     /// Useful for more correct gas accounting and EVM behavior in general.
     pub isolate: bool,
 
-    /// Whether to disable the block gas limit.
+    /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    pub enable_tx_gas_limit: bool,
 
     /// Address labels
     pub labels: AddressHashMap<String>,
@@ -958,7 +960,8 @@ impl Config {
     ///
     /// Use this when you just want the source graph or the Solar compiler context.
     pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
-        let mut project = self.project()?;
+        let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
+        let mut project = self.create_project(self.cache && !ui_testing, false)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection([]);
         });
@@ -1443,15 +1446,10 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            match ResolvedEtherscanConfig::create(key, chain.or(self.chain).unwrap_or_default()) {
-                Some(config) => return Ok(Some(config)),
-                None => {
-                    return Err(EtherscanConfigError::UnknownChain(
-                        String::new(),
-                        chain.unwrap_or_default(),
-                    ));
-                }
-            }
+            return Ok(ResolvedEtherscanConfig::create(
+                key,
+                chain.or(self.chain).unwrap_or_default(),
+            ));
         }
         Ok(None)
     }
@@ -2388,6 +2386,7 @@ impl Default for Config {
             block_prevrandao: Default::default(),
             block_gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_accept_invalid_certs: false,
