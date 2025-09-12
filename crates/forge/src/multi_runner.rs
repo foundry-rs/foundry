@@ -390,9 +390,14 @@ impl TestRunnerConfig {
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
             .with_state_changes(verbosity() > 4);
-        // Enable step recording for backtraces when verbosity >= 3
-        if self.evm_opts.verbosity >= 3 && mode < TraceMode::JumpSimple {
-            mode = TraceMode::JumpSimple;
+
+        // Enable full step recording for backtraces when verbosity >= 3
+        // We need to ensure we're recording steps for:
+        // 1. Backtraces (need program counters)
+        // 2. Debug trace recording (needs all opcodes)
+        // But we don't want to downgrade from RecordStateDiff
+        if self.evm_opts.verbosity >= 3 && (mode == TraceMode::Call || mode == TraceMode::None) {
+            mode = TraceMode::Debug;
         }
         mode
     }
