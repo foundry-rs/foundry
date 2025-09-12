@@ -81,9 +81,8 @@ use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
-        transaction_request_to_typed,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedTransaction, has_optimism_fields, transaction_request_to_typed,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -2945,10 +2944,7 @@ impl Backend {
         };
 
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index]
-            .iter()
-            .map(|r| r.logs().len())
-            .sum::<usize>();
+        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
         let receipt_ref = tx_receipt.as_receipt_with_bloom();
         let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
@@ -2979,23 +2975,25 @@ impl Backend {
             TypedReceipt::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
             TypedReceipt::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedReceipt::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedReceipt::Deposit(r) => TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                receipt: op_alloy_consensus::OpDepositReceipt {
-                    inner: Receipt {
-                        status: receipt_with_bloom.receipt.status,
-                        cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
-                        logs: receipt_with_bloom
-                            .receipt
-                            .logs
-                            .into_iter()
-                            .map(|l| l.inner)
-                            .collect(),
+            TypedReceipt::Deposit(r) => {
+                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: Receipt {
+                            status: receipt_with_bloom.receipt.status,
+                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
+                            logs: receipt_with_bloom
+                                .receipt
+                                .logs
+                                .into_iter()
+                                .map(|l| l.inner)
+                                .collect(),
+                        },
+                        deposit_nonce: r.receipt.deposit_nonce,
+                        deposit_receipt_version: r.receipt.deposit_receipt_version,
                     },
-                    deposit_nonce: r.receipt.deposit_nonce,
-                    deposit_receipt_version: r.receipt.deposit_receipt_version,
-                },
-                logs_bloom: receipt_with_bloom.logs_bloom,
-            }),
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                })
+            }
         };
 
         let inner = TransactionReceipt {

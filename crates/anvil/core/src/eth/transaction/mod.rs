@@ -10,7 +10,7 @@ use alloy_consensus::{
 
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
-use alloy_primitives::{Address, B256, Bloom, Bytes, Log, Signature, TxHash, TxKind, U64, U256};
+use alloy_primitives::{Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
     AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
@@ -20,7 +20,9 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
+use op_alloy_consensus::{
+    DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit,
+};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
@@ -966,7 +968,6 @@ impl TypedTransaction {
             ),
         }
     }
-
 }
 
 impl Encodable for TypedTransaction {
@@ -1189,7 +1190,9 @@ impl TypedReceipt<Receipt<alloy_primitives::Log>> {
 }
 
 // Intentionally only provide a concrete conversion used by RPC response/Otterscan path.
-impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
+impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>>
+    for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>
+{
     fn from(value: TypedReceipt<Receipt<alloy_rpc_types::Log>>) -> Self {
         match value {
             TypedReceipt::Legacy(r)
@@ -1208,10 +1211,19 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for ReceiptWithBloom<Rece
                         .logs
                         .iter()
                         .cloned()
-                        .map(|l| alloy_rpc_types::Log { inner: l, block_hash: None, block_number: None, block_timestamp: None, transaction_hash: None, transaction_index: None, log_index: None, removed: false })
+                        .map(|l| alloy_rpc_types::Log {
+                            inner: l,
+                            block_hash: None,
+                            block_number: None,
+                            block_timestamp: None,
+                            transaction_hash: None,
+                            transaction_index: None,
+                            log_index: None,
+                            removed: false,
+                        })
                         .collect(),
                 };
-                ReceiptWithBloom { receipt, logs_bloom: r.logs_bloom }
+                Self { receipt, logs_bloom: r.logs_bloom }
             }
         }
     }
@@ -1335,8 +1347,7 @@ impl Decodable for TypedReceipt {
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP7702)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
-                    <OpDepositReceiptWithBloom as Decodable>::decode(buf)
-                        .map(TypedReceipt::Deposit)
+                    <OpDepositReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::Deposit)
                 } else {
                     Err(alloy_rlp::Error::Custom("invalid receipt type"))
                 }
@@ -1456,9 +1467,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x7E => TypedReceipt::Deposit(OpDepositReceiptWithBloom {
                 receipt: OpDepositReceipt {
                     inner: Receipt {
-                        status: alloy_consensus::Eip658Value::Eip658(
-                            receipt_with_bloom.status(),
-                        ),
+                        status: alloy_consensus::Eip658Value::Eip658(receipt_with_bloom.status()),
                         cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
                         logs: receipt_with_bloom
                             .receipt
@@ -1489,7 +1498,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{LogData, b256, hex};
+    use alloy_primitives::{Log, LogData, b256, hex};
     use std::str::FromStr;
 
     // <https://github.com/foundry-rs/foundry/issues/10852>
