@@ -7,10 +7,11 @@ use alloy_consensus::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
+
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, Signature, TxHash, TxKind, U64, U256};
-use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
     AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
     request::TransactionRequest, trace::otterscan::OtsReceipt,
@@ -18,7 +19,8 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
@@ -964,6 +966,7 @@ impl TypedTransaction {
             ),
         }
     }
+
 }
 
 impl Encodable for TypedTransaction {
@@ -1094,104 +1097,6 @@ pub struct TransactionInfo {
     pub gas_used: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DepositReceipt<T = Receipt<alloy_primitives::Log>> {
-    #[serde(flatten)]
-    pub inner: ReceiptWithBloom<T>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub deposit_nonce: Option<u64>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub deposit_receipt_version: Option<u64>,
-}
-
-impl DepositReceipt {
-    fn payload_len(&self) -> usize {
-        self.inner.receipt.status.length()
-            + self.inner.receipt.cumulative_gas_used.length()
-            + self.inner.logs_bloom.length()
-            + self.inner.receipt.logs.length()
-            + self.deposit_nonce.map_or(0, |n| n.length())
-            + self.deposit_receipt_version.map_or(0, |n| n.length())
-    }
-
-    /// Returns the rlp header for the receipt payload.
-    fn receipt_rlp_header(&self) -> alloy_rlp::Header {
-        alloy_rlp::Header { list: true, payload_length: self.payload_len() }
-    }
-
-    /// Encodes the receipt data.
-    fn encode_fields(&self, out: &mut dyn BufMut) {
-        self.receipt_rlp_header().encode(out);
-        self.inner.status().encode(out);
-        self.inner.receipt.cumulative_gas_used.encode(out);
-        self.inner.logs_bloom.encode(out);
-        self.inner.receipt.logs.encode(out);
-        if let Some(n) = self.deposit_nonce {
-            n.encode(out);
-        }
-        if let Some(n) = self.deposit_receipt_version {
-            n.encode(out);
-        }
-    }
-
-    /// Decodes the receipt payload
-    fn decode_receipt(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let b: &mut &[u8] = &mut &**buf;
-        let rlp_head = alloy_rlp::Header::decode(b)?;
-        if !rlp_head.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let started_len = b.len();
-        let remaining = |b: &[u8]| rlp_head.payload_length - (started_len - b.len()) > 0;
-
-        let status = Decodable::decode(b)?;
-        let cumulative_gas_used = Decodable::decode(b)?;
-        let logs_bloom = Decodable::decode(b)?;
-        let logs: Vec<Log> = Decodable::decode(b)?;
-        let deposit_nonce = remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
-        let deposit_nonce_version =
-            remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
-
-        let this = Self {
-            inner: ReceiptWithBloom {
-                receipt: Receipt { status, cumulative_gas_used, logs },
-                logs_bloom,
-            },
-            deposit_nonce,
-            deposit_receipt_version: deposit_nonce_version,
-        };
-
-        let consumed = started_len - b.len();
-        if consumed != rlp_head.payload_length {
-            return Err(alloy_rlp::Error::ListLengthMismatch {
-                expected: rlp_head.payload_length,
-                got: consumed,
-            });
-        }
-
-        *buf = *b;
-        Ok(this)
-    }
-}
-
-impl alloy_rlp::Encodable for DepositReceipt {
-    fn encode(&self, out: &mut dyn BufMut) {
-        self.encode_fields(out);
-    }
-
-    fn length(&self) -> usize {
-        let payload_length = self.payload_len();
-        payload_length + length_of_length(payload_length)
-    }
-}
-
-impl alloy_rlp::Decodable for DepositReceipt {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Self::decode_receipt(buf)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
@@ -1206,31 +1111,108 @@ pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(rename = "0x4", alias = "0x04")]
     EIP7702(ReceiptWithBloom<T>),
     #[serde(rename = "0x7E", alias = "0x7e")]
-    Deposit(DepositReceipt<T>),
+    Deposit(OpDepositReceiptWithBloom),
 }
 
-impl<T> TypedReceipt<T> {
-    pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<T> {
+impl TypedReceipt<Receipt<alloy_rpc_types::Log>> {
+    pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
         match self {
             Self::Legacy(r)
             | Self::EIP1559(r)
             | Self::EIP2930(r)
             | Self::EIP4844(r)
             | Self::EIP7702(r) => r,
-            Self::Deposit(r) => &r.inner,
+            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
+        }
+    }
+
+    pub fn logs_bloom(&self) -> &Bloom {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => &r.logs_bloom,
+            Self::Deposit(r) => &r.logs_bloom,
+        }
+    }
+
+    pub fn logs(&self) -> &[alloy_rpc_types::Log] {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => &r.receipt.logs,
+            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
         }
     }
 }
 
-impl<T> From<TypedReceipt<T>> for ReceiptWithBloom<T> {
-    fn from(value: TypedReceipt<T>) -> Self {
+impl TypedReceipt<Receipt<alloy_primitives::Log>> {
+    pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => r,
+            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
+        }
+    }
+
+    pub fn logs(&self) -> &[alloy_primitives::Log] {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => &r.receipt.logs,
+            Self::Deposit(_) => unreachable!("use variant-specific helpers for deposit"),
+        }
+    }
+
+    pub fn logs_bloom(&self) -> &Bloom {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => &r.logs_bloom,
+            Self::Deposit(r) => &r.logs_bloom,
+        }
+    }
+
+    pub fn cumulative_gas_used(&self) -> u64 {
+        self.as_receipt_with_bloom().cumulative_gas_used()
+    }
+}
+
+// Intentionally only provide a concrete conversion used by RPC response/Otterscan path.
+impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
+    fn from(value: TypedReceipt<Receipt<alloy_rpc_types::Log>>) -> Self {
         match value {
             TypedReceipt::Legacy(r)
             | TypedReceipt::EIP1559(r)
             | TypedReceipt::EIP2930(r)
             | TypedReceipt::EIP4844(r)
             | TypedReceipt::EIP7702(r) => r,
-            TypedReceipt::Deposit(r) => r.inner,
+            TypedReceipt::Deposit(r) => {
+                // Convert OP deposit receipt (primitives::Log) to RPC receipt (rpc_types::Log)
+                let receipt = Receipt::<alloy_rpc_types::Log> {
+                    status: r.receipt.inner.status,
+                    cumulative_gas_used: r.receipt.inner.cumulative_gas_used,
+                    logs: r
+                        .receipt
+                        .inner
+                        .logs
+                        .iter()
+                        .cloned()
+                        .map(|l| alloy_rpc_types::Log { inner: l, block_hash: None, block_number: None, block_timestamp: None, transaction_hash: None, transaction_index: None, log_index: None, removed: false })
+                        .collect(),
+                };
+                ReceiptWithBloom { receipt, logs_bloom: r.logs_bloom }
+            }
         }
     }
 }
@@ -1255,17 +1237,9 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
     }
 }
 
-impl TypedReceipt {
+impl TypedReceipt<Receipt<alloy_rpc_types::Log>> {
     pub fn cumulative_gas_used(&self) -> u64 {
         self.as_receipt_with_bloom().cumulative_gas_used()
-    }
-
-    pub fn logs_bloom(&self) -> &Bloom {
-        &self.as_receipt_with_bloom().logs_bloom
-    }
-
-    pub fn logs(&self) -> &[Log] {
-        self.as_receipt_with_bloom().logs()
     }
 }
 
@@ -1361,7 +1335,8 @@ impl Decodable for TypedReceipt {
                     <ReceiptWithBloom as Decodable>::decode(buf).map(TypedReceipt::EIP7702)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
-                    <DepositReceipt as Decodable>::decode(buf).map(TypedReceipt::Deposit)
+                    <OpDepositReceiptWithBloom as Decodable>::decode(buf)
+                        .map(TypedReceipt::Deposit)
                 } else {
                     Err(alloy_rlp::Error::Custom("invalid receipt type"))
                 }
@@ -1419,7 +1394,7 @@ impl Encodable2718 for TypedReceipt {
 impl Decodable2718 for TypedReceipt {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositReceipt::decode(buf)?));
+            return Ok(Self::Deposit(OpDepositReceiptWithBloom::decode(buf)?));
         }
         match ReceiptEnvelope::typed_decode(ty, buf)? {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
@@ -1478,18 +1453,33 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x02 => TypedReceipt::EIP1559(receipt_with_bloom),
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
             0x04 => TypedReceipt::EIP7702(receipt_with_bloom),
-            0x7E => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: other
-                    .get_deserialized::<U64>("depositNonce")
-                    .transpose()
-                    .ok()?
-                    .map(|v| v.to()),
-                deposit_receipt_version: other
-                    .get_deserialized::<U64>("depositReceiptVersion")
-                    .transpose()
-                    .ok()?
-                    .map(|v| v.to()),
+            0x7E => TypedReceipt::Deposit(OpDepositReceiptWithBloom {
+                receipt: OpDepositReceipt {
+                    inner: Receipt {
+                        status: alloy_consensus::Eip658Value::Eip658(
+                            receipt_with_bloom.status(),
+                        ),
+                        cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
+                        logs: receipt_with_bloom
+                            .receipt
+                            .logs
+                            .iter()
+                            .cloned()
+                            .map(|l| l.inner)
+                            .collect(),
+                    },
+                    deposit_nonce: other
+                        .get_deserialized::<U64>("depositNonce")
+                        .transpose()
+                        .ok()?
+                        .map(|v| v.to()),
+                    deposit_receipt_version: other
+                        .get_deserialized::<U64>("depositReceiptVersion")
+                        .transpose()
+                        .ok()?
+                        .map(|v| v.to()),
+                },
+                logs_bloom: receipt_with_bloom.logs_bloom,
             }),
             _ => return None,
         },
