@@ -1,5 +1,5 @@
 use alloy_eip5792::DelegationCapability;
-use alloy_primitives::{ChainId, U64, map::HashMap};
+use alloy_primitives::{Address, ChainId, U64, map::HashMap};
 use serde::{Deserialize, Serialize};
 
 /// Wallet capabilities for a specific chain.
@@ -16,7 +16,7 @@ impl Default for Capabilities {
 }
 
 impl Capabilities {
-    pub fn from_addresses(addresses: Vec<alloy_primitives::Address>) -> Self {
+    pub fn delegation_from_addresses(addresses: Vec<Address>) -> Self {
         Self { delegation: DelegationCapability { addresses } }
     }
 }

@@ -338,8 +338,10 @@ impl Backend {
             let mut capabilities = WalletCapabilities::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
-            capabilities
-                .insert(chain_id, Capabilities::from_addresses(vec![P256_DELEGATION_CONTRACT]));
+            capabilities.insert(
+                chain_id,
+                Capabilities::delegation_from_addresses(vec![P256_DELEGATION_CONTRACT]),
+            );
 
             let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
 
