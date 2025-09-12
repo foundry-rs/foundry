@@ -198,11 +198,6 @@ pub struct Backtrace<'a> {
 }
 
 impl<'a> Backtrace<'a> {
-    /// Returns true if the backtrace is empty.
-    pub fn is_empty(&self) -> bool {
-        self.frames.is_empty()
-    }
-
     /// Sets source data from pre-collected artifacts.
     pub fn new(
         contracts_by_address: &HashMap<Address, String>,
@@ -427,6 +422,11 @@ impl<'a> Backtrace<'a> {
     /// Finds a linked library by address.
     fn find_linked_library(&self, address: Address) -> Option<&LibraryInfo> {
         self.library_sources.iter().find(|lib| lib.address == Some(address) && lib.is_linked())
+    }
+
+    /// Returns true if the backtrace is empty.
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
     }
 }
 
