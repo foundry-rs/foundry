@@ -209,16 +209,17 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         then_stmt.span,
                     );
-                    if let Some(else_stmt) = else_stmt {
-                        // The relevant source range for the false branch is the `else`
-                        // statement itself and the false body of the else statement.
+                    if else_stmt.is_some() {
+                        // We use `stmt.span`, which includes `else_stmt.span`, since we need to
+                        // include the condition so that this can be marked as covered.
+                        // Initially implemented in https://github.com/foundry-rs/foundry/pull/3094.
                         self.push_item_kind(
                             CoverageItemKind::Branch {
                                 branch_id,
                                 path_id: 1,
                                 is_first_opcode: false,
                             },
-                            stmt.span.to(else_stmt.span),
+                            stmt.span,
                         );
                     }
                 }
