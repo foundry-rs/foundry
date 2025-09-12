@@ -1,5 +1,5 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_primitives::{U256, hex, keccak256};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
@@ -108,7 +108,9 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                let bucket_rows =
+                    parse_storage_buckets_value(artifact.raw_metadata.as_ref()).unwrap_or_default();
+                print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -281,6 +283,7 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(
     storage_layout: Option<&StorageLayout>,
+    bucket_rows: Vec<(String, String)>,
     should_wrap: bool,
 ) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
@@ -312,6 +315,16 @@ pub fn print_storage_layout(
                     &slot.offset.to_string(),
                     storage_type.map_or("?", |t| &t.number_of_bytes),
                     &slot.contract,
+                ]);
+            }
+            for (type_str, slot_dec) in &bucket_rows {
+                table.add_row([
+                    "storage-bucket",
+                    type_str.as_str(),
+                    slot_dec.as_str(),
+                    "0",
+                    "32",
+                    type_str,
                 ]);
             }
         },
@@ -612,6 +625,61 @@ fn missing_error(field: &str) -> eyre::Error {
     )
 }
 
+static BUCKET_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)
+        (?P<name>[A-Za-z_][A-Za-z0-9_:\.\-]*)
+        \s+
+        (?:0x)?(?P<hex>[0-9a-f]{1,64})
+    ",
+    )
+    .unwrap()
+});
+
+fn parse_storage_buckets_value(raw_metadata: Option<&String>) -> Option<Vec<(String, String)>> {
+    let parse_bucket_pairs = |s: &str| {
+        BUCKET_PAIR_RE
+            .captures_iter(s)
+            .filter_map(|caps| {
+                let name = caps.get(1)?.as_str();
+                let hex_str = caps.get(2)?.as_str();
+
+                hex::decode(hex_str.trim_start_matches("0x"))
+                    .ok()
+                    .filter(|bytes| bytes.len() == 32)
+                    .map(|_| (name.to_owned(), hex_str.to_owned()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let raw = raw_metadata?;
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    v.get("output")
+        .and_then(|o| o.get("devdoc"))
+        .and_then(|d| d.get("methods"))
+        .and_then(|m| m.get("constructor"))
+        .and_then(|c| c.as_object())
+        .and_then(|obj| obj.get("custom:storage-bucket"))
+        .map(|val| {
+            val.as_str()
+                .into_iter() // Option<&str> → Iterator<Item=&str>
+                .flat_map(parse_bucket_pairs)
+                .filter_map(|(name, hex): (String, String)| {
+                    let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
+                    let slot = U256::from_str_radix(hex_str, 16).ok()?;
+                    let slot_hex = short_hex(&alloy_primitives::hex::encode_prefixed(
+                        slot.to_be_bytes::<32>(),
+                    ));
+                    Some((name, slot_hex))
+                })
+                .collect()
+        })
+}
+
+fn short_hex(h: &str) -> String {
+    let s = h.strip_prefix("0x").unwrap_or(h);
+    if s.len() > 12 { format!("0x{}…{}", &s[..6], &s[s.len() - 4..]) } else { format!("0x{s}") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -639,5 +707,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn parses_eip7201_storage_buckets_from_metadata() {
+        let raw_wrapped = r#"
+        {
+            "metadata": {
+                "compiler": { "version": "0.8.30+commit.73712a01" },
+                "language": "Solidity",
+                "output": {
+                    "abi": [],
+                    "devdoc": {
+                        "kind": "dev",
+                        "methods": {
+                            "constructor": {
+                                "custom:storage-bucket": "EIP712Storage 0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100NoncesStorage 0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00"
+                            }
+                        },
+                        "version": 1
+                    },
+                    "userdoc": { "kind": "user", "methods": {}, "version": 1 }
+                },
+                "settings": { "optimizer": { "enabled": false, "runs": 200 } },
+                "sources": {},
+                "version": 1
+            }
+        }"#;
+
+        let v: serde_json::Value = serde_json::from_str(raw_wrapped).unwrap();
+        let inner_meta_str = v.get("metadata").unwrap().to_string();
+
+        let rows =
+            parse_storage_buckets_value(Some(&inner_meta_str)).expect("parser returned None");
+        assert_eq!(rows.len(), 2, "expected two EIP-7201 buckets");
+
+        assert_eq!(rows[0].0, "EIP712Storage");
+        assert_eq!(rows[1].0, "NoncesStorage");
+
+        let expect_short = |h: &str| {
+            let hex_str = h.trim_start_matches("0x");
+            let slot = U256::from_str_radix(hex_str, 16).unwrap();
+            let full = alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<32>());
+            short_hex(&full)
+        };
+
+        let eip712_slot_hex =
+            expect_short("0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100");
+        let nonces_slot_hex =
+            expect_short("0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00");
+
+        assert_eq!(rows[0].1, eip712_slot_hex);
+        assert_eq!(rows[1].1, nonces_slot_hex);
+
+        assert!(rows[0].1.starts_with("0x") && rows[0].1.contains('…'));
+        assert!(rows[1].1.starts_with("0x") && rows[1].1.contains('…'));
     }
 }
