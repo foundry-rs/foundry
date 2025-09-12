@@ -200,7 +200,9 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         disabled_blocks: &mut HashMap<I::Item, (usize, BytePos, BytePos)>,
         find_next_item: &mut dyn FnMut(BytePos) -> Option<Span>,
     ) {
-        let (file, comment_range) = source_map.span_to_source(span).unwrap();
+        let result = source_map.span_to_source(span).unwrap();
+        let file = result.file;
+        let comment_range = result.data;
         let src = file.src.as_str();
 
         match item {

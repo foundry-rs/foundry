@@ -5,9 +5,10 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::{BuildOpts, configure_pcx},
+    opts::BuildOpts,
     utils::{FoundryPathExt, LoadConfig},
 };
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
@@ -43,7 +44,8 @@ foundry_config::impl_figment_convert!(LintArgs, build);
 impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let project = config.project()?;
+        let project = config.solar_project()?;
+
         let path_config = config.project_paths();
 
         // Expand ignore globs and canonicalize from the get go
@@ -112,15 +114,9 @@ impl LintArgs {
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
-        let mut compiler = linter.init();
-        compiler.enter_mut(|compiler| -> Result<()> {
-            let mut pcx = compiler.parse();
-            configure_pcx(&mut pcx, &config, Some(&project), Some(&input))?;
-            pcx.parse();
-            let _ = compiler.lower_asts();
-            Ok(())
-        })?;
-        linter.lint(&input, &mut compiler);
+        let mut output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        linter.lint(&input, compiler)?;
 
         Ok(())
     }
