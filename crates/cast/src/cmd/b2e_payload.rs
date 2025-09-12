@@ -35,7 +35,12 @@ impl B2EPayloadArgs {
             .map_err(|e| eyre!("Failed to parse beacon block JSON: {}", e))?;
 
         // early detection if the format is not correct
-        if  beacon_json.get("message").and_then(|m| m.get("body")).and_then(|b| b.get("execution_payload")).is_none(){
+        if beacon_json
+            .get("message")
+            .and_then(|m| m.get("body"))
+            .and_then(|b| b.get("execution_payload"))
+            .is_none()
+        {
             return Err(eyre!("Invalid beacon block format: missing 'message' field"));
         }
         // Extract the "message.body.execution_payload" field from the beacon block JSON
