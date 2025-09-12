@@ -3,6 +3,7 @@ use alloy_rpc_types_engine::ExecutionPayload;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_common::{fs, sh_print};
+use std::path::PathBuf;
 
 /// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution
 /// JSON-RPC format.
@@ -10,14 +11,14 @@ use foundry_common::{fs, sh_print};
 pub struct B2EPayloadArgs {
     /// Input data provided through JSON file path.
     #[arg(help = "Path to the JSON file containing the beacon block")]
-    pub json_file: String,
+    pub json_file: PathBuf,
 }
 
 impl B2EPayloadArgs {
     pub async fn run(self) -> Result<()> {
         // Get input beacon block data
         let beacon_block = fs::read_to_string(&self.json_file)
-            .map_err(|e| eyre!("Failed to read JSON file '{}': {}", self.json_file, e))?;
+            .map_err(|e| eyre!("Failed to read JSON file '{}': {}", self.json_file.display(), e))?;
 
         // Extract and convert execution payload
         let execution_payload = Self::extract_and_convert_execution_payload(&beacon_block)?;
