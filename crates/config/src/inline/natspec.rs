@@ -33,15 +33,16 @@ impl NatSpec {
         let solar = SolarParser::new();
         let solc = SolcParser::new();
         for (id, artifact) in output.artifact_ids() {
-            let abs_path = id.source.as_path();
-            let path = abs_path.strip_prefix(root).unwrap_or(abs_path);
+            let path = id.source.as_path();
+            let path = path.strip_prefix(root).unwrap_or(path);
+            let abs_path = &*root.join(path);
             let contract_name = id.name.split('.').next().unwrap();
             // `id.identifier` but with the stripped path.
             let contract = format!("{}:{}", path.display(), id.name);
 
             let mut used_solar = false;
             let compiler = output.parser().solc().compiler();
-            compiler.enter(|compiler| {
+            compiler.enter_sequential(|compiler| {
                 if let Some((_, source)) = compiler.gcx().get_ast_source(abs_path)
                     && let Some(ast) = &source.ast
                 {
@@ -50,11 +51,21 @@ impl NatSpec {
                 }
             });
 
+            if !used_solar {
+                warn!(?abs_path, %contract, "could not parse natspec with solar");
+            }
+
+            let mut used_solc = false;
             if !used_solar
                 && let Some(ast) = &artifact.ast
                 && let Some(node) = solc.contract_root_node(&ast.nodes, &contract)
             {
                 solc.parse(&mut natspecs, &contract, node, true);
+                used_solc = true;
+            }
+
+            if !used_solar && !used_solc {
+                warn!(?abs_path, %contract, "could not parse natspec");
             }
         }
 
