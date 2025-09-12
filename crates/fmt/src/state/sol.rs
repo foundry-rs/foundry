@@ -473,7 +473,7 @@ impl<'ast> State<'_, 'ast> {
                     if pos.is_first && cmnt.style.is_isolated() && !this.is_bol_or_only_ind() {
                         this.print_sep(Separator::Hardbreak);
                     }
-                    if let Some(cmnt) = this.handle_comment(cmnt) {
+                    if let Some(cmnt) = this.handle_comment(cmnt, false) {
                         this.print_comment(cmnt, CommentConfig::skip_ws().mixed_post_nbsp());
                     }
                     if pos.is_last {
@@ -631,7 +631,7 @@ impl<'ast> State<'_, 'ast> {
         match map.remove(&span.lo()) {
             Some((pre_comments, post_comments)) => {
                 for cmnt in pre_comments {
-                    let Some(cmnt) = self.handle_comment(cmnt) else {
+                    let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
                     self.print_comment(cmnt, CommentConfig::default());
@@ -647,7 +647,7 @@ impl<'ast> State<'_, 'ast> {
                     enabled = true;
                 }
                 for cmnt in post_comments {
-                    let Some(cmnt) = self.handle_comment(cmnt) else {
+                    let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
                     self.print_comment(cmnt, CommentConfig::default().mixed_prev_space());
@@ -1495,8 +1495,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::CallArgsKind::Unnamed(exprs) => {
-                self.word("(");
-                self.commasep(
+                self.print_tuple(
                     exprs,
                     span.lo(),
                     span.hi(),
@@ -1509,7 +1508,6 @@ impl<'ast> State<'_, 'ast> {
                     },
                     break_single_no_cmnts,
                 );
-                self.word(")");
             }
             ast::CallArgsKind::Named(named_args) => {
                 self.word("(");
@@ -1978,7 +1976,7 @@ impl<'ast> State<'_, 'ast> {
         {
             self.nbsp();
         };
-        self.cbox(0);
+        self.s.cbox(0);
         self.print_path(path, false);
         self.print_call_args(args, false);
         self.end();

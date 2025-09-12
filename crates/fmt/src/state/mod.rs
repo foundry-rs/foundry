@@ -268,20 +268,20 @@ impl State<'_, '_> {
 impl<'sess> State<'sess, '_> {
     /// Returns `None` if the span is disabled and has been printed as-is.
     #[must_use]
-    fn handle_comment(&mut self, cmnt: Comment) -> Option<Comment> {
+    fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
                 if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);
-                if cmnt.style.is_isolated() || cmnt.style.is_trailing() {
+                if !skip_break && (cmnt.style.is_isolated() || cmnt.style.is_trailing()) {
                     self.print_sep(Separator::Hardbreak);
                 }
                 return None;
             }
         } else if self.print_span_if_disabled(cmnt.span) {
-            if cmnt.style.is_isolated() || cmnt.style.is_trailing() {
+            if !skip_break && (cmnt.style.is_isolated() || cmnt.style.is_trailing()) {
                 self.print_sep(Separator::Hardbreak);
             }
             return None;
@@ -314,7 +314,22 @@ impl<'sess> State<'sess, '_> {
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
-            let Some(cmnt) = self.handle_comment(cmnt) else {
+
+            // Ensure breaks are never skipped when there are multiple comments
+            if self.peek_comment_before(pos).is_some() {
+                config.iso_no_break = false;
+                config.trailing_no_break = false;
+            }
+
+            // Handle disabled comments
+            let Some(cmnt) = self.handle_comment(
+                cmnt,
+                if style_cache.is_isolated() {
+                    config.iso_no_break
+                } else {
+                    config.trailing_no_break
+                },
+            ) else {
                 last_style = Some(style_cache);
                 continue;
             };
@@ -485,8 +500,6 @@ impl<'sess> State<'sess, '_> {
 
                     if self.config.wrap_comments {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
-                    } else if pos.is_last && !config.iso_no_break {
-                        self.word(line.trim_end().to_string());
                     } else {
                         self.word(line);
                     }
@@ -621,7 +634,7 @@ impl<'sess> State<'sess, '_> {
                 config.unwrap_or(CommentConfig::skip_ws().mixed_no_break().mixed_prev_space());
             while printed <= n {
                 let cmnt = self.comments.next().unwrap();
-                if let Some(cmnt) = self.handle_comment(cmnt) {
+                if let Some(cmnt) = self.handle_comment(cmnt, config.trailing_no_break) {
                     self.print_comment(cmnt, config);
                 };
                 printed += 1;
@@ -650,7 +663,7 @@ impl<'sess> State<'sess, '_> {
         }
 
         while let Some(cmnt) = self.next_comment() {
-            if let Some(cmnt) = self.handle_comment(cmnt) {
+            if let Some(cmnt) = self.handle_comment(cmnt, false) {
                 self.print_comment(cmnt, CommentConfig::default());
             } else if self.peek_comment().is_none() {
                 self.hardbreak();
@@ -708,6 +721,12 @@ impl CommentConfig {
         self.mixed_no_break = true;
         self
     }
+
+    pub(crate) fn iso_no_break(mut self) -> Self {
+        self.iso_no_break = true;
+        self
+    }
+
     pub(crate) fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self
