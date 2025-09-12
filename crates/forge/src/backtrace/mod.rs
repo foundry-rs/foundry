@@ -54,7 +54,7 @@ impl Backtrace {
         let mut resolved_contracts = HashMap::default();
         for (addr, label) in &contracts_by_address {
             let mut found = false;
-            
+
             // Find the full identifier for this contract label
             for (artifact_id, _) in known_contracts.iter() {
                 if artifact_id.name == *label {
@@ -63,7 +63,7 @@ impl Backtrace {
                     break;
                 }
             }
-            
+
             // If no match found, keep the original label (might be needed for external contracts)
             if !found {
                 resolved_contracts.insert(*addr, label.clone());
