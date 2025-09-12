@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 pub struct B2EPayloadArgs {
     /// Input data provided through JSON file path.
-    #[arg(help = "Path to the JSON file containing the beacon block")]
+    #[arg(long = "json-file", value_name = "FILE", help = "Path to the JSON file containing the beacon block")]
     pub json_file: PathBuf,
 }
 
