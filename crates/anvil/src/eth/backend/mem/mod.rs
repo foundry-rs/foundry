@@ -27,7 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    evm::celo_precompile,
+    evm::celo_precompile::{self, CELO_TRANSFER_ADDRESS},
     inject_precompiles,
     mem::{
         inspector::AnvilInspector,
@@ -41,7 +41,10 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
+use alloy_eips::{
+    eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    eip7910::SystemContract,
+};
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
@@ -115,7 +118,11 @@ use revm::{
     },
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+    precompile::{
+        PrecompileId, PrecompileSpecId, Precompiles,
+        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
+        u64_to_address,
+    },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -841,6 +848,56 @@ impl Backend {
     /// Returns true if Celo features are active
     pub fn is_celo(&self) -> bool {
         self.env.read().is_celo
+    }
+
+    /// Returns the precompiles for the current spec.
+    pub fn precompiles(&self) -> BTreeMap<String, Address> {
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
+
+        let mut precompiles_map = BTreeMap::<String, Address>::default();
+        for (address, precompile) in precompiles.inner() {
+            precompiles_map.insert(precompile.id().name().to_string(), *address);
+        }
+
+        if self.odyssey {
+            precompiles_map.insert(
+                PrecompileId::P256Verify.name().to_string(),
+                u64_to_address(P256VERIFY_ADDRESS),
+            );
+        }
+
+        if self.is_celo() {
+            precompiles_map.insert(
+                celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
+                CELO_TRANSFER_ADDRESS,
+            );
+        }
+
+        if let Some(factory) = &self.precompile_factory {
+            for (precompile, _) in &factory.precompiles() {
+                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            }
+        }
+
+        precompiles_map
+    }
+
+    /// Returns the system contracts for the current spec.
+    pub fn system_contracts(&self) -> BTreeMap<SystemContract, Address> {
+        let mut system_contracts = BTreeMap::<SystemContract, Address>::default();
+
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+
+        if spec_id >= SpecId::CANCUN {
+            system_contracts.extend(SystemContract::cancun());
+        }
+
+        if spec_id >= SpecId::PRAGUE {
+            system_contracts.extend(SystemContract::prague(None));
+        }
+
+        system_contracts
     }
 
     /// Returns [`BlobParams`] corresponding to the current spec.
