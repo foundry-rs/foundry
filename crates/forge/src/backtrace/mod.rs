@@ -133,11 +133,11 @@ impl BacktraceBuilder {
         &self,
         arena: &SparsedTraceArena,
         known_contracts: &ContractsByArtifact,
-    ) -> Backtrace {
+    ) -> Backtrace<'_> {
         let resolved_contracts = self.resolve_contracts(arena, known_contracts);
 
         let mut backtrace =
-            Backtrace::new(&resolved_contracts, &self.source_data, self.library_sources.clone());
+            Backtrace::new(&resolved_contracts, &self.source_data, &self.library_sources);
 
         backtrace.extract_frames(arena);
 
@@ -188,8 +188,7 @@ impl BacktraceBuilder {
 }
 
 /// A Solidity stack trace for a test failure.
-#[derive(Default)]
-pub struct Backtrace {
+pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     pub frames: Vec<BacktraceFrame>,
     /// Source data mapped by contract address
@@ -197,10 +196,10 @@ pub struct Backtrace {
     /// PC to source mappers for each contract
     pc_mappers: HashMap<Address, PcSourceMapper>,
     /// Library sources (both internal and linked libraries)
-    library_sources: HashSet<LibraryInfo>,
+    library_sources: &'a HashSet<LibraryInfo>,
 }
 
-impl Backtrace {
+impl<'a> Backtrace<'a> {
     /// Returns true if the backtrace is empty.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
@@ -210,11 +209,15 @@ impl Backtrace {
     pub fn new(
         contracts_by_address: &HashMap<Address, String>,
         source_data_by_artifact: &HashMap<String, SourceData>,
-        library_sources: HashSet<LibraryInfo>,
+        library_sources: &'a HashSet<LibraryInfo>,
     ) -> Self {
         // Store library sources globally
-        let mut backtrace = Self::default();
-        backtrace.library_sources = library_sources;
+        let mut backtrace = Self {
+            frames: Vec::new(),
+            source_data: HashMap::default(),
+            pc_mappers: HashMap::default(),
+            library_sources,
+        };
 
         // Map source data to contract addresses using the contract identifier.
         for (addr, contract_identifier) in contracts_by_address {
@@ -225,7 +228,7 @@ impl Backtrace {
 
         // Add linked libraries to the address mapping
         let mut linked_lib_addresses: HashMap<String, Address> = HashMap::default();
-        for lib_info in &backtrace.library_sources {
+        for lib_info in backtrace.library_sources {
             if lib_info.is_linked()
                 && let Some(lib_addr) = lib_info.address
             {
@@ -432,17 +435,7 @@ impl Backtrace {
     }
 }
 
-impl fmt::Debug for Backtrace {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Backtrace")
-            .field("frames", &self.frames)
-            .field("source_data_count", &self.source_data.len())
-            .field("pc_mappers_count", &self.pc_mappers.len())
-            .finish()
-    }
-}
-
-impl fmt::Display for Backtrace {
+impl<'a> fmt::Display for Backtrace<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.frames.is_empty() {
             return Ok(());
