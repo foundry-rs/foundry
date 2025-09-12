@@ -2904,6 +2904,7 @@ Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
   [..] DebugTraceRecordingTest::test_start_stop_recording()
+...
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -3036,7 +3037,7 @@ Traces:
 
 Backtrace:
   at VM.assertEq
-  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:96:42)
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
 
 [PASS] test_increment_success() ([GAS])
 Logs:
