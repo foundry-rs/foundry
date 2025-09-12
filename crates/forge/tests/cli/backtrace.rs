@@ -2,7 +2,7 @@
 
 use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
 
-#[ignore(windows)]
+#[cfg_attr(windows, ignore)]
 forgetest!(test_backtraces, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -99,7 +99,7 @@ Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[ignore(windows)]
+#[cfg_attr(windows, ignore)]
 forgetest!(test_backtrace_with_mixed_compilation, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -265,7 +265,7 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[ignore(windows)]
+#[cfg_attr(windows, ignore)]
 forgetest!(test_library_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -374,7 +374,7 @@ Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[ignore(windows)]
+#[cfg_attr(windows, ignore)]
 forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     prj.insert_ds_test();
 
@@ -435,7 +435,7 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-#[ignore(windows)]
+#[cfg_attr(windows, ignore)]
 forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
