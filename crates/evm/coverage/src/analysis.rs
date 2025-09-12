@@ -187,13 +187,14 @@ impl<'a, 'ast> Visit<'ast> for ContractVisitor<'a> {
 
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         match &stmt.kind {
-            StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Emit(..)
-            | StmtKind::Revert(..)
-            | StmtKind::Return(_)
-            | StmtKind::DeclSingle(_)
-            | StmtKind::DeclMulti(..) => self.push_stmt(stmt.span),
+            StmtKind::Break | StmtKind::Continue | StmtKind::Emit(..) | StmtKind::Revert(..) => {
+                self.push_stmt(stmt.span);
+                // TODO(dani): these probably shouldn't be excluded.
+                return ControlFlow::Continue(());
+            }
+            StmtKind::Return(_) | StmtKind::DeclSingle(_) | StmtKind::DeclMulti(..) => {
+                self.push_stmt(stmt.span);
+            }
 
             StmtKind::If(_cond, then_stmt, else_stmt) => {
                 let branch_id = self.next_branch_id();
