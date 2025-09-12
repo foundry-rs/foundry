@@ -34,7 +34,10 @@ use alloy_consensus::{
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{
+    eip2718::Encodable2718,
+    eip7910::{EthConfig, EthForkConfig},
+};
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
     AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
@@ -313,6 +316,7 @@ impl EthApi {
             EthRequest::EthGetLogs(filter) => self.logs(filter).await.to_rpc_result(),
             EthRequest::EthGetWork(_) => self.work().to_rpc_result(),
             EthRequest::EthSyncing(_) => self.syncing().to_rpc_result(),
+            EthRequest::EthConfig(_) => self.config().to_rpc_result(),
             EthRequest::EthSubmitWork(nonce, pow, digest) => {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
             }
@@ -1470,6 +1474,32 @@ impl EthApi {
     pub fn syncing(&self) -> Result<bool> {
         node_info!("eth_syncing");
         Ok(false)
+    }
+
+    /// Returns the current configuration of the chain.
+    /// This is useful for finding out what precompiles and system contracts are available.
+    ///
+    /// Note: the activation timestamp is always 0 as the configuration is set at genesis.
+    /// Note: the `fork_id` is always `0x00000000` as this node does not participate in any forking
+    /// on the network.
+    /// Note: the `next` and `last` fields are always `null` as this node does not participate in
+    /// any forking on the network.
+    ///
+    /// Handler for ETH RPC call: `eth_config`
+    pub fn config(&self) -> Result<EthConfig> {
+        node_info!("eth_config");
+        Ok(EthConfig {
+            current: EthForkConfig {
+                activation_time: 0,
+                blob_schedule: self.backend.blob_params(),
+                chain_id: self.backend.env().read().evm_env.cfg_env.chain_id,
+                fork_id: Bytes::from_static(&[0; 4]),
+                precompiles: self.backend.precompiles(),
+                system_contracts: self.backend.system_contracts(),
+            },
+            next: None,
+            last: None,
+        })
     }
 
     /// Used for submitting a proof-of-work solution.
