@@ -84,11 +84,6 @@ impl std::ops::DerefMut for MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    /// Set the verbosity level for test output.
-    pub fn set_verbosity(&mut self, verbosity: u8) {
-        self.tcfg.verbosity = verbosity;
-    }
-
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
@@ -306,8 +301,6 @@ pub struct TestRunnerConfig {
     pub odyssey: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: FailFast,
-    /// Verbosity level for output.
-    pub verbosity: u8,
 }
 
 impl TestRunnerConfig {
@@ -428,8 +421,6 @@ pub struct MultiContractRunnerBuilder {
     pub odyssey: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
-    /// Verbosity level for test output.
-    pub verbosity: u8,
 }
 
 impl MultiContractRunnerBuilder {
@@ -446,7 +437,6 @@ impl MultiContractRunnerBuilder {
             decode_internal: Default::default(),
             odyssey: Default::default(),
             fail_fast: false,
-            verbosity: 0,
         }
     }
 
@@ -497,11 +487,6 @@ impl MultiContractRunnerBuilder {
 
     pub fn odyssey(mut self, enable: bool) -> Self {
         self.odyssey = enable;
-        self
-    }
-
-    pub fn with_verbosity(mut self, verbosity: u8) -> Self {
-        self.verbosity = verbosity;
         self
     }
 
@@ -586,7 +571,6 @@ impl MultiContractRunnerBuilder {
                 odyssey: self.odyssey,
                 config: self.config,
                 fail_fast: FailFast::new(self.fail_fast),
-                verbosity: self.verbosity,
             },
         })
     }
