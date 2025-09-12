@@ -190,9 +190,7 @@ impl BacktraceBuilder {
 /// A Solidity stack trace for a test failure.
 pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
-    pub frames: Vec<BacktraceFrame>,
-    /// Source data mapped by contract address
-    source_data: HashMap<Address, SourceData>,
+    frames: Vec<BacktraceFrame>,
     /// PC to source mappers for each contract
     pc_mappers: HashMap<Address, PcSourceMapper>,
     /// Library sources (both internal and linked libraries)
@@ -212,17 +210,14 @@ impl<'a> Backtrace<'a> {
         library_sources: &'a HashSet<LibraryInfo>,
     ) -> Self {
         // Store library sources globally
-        let mut backtrace = Self {
-            frames: Vec::new(),
-            source_data: HashMap::default(),
-            pc_mappers: HashMap::default(),
-            library_sources,
-        };
+        let mut backtrace =
+            Self { frames: Vec::new(), pc_mappers: HashMap::default(), library_sources };
 
+        let mut source_data = HashMap::new();
         // Map source data to contract addresses using the contract identifier.
         for (addr, contract_identifier) in contracts_by_address {
             if let Some(data) = source_data_by_artifact.get(contract_identifier) {
-                backtrace.source_data.insert(*addr, data.clone());
+                source_data.insert(*addr, data.clone());
             }
         }
 
@@ -241,14 +236,14 @@ impl<'a> Backtrace<'a> {
             // Find matching artifact by checking if identifier ends with the library name
             for (identifier, data) in source_data_by_artifact {
                 if identifier.ends_with(&format!(":{lib_name}")) || identifier == &lib_name {
-                    backtrace.source_data.insert(lib_addr, data.clone());
+                    source_data.insert(lib_addr, data.clone());
                     break;
                 }
             }
         }
 
         // Build PC source mappers for each contract
-        for (addr, data) in &backtrace.source_data {
+        for (addr, data) in &source_data {
             backtrace.pc_mappers.insert(
                 *addr,
                 PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
