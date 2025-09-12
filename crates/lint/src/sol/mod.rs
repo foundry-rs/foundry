@@ -5,12 +5,12 @@ use crate::{
         LinterConfig,
     },
 };
-use foundry_common::comments::Comments;
+use foundry_common::{comments::Comments, errors::convert_solar_errors};
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::prelude::*;
 use solar::{
-    ast::{self as ast, visit::Visit as VisitAST},
+    ast::{self as ast, visit::Visit as _},
     interface::{
         Session,
         diagnostics::{self, HumanEmitter, JsonEmitter},
@@ -18,7 +18,7 @@ use solar::{
     },
     sema::{
         Compiler, Gcx,
-        hir::{self, Visit as VisitHIR},
+        hir::{self, Visit as _},
     },
 };
 use std::{
@@ -233,41 +233,59 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn configure(&self, compiler: &mut Compiler) {
-        let dcx = compiler.dcx_mut();
-        let sm = dcx.source_map_mut().unwrap().clone();
-        dcx.set_emitter(if self.with_json_emitter {
+    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+        let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
+
+        let sm = compiler.sess().clone_source_map();
+        let prev_emitter = compiler.dcx().set_emitter(if self.with_json_emitter {
             let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
-            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(false);
+            let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(ui_testing);
             Box::new(json_emitter)
         } else {
             Box::new(HumanEmitter::stderr(Default::default()).source_map(Some(sm)))
         });
-        dcx.set_flags_mut(|f| f.track_diagnostics = false);
-    }
+        let sess = compiler.sess_mut();
+        sess.dcx.set_flags_mut(|f| f.track_diagnostics = false);
+        if ui_testing {
+            sess.opts.unstable.ui_testing = true;
+            sess.reconfigure();
+        }
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) {
-        compiler.enter_mut(|compiler| {
+        compiler.enter_mut(|compiler| -> eyre::Result<()> {
+            if compiler.gcx().stage() == Some(solar::config::CompilerStage::Parsing) {
+                let _ = compiler.lower_asts();
+                convert_solar_errors(compiler.dcx())?;
+            }
+
             let gcx = compiler.gcx();
 
-            // Early lints.
-            gcx.sources.raw.par_iter().for_each(|source| {
-                if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_ast(gcx.sess, ast, &source.file, path);
-                }
+            input.par_iter().for_each(|path| {
+                let path = &self.path_config.root.join(path);
+                let Some((_, ast_source)) = gcx.get_ast_source(path) else {
+                    panic!("AST source not found for {}", path.display());
+                };
+                let Some(ast) = &ast_source.ast else {
+                    panic!("AST missing for {}", path.display());
+                };
+                let _ = self.process_source_ast(gcx.sess, ast, &ast_source.file, path);
+
+                let Some((hir_source_id, hir_source)) = gcx.get_hir_source(path) else {
+                    panic!("HIR source not found for {}", path.display());
+                };
+                let _ = self.process_source_hir(gcx, hir_source_id, &hir_source.file);
             });
 
-            // Late lints.
-            gcx.hir.par_sources_enumerated().for_each(|(source_id, source)| {
-                if let FileName::Real(path) = &source.file.name
-                    && input.iter().any(|input_path| path.ends_with(input_path))
-                {
-                    let _ = self.process_source_hir(gcx, source_id, &source.file);
-                }
-            });
-        });
+            Ok(())
+        })?;
+
+        let sess = compiler.sess_mut();
+        sess.dcx.set_emitter(prev_emitter);
+        if ui_testing {
+            sess.opts.unstable.ui_testing = false;
+            sess.reconfigure();
+        }
+
+        convert_solar_errors(compiler.dcx())
     }
 }
 
