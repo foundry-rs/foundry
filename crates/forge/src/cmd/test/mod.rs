@@ -664,22 +664,17 @@ impl TestArgs {
                 }
 
                 // Extract and display backtrace for failed tests when verbosity >= 3
-                if !silent
-                    && verbosity >= 3
-                    && result.status == TestStatus::Failure
-                    && !result.traces.is_empty()
-                {
-                    // Find the execution trace (the actual test, not setup)
-                    if let Some((_, arena)) =
-                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
-                        && let Some(builder) = &backtrace_builder
-                    {
-                        // Create backtrace with pre-collected source data and library sources
-                        let backtrace = builder.from_traces(arena);
 
-                        if !backtrace.is_empty() {
-                            sh_println!("{}", backtrace)?;
-                        }
+                if !result.traces.is_empty()
+                    && let Some((_, arena)) =
+                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                    && let Some(builder) = &backtrace_builder
+                {
+                    // Create backtrace with pre-collected source data and library sources
+                    let backtrace = builder.from_traces(arena);
+
+                    if !backtrace.is_empty() {
+                        sh_println!("{}", backtrace)?;
                     }
                 }
 
