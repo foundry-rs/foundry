@@ -69,6 +69,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-chains"
+version = "0.2.6"
+source = "git+https://github.com/alloy-rs/chains?rev=e5812b8e092801dc9f872ef955b1f071f17e85db#e5812b8e092801dc9f872ef955b1f071f17e85db"
+dependencies = [
+ "alloy-primitives",
+ "num_enum",
+ "serde",
+ "strum 0.27.2",
+]
+
+[[package]]
 name = "alloy-consensus"
 version = "1.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,7 +272,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a20b180071d4f22db71702329101685ccff2e2a8f400d30a68ba907700163bf5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-eip2124",
  "alloy-primitives",
  "auto_impl",
@@ -357,7 +368,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b6e8ab92a4b6cf57d84cec62868b7161f40de36b01ffda62455deb3907c9001"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-hardforks",
  "auto_impl",
 ]
@@ -398,7 +409,7 @@ version = "1.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "475a5141313c3665b75d818be97d5fa3eb5e0abb7e832e9767edd94746db28e3"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-eips",
  "alloy-json-rpc",
@@ -1049,7 +1060,7 @@ dependencies = [
 name = "anvil"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
@@ -2528,7 +2539,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 name = "cast"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
@@ -3754,6 +3765,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
+name = "enscribe"
+version = "1.3.1"
+dependencies = [
+ "alloy-chains 0.2.6 (git+https://github.com/alloy-rs/chains?rev=e5812b8e092801dc9f872ef955b1f071f17e85db)",
+ "alloy-ens",
+ "alloy-sol-types",
+ "eyre",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-config",
+]
+
+[[package]]
 name = "enum-ordinalize"
 version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4030,8 +4054,10 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 name = "forge"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-ens",
  "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
@@ -4041,6 +4067,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-types",
  "alloy-transport",
  "anvil",
  "axum",
@@ -4051,6 +4078,7 @@ dependencies = [
  "clearscreen",
  "comfy-table",
  "dunce",
+ "enscribe",
  "evm-disassembler",
  "eyre",
  "forge-doc",
@@ -4061,6 +4089,7 @@ dependencies = [
  "forge-sol-macro-gen",
  "forge-verify",
  "foundry-block-explorers",
+ "foundry-cheatcodes-spec",
  "foundry-cli",
  "foundry-common",
  "foundry-compilers",
@@ -4166,7 +4195,7 @@ dependencies = [
 name = "forge-script"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
@@ -4180,6 +4209,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "dunce",
+ "enscribe",
  "eyre",
  "forge-script-sequence",
  "forge-verify",
@@ -4306,7 +4336,7 @@ version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff814624bb21bfe43b70fb736ab39527b405d04cdc94d90b7e182fba28b25ec7"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers",
@@ -4322,7 +4352,7 @@ dependencies = [
 name = "foundry-cheatcodes"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-ens",
@@ -4384,7 +4414,7 @@ dependencies = [
 name = "foundry-cli"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-ens",
@@ -4613,7 +4643,7 @@ dependencies = [
 name = "foundry-config"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-primitives",
  "clap",
  "dirs",
@@ -4713,7 +4743,7 @@ dependencies = [
 name = "foundry-evm-core"
 version = "1.3.5"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-evm",
@@ -4821,7 +4851,7 @@ version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5c6930a2357571fef2ca1e71bbb27be83e86bc78d9ead064c9889bdb268501e"
 dependencies = [
- "alloy-chains",
+ "alloy-chains 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-consensus",
  "alloy-hardforks",
  "alloy-primitives",
