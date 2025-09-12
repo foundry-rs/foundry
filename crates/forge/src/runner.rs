@@ -480,7 +480,6 @@ impl<'a> std::ops::Deref for FunctionRunner<'a> {
 }
 
 impl<'a> FunctionRunner<'a> {
-    /// Extract a backtrace from failed test traces
     fn new(cr: &'a ContractRunner<'a>, setup: &'a TestSetup) -> Self {
         Self {
             tcfg: match &cr.tcfg {
