@@ -1,9 +1,10 @@
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
-    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
-    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
-    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
+    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
+    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, estimate::EstimateArgs,
+    find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1042,6 +1043,10 @@ pub enum CastSubcommand {
     /// Generate a rust binding from a given ABI.
     #[command(visible_alias = "bi")]
     Bind(BindArgs),
+
+    /// Convert Beacon payload to execution payload.
+    #[command(visible_alias = "b2e")]
+    B2EPayload(B2EPayloadArgs),
 
     /// Get the selector for a function.
     #[command(visible_alias = "si")]
