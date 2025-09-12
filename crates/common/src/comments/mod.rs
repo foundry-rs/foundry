@@ -70,7 +70,6 @@ fn line_begin_pos(sf: &SourceFile, pos: BytePos) -> BytePos {
 fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
     let text = sf.src.as_str();
     let start_bpos = sf.start_pos;
-    let mut pos = 0;
     let mut comments: Vec<Comment> = Vec::new();
     let mut code_to_the_left = false;
 
@@ -89,7 +88,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
     }
     */
 
-    for token in solar::parse::Cursor::new(&text[pos..]) {
+    for (pos, token) in solar::parse::Cursor::new(text).with_position() {
         let token_range = pos..pos + token.len as usize;
         let span = make_span(token_range.clone());
         let token_text = &text[token_range];
@@ -148,7 +147,6 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 code_to_the_left = true;
             }
         }
-        pos += token.len as usize;
     }
 
     comments
