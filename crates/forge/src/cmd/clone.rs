@@ -455,8 +455,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
         });
 
     // ensure `src` and `lib` directories exist
-    eyre::ensure!(Path::exists(&root.join(src_dir)), "`src` directory must exists");
-    eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exists");
+    eyre::ensure!(Path::exists(&root.join(src_dir)), "`src` directory must exist");
+    eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exist");
 
     // move source files
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
