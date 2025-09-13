@@ -32,7 +32,7 @@ resolver = "2"
 version = "1.3.5"
 edition = "2024"
 # Remember to update clippy.toml as well
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://getfoundry.sh"
@@ -210,9 +210,7 @@ foundry-block-explorers = { version = "0.22.0", default-features = false }
 foundry-compilers = { version = "0.19.1", default-features = false }
 foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
-solar = { package = "solar-compiler", version = "=0.1.6", default-features = false }
-# TODO: remove in next solar release: https://github.com/paradigmxyz/solar/pull/444
-solar-interface = { version = "=0.1.6", default-features = false }
+solar = { package = "solar-compiler", version = "=0.1.7", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "1.0.23", default-features = false }
@@ -416,7 +414,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
+# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "dani/bump-solar" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
 ## solar
