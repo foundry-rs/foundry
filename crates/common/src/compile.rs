@@ -87,8 +87,10 @@ impl ProjectCompiler {
         }
     }
 
-    /// Sets whether we are going to verify the contracts after compilation.
+    /// Deprecated: this flag has no effect; verification is handled by higher-level commands
+    /// (e.g., `forge create` / script flows) and not by the compiler helper.
     #[inline]
+    #[deprecated(note = "No effect; verification is handled by higher-level commands (forge create/script).")]
     pub fn verify(mut self, yes: bool) -> Self {
         self.verify = Some(yes);
         self
@@ -504,8 +506,6 @@ pub struct ContractInfo {
 /// Compiles target file path.
 ///
 /// If `quiet` no solc related output will be emitted to stdout.
-///
-/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
