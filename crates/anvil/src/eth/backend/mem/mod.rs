@@ -41,6 +41,7 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
+use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
 use alloy_evm::{
     Database, Evm,
@@ -85,7 +86,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
-    wallet::{Capabilities, WalletCapabilities},
+    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -340,7 +341,9 @@ impl Backend {
             let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
                 chain_id,
-                Capabilities::delegation_from_addresses(vec![P256_DELEGATION_CONTRACT]),
+                Capabilities {
+                    delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
+                },
             );
 
             let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
@@ -418,7 +421,10 @@ impl Backend {
     pub(crate) fn add_capability(&self, address: Address) {
         let chain_id = self.env.read().evm_env.cfg_env.chain_id;
         let mut capabilities = self.capabilities.write();
-        let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
+        let mut capability = capabilities
+            .get(chain_id)
+            .cloned()
+            .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
         capability.delegation.addresses.push(address);
         capabilities.insert(chain_id, capability);
     }
