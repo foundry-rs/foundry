@@ -1,6 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
+    backtrace::BacktraceBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -24,8 +25,13 @@ use foundry_common::{
     EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
 };
 use foundry_compilers::{
-    Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
-    compilers::multi::MultiCompiler, multi::MultiCompilerLanguage, utils::source_files_iter,
+    ProjectCompileOutput,
+    artifacts::output_selection::OutputSelection,
+    compilers::{
+        Language,
+        multi::{MultiCompiler, MultiCompilerLanguage},
+    },
+    utils::source_files_iter,
 };
 use foundry_config::{
     Config, figment,
@@ -542,8 +548,8 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
-        for (contract_name, suite_result) in rx {
-            let tests = &suite_result.test_results;
+        for (contract_name, mut suite_result) in rx {
+            let tests = &mut suite_result.test_results;
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -567,6 +573,14 @@ impl TestArgs {
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }
             }
+
+            // Check if any failures to enable backtrace
+            let backtrace_builder = tests
+                .values()
+                .any(|res| {
+                    res.status.is_failure() && !silent && verbosity >= 3 && !res.traces.is_empty()
+                })
+                .then_some(BacktraceBuilder::new(output, config.as_ref()));
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
@@ -606,7 +620,7 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &mut result.traces.clone() {
+                for (kind, arena) in &mut result.traces {
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -636,6 +650,21 @@ impl TestArgs {
                     sh_println!("Traces:")?;
                     for trace in &decoded_traces {
                         sh_println!("{trace}")?;
+                    }
+                }
+
+                // Extract and display backtrace for failed tests when verbosity >= 3
+
+                if !result.traces.is_empty()
+                    && let Some((_, arena)) =
+                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                    && let Some(builder) = &backtrace_builder
+                {
+                    // Create backtrace with pre-collected source data and library sources
+                    let backtrace = builder.from_traces(arena);
+
+                    if !backtrace.is_empty() {
+                        sh_println!("{}", backtrace)?;
                     }
                 }
 
