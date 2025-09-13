@@ -442,7 +442,10 @@ impl Cheatcode for getChainIdCall {
 impl Cheatcode for chainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newChainId } = self;
-        ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
+        ensure!(
+            *newChainId <= U256::from(u64::MAX),
+            "chain ID must be less than or equal to 2^64 - 1"
+        );
         ccx.ecx.cfg.chain_id = newChainId.to();
         Ok(Default::default())
     }
@@ -472,7 +475,10 @@ impl Cheatcode for difficultyCall {
 impl Cheatcode for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBasefee } = self;
-        ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
+        ensure!(
+            *newBasefee <= U256::from(u64::MAX),
+            "base fee must be less than or equal to 2^64 - 1"
+        );
         ccx.ecx.block.basefee = newBasefee.saturating_to();
         Ok(Default::default())
     }
@@ -549,7 +555,10 @@ impl Cheatcode for getBlockNumberCall {
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newGasPrice } = self;
-        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
+        ensure!(
+            *newGasPrice <= U256::from(u64::MAX),
+            "gas price must be less than or equal to 2^64 - 1"
+        );
         ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
         Ok(Default::default())
     }
@@ -1030,7 +1039,10 @@ impl Cheatcode for broadcastRawTransactionCall {
 impl Cheatcode for setBlockhashCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber, blockHash } = *self;
-        ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
+        ensure!(
+            blockNumber <= U256::from(u64::MAX),
+            "blockNumber must be less than or equal to 2^64 - 1"
+        );
         ensure!(
             blockNumber <= U256::from(ccx.ecx.block.number),
             "block number must be less than or equal to the current block number"
