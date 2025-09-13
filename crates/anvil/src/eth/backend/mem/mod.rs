@@ -343,7 +343,7 @@ impl Backend {
             let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
             let _ = db.set_balance(EXECUTOR, init_balance);
 
-            let mut capabilities = WalletCapabilities::default();
+            let mut capabilities = HashMap::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
@@ -357,9 +357,9 @@ impl Backend {
 
             let executor_wallet = EthereumWallet::new(signer);
 
-            (capabilities, Some(executor_wallet))
+            (WalletCapabilities(capabilities), Some(executor_wallet))
         } else {
-            (WalletCapabilities::default(), None)
+            (WalletCapabilities(Default::default()), None)
         };
 
         let backend = Self {
@@ -433,7 +433,7 @@ impl Backend {
             .cloned()
             .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
         capability.delegation.addresses.push(address);
-        capabilities.insert(chain_id, capability);
+        capabilities.0.insert(chain_id, capability);
     }
 
     pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {

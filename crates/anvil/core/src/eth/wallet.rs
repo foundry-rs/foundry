@@ -1,21 +1,4 @@
-use alloy_eip5792::Capabilities;
-use alloy_primitives::{ChainId, U64, map::HashMap};
-use serde::{Deserialize, Serialize};
-
-/// A map of wallet capabilities per chain ID.
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct WalletCapabilities(HashMap<U64, Capabilities>);
-
-impl WalletCapabilities {
-    /// Get the capabilities of the wallet API for the specified chain ID.
-    pub fn get(&self, chain_id: ChainId) -> Option<&Capabilities> {
-        self.0.get(&U64::from(chain_id))
-    }
-
-    pub fn insert(&mut self, chain_id: ChainId, capabilities: Capabilities) {
-        self.0.insert(U64::from(chain_id), capabilities);
-    }
-}
+pub use alloy_eip5792::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalletError {
