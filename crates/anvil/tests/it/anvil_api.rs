@@ -845,11 +845,11 @@ async fn can_get_wallet_capabilities() {
 
     let capabilities = api.get_capabilities().unwrap();
 
-    let mut expect_caps = WalletCapabilities::default();
+    let mut expect_caps = WalletCapabilities(Default::default());
     let cap: Capabilities = Capabilities {
         delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
     };
-    expect_caps.insert(api.chain_id(), cap);
+    expect_caps.0.insert(api.chain_id(), cap);
 
     assert_eq!(capabilities, expect_caps);
 }
@@ -860,11 +860,11 @@ async fn can_add_capability() {
 
     let init_capabilities = api.get_capabilities().unwrap();
 
-    let mut expect_caps = WalletCapabilities::default();
+    let mut expect_caps = WalletCapabilities(Default::default());
     let cap: Capabilities = Capabilities {
         delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
     };
-    expect_caps.insert(api.chain_id(), cap);
+    expect_caps.0.insert(api.chain_id(), cap);
 
     assert_eq!(init_capabilities, expect_caps);
 
@@ -879,7 +879,7 @@ async fn can_add_capability() {
             addresses: vec![P256_DELEGATION_CONTRACT, new_cap_addr],
         },
     };
-    expect_caps.insert(api.chain_id(), cap);
+    expect_caps.0.insert(api.chain_id(), cap);
 
     assert_eq!(capabilities, expect_caps);
 }
