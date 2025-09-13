@@ -2948,12 +2948,13 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit specially
+        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
+        // specially
         let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
             TypedReceipt::Deposit(r) => (
                 r.receipt.inner.status,
                 r.receipt.inner.cumulative_gas_used,
-                r.receipt.inner.logs.iter().cloned().collect::<Vec<_>>(),
+                r.receipt.inner.logs.to_vec(),
                 r.logs_bloom,
             ),
             _ => {
@@ -2961,7 +2962,7 @@ impl Backend {
                 (
                     receipt_ref.receipt.status,
                     receipt_ref.receipt.cumulative_gas_used,
-                    receipt_ref.receipt.logs.iter().cloned().collect::<Vec<_>>(),
+                    receipt_ref.receipt.logs.to_vec(),
                     receipt_ref.logs_bloom,
                 )
             }
