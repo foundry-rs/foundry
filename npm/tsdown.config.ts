@@ -55,13 +55,6 @@ export default [
   }),
   defineConfig({
     ...config,
-    name: 'index',
-    outDir: './@foundry-rs/forge/dist',
-    outExtensions: () => ({ js: '.mjs' }),
-    entry: ['./src/index.ts']
-  }),
-  defineConfig({
-    ...config,
     name: 'install',
     outDir: './@foundry-rs/forge/dist',
     outExtensions: () => ({ js: '.mjs' }),

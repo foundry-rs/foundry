@@ -18,17 +18,18 @@ interface ImportMetaEnv {
     | 'x86_64-pc-windows-msvc'
   // <release.yml#jobs:release:strategy:matrix:include:-|arch>
   readonly ARCH: 'amd64' | 'arm64'
-  // `target/$TARGET/$PROFILE`
-  readonly OUT_DIR: `target/${TARGET}/${PROFILE}`
   readonly IS_NIGHTLY: 'true' | 'false'
   // `${(env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name}`
   readonly VERSION_NAME: string
   // release.yml#jobs:release:strategy:matrix:include:-|platform
   readonly PLATFORM_NAME: 'linux' | 'alpine' | 'darwin' | 'win32'
-  // `$OUT_DIR/forge$ext # <- .exe or empty string`
-  readonly EXT: '.exe' | ''
   // `debug` / `release` / `maxperf` # <- always `maxperf`
   readonly PROFILE: 'debug' | 'release' | 'maxperf'
+
+  // Used for local testing/development only
+  readonly REGISTRY_URL: string
+  readonly PACKAGE_PATH: string
+  readonly ALLOW_NO_INTEGRITY: 'true' | 'false'
 }
 
 declare namespace NodeJS {

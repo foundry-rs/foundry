@@ -8,16 +8,13 @@ import { colors } from '../src/const'
 const PRESERVED_FILES = ['package.json', 'README.md']
 const PLATFORM_MAP = {
   linux: 'linux',
-  alpine: 'linux',
   darwin: 'darwin',
   win32: 'win32'
 } as const
 
 const TARGET_MAP = {
   'amd64-linux': 'x86_64-unknown-linux-gnu',
-  'amd64-alpine': 'x86_64-unknown-linux-musl',
   'arm64-linux': 'aarch64-unknown-linux-gnu',
-  'arm64-alpine': 'aarch64-unknown-linux-musl',
   'amd64-darwin': 'x86_64-apple-darwin',
   'arm64-darwin': 'aarch64-apple-darwin',
   'amd64-win32': 'x86_64-pc-windows-msvc'

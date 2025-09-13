@@ -9,3 +9,5 @@ testdata/fixtures/**/* eol=lf
 
 dprint.json linguist-language=JSON-with-Comments
 .devcontainer/devcontainer.json linguist-language=JSON-with-Comments
+
+.env.example linguist-language=Dotenv
