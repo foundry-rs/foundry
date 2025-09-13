@@ -41,6 +41,7 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
+use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
     eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
     eip7910::SystemContract,
@@ -88,7 +89,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
-    wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -342,7 +343,7 @@ impl Backend {
             let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
             let _ = db.set_balance(EXECUTOR, init_balance);
 
-            let mut capabilities = WalletCapabilities::default();
+            let mut capabilities = HashMap::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
@@ -356,9 +357,9 @@ impl Backend {
 
             let executor_wallet = EthereumWallet::new(signer);
 
-            (capabilities, Some(executor_wallet))
+            (WalletCapabilities(capabilities), Some(executor_wallet))
         } else {
-            (WalletCapabilities::default(), None)
+            (WalletCapabilities(Default::default()), None)
         };
 
         let backend = Self {
@@ -407,9 +408,9 @@ impl Backend {
 
     /// Get the capabilities of the wallet.
     ///
-    /// Currently the only capability is [`DelegationCapability`].
+    /// Currently the only capability is delegation.
     ///
-    /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
+    /// See `anvil_core::eth::wallet::Capabilities` for construction helpers.
     pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
         self.capabilities.read().clone()
     }
@@ -423,13 +424,16 @@ impl Backend {
         self.executor_wallet.read().clone()
     }
 
-    /// Adds an address to the [`DelegationCapability`] of the wallet.
+    /// Adds an address to the wallet's delegation capability.
     pub(crate) fn add_capability(&self, address: Address) {
         let chain_id = self.env.read().evm_env.cfg_env.chain_id;
         let mut capabilities = self.capabilities.write();
-        let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
+        let mut capability = capabilities
+            .get(chain_id)
+            .cloned()
+            .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
         capability.delegation.addresses.push(address);
-        capabilities.insert(chain_id, capability);
+        capabilities.0.insert(chain_id, capability);
     }
 
     pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {
