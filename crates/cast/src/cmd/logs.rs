@@ -4,7 +4,10 @@ use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, hex::FromHex};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
+use alloy_provider::Provider;
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Log, Topic,
+};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
@@ -48,14 +51,31 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
+    /// Maximum number of logs to return
+    #[arg(long)]
+    count: Option<usize>,
+
+    /// Number of blocks to query in each batch
+    #[arg(long)]
+    batch: Option<u64>,
+
     #[command(flatten)]
     eth: EthereumOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
-            self;
+        let Self {
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            count,
+            batch,
+            eth,
+        } = self;
 
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
@@ -72,11 +92,20 @@ impl LogsArgs {
         let to_block =
             cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
-        let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
+        let mut filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter).await?;
-            sh_println!("{logs}")?;
+            let mut logs = if let Some(batch) = batch {
+                get_logs_in_batch(&cast, &mut filter, from_block, to_block, batch, count).await?
+            } else {
+                cast.get_logs(filter).await?
+            };
+
+            if let Some(count) = count {
+                logs.truncate(count);
+            }
+
+            cast.format_logs(logs).await?;
             return Ok(());
         }
 
@@ -93,6 +122,59 @@ impl LogsArgs {
 
         Ok(())
     }
+}
+
+/// Retrieves logs in batches to avoid large single requests
+async fn get_logs_in_batch<P>(
+    cast: &Cast<P>,
+    filter: &mut Filter,
+    from_block: Option<BlockNumberOrTag>,
+    to_block: Option<BlockNumberOrTag>,
+    batch: u64,
+    count: Option<usize>,
+) -> Result<Vec<Log>>
+where
+    P: Provider<AnyNetwork>,
+{
+    let start_block = from_block.unwrap_or(BlockNumberOrTag::Earliest);
+    let end_block = to_block.unwrap_or(BlockNumberOrTag::Latest);
+
+    // Convert block identifiers to actual block numbers
+    let start_num = match start_block {
+        BlockNumberOrTag::Number(n) => n,
+        BlockNumberOrTag::Earliest => 0,
+        _ => cast.provider.get_block_number().await?,
+    };
+
+    let end_num = match end_block {
+        BlockNumberOrTag::Number(n) => n,
+        BlockNumberOrTag::Earliest => 0,
+        _ => cast.provider.get_block_number().await?,
+    };
+
+    let mut logs = Vec::new();
+    let mut current_block = start_num;
+
+    while current_block <= end_num {
+        let batch_end = std::cmp::min(current_block + batch - 1, end_num);
+
+        // Update the filter's block range instead of creating new one
+        filter.block_option = FilterBlockOption::Range {
+            from_block: Some(BlockNumberOrTag::Number(current_block)),
+            to_block: Some(BlockNumberOrTag::Number(batch_end)),
+        };
+
+        logs.extend(cast.get_logs(filter.clone()).await?);
+
+        // If we have a count limit and we've reached it, return early
+        if count.is_some_and(|c| logs.len() >= c) {
+            break;
+        }
+
+        current_block = batch_end + 1;
+    }
+
+    Ok(logs)
 }
 
 /// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If
