@@ -1185,7 +1185,10 @@ impl TypedReceipt<Receipt<alloy_primitives::Log>> {
     }
 
     pub fn cumulative_gas_used(&self) -> u64 {
-        self.as_receipt_with_bloom().cumulative_gas_used()
+        match self {
+            Self::Deposit(r) => r.receipt.inner.cumulative_gas_used,
+            _ => self.as_receipt_with_bloom().cumulative_gas_used(),
+        }
     }
 }
 

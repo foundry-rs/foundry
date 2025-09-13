@@ -2948,17 +2948,33 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        let receipt_ref = tx_receipt.as_receipt_with_bloom();
+        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit specially
+        let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
+            TypedReceipt::Deposit(r) => (
+                r.receipt.inner.status,
+                r.receipt.inner.cumulative_gas_used,
+                r.receipt.inner.logs.iter().cloned().collect::<Vec<_>>(),
+                r.logs_bloom,
+            ),
+            _ => {
+                let receipt_ref = tx_receipt.as_receipt_with_bloom();
+                (
+                    receipt_ref.receipt.status,
+                    receipt_ref.receipt.cumulative_gas_used,
+                    receipt_ref.receipt.logs.iter().cloned().collect::<Vec<_>>(),
+                    receipt_ref.logs_bloom,
+                )
+            }
+        };
+
         let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
-            status: receipt_ref.receipt.status,
-            cumulative_gas_used: receipt_ref.receipt.cumulative_gas_used,
-            logs: receipt_ref
-                .receipt
-                .logs
-                .iter()
+            status,
+            cumulative_gas_used,
+            logs: logs_source
+                .into_iter()
                 .enumerate()
                 .map(|(index, log)| alloy_rpc_types::Log {
-                    inner: log.clone(),
+                    inner: log,
                     block_hash: Some(block_hash),
                     block_number: Some(block.header.number),
                     block_timestamp: Some(block.header.timestamp),
@@ -2969,7 +2985,7 @@ impl Backend {
                 })
                 .collect(),
         };
-        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom: *tx_receipt.logs_bloom() };
+        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
 
         let inner = match tx_receipt {
             TypedReceipt::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
