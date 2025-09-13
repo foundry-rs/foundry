@@ -1320,10 +1320,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        if self.strategy.runner.pre_step_end(self.strategy.context.as_mut(), interpreter, ecx) {
-            return;
-        }
-
         self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
