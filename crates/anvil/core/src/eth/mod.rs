@@ -688,9 +688,7 @@ pub enum EthRequest {
     )]
     WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    /// Add an address to the [`DelegationCapability`] of the wallet
-    ///
-    /// [`DelegationCapability`]: wallet::DelegationCapability
+    /// Add an address to the delegation capability of the wallet
     #[serde(rename = "anvil_addCapability", with = "sequence")]
     AnvilAddCapability(Address),
 

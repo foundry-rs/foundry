@@ -216,6 +216,7 @@ solar = { package = "solar-compiler", version = "=0.1.7", default-features = fal
 alloy-consensus = { version = "1.0.23", default-features = false }
 alloy-contract = { version = "1.0.23", default-features = false }
 alloy-eips = { version = "1.0.23", default-features = false }
+alloy-eip5792 = { version = "1.0.23", default-features = false }
 alloy-ens = { version = "1.0.23", default-features = false }
 alloy-genesis = { version = "1.0.23", default-features = false }
 alloy-json-rpc = { version = "1.0.23", default-features = false }
