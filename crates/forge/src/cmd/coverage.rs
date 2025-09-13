@@ -1,6 +1,6 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::{
-    MultiContractRunnerBuilder,
+    ConfigAndProject, MultiContractRunnerBuilder,
     coverage::{
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
@@ -103,18 +103,21 @@ impl CoverageArgs {
         // Coverage analysis requires the Solc AST output.
         config.ast = true;
 
-        let (paths, output) = {
-            let (project, output) = self.build(&config)?;
-            (project.paths, output)
-        };
+        let (project, output) = self.build(&config)?;
 
-        self.populate_reporters(&paths.root);
+        self.populate_reporters(&project.paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &output)?;
+        let report = self.prepare(&project.paths, &output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
+        self.collect(
+            &output,
+            report,
+            ConfigAndProject::new(Arc::new(config), Arc::new(project)),
+            evm_opts,
+        )
+        .await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -261,23 +264,23 @@ impl CoverageArgs {
     #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
-        root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Arc<Config>,
+        config_and_project: ConfigAndProject,
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let verbosity = evm_opts.verbosity;
+        let config = config_and_project.config.clone();
 
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
-        let runner = MultiContractRunnerBuilder::new(config.clone())
+        let runner = MultiContractRunnerBuilder::new(config_and_project)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .set_coverage(true)
-            .build::<MultiCompiler>(root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(output, env, evm_opts)?;
 
         let known_contracts = runner.known_contracts.clone();
 

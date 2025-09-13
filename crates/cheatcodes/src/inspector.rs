@@ -8,7 +8,7 @@ use crate::{
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
-    inspector::utils::CommonCreateInput,
+    inspector::{analysis::CheatcodeAnalysis, utils::CommonCreateInput},
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
@@ -75,6 +75,7 @@ use std::{
     sync::Arc,
 };
 
+mod analysis;
 mod utils;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
@@ -367,6 +368,9 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
 pub struct Cheatcodes {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Option<CheatcodeAnalysis>,
+
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the

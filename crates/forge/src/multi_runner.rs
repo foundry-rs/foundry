@@ -7,14 +7,14 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
+use foundry_cli::opts::configure_pcx;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
     shell::verbosity,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
+    Artifact, ArtifactId, Compiler, Project, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
-    compilers::Compiler,
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
@@ -61,6 +61,8 @@ pub struct MultiContractRunner {
     pub libs_to_deploy: Vec<Bytes>,
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Arc<solar::sema::Compiler>,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -252,7 +254,12 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
-        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
+        let executor = self.tcfg.executor(
+            self.known_contracts.clone(),
+            self.analysis.clone(),
+            artifact_id,
+            db.clone(),
+        );
         let runner = ContractRunner::new(
             &identifier,
             contract,
@@ -350,6 +357,7 @@ impl TestRunnerConfig {
     pub fn executor(
         &self,
         known_contracts: ContractsByArtifact,
+        analysis: Arc<solar::sema::Compiler>,
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
@@ -384,8 +392,20 @@ impl TestRunnerConfig {
     }
 }
 
+#[derive(Clone)]
+pub struct ConfigAndProject {
+    pub config: Arc<Config>,
+    pub project: Arc<Project>,
+}
+
+impl ConfigAndProject {
+    pub fn new(config: Arc<Config>, project: Arc<Project>) -> Self {
+        Self { config, project }
+    }
+}
+
 /// Builder used for instantiating the multi-contract runner
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
@@ -398,7 +418,7 @@ pub struct MultiContractRunnerBuilder {
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
-    pub config: Arc<Config>,
+    pub config_and_project: ConfigAndProject,
     /// Whether or not to collect line coverage info
     pub line_coverage: bool,
     /// Whether or not to collect debug info
@@ -414,9 +434,9 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config_and_project: ConfigAndProject) -> Self {
         Self {
-            config,
+            config_and_project,
             sender: Default::default(),
             initial_balance: Default::default(),
             evm_spec: Default::default(),
@@ -428,6 +448,14 @@ impl MultiContractRunnerBuilder {
             odyssey: Default::default(),
             fail_fast: false,
         }
+    }
+
+    fn config(&self) -> &Arc<Config> {
+        &self.config_and_project.config
+    }
+
+    fn project(&self) -> &Arc<Project> {
+        &self.config_and_project.project
     }
 
     pub fn sender(mut self, sender: Address) -> Self {
@@ -484,11 +512,11 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
-        root: &Path,
         output: &ProjectCompileOutput,
         env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
+        let root = self.project().root();
         let contracts = output
             .artifact_ids()
             .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))
@@ -539,29 +567,52 @@ impl MultiContractRunnerBuilder {
             .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
             .build();
 
+        // Initialize and configure the solar compiler.
+        let mut analysis = solar::sema::Compiler::new(
+            solar::interface::Session::builder().with_stderr_emitter().build(),
+        );
+        let dcx = analysis.dcx_mut();
+        dcx.set_emitter(Box::new(
+            solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
+                .source_map(Some(dcx.source_map().unwrap().clone())),
+        ));
+        dcx.set_flags_mut(|f| f.track_diagnostics = false);
+
+        // Populate solar's global context by parsing and lowering the sources.
+        let files: Vec<_> =
+            output.output().sources.as_ref().iter().map(|(path, _)| path.to_path_buf()).collect();
+        analysis.enter_mut(|compiler| -> Result<()> {
+            let mut pcx = compiler.parse();
+            configure_pcx(&mut pcx, self.config(), Some(self.project()), Some(&files))?;
+            pcx.parse();
+            let _ = compiler.lower_asts();
+            Ok(())
+        })?;
+
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             revert_decoder,
             known_contracts,
             libs_to_deploy,
             libraries,
-
-            fork: self.fork,
+            analysis: Arc::new(analysis),
 
             tcfg: TestRunnerConfig {
                 evm_opts,
                 env,
-                spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
-                sender: self.sender.unwrap_or(self.config.sender),
+                spec_id: self.evm_spec.unwrap_or_else(|| self.config().evm_spec_id()),
+                sender: self.sender.unwrap_or(self.config().sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
-                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                inline_config: Arc::new(InlineConfig::new_parsed(output, self.config())?),
                 isolation: self.isolation,
                 odyssey: self.odyssey,
-                config: self.config,
+                config: self.config().clone(),
                 fail_fast: FailFast::new(self.fail_fast),
             },
+
+            fork: self.fork,
         })
     }
 }
