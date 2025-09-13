@@ -455,8 +455,13 @@ pub fn init_tracing() -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();
-    // check whether `RUST_LOG` is explicitly set
-    let _ = if std::env::var("RUST_LOG").is_ok() {
+    // only use `RUST_LOG` to configure the EnvFilter when the var is explicitly
+    // setting the log level for `anvil` or `node` or if it is a blanket filter
+    // like `RUST_LOG=info`
+    let use_rust_log = std::env::var("RUST_LOG")
+        .map(|v| v.contains("anvil") || v.contains("node") || !v.contains("="))
+        .unwrap_or_default();
+    let _ = if use_rust_log {
         tracing_subscriber::Registry::default()
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer())
