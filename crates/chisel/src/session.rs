@@ -81,7 +81,8 @@ impl ChiselSession {
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
-                format!("{cache_dir}chisel-{id}.json")
+                let path = std::path::Path::new(&cache_dir).join(format!("chisel-{id}.json"));
+                path.to_string_lossy().to_string()
             }
             None => {
                 // Get the next session cache ID / file
@@ -109,28 +110,29 @@ impl ChiselSession {
     /// Optionally, returns a tuple containing the next cached session's id and file name.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
-        let mut entries = std::fs::read_dir(&cache_dir)?;
 
-        // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest = if let Some(e) = entries.next() {
-            e?
-        } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
-        };
-
-        let mut session_num = 1;
-        // Get the latest cached session
-        for entry in entries {
+        let mut max_id: Option<u64> = None;
+        for entry in std::fs::read_dir(&cache_dir)? {
             let entry = entry?;
-            if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
-                latest = entry;
-            }
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
 
-            // Increase session_num counter rather than cloning the iterator and using `.count`
-            session_num += 1;
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if let Some(num_str) = name
+                    .strip_prefix("chisel-")
+                    .and_then(|s| s.strip_suffix(".json"))
+                {
+                    if let Ok(n) = num_str.parse::<u64>() {
+                        max_id = Some(max_id.map_or(n, |m| m.max(n)));
+                    }
+                }
+            }
         }
 
-        Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
+        let next = max_id.map_or(0, |m| m.saturating_add(1));
+        let file_path = std::path::Path::new(&cache_dir).join(format!("chisel-{next}.json"));
+        Ok((next.to_string(), file_path.to_string_lossy().to_string()))
     }
 
     /// The Chisel Cache Directory
