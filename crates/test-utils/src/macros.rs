@@ -100,6 +100,7 @@ macro_rules! forgetest_init {
         fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize($prj.root());
+            $prj.initialize_default_contracts();
             $e
         }
     };
@@ -118,6 +119,7 @@ macro_rules! forgesoldeer {
         fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize($prj.root());
+            $prj.initialize_default_contracts();
             $e
         }
     };
