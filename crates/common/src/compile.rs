@@ -90,7 +90,9 @@ impl ProjectCompiler {
     /// Deprecated: this flag has no effect; verification is handled by higher-level commands
     /// (e.g., `forge create` / script flows) and not by the compiler helper.
     #[inline]
-    #[deprecated(note = "No effect; verification is handled by higher-level commands (forge create/script).")]
+    #[deprecated(
+        note = "No effect; verification is handled by higher-level commands (forge create/script)."
+    )]
     pub fn verify(mut self, yes: bool) -> Self {
         self.verify = Some(yes);
         self
