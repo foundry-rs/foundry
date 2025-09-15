@@ -1281,8 +1281,10 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         current.position
                     }
-                } else {
+                } else if matches!(&call_expr.kind, ast::ExprKind::Member(..)) {
                     MemberPos::Bottom
+                } else {
+                    MemberPos::Top
                 };
 
                 // Update state for recursive call
