@@ -4764,6 +4764,7 @@ dependencies = [
  "rayon",
  "revm",
  "semver 1.0.26",
+ "solar-compiler",
  "tracing",
 ]
 
