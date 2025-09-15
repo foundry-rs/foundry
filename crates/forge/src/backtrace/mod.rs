@@ -139,7 +139,7 @@ impl<'a> BacktraceBuilder<'a> {
             }
         }
 
-        let mut backtrace = Backtrace::new(&artifacts_by_address, &sources, &self.library_sources);
+        let mut backtrace = Backtrace::new(artifacts_by_address, sources, &self.library_sources);
 
         backtrace.extract_frames(arena);
 
@@ -196,8 +196,8 @@ pub struct Backtrace<'a> {
 impl<'a> Backtrace<'a> {
     /// Sets source data from pre-collected artifacts.
     pub fn new(
-        artifacts_by_address: &HashMap<Address, ArtifactId>,
-        sources: &HashMap<ArtifactId, SourceData>,
+        artifacts_by_address: HashMap<Address, ArtifactId>,
+        mut sources: HashMap<ArtifactId, SourceData>,
         library_sources: &'a HashSet<LibraryInfo>,
     ) -> Self {
         // Store library sources globally
@@ -205,40 +205,32 @@ impl<'a> Backtrace<'a> {
             Self { frames: Vec::new(), pc_mappers: HashMap::default(), library_sources };
 
         let mut source_data = HashMap::new();
-        // Map source data to contract addresses using the artifact ID.
+        // Map source data to contract addresses using the artifact ID, taking ownership
         for (addr, artifact_id) in artifacts_by_address {
-            if let Some(data) = sources.get(artifact_id) {
-                source_data.insert(*addr, data.clone());
-            }
-        }
-
-        // Add linked libraries to the address mapping
-        let mut linked_lib_addresses = HashMap::new();
-        for lib_info in backtrace.library_sources {
-            if lib_info.is_linked()
-                && let Some(lib_addr) = lib_info.address
-            {
-                linked_lib_addresses.insert(lib_info.name.clone(), lib_addr);
+            if let Some(data) = sources.remove(&artifact_id) {
+                source_data.insert(addr, data);
             }
         }
 
         // Map linked library source data to their deployed addresses
-        for (lib_name, lib_addr) in linked_lib_addresses {
-            // Find matching artifact by checking if the artifact name matches the library name
-            for (artifact_id, data) in sources {
-                if artifact_id.name == lib_name {
-                    source_data.insert(lib_addr, data.clone());
-                    break;
-                }
+        for lib_info in backtrace.library_sources {
+            if lib_info.is_linked()
+                && let Some(lib_addr) = lib_info.address
+                && let Some(artifact_id) = sources.iter().find_map(|(artifact_id, _)| {
+                    if artifact_id.name == lib_info.name {
+                        return Some(artifact_id.clone());
+                    }
+                    None
+                })
+                && let Some(data) = sources.remove(&artifact_id)
+            {
+                source_data.insert(lib_addr, data);
             }
         }
 
         // Build PC source mappers for each contract
-        for (addr, data) in &source_data {
-            backtrace.pc_mappers.insert(
-                *addr,
-                PcSourceMapper::new(&data.bytecode, data.source_map.clone(), data.sources.clone()),
-            );
+        for (addr, data) in source_data {
+            backtrace.pc_mappers.insert(addr, PcSourceMapper::new(data));
         }
 
         backtrace

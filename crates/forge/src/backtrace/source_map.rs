@@ -70,15 +70,20 @@ pub struct PcSourceMapper {
 
 impl PcSourceMapper {
     /// Creates a new PC to source mapper.
-    pub fn new(bytecode: &Bytes, source_map: SourceMap, sources: Vec<(PathBuf, String)>) -> Self {
+    pub fn new(source_data: SourceData) -> Self {
         // Build instruction counter to program counter mapping
-        let ic_pc_map = IcPcMap::new(bytecode.as_ref());
+        let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
         // Pre-calculate line offsets for each source file
         let line_offsets =
-            sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
+            source_data.sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
 
-        Self { ic_pc_map, source_map, sources, line_offsets }
+        Self {
+            ic_pc_map,
+            source_map: source_data.source_map,
+            sources: source_data.sources,
+            line_offsets,
+        }
     }
 
     /// Maps a program counter to source location.
