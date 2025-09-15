@@ -211,6 +211,8 @@ impl<'ast> CommentGatherer<'ast> {
                 }
             }
             TokenKind::BlockComment { is_doc, .. } => {
+                // TODO(rusowsky): handle this logic upstream in solar
+                let is_doc = is_doc || token_text.starts_with("/**");
                 let code_to_the_right = !matches!(
                     self.text[self.pos + token.len as usize..].chars().next(),
                     Some('\r' | '\n')
@@ -298,10 +300,11 @@ impl<'ast> CommentGatherer<'ast> {
             if !pos.is_last {
                 res.push(format_doc_block_comment(&line, self.tab_width));
             } else {
+                // Ensure last line of a doc comment only has the `*/` decorator
                 if let Some((first, _)) = line.split_once("*/")
                     && !first.trim().is_empty()
                 {
-                    res.push(format_doc_block_comment(first, self.tab_width));
+                    res.push(format_doc_block_comment(first.trim_end(), self.tab_width));
                 }
                 res.push(" */".to_string());
             }
