@@ -38,9 +38,6 @@ pub struct ProjectCompiler {
     /// The root of the project.
     project_root: PathBuf,
 
-    /// Whether we are going to verify the contracts after compilation.
-    verify: Option<bool>,
-
     /// Whether to also print contract names.
     print_names: Option<bool>,
 
@@ -76,7 +73,6 @@ impl ProjectCompiler {
     pub fn new() -> Self {
         Self {
             project_root: PathBuf::new(),
-            verify: None,
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
@@ -87,16 +83,6 @@ impl ProjectCompiler {
         }
     }
 
-    /// Deprecated: this flag has no effect; verification is handled by higher-level commands
-    /// (e.g., `forge create` / script flows) and not by the compiler helper.
-    #[inline]
-    #[deprecated(
-        note = "No effect; verification is handled by higher-level commands (forge create/script)."
-    )]
-    pub fn verify(mut self, yes: bool) -> Self {
-        self.verify = Some(yes);
-        self
-    }
 
     /// Sets whether to print contract names.
     #[inline]
