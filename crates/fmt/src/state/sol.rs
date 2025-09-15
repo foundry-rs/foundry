@@ -832,7 +832,7 @@ impl<'ast> State<'_, 'ast> {
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
                         if init_size + pre_init_size + 4 >= init_space_left
-                            && init_size + 1 + self.config.tab_width <= init_space_left
+                            && init_size + self.config.tab_width < init_space_left
                             && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {
                             self.print_sep(Separator::Space);
@@ -1116,8 +1116,8 @@ impl<'ast> State<'_, 'ast> {
                 let lhs_size = self.estimate_size(lhs.span);
                 let rhs_size = self.estimate_size(rhs.span);
                 // 'lhs' + ' = ' + 'rhs' + ';'
-                let overflows = rhs_size + lhs_size + 4 > space_left;
-                let fits_alone = rhs_size <= space_left - self.config.tab_width;
+                let overflows = rhs_size + lhs_size + 4 >= space_left;
+                let fits_alone = rhs_size + self.config.tab_width < space_left;
 
                 self.s.ibox(
                     if has_complex_successor(&rhs.kind, false)

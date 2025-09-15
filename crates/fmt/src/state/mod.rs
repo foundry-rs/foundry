@@ -280,9 +280,16 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let mut size = 0;
+            let (mut size, mut first_line) = (0, true);
             for line in snip.lines() {
                 size += line.trim().len();
+
+                // Subsequent lines require either a hardbreak or a space.
+                if first_line {
+                    first_line = false;
+                } else {
+                    size += 1;
+                }
             }
             return size;
         }
