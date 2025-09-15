@@ -1264,61 +1264,28 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Call(call_expr, call_args) => {
-                let (space_left, expr_size, args_size) = (
-                    self.space_left(),
-                    self.estimate_size(call_expr.span),
-                    self.estimate_size(call_args.span),
-                );
-                let all_fits = expr_size + args_size + 2 <= space_left;
-                let expr_fits = expr_size + 1 <= space_left;
-                let break_single = !all_fits && call_args.len() == 1;
+                self.print_member_or_call_chain(call_expr, false, |s, current_position| {
+                    let (space_left, expr_size, args_size) = (
+                        s.space_left(),
+                        s.estimate_size(call_expr.span),
+                        s.estimate_size(call_args.span),
+                    );
+                    let all_fits = expr_size + args_size + 2 <= space_left;
+                    let expr_fits = expr_size < space_left;
+                    let break_single = !all_fits && call_args.len() == 1;
 
-                // Determine call position in the chain.
-                let current_position = if let Some(current) = self.member_expr {
-                    if call_expr.span == current.bottom {
-                        // Child is the innermost expression, so this is the top.
-                        MemberPos::Top
-                    } else {
-                        current.position
-                    }
-                } else if matches!(&call_expr.kind, ast::ExprKind::Member(..)) {
-                    MemberPos::Bottom
-                } else {
-                    MemberPos::Top
-                };
-
-                // Update state for recursive call
-                let old_state = self.member_expr;
-                if let Some(current) = self.member_expr {
-                    let child_is_innermost = call_expr.span == current.bottom;
-                    self.member_expr = Some(MemberCache {
-                        bottom: current.bottom,
-                        position: if child_is_innermost {
-                            MemberPos::Top
-                        } else {
-                            MemberPos::Middle
+                    s.print_call_args(
+                        call_args,
+                        ListFormat::Compact {
+                            break_single,
+                            cmnts_break: true,
+                            with_space: false,
+                            with_delimiters: break_single
+                                || current_position == MemberPos::Top
+                                || (!expr_fits && current_position == MemberPos::Bottom),
                         },
-                    });
-                }
-
-                self.cbox(0);
-                self.print_expr(call_expr);
-
-                self.print_call_args(
-                    call_args,
-                    ListFormat::Compact {
-                        break_single,
-                        cmnts_break: true,
-                        with_space: false,
-                        with_delimiters: break_single
-                            || current_position == MemberPos::Top
-                            || (!expr_fits && current_position == MemberPos::Bottom),
-                    },
-                );
-                self.end();
-
-                // Restore the old state
-                self.member_expr = old_state;
+                    );
+                });
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
@@ -1409,53 +1376,17 @@ impl<'ast> State<'_, 'ast> {
                     self.word(unit.to_str());
                 }
             }
-
             ast::ExprKind::Member(member_expr, ident) => {
-                let cache = self.member_expr;
-                let is_child = if let Some(current) = self.member_expr {
-                    // Update state with child information
-                    self.member_expr = Some(MemberCache {
-                        bottom: current.bottom,
-                        position: if member_expr.span == current.bottom {
-                            MemberPos::Top
-                        } else {
-                            MemberPos::Middle
-                        },
-                    });
-
-                    true
-                } else {
-                    // First member expression is the bottom of the chain -> outermost expression
-                    // that will be printed last.
-                    let bottom = get_chain_bottom(expr).span;
-                    self.member_expr = Some(MemberCache {
-                        bottom,
-                        position: if member_expr.span == bottom {
-                            MemberPos::Top
-                        } else {
-                            MemberPos::Middle
-                        },
-                    });
-
-                    self.s.ibox(self.ind);
-                    false
-                };
-
-                self.print_expr(member_expr);
-                self.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)) {
-                    self.zerobreak();
-                }
-                self.word(".");
-                self.print_ident(ident);
-
-                if !is_child {
-                    // top-level expression of the chain -> clear cache
-                    self.member_expr = cache;
-                    self.end();
-                }
+                self.print_member_or_call_chain(member_expr, true, |s, _| {
+                    s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
+                    if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_))
+                    {
+                        s.zerobreak();
+                    }
+                    s.word(".");
+                    s.print_ident(ident);
+                });
             }
-
             ast::ExprKind::New(ty) => {
                 self.word("new ");
                 self.print_ty(ty);
@@ -1579,6 +1510,67 @@ impl<'ast> State<'_, 'ast> {
                     with_delimiters: true,
                 },
             );
+        }
+    }
+
+    fn print_member_or_call_chain<F>(
+        &mut self,
+        child_expr: &'ast ast::Expr<'ast>,
+        is_member_link: bool,
+        print_suffix: F,
+    ) where
+        F: FnOnce(&mut Self, MemberPos),
+    {
+        let old_state = self.member_expr;
+
+        // Determine the position of the formatted expression.
+        let (is_chain_start, current_pos) = if let Some(current) = self.member_expr {
+            (
+                false,
+                if child_expr.span == current.bottom { MemberPos::Top } else { MemberPos::Middle },
+            )
+        } else {
+            // If this is the start, initialize the cache and the indent box.
+            if is_member_link {
+                let bottom = get_chain_bottom(child_expr).span;
+                self.member_expr = Some(MemberCache { bottom, position: MemberPos::Bottom });
+                self.s.ibox(self.ind);
+            } else {
+                self.s.cbox(0);
+            }
+
+            (
+                true,
+                if matches!(&child_expr.kind, ast::ExprKind::Member(..)) {
+                    MemberPos::Bottom
+                } else {
+                    MemberPos::Top
+                },
+            )
+        };
+
+        // Before recursing, update the cache for the child expression.
+        if is_member_link && let Some(current) = self.member_expr {
+            self.member_expr = Some(MemberCache {
+                bottom: current.bottom,
+                position: if child_expr.span == current.bottom {
+                    MemberPos::Top
+                } else {
+                    MemberPos::Middle
+                },
+            });
+        }
+
+        // Recursively print the child/prefix expression.
+        self.print_expr(child_expr);
+
+        // Call the closure to print the suffix for the current link, with the calculated position.
+        print_suffix(self, current_pos);
+
+        // If a chain was started, clean up the state and end the box.
+        if is_chain_start {
+            self.member_expr = old_state;
+            self.end();
         }
     }
 

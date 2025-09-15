@@ -156,10 +156,11 @@ impl Printer {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
 
-            if let Token::Break(break_token) = token {
-                if break_token.blank_space as isize >= SIZE_INFINITY && !break_token.never_break {
-                    return self.margin as usize;
-                }
+            if let Token::Break(break_token) = token
+                && break_token.blank_space as isize >= SIZE_INFINITY
+                && !break_token.never_break
+            {
+                return self.margin as usize;
             }
 
             // Stop at first non-End token - if no hard break found by then, none is guaranteed

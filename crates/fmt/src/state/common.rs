@@ -293,9 +293,9 @@ impl<'ast> State<'_, 'ast> {
         self.print_word("]");
     }
 
-    pub(super) fn commasep_opening_logic<'a, T, S>(
+    pub(super) fn commasep_opening_logic<T, S>(
         &mut self,
-        values: &'a [T],
+        values: &[T],
         mut get_span: S,
         format: ListFormat,
     ) -> bool
