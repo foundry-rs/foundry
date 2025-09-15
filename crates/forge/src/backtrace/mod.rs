@@ -8,7 +8,6 @@ use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
     artifacts::{Libraries, NodeType},
 };
-use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;

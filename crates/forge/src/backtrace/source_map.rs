@@ -5,7 +5,6 @@ use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{ConfigurableContractArtifact, sourcemap::SourceMap},
 };
-use foundry_config::Config;
 use foundry_evm_core::ic::IcPcMap;
 use std::path::{Path, PathBuf};
 
