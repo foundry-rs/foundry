@@ -7,7 +7,7 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm_core::ic::IcPcMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Information about a library used in a contract
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -192,7 +192,7 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
 pub fn collect_source_data(
     artifact: &ConfigurableContractArtifact,
     output: &ProjectCompileOutput,
-    config: &Config,
+    root: &Path,
     build_id: &str,
 ) -> Option<SourceData> {
     // Get source map and bytecode
@@ -204,7 +204,6 @@ pub fn collect_source_data(
     }
 
     // Get sources for this build
-    let root = config.root.as_path();
     let mut sources = Vec::new();
 
     // Get the build context for this build_id

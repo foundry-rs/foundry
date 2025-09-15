@@ -4,7 +4,10 @@ use alloy_primitives::{
     Address,
     map::{HashMap, HashSet},
 };
-use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::NodeType};
+use foundry_compilers::{
+    ArtifactId, ProjectCompileOutput,
+    artifacts::{Libraries, NodeType},
+};
 use foundry_config::Config;
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
@@ -22,23 +25,30 @@ pub struct BacktraceBuilder<'a> {
     library_sources: HashSet<LibraryInfo>,
     /// Reference to project output for on-demand source loading
     output: &'a ProjectCompileOutput,
-    /// Config reference for path resolution
-    config: &'a Config,
+    /// Project root
+    root: PathBuf,
 }
 
 impl<'a> BacktraceBuilder<'a> {
     /// Instantiates a backtrace builder from a [`ProjectCompileOutput`] and [`Config`].
     ///
     /// Collects artifact IDs and libraries without loading source data upfront.
-    pub fn new(output: &'a ProjectCompileOutput, config: &'a Config) -> Self {
+    pub fn new(
+        output: &'a ProjectCompileOutput,
+        root: PathBuf,
+        parsed_libs: Option<Libraries>,
+    ) -> Self {
         let mut library_sources = HashSet::default();
 
-        // Collect linked libraries from config
-        if let Ok(parsed_libs) = config.parsed_libraries() {
-            for (path, libs) in parsed_libs.libs {
+        if let Some(parsed_libs) = &parsed_libs {
+            for (path, libs) in &parsed_libs.libs {
                 for (lib_name, addr_str) in libs {
                     if let Ok(addr) = addr_str.parse::<Address>() {
-                        library_sources.insert(LibraryInfo::linked(path.clone(), lib_name, addr));
+                        library_sources.insert(LibraryInfo::linked(
+                            path.clone(),
+                            lib_name.clone(),
+                            addr,
+                        ));
                     }
                 }
             }
@@ -68,7 +78,7 @@ impl<'a> BacktraceBuilder<'a> {
 
                             let lib_path = artifact_id
                                 .source
-                                .strip_prefix(&config.root)
+                                .strip_prefix(&root)
                                 .unwrap_or(&artifact_id.source)
                                 .to_path_buf();
 
@@ -83,7 +93,7 @@ impl<'a> BacktraceBuilder<'a> {
             }
         }
 
-        Self { library_sources, output, config }
+        Self { library_sources, output, root }
     }
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
@@ -91,7 +101,7 @@ impl<'a> BacktraceBuilder<'a> {
         let artifact_ids = self
             .output
             .artifact_ids()
-            .map(|(id, _)| id.with_stripped_file_prefixes(&self.config.root))
+            .map(|(id, _)| id.with_stripped_file_prefixes(&self.root))
             .collect::<HashSet<_>>();
 
         // Resolve addresses to artifacts using trace labels
@@ -111,7 +121,7 @@ impl<'a> BacktraceBuilder<'a> {
         for artifact_id in artifacts_by_address.values().chain(external_lib_artifacts) {
             // Find the actual artifact from the output
             for (output_id, artifact) in self.output.artifact_ids() {
-                let stripped_id = output_id.with_stripped_file_prefixes(&self.config.root);
+                let stripped_id = output_id.with_stripped_file_prefixes(&self.root);
                 if stripped_id == *artifact_id {
                     // Find the build_id for this specific artifact
                     let build_id = self
@@ -130,7 +140,7 @@ impl<'a> BacktraceBuilder<'a> {
 
                     if let Some(build_id) = build_id
                         && let Some(data) =
-                            collect_source_data(artifact, self.output, self.config, &build_id)
+                            collect_source_data(artifact, self.output, &self.root, &build_id)
                     {
                         sources.insert(artifact_id.clone(), data);
                     }
