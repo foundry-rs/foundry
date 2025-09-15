@@ -886,6 +886,7 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(can_clean_config, |prj, cmd| {
     prj.update_config(|config| config.out = "custom-out".into());
+    prj.initialize_default_contracts();
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -907,6 +908,7 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
         config.fuzz = FuzzConfig::new("cache/fuzz".into());
         config.invariant = InvariantConfig::new("cache/invariant".into());
     });
+    prj.initialize_default_contracts();
     // default test contract is written in custom out directory
     let fuzz_cache_dir = prj.root().join("cache/fuzz");
     let _ = fs::create_dir(fuzz_cache_dir.clone());
@@ -923,6 +925,7 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     cmd.args(["build", "--extra-output", "metadata"]).assert_success().stdout_eq(str![[r#"
@@ -955,6 +958,7 @@ Compiler run successful!
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args([
         "build",
         "--extra-output",
