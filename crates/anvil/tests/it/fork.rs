@@ -5,6 +5,10 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_chains::NamedChain;
+use alloy_eips::{
+    eip7840::BlobParams,
+    eip7910::{EthConfig, SystemContract},
+};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
 use alloy_provider::Provider;
@@ -16,12 +20,19 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::{NodeConfig, NodeHandle, eth::EthApi, spawn};
+use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
-use std::{sync::Arc, thread::sleep, time::Duration};
+use revm::precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    thread::sleep,
+    time::Duration,
+};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
@@ -1606,4 +1617,278 @@ async fn test_fork_get_account() {
     let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
+}
+
+fn assert_hardfork_config(
+    config: &EthConfig,
+    expected_blob_params: &BlobParams,
+    expected_precompiles: &[Address],
+    expected_system_contracts: &BTreeMap<SystemContract, Address>,
+) {
+    assert!(config.next.is_none());
+    assert!(config.last.is_none());
+
+    let current = &config.current;
+
+    assert_eq!(current.activation_time, 0);
+    assert_eq!(current.chain_id, 31337);
+    assert_eq!(current.fork_id, Bytes::from(vec![0, 0, 0, 0]));
+
+    assert_eq!(&current.blob_schedule, expected_blob_params);
+
+    assert_eq!(
+        current.precompiles.values().copied().collect::<BTreeSet<_>>(),
+        expected_precompiles.iter().copied().collect::<BTreeSet<_>>(),
+    );
+
+    assert_eq!(current.system_contracts, *expected_system_contracts);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_config_with_cancun_hardfork() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+
+    let config = api.config().unwrap();
+
+    let expected_blob_params = BlobParams {
+        target_blob_count: 3,
+        max_blob_count: 6,
+        update_fraction: 3338477,
+        min_blob_fee: 1,
+        max_blobs_per_tx: 6,
+        blob_base_cost: 0,
+    };
+
+    // <= Cancun precompiles
+    let expected_precompiles = [
+        address!("0000000000000000000000000000000000000001"),
+        address!("0000000000000000000000000000000000000002"),
+        address!("0000000000000000000000000000000000000003"),
+        address!("0000000000000000000000000000000000000004"),
+        address!("0000000000000000000000000000000000000005"),
+        address!("0000000000000000000000000000000000000006"),
+        address!("0000000000000000000000000000000000000007"),
+        address!("0000000000000000000000000000000000000008"),
+        address!("0000000000000000000000000000000000000009"),
+        address!("000000000000000000000000000000000000000a"),
+    ];
+
+    let expected_system_contracts = BTreeMap::from([(
+        SystemContract::BeaconRoots,
+        address!("000f3df6d732807ef1319fb7b8bb8522d0beac02"),
+    )]);
+
+    assert_hardfork_config(
+        &config,
+        &expected_blob_params,
+        &expected_precompiles,
+        &expected_system_contracts,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_config_with_prague_hardfork_with_celo() {
+    let (api, _handle) = spawn(
+        NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into())).with_celo(true),
+    )
+    .await;
+
+    let config = api.config().unwrap();
+
+    let expected_blob_params = BlobParams {
+        target_blob_count: 6,
+        max_blob_count: 9,
+        update_fraction: 5007716,
+        min_blob_fee: 1,
+        max_blobs_per_tx: 9,
+        blob_base_cost: 0,
+    };
+
+    // <= Prague + Celo precompiles
+    let expected_precompiles = [
+        address!("0000000000000000000000000000000000000001"),
+        address!("0000000000000000000000000000000000000002"),
+        address!("0000000000000000000000000000000000000003"),
+        address!("0000000000000000000000000000000000000004"),
+        address!("0000000000000000000000000000000000000005"),
+        address!("0000000000000000000000000000000000000006"),
+        address!("0000000000000000000000000000000000000007"),
+        address!("0000000000000000000000000000000000000008"),
+        address!("0000000000000000000000000000000000000009"),
+        address!("000000000000000000000000000000000000000a"),
+        address!("000000000000000000000000000000000000000b"),
+        address!("000000000000000000000000000000000000000c"),
+        address!("000000000000000000000000000000000000000d"),
+        address!("000000000000000000000000000000000000000e"),
+        address!("000000000000000000000000000000000000000f"),
+        address!("0000000000000000000000000000000000000010"),
+        address!("0000000000000000000000000000000000000011"),
+        address!("00000000000000000000000000000000000000fd"), // `celo transfer`
+    ];
+
+    let expected_system_contracts = BTreeMap::from([
+        (SystemContract::BeaconRoots, address!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
+        (
+            SystemContract::ConsolidationRequestPredeploy,
+            address!("0000bbddc7ce488642fb579f8b00f3a590007251"),
+        ),
+        (SystemContract::DepositContract, address!("00000000219ab540356cbb839cbe05303d7705fa")),
+        (SystemContract::HistoryStorage, address!("0000f90827f1c53a10cb7a02335b175320002935")),
+        (
+            SystemContract::WithdrawalRequestPredeploy,
+            address!("00000961ef480eb55e80d19ad83579a64c007002"),
+        ),
+    ]);
+
+    assert_hardfork_config(
+        &config,
+        &expected_blob_params,
+        &expected_precompiles,
+        &expected_system_contracts,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_config_with_osaka_hardfork() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+
+    let config = api.config().unwrap();
+
+    let expected_blob_params = BlobParams {
+        target_blob_count: 6,
+        max_blob_count: 9,
+        update_fraction: 5007716,
+        min_blob_fee: 1,
+        max_blobs_per_tx: 6,
+        blob_base_cost: 8192,
+    };
+
+    // <= Osaka precompiles
+    let expected_precompiles = [
+        address!("0000000000000000000000000000000000000001"),
+        address!("0000000000000000000000000000000000000002"),
+        address!("0000000000000000000000000000000000000003"),
+        address!("0000000000000000000000000000000000000004"),
+        address!("0000000000000000000000000000000000000005"),
+        address!("0000000000000000000000000000000000000006"),
+        address!("0000000000000000000000000000000000000007"),
+        address!("0000000000000000000000000000000000000008"),
+        address!("0000000000000000000000000000000000000009"),
+        address!("000000000000000000000000000000000000000a"),
+        address!("000000000000000000000000000000000000000b"),
+        address!("000000000000000000000000000000000000000c"),
+        address!("000000000000000000000000000000000000000d"),
+        address!("000000000000000000000000000000000000000e"),
+        address!("000000000000000000000000000000000000000f"),
+        address!("0000000000000000000000000000000000000010"),
+        address!("0000000000000000000000000000000000000011"),
+        address!("0000000000000000000000000000000000000100"),
+    ];
+
+    let expected_system_contracts = BTreeMap::from([
+        (SystemContract::BeaconRoots, address!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
+        (
+            SystemContract::ConsolidationRequestPredeploy,
+            address!("0000bbddc7ce488642fb579f8b00f3a590007251"),
+        ),
+        (SystemContract::DepositContract, address!("00000000219ab540356cbb839cbe05303d7705fa")),
+        (SystemContract::HistoryStorage, address!("0000f90827f1c53a10cb7a02335b175320002935")),
+        (
+            SystemContract::WithdrawalRequestPredeploy,
+            address!("00000961ef480eb55e80d19ad83579a64c007002"),
+        ),
+    ]);
+
+    assert_hardfork_config(
+        &config,
+        &expected_blob_params,
+        &expected_precompiles,
+        &expected_system_contracts,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_config_with_osaka_hardfork_with_precompile_factory() {
+    fn custom_echo_precompile(input: &[u8], _gas_limit: u64) -> PrecompileResult {
+        Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0, reverted: false })
+    }
+
+    #[derive(Debug)]
+    struct CustomPrecompileFactory;
+
+    impl PrecompileFactory for CustomPrecompileFactory {
+        fn precompiles(&self) -> Vec<(Precompile, u64)> {
+            vec![(
+                Precompile::from((
+                    PrecompileId::Custom(Cow::Borrowed("custom_echo")),
+                    address!("0x0000000000000000000000000000000000000071"),
+                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
+                )),
+                1000,
+            )]
+        }
+    }
+
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .with_precompile_factory(CustomPrecompileFactory),
+    )
+    .await;
+
+    let config = api.config().unwrap();
+
+    let expected_blob_params = BlobParams {
+        target_blob_count: 6,
+        max_blob_count: 9,
+        update_fraction: 5007716,
+        min_blob_fee: 1,
+        max_blobs_per_tx: 6,
+        blob_base_cost: 8192,
+    };
+
+    // <= Osaka precompiles + custom precompile
+    let expected_precompiles = [
+        address!("0000000000000000000000000000000000000001"),
+        address!("0000000000000000000000000000000000000002"),
+        address!("0000000000000000000000000000000000000003"),
+        address!("0000000000000000000000000000000000000004"),
+        address!("0000000000000000000000000000000000000005"),
+        address!("0000000000000000000000000000000000000006"),
+        address!("0000000000000000000000000000000000000007"),
+        address!("0000000000000000000000000000000000000008"),
+        address!("0000000000000000000000000000000000000009"),
+        address!("000000000000000000000000000000000000000a"),
+        address!("000000000000000000000000000000000000000b"),
+        address!("000000000000000000000000000000000000000c"),
+        address!("000000000000000000000000000000000000000d"),
+        address!("000000000000000000000000000000000000000e"),
+        address!("000000000000000000000000000000000000000f"),
+        address!("0000000000000000000000000000000000000010"),
+        address!("0000000000000000000000000000000000000011"),
+        address!("0000000000000000000000000000000000000071"), // `custom_echo`
+        address!("0000000000000000000000000000000000000100"),
+    ];
+    let expected_system_contracts = BTreeMap::from([
+        (SystemContract::BeaconRoots, address!("000f3df6d732807ef1319fb7b8bb8522d0beac02")),
+        (
+            SystemContract::ConsolidationRequestPredeploy,
+            address!("0000bbddc7ce488642fb579f8b00f3a590007251"),
+        ),
+        (SystemContract::DepositContract, address!("00000000219ab540356cbb839cbe05303d7705fa")),
+        (SystemContract::HistoryStorage, address!("0000f90827f1c53a10cb7a02335b175320002935")),
+        (
+            SystemContract::WithdrawalRequestPredeploy,
+            address!("00000961ef480eb55e80d19ad83579a64c007002"),
+        ),
+    ]);
+
+    assert_hardfork_config(
+        &config,
+        &expected_blob_params,
+        &expected_precompiles,
+        &expected_system_contracts,
+    );
 }

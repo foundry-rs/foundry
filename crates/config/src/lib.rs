@@ -960,7 +960,8 @@ impl Config {
     ///
     /// Use this when you just want the source graph or the Solar compiler context.
     pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
-        let mut project = self.project()?;
+        let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
+        let mut project = self.create_project(self.cache && !ui_testing, false)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection([]);
         });

@@ -467,7 +467,7 @@ impl fmt::Display for TestResult {
                 } else {
                     s.push(']');
                 }
-                s.red().fmt(f)
+                s.red().wrap().fmt(f)
             }
         }
     }

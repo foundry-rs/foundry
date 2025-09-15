@@ -264,6 +264,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_syncing", with = "empty_params")]
     EthSyncing(()),
 
+    #[serde(rename = "eth_config", with = "empty_params")]
+    EthConfig(()),
+
     /// geth's `debug_getRawTransaction`  endpoint
     #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
@@ -685,9 +688,7 @@ pub enum EthRequest {
     )]
     WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    /// Add an address to the [`DelegationCapability`] of the wallet
-    ///
-    /// [`DelegationCapability`]: wallet::DelegationCapability
+    /// Add an address to the delegation capability of the wallet
     #[serde(rename = "anvil_addCapability", with = "sequence")]
     AnvilAddCapability(Address),
 
