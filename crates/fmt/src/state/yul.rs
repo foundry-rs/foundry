@@ -39,11 +39,11 @@ impl<'ast> State<'_, 'ast> {
                     |this, path| this.print_path(path, false),
                     get_span!(()),
                     ListFormat::Consistent {
+                        break_single: false,
                         cmnts_break: false,
                         with_space: false,
                         with_delimiters: true,
                     },
-                    false,
                 );
                 self.word(" :=");
                 self.space();
@@ -123,11 +123,11 @@ impl<'ast> State<'_, 'ast> {
                     Self::print_ident,
                     get_span!(),
                     ListFormat::Consistent {
+                        break_single: false,
                         cmnts_break: false,
                         with_space: false,
                         with_delimiters: true,
                     },
-                    false,
                 );
                 self.nbsp();
                 let has_returns = !returns.is_empty();
@@ -143,7 +143,6 @@ impl<'ast> State<'_, 'ast> {
                         Self::print_ident,
                         get_span!(),
                         ListFormat::Yul { sym_prev: Some("->"), sym_post: Some("{") },
-                        false,
                     );
                 }
                 self.end();
@@ -165,11 +164,11 @@ impl<'ast> State<'_, 'ast> {
                     Self::print_ident,
                     get_span!(),
                     ListFormat::Consistent {
+                        break_single: false,
                         cmnts_break: false,
                         with_space: false,
                         with_delimiters: true,
                     },
-                    false,
                 );
                 if let Some(expr) = expr {
                     self.word(" :=");
@@ -209,8 +208,12 @@ impl<'ast> State<'_, 'ast> {
             Span::DUMMY.hi(),
             Self::print_yul_expr,
             get_span!(),
-            ListFormat::Consistent { cmnts_break: false, with_space: false, with_delimiters: true },
-            true,
+            ListFormat::Consistent {
+                break_single: true,
+                cmnts_break: false,
+                with_space: false,
+                with_delimiters: true,
+            },
         );
     }
 

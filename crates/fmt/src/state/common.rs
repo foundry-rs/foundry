@@ -217,7 +217,6 @@ impl<'ast> State<'_, 'ast> {
         mut print: P,
         mut get_span: S,
         format: ListFormat,
-        break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
         S: FnMut(&T) -> Option<Span> + Copy,
@@ -259,7 +258,7 @@ impl<'ast> State<'_, 'ast> {
 
         // Otherwise, use commasep
         self.print_word("(");
-        self.commasep(values, pos_lo, pos_hi, print, get_span, format, break_single_no_cmnts);
+        self.commasep(values, pos_lo, pos_hi, print, get_span, format);
         self.print_word(")");
     }
 
@@ -271,7 +270,7 @@ impl<'ast> State<'_, 'ast> {
         get_span: S,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span> + Copy,
+        S: FnMut(&T) -> Option<Span>,
     {
         if self.handle_span(span, false) {
             return;
@@ -284,8 +283,12 @@ impl<'ast> State<'_, 'ast> {
             span.hi(),
             print,
             get_span,
-            ListFormat::Compact { cmnts_break: false, with_space: false, with_delimiters: true },
-            false,
+            ListFormat::Compact {
+                break_single: false,
+                cmnts_break: false,
+                with_space: false,
+                with_delimiters: true,
+            },
         );
         self.print_word("]");
     }
@@ -373,28 +376,27 @@ impl<'ast> State<'_, 'ast> {
         mut print: P,
         mut get_span: S,
         format: ListFormat,
-        break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span> + Copy,
+        S: FnMut(&T) -> Option<Span>,
     {
         if values.is_empty() {
             return;
         }
 
         let is_single_without_cmnts = values.len() == 1
-            && !break_single_no_cmnts
+            && !format.break_single()
             && self.peek_comment_before(pos_hi).is_none();
 
         let skip_first_break = if format.with_delimiters() {
             self.s.cbox(self.ind);
-            if !is_single_without_cmnts || break_single_no_cmnts {
-                self.commasep_opening_logic(values, get_span, format)
-            } else {
+            if is_single_without_cmnts {
                 true
+            } else {
+                self.commasep_opening_logic(values, &mut get_span, format)
             }
         } else {
-            let res = self.commasep_opening_logic(values, get_span, format);
+            let res = self.commasep_opening_logic(values, &mut get_span, format);
             self.s.cbox(self.ind);
             res
         };
@@ -410,16 +412,6 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(0);
         }
 
-        // // If all items are disabled, handle them at once
-        // if let (Some(from), Some(to)) = (get_span(&values[0]), get_span(&values[values.len() -
-        // 1]))     && self.handle_span(from.to(to), true)
-        // {
-        //     self.print_comments(pos_hi, CommentConfig::skip_ws().no_breaks().mixed_prev_space());
-        //     self.end();
-        //     return;
-        // }
-
-        // Otherwise, handle them individually
         let mut skip_last_break = is_single_without_cmnts || !format.with_delimiters();
         for (i, value) in values.iter().enumerate() {
             let (is_last, span) = (i == values.len() - 1, get_span(value));
@@ -438,27 +430,23 @@ impl<'ast> State<'_, 'ast> {
             }
             let next_span = if is_last { None } else { get_span(&values[i + 1]) };
             let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
-            if !is_last || format.with_delimiters() {
-                if format.breaks_comments()
-                    && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
-                        let disabled = self.inline_config.is_disabled(cmnt.span);
-                        (cmnt.style.is_mixed() && !disabled)
-                            || (cmnt.style.is_isolated() && disabled)
-                    })
-                {
-                    self.hardbreak(); // trailing and isolated comments already hardbreak
-                }
-
-                self.print_comments(
-                    next_pos,
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-                );
-            } else {
-                self.print_comments(
-                    next_pos,
-                    CommentConfig::skip_ws().no_breaks().mixed_prev_space(),
-                );
+            if !is_last
+                && format.breaks_comments()
+                && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
+                    let disabled = self.inline_config.is_disabled(cmnt.span);
+                    (cmnt.style.is_mixed() && !disabled) || (cmnt.style.is_isolated() && disabled)
+                })
+            {
+                self.hardbreak(); // trailing and isolated comments already hardbreak
             }
+            self.print_comments(
+                next_pos,
+                if !is_last || format.with_delimiters() {
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+                } else {
+                    CommentConfig::skip_ws().no_breaks().mixed_prev_space()
+                },
+            );
 
             if is_last && self.is_bol_or_only_ind() {
                 // if a trailing comment is printed at the very end, we have to manually adjust
@@ -710,10 +698,9 @@ pub(crate) enum ListFormat {
     /// on the `break_single` flag.
     AlwaysBreak { break_single: bool, with_space: bool },
     /// Breaks all elements if any break.
-    Consistent { cmnts_break: bool, with_space: bool, with_delimiters: bool },
+    Consistent { break_single: bool, cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// Attempts to fit all elements in one line, before breaking consistently.
-    /// The boolean indicates whether mixed comments should force a break.
-    Compact { cmnts_break: bool, with_space: bool, with_delimiters: bool },
+    Compact { break_single: bool, cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// If the list contains just one element, it will print unboxed (will not break).
     /// Otherwise, will break consistently.
     Inline,
@@ -725,6 +712,15 @@ pub(crate) enum ListFormat {
 }
 
 impl ListFormat {
+    pub(crate) fn break_single(&self) -> bool {
+        match self {
+            Self::AlwaysBreak { break_single, .. } => *break_single,
+            Self::Consistent { break_single, .. } => *break_single,
+            Self::Compact { break_single, .. } => *break_single,
+            Self::Inline | Self::Yul { .. } => false,
+        }
+    }
+
     pub(crate) fn with_delimiters(&self) -> bool {
         match self {
             Self::AlwaysBreak { .. } | Self::Yul { .. } => true,

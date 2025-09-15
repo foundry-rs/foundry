@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::{pp::SIZE_INFINITY, state::common::LitExt};
+use crate::{
+    pp::SIZE_INFINITY,
+    state::{MemberCache, MemberPos, common::LitExt},
+};
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::parse::{
@@ -452,6 +455,7 @@ impl<'ast> State<'_, 'ast> {
                 ListFormat::AlwaysBreak { break_single: true, with_space: false }
             }
             _ => ListFormat::Consistent {
+                break_single: false,
                 cmnts_break: true,
                 with_space: false,
                 with_delimiters: true,
@@ -543,6 +547,7 @@ impl<'ast> State<'_, 'ast> {
                 ret,
                 ret.span,
                 ListFormat::Consistent {
+                    break_single: false,
                     cmnts_break: false,
                     with_space: false,
                     with_delimiters: true,
@@ -695,7 +700,12 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Compact { cmnts_break: false, with_space: false, with_delimiters: true },
+            ListFormat::Compact {
+                break_single: false,
+                cmnts_break: false,
+                with_space: false,
+                with_delimiters: true,
+            },
         );
         self.word(";");
     }
@@ -707,7 +717,12 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Compact { cmnts_break: true, with_space: false, with_delimiters: true },
+            ListFormat::Compact {
+                break_single: false,
+                cmnts_break: true,
+                with_space: false,
+                with_delimiters: true,
+            },
         );
         if *anonymous {
             self.word(" anonymous");
@@ -741,12 +756,7 @@ impl<'ast> State<'_, 'ast> {
         // have double breaks (which should have double indentation) or not.
         // Alternatively, we could achieve the same behavior with a new box group that supports
         // "continuation" which would only increase indentation if its parent box broke.
-        let init_space_left = std::cmp::min(
-            self.space_left(),
-            self.config.line_length
-                - if self.contract.is_some() { self.config.tab_width } else { 0 }
-                - if self.fn_body { self.config.tab_width } else { 0 },
-        );
+        let init_space_left = self.space_left();
         let mut pre_init_size = self.estimate_size(ty.span);
 
         // Non-elementary types use commasep which has its own padding.
@@ -848,7 +858,7 @@ impl<'ast> State<'_, 'ast> {
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
                         if init_size + pre_init_size + 4 >= init_space_left
-                            && init_size + 1 + self.config.tab_width < init_space_left
+                            && init_size + 1 + self.config.tab_width <= init_space_left
                             && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {
                             self.print_sep(Separator::Space);
@@ -893,7 +903,6 @@ impl<'ast> State<'_, 'ast> {
             |fmt, var| fmt.print_var(var, false),
             get_span!(),
             format,
-            matches!(format, ListFormat::AlwaysBreak { break_single: true, .. }),
         );
     }
 
@@ -982,6 +991,7 @@ impl<'ast> State<'_, 'ast> {
                         ret,
                         ret.span,
                         ListFormat::Consistent {
+                            break_single: false,
                             cmnts_break: false,
                             with_space: false,
                             with_delimiters: true,
@@ -1113,11 +1123,11 @@ impl<'ast> State<'_, 'ast> {
                 |this, path| this.print_path(path, false),
                 get_span!(()),
                 ListFormat::Consistent {
+                    break_single: false,
                     cmnts_break: false,
                     with_space: false,
                     with_delimiters: true,
                 },
-                false,
             );
         }
     }
@@ -1165,7 +1175,7 @@ impl<'ast> State<'_, 'ast> {
                     self.s.ibox(self.ind);
                     self.print_expr(rhs);
                     self.end();
-                } else if (matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
+                } else if (is_call_chain(&rhs.kind, false) && overflows && fits_alone)
                     || (matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
                         && overflows)
                 {
@@ -1253,20 +1263,60 @@ impl<'ast> State<'_, 'ast> {
                     self.end();
                 }
             }
-            ast::ExprKind::Call(expr, call_args) => {
-                let space_left = self.space_left();
-                let expr_size = self.estimate_size(expr.span);
-                let args_size = self.estimate_size(call_args.span);
+            ast::ExprKind::Call(call_expr, call_args) => {
+                let (space_left, expr_size, args_size) = (
+                    self.space_left(),
+                    self.estimate_size(call_expr.span),
+                    self.estimate_size(call_args.span),
+                );
+                let all_fits = expr_size + args_size + 2 <= space_left;
+                let expr_fits = expr_size + 1 <= space_left;
+                let break_single = !all_fits && call_args.len() == 1;
+
+                // Determine call position in the chain.
+                let current_position = if let Some(current) = self.member_expr {
+                    if call_expr.span == current.bottom {
+                        // Child is the innermost expression, so this is the top.
+                        MemberPos::Top
+                    } else {
+                        current.position
+                    }
+                } else {
+                    MemberPos::Bottom
+                };
+
+                // Update state for recursive call
+                let old_state = self.member_expr;
+                if let Some(current) = self.member_expr {
+                    let child_is_innermost = call_expr.span == current.bottom;
+                    self.member_expr = Some(MemberCache {
+                        bottom: current.bottom,
+                        position: if child_is_innermost {
+                            MemberPos::Top
+                        } else {
+                            MemberPos::Middle
+                        },
+                    });
+                }
 
                 self.cbox(0);
-                self.ibox(0);
-                self.print_expr(expr);
-                self.end();
+                self.print_expr(call_expr);
+
                 self.print_call_args(
                     call_args,
-                    call_args.len() == 1 && args_size + 2 + expr_size > space_left,
+                    ListFormat::Compact {
+                        break_single,
+                        cmnts_break: true,
+                        with_space: false,
+                        with_delimiters: break_single
+                            || current_position == MemberPos::Top
+                            || (!expr_fits && current_position == MemberPos::Bottom),
+                    },
                 );
                 self.end();
+
+                // Restore the old state
+                self.member_expr = old_state;
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
@@ -1357,17 +1407,41 @@ impl<'ast> State<'_, 'ast> {
                     self.word(unit.to_str());
                 }
             }
-            ast::ExprKind::Member(expr, ident) => {
-                let is_child = self.member_expr;
-                if !is_child {
-                    // top-level expression of the chain -> set cache
-                    self.member_expr = true;
-                    self.s.ibox(self.ind);
-                }
 
-                self.print_expr(expr);
-                self.print_trailing_comment(expr.span.hi(), Some(ident.span.lo()));
-                if !matches!(expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)) {
+            ast::ExprKind::Member(member_expr, ident) => {
+                let cache = self.member_expr;
+                let is_child = if let Some(current) = self.member_expr {
+                    // Update state with child information
+                    self.member_expr = Some(MemberCache {
+                        bottom: current.bottom,
+                        position: if member_expr.span == current.bottom {
+                            MemberPos::Top
+                        } else {
+                            MemberPos::Middle
+                        },
+                    });
+
+                    true
+                } else {
+                    // First member expression is the bottom of the chain -> outermost expression
+                    // that will be printed last.
+                    let bottom = get_chain_bottom(expr).span;
+                    self.member_expr = Some(MemberCache {
+                        bottom,
+                        position: if member_expr.span == bottom {
+                            MemberPos::Top
+                        } else {
+                            MemberPos::Middle
+                        },
+                    });
+
+                    self.s.ibox(self.ind);
+                    false
+                };
+
+                self.print_expr(member_expr);
+                self.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
+                if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)) {
                     self.zerobreak();
                 }
                 self.word(".");
@@ -1375,17 +1449,26 @@ impl<'ast> State<'_, 'ast> {
 
                 if !is_child {
                     // top-level expression of the chain -> clear cache
-                    self.member_expr = false;
+                    self.member_expr = cache;
                     self.end();
                 }
             }
+
             ast::ExprKind::New(ty) => {
                 self.word("new ");
                 self.print_ty(ty);
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, false);
+                self.print_call_args(
+                    args,
+                    ListFormat::Compact {
+                        break_single: false,
+                        cmnts_break: true,
+                        with_space: false,
+                        with_delimiters: true,
+                    },
+                );
             }
             ast::ExprKind::Ternary(cond, then, els) => {
                 self.s.cbox(self.ind);
@@ -1435,11 +1518,12 @@ impl<'ast> State<'_, 'ast> {
                 },
                 |e| e.as_deref().map(|e| e.span),
                 ListFormat::Compact {
+                    break_single: is_binary_expr(&expr.kind),
+
                     cmnts_break: false,
                     with_space: false,
                     with_delimiters: true,
                 },
-                is_binary_expr(&expr.kind),
             ),
             ast::ExprKind::TypeCall(ty) => {
                 self.word("type");
@@ -1450,11 +1534,12 @@ impl<'ast> State<'_, 'ast> {
                     Self::print_ty,
                     get_span!(),
                     ListFormat::Consistent {
+                        break_single: false,
+
                         cmnts_break: false,
                         with_space: false,
                         with_delimiters: true,
                     },
-                    false,
                 );
             }
             ast::ExprKind::Type(ty) => self.print_ty(ty),
@@ -1483,11 +1568,19 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(arguments, false);
+            self.print_call_args(
+                arguments,
+                ListFormat::Compact {
+                    break_single: false,
+                    cmnts_break: true,
+                    with_space: false,
+                    with_delimiters: true,
+                },
+            );
         }
     }
 
-    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>, break_single_no_cmnts: bool) {
+    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>, format: ListFormat) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
             return;
@@ -1501,12 +1594,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     |this, e| this.print_expr(e),
                     get_span!(),
-                    ListFormat::Compact {
-                        cmnts_break: true,
-                        with_space: false,
-                        with_delimiters: false,
-                    },
-                    break_single_no_cmnts,
+                    format,
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
@@ -1551,11 +1639,11 @@ impl<'ast> State<'_, 'ast> {
             },
             |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
             ListFormat::Consistent {
+                break_single: true,
                 cmnts_break: true,
                 with_space: self.config.bracket_spacing,
                 with_delimiters: true,
             },
-            true,
         );
         self.word("}");
 
@@ -1598,11 +1686,11 @@ impl<'ast> State<'_, 'ast> {
                             Self::print_ast_str_lit,
                             get_span!(),
                             ListFormat::Consistent {
+                                break_single: false,
                                 cmnts_break: false,
                                 with_space: false,
                                 with_delimiters: true,
                             },
-                            false,
                         );
                         self.print_sep(Separator::Nbsp);
                     }
@@ -1626,11 +1714,11 @@ impl<'ast> State<'_, 'ast> {
                     },
                     |v| v.as_ref().map(|v| v.span),
                     ListFormat::Consistent {
+                        break_single: false,
                         cmnts_break: false,
                         with_space: false,
                         with_delimiters: true,
                     },
-                    false,
                 );
                 self.end();
                 self.word(" =");
@@ -1770,6 +1858,7 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.nbsp();
                     }
+                    // self.word(format!("\n // {:?}\n", expr.kind));
                     self.print_expr(expr);
                     self.end();
                 } else {
@@ -1799,6 +1888,7 @@ impl<'ast> State<'_, 'ast> {
                             args,
                             args.span.with_hi(block.span.lo()),
                             ListFormat::Compact {
+                                break_single: false,
                                 cmnts_break: false,
                                 with_space: false,
                                 with_delimiters: true,
@@ -1955,8 +2045,13 @@ impl<'ast> State<'_, 'ast> {
             pos_hi,
             Self::print_expr,
             get_span!(),
-            ListFormat::Compact { cmnts_break: true, with_space: false, with_delimiters: true },
-            is_binary_expr(&cond.kind),
+            ListFormat::Compact {
+                break_single: is_binary_expr(&cond.kind),
+
+                cmnts_break: true,
+                with_space: false,
+                with_delimiters: true,
+            },
         );
     }
 
@@ -1978,7 +2073,15 @@ impl<'ast> State<'_, 'ast> {
         };
         self.s.cbox(0);
         self.print_path(path, false);
-        self.print_call_args(args, false);
+        self.print_call_args(
+            args,
+            ListFormat::Compact {
+                break_single: false,
+                cmnts_break: true,
+                with_space: false,
+                with_delimiters: args.len() == 1,
+            },
+        );
         self.end();
     }
 
@@ -2494,6 +2597,26 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
         _ => true,
+    }
+}
+
+/// Traverses a nested Member/Call expression chain to find the lowest-level expression.
+fn get_chain_bottom<'a>(mut expr: &'a ast::Expr<'a>) -> &'a ast::Expr<'a> {
+    loop {
+        match &expr.kind {
+            ast::ExprKind::Member(child, ..) | ast::ExprKind::Call(child, ..) => {
+                expr = child;
+            }
+            _ => return expr,
+        }
+    }
+}
+
+fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
+    match expr_kind {
+        ast::ExprKind::Call(..) => !must_have_child,
+        ast::ExprKind::Member(child, ..) => is_call_chain(&child.kind, false),
+        _ => false,
     }
 }
 

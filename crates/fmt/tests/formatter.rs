@@ -222,6 +222,7 @@ fmt_tests! {
     OperatorExpressions,
     PragmaDirective,
     Repros,
+    ReprosCalls,
     ReturnStatement,
     RevertNamedArgsStatement,
     RevertStatement,

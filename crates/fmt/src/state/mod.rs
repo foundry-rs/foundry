@@ -19,6 +19,27 @@ mod common;
 mod sol;
 mod yul;
 
+/// Represents the position of a specific expression within a call/member chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MemberPos {
+    // The outermost expression in the chain
+    Top,
+    /// An intermediate expression in the chain
+    Middle,
+    /// The very first expression that starts the chain
+    Bottom,
+}
+
+/// Holds the complete state for formatting a single, continuous member access/call chain.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MemberCache {
+    /// A pointer to the expression that is the "bottom" of the entire chain.
+    pub bottom: Span,
+
+    /// The position of the expr being formatted within the chain.
+    pub position: MemberPos,
+}
+
 pub(super) struct State<'sess, 'ast> {
     pub(super) s: pp::Printer,
     ind: isize,
@@ -32,8 +53,8 @@ pub(super) struct State<'sess, 'ast> {
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
     call_expr_named: bool,
+    member_expr: Option<MemberCache>,
     binary_expr: bool,
-    member_expr: bool,
     var_init: bool,
     fn_body: bool,
 }
@@ -119,11 +140,21 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_expr_named: false,
+            member_expr: None,
             binary_expr: false,
-            member_expr: false,
             var_init: false,
             fn_body: false,
         }
+    }
+
+    fn space_left(&self) -> usize {
+        std::cmp::min(
+            self.s.space_left(),
+            self.config
+                .line_length
+                .saturating_sub(if self.fn_body { self.config.tab_width } else { 0 })
+                .saturating_sub(if self.contract.is_some() { self.config.tab_width } else { 0 }),
+        )
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
