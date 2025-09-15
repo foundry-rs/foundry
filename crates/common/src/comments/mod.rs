@@ -359,7 +359,6 @@ fn format_doc_block_comment(line: &str, tab_width: Option<usize>) -> String {
     if line.is_empty() {
         return (" *").to_string();
     }
-}
 
     if let Some((_, rest_of_line)) = line.split_once("*") {
         if rest_of_line.is_empty() {
