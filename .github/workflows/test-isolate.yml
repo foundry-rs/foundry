@@ -2,6 +2,9 @@
 
 name: test-isolate
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "0 0 * * *"

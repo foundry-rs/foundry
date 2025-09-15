@@ -2,6 +2,9 @@
 
 name: nextest
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:
@@ -50,6 +53,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
