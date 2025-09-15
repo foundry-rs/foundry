@@ -574,6 +574,17 @@ impl TestArgs {
                 }
             }
 
+            let backtrace_builder = tests
+                .values()
+                .any(|res| {
+                    res.status.is_failure() && !silent && verbosity >= 3 && !res.traces.is_empty()
+                })
+                .then_some(BacktraceBuilder::new(
+                    output,
+                    config.root.clone(),
+                    config.parsed_libraries().ok(),
+                ));
+
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
                 let show_traces =
@@ -646,19 +657,11 @@ impl TestArgs {
                 }
 
                 // Extract and display backtrace for failed tests when verbosity >= 3
-
-                if !silent
-                    && verbosity >= 3
-                    && result.status.is_failure()
-                    && !result.traces.is_empty()
+                if !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                    && let Some(builder) = &backtrace_builder
                 {
-                    let builder = BacktraceBuilder::new(
-                        output,
-                        config.root.clone(),
-                        config.parsed_libraries().ok(),
-                    );
                     let backtrace = builder.from_traces(arena);
 
                     if !backtrace.is_empty() {
