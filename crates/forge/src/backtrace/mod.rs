@@ -15,13 +15,11 @@ use crate::backtrace::source_map::collect_source_data;
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
 
-/// Collects [`ArtifactId`] and [`LibraryInfo`] and prepares for backtrace generation.
-/// Source data is loaded on-demand only for artifacts needed in failing traces.
+/// Collects [`LibraryInfo`] and holds references to [`ProjectCompileOutput`] and [`Config`] for
+/// backtrace generation.
 pub struct BacktraceBuilder<'a> {
-    /// Available artifact IDs in the project
-    pub artifact_ids: HashSet<ArtifactId>,
     /// Libraries part of the current source contracts both internal and linked/external libraries.
-    pub library_sources: HashSet<LibraryInfo>,
+    library_sources: HashSet<LibraryInfo>,
     /// Reference to project output for on-demand source loading
     output: &'a ProjectCompileOutput,
     /// Config reference for path resolution
@@ -33,7 +31,6 @@ impl<'a> BacktraceBuilder<'a> {
     ///
     /// Collects artifact IDs and libraries without loading source data upfront.
     pub fn new(output: &'a ProjectCompileOutput, config: &'a Config) -> Self {
-        let mut artifact_ids = HashSet::default();
         let mut library_sources = HashSet::default();
 
         // Collect linked libraries from config
@@ -84,25 +81,26 @@ impl<'a> BacktraceBuilder<'a> {
                     }
                 }
             }
-
-            // Store artifact ID with stripped file prefixes for consistency
-            let id = artifact_id.with_stripped_file_prefixes(&config.root);
-            artifact_ids.insert(id);
         }
 
-        Self { artifact_ids, library_sources, output, config }
+        Self { library_sources, output, config }
     }
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
     pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace<'_> {
+        let artifact_ids = self
+            .output
+            .artifact_ids()
+            .map(|(id, _)| id.with_stripped_file_prefixes(&self.config.root))
+            .collect::<HashSet<_>>();
+
         // Resolve addresses to artifacts using trace labels
-        let artifacts_by_address = self.resolve_addresses(arena);
+        let artifacts_by_address = self.resolve_addresses(arena, &artifact_ids);
 
         let mut sources = HashMap::default();
         let external_lib_artifacts = self.library_sources.iter().filter_map(|lib| {
             if lib.is_linked() {
-                return self
-                    .artifact_ids
+                return artifact_ids
                     .iter()
                     .find(|id| id.identifier() == format!("{}:{}", lib.path.display(), lib.name));
             }
@@ -130,12 +128,11 @@ impl<'a> BacktraceBuilder<'a> {
                             None
                         });
 
-                    if let Some(build_id) = build_id {
-                        if let Some(data) =
+                    if let Some(build_id) = build_id
+                        && let Some(data) =
                             collect_source_data(artifact, self.output, self.config, &build_id)
-                        {
-                            sources.insert(artifact_id.clone(), data);
-                        }
+                    {
+                        sources.insert(artifact_id.clone(), data);
                     }
                     break;
                 }
@@ -149,8 +146,13 @@ impl<'a> BacktraceBuilder<'a> {
         backtrace
     }
 
-    /// Resolves contract addresses to [`ArtifactId`]s using trace labels.
-    fn resolve_addresses(&self, arena: &SparsedTraceArena) -> HashMap<Address, ArtifactId> {
+    /// Resolves contract addresses to [`ArtifactId`]s using trace labels and provided
+    /// [`ArtifactId`]s.
+    fn resolve_addresses(
+        &self,
+        arena: &SparsedTraceArena,
+        artifact_ids: &HashSet<ArtifactId>,
+    ) -> HashMap<Address, ArtifactId> {
         let mut artifacts_by_address = HashMap::default();
 
         // Build contracts mapping from decoded traces
@@ -159,7 +161,7 @@ impl<'a> BacktraceBuilder<'a> {
                 && let Some(label) = &decoded.label
             {
                 // Find the artifact ID for this contract label from our collected artifact IDs
-                for artifact_id in &self.artifact_ids {
+                for artifact_id in artifact_ids {
                     if artifact_id.name == *label {
                         // Store the artifact ID directly
                         artifacts_by_address.insert(node.trace.address, artifact_id.clone());
