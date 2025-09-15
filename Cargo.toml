@@ -109,9 +109,10 @@ serde.opt-level = 3
 foundry-solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
 
+solar.opt-level = 3
 solar-ast.opt-level = 3
 solar-data-structures.opt-level = 3
-solar.opt-level = 3
+solar-interface.opt-level = 3
 solar-parse.opt-level = 3
 solar-sema.opt-level = 3
 
