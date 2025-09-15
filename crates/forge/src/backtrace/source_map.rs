@@ -88,32 +88,14 @@ impl PcSourceMapper {
         // Find the instruction counter for this PC
         let ic = self.find_instruction_counter(pc)?;
 
-        tracing::info!(pc = pc, ic = ic, map_entries = self.ic_pc_map.len(), "PC to IC mapping");
-
         // Get the source element for this instruction
         let element = self.source_map.get(ic)?;
 
-        tracing::info!(
-            ic = ic,
-            source_map_len = self.source_map.len(),
-            "Got source element for IC"
-        );
-
         // Get the source file index - returns None if index is -1
         let source_idx_opt = element.index();
-        tracing::info!(
-            source_idx = ?source_idx_opt,
-            sources_count = self.sources.len(),
-            "Checking source index"
-        );
 
         let source_idx = source_idx_opt? as usize;
         if source_idx >= self.sources.len() {
-            tracing::info!(
-                source_idx = source_idx,
-                sources_count = self.sources.len(),
-                "Source index out of bounds"
-            );
             return None;
         }
 
@@ -125,17 +107,12 @@ impl PcSourceMapper {
 
         // Check if offset is valid for this source file
         if offset >= content.len() {
-            tracing::info!(
-                offset = offset,
-                content_len = content.len(),
-                "Offset out of bounds for source file"
-            );
             return None;
         }
 
         let (line, column) = self.offset_to_line_column(source_idx, offset)?;
 
-        tracing::info!(
+        trace!(
             file = ?file_path,
             line = line,
             column = column,

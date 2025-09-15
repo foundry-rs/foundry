@@ -15,22 +15,25 @@ use crate::backtrace::source_map::collect_source_data;
 pub use solidity::{PcToSourceMapper, SourceLocation};
 pub use source_map::{LibraryInfo, PcSourceMapper, SourceData};
 
-/// Collects [`SourceData`] by [`ArtifactId`] and [`LibraryInfo`] and prepares for backtrace
-/// generation.
-pub struct BacktraceBuilder {
-    /// Mapping of [`ArtifactId`] to [`SourceData`]
-    pub sources: HashMap<ArtifactId, SourceData>,
+/// Collects [`ArtifactId`] and [`LibraryInfo`] and prepares for backtrace generation.
+/// Source data is loaded on-demand only for artifacts needed in failing traces.
+pub struct BacktraceBuilder<'a> {
+    /// Available artifact IDs in the project
+    pub artifact_ids: HashSet<ArtifactId>,
     /// Libraries part of the current source contracts both internal and linked/external libraries.
     pub library_sources: HashSet<LibraryInfo>,
+    /// Reference to project output for on-demand source loading
+    output: &'a ProjectCompileOutput,
+    /// Config reference for path resolution
+    config: &'a Config,
 }
 
-impl BacktraceBuilder {
+impl<'a> BacktraceBuilder<'a> {
     /// Instantiates a backtrace builder from a [`ProjectCompileOutput`] and [`Config`].
     ///
-    /// Collects the sources and libraries part of the current source contracts both internal and
-    /// linked/external.
-    pub fn new(output: &ProjectCompileOutput, config: &Config) -> Self {
-        let mut sources = HashMap::default();
+    /// Collects artifact IDs and libraries without loading source data upfront.
+    pub fn new(output: &'a ProjectCompileOutput, config: &'a Config) -> Self {
+        let mut artifact_ids = HashSet::default();
         let mut library_sources = HashSet::default();
 
         // Collect linked libraries from config
@@ -44,7 +47,7 @@ impl BacktraceBuilder {
             }
         }
 
-        // Process all artifacts - collect both library info and source data
+        // Process all artifacts - collect artifact IDs and library info
         for (artifact_id, artifact) in output.artifact_ids() {
             // Check if this is a library artifact and collect library info
             if let Some(ast) = &artifact.ast {
@@ -82,49 +85,71 @@ impl BacktraceBuilder {
                 }
             }
 
-            // Collect source data for all artifacts (including libraries)
-            // Find the build_id for this specific artifact
-            let build_id = output
-                .compiled_artifacts()
-                .artifact_files()
-                .chain(output.cached_artifacts().artifact_files())
-                .find_map(|af| {
-                    // Match by checking if this artifact file corresponds to the
-                    // same artifact
-                    if std::ptr::eq(&raw const af.artifact, artifact as *const _) {
-                        return Some(af.build_id.clone());
-                    }
-                    None
-                });
-
-            let Some(build_id) = build_id else {
-                continue;
-            };
-
-            if let Some(data) = collect_source_data(artifact, output, config, &build_id) {
-                // Store with stripped artifact ID for consistency
-                let id = artifact_id.with_stripped_file_prefixes(&config.root);
-                sources.insert(id, data);
-            }
+            // Store artifact ID with stripped file prefixes for consistency
+            let id = artifact_id.with_stripped_file_prefixes(&config.root);
+            artifact_ids.insert(id);
         }
 
-        Self { sources, library_sources }
+        Self { artifact_ids, library_sources, output, config }
     }
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
     pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace<'_> {
-        // Resolve addresses to artifacts using trace labels and our source data
+        // Resolve addresses to artifacts using trace labels
         let artifacts_by_address = self.resolve_addresses(arena);
 
-        let mut backtrace =
-            Backtrace::new(&artifacts_by_address, &self.sources, &self.library_sources);
+        let mut sources = HashMap::default();
+        let external_lib_artifacts = self.library_sources.iter().filter_map(|lib| {
+            if lib.is_linked() {
+                return self
+                    .artifact_ids
+                    .iter()
+                    .find(|id| id.identifier() == format!("{}:{}", lib.path.display(), lib.name));
+            }
+            None
+        });
+
+        // Collect source data for artifacts
+        for artifact_id in artifacts_by_address.values().chain(external_lib_artifacts) {
+            // Find the actual artifact from the output
+            for (output_id, artifact) in self.output.artifact_ids() {
+                let stripped_id = output_id.with_stripped_file_prefixes(&self.config.root);
+                if stripped_id == *artifact_id {
+                    // Find the build_id for this specific artifact
+                    let build_id = self
+                        .output
+                        .compiled_artifacts()
+                        .artifact_files()
+                        .chain(self.output.cached_artifacts().artifact_files())
+                        .find_map(|af| {
+                            // Match by checking if this artifact file corresponds to the same
+                            // artifact
+                            if std::ptr::eq(&raw const af.artifact, artifact as *const _) {
+                                return Some(af.build_id.clone());
+                            }
+                            None
+                        });
+
+                    if let Some(build_id) = build_id {
+                        if let Some(data) =
+                            collect_source_data(artifact, self.output, self.config, &build_id)
+                        {
+                            sources.insert(artifact_id.clone(), data);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        let mut backtrace = Backtrace::new(&artifacts_by_address, &sources, &self.library_sources);
 
         backtrace.extract_frames(arena);
 
         backtrace
     }
 
-    /// Resolves contract addresses to [`ArtifactId`]s using trace labels and collected source data.
+    /// Resolves contract addresses to [`ArtifactId`]s using trace labels.
     fn resolve_addresses(&self, arena: &SparsedTraceArena) -> HashMap<Address, ArtifactId> {
         let mut artifacts_by_address = HashMap::default();
 
@@ -133,8 +158,8 @@ impl BacktraceBuilder {
             if let Some(decoded) = &node.trace.decoded
                 && let Some(label) = &decoded.label
             {
-                // Find the artifact ID for this contract label from our source data
-                for artifact_id in self.sources.keys() {
+                // Find the artifact ID for this contract label from our collected artifact IDs
+                for artifact_id in &self.artifact_ids {
                     if artifact_id.name == *label {
                         // Store the artifact ID directly
                         artifacts_by_address.insert(node.trace.address, artifact_id.clone());
@@ -186,7 +211,7 @@ impl<'a> Backtrace<'a> {
         }
 
         // Add linked libraries to the address mapping
-        let mut linked_lib_addresses: HashMap<String, Address> = HashMap::default();
+        let mut linked_lib_addresses = HashMap::new();
         for lib_info in backtrace.library_sources {
             if lib_info.is_linked()
                 && let Some(lib_addr) = lib_info.address
