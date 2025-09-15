@@ -11,18 +11,25 @@
 //! - to address (32 bytes, left-padded)
 //! - value (32 bytes, big-endian U256)
 
+use std::borrow::Cow;
+
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256, address};
 use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
 
+/// Address of the Celo transfer precompile.
 pub const CELO_TRANSFER_ADDRESS: Address = address!("0x00000000000000000000000000000000000000fd");
 
-/// Gas cost for Celo transfer precompile
+/// ID for the [Celo transfer precompile](CELO_TRANSFER_ADDRESS).
+pub static PRECOMPILE_ID_CELO_TRANSFER: PrecompileId =
+    PrecompileId::Custom(Cow::Borrowed("celo transfer"));
+
+/// Gas cost for Celo transfer precompile.
 const CELO_TRANSFER_GAS_COST: u64 = 9000;
 
-/// Returns the celo native transfer
+/// Returns the Celo native transfer.
 pub fn precompile() -> DynPrecompile {
-    DynPrecompile::new_stateful(PrecompileId::custom("celo transfer"), celo_transfer_precompile)
+    DynPrecompile::new_stateful(PRECOMPILE_ID_CELO_TRANSFER.clone(), celo_transfer_precompile)
 }
 
 /// Celo transfer precompile implementation.
