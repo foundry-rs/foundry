@@ -3,11 +3,11 @@
 use alloy_primitives::{Address, Bytes};
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
-    artifacts::{ConfigurableContractArtifact, ast::Ast, sourcemap::SourceMap},
+    artifacts::{ConfigurableContractArtifact, sourcemap::SourceMap},
 };
 use foundry_config::Config;
 use foundry_evm_core::ic::IcPcMap;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 /// Information about a library used in a contract
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -54,8 +54,6 @@ pub struct SourceData {
     pub sources: Vec<(PathBuf, String)>,
     /// Deployed bytecode for accurate PC mapping
     pub bytecode: Bytes,
-    /// AST of the contract
-    pub ast: Option<Arc<Ast>>,
 }
 
 /// Maps program counters to source locations.
@@ -200,8 +198,6 @@ pub fn collect_source_data(
         return None;
     }
 
-    let ast = artifact.ast.as_ref().map(|ast| Arc::new(ast.clone()));
-
     // Get sources for this build
     let root = config.root.as_path();
     let mut sources = Vec::new();
@@ -247,5 +243,5 @@ pub fn collect_source_data(
         }
     }
 
-    Some(SourceData { source_map, sources, bytecode, ast })
+    Some(SourceData { source_map, sources, bytecode })
 }
