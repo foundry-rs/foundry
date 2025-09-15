@@ -83,7 +83,6 @@ impl ProjectCompiler {
         }
     }
 
-
     /// Sets whether to print contract names.
     #[inline]
     pub fn print_names(mut self, yes: bool) -> Self {
