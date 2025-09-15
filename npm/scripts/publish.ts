@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
-import { colors } from '../src/const'
+
+import { colors } from '#const.ts'
 
 const REGISTRY_URL = Bun.env.NPM_REGISTRY_URL || 'https://registry.npmjs.org'
 

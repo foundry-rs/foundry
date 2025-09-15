@@ -10,10 +10,10 @@
     "clean": "rm -rf bin dist && rm -rf ./@foundry-rs/forge*/bin ./@foundry-rs/forge*/dist ./@foundry-rs/forge*/*.tgz"
   },
   "dependencies": {
-    "tsdown": "^0.15.0",
+    "tsdown": "^0.15.1",
     "typescript": "^5.9.2",
-    "@types/bun": "^1.2.21",
-    "@types/node": "^24.3.1"
+    "@types/bun": "^1.2.22",
+    "@types/node": "^24.4.0"
   },
   "license": "MIT OR Apache-2.0",
   "$schema": "https://json.schemastore.org/package.json"
