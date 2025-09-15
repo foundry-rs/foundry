@@ -65,22 +65,28 @@ pub fn format(src: &str) -> Result<String, FormatterError> {
     Ok(output)
 }
 
-/// Converts the start offset of a `Loc` to `(line, col)`
+/// Converts the start offset of a `Loc` (byte offset) to `(line, col)` (1-based)
 pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
-    debug_assert!(content.len() > start);
+    assert!(start <= content.len(), "start out of bounds");
 
     // first line is `1`
-    let mut line_counter = 1;
-    for (offset, c) in content.chars().enumerate() {
-        if c == '\n' {
-            line_counter += 1;
+    let mut line = 1usize;
+    let mut last_line_start = 0usize;
+
+    for (byte_idx, ch) in content.char_indices() {
+        if byte_idx >= start {
+            let col = (start - last_line_start) + 1; // 1-based column
+            return (line, col);
         }
-        if offset > start {
-            return (line_counter, offset - start);
+        if ch == '\n' {
+            line += 1;
+            last_line_start = byte_idx + ch.len_utf8();
         }
     }
 
-    unreachable!("content.len() > start")
+    // start == content.len(): position at end of file
+    let col = (start - last_line_start) + 1;
+    (line, col)
 }
 
 /// Formats parser diagnostics
