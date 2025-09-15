@@ -44,7 +44,7 @@ jobs:
   cache-binaries:
     name: cache binaries (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

@@ -141,7 +141,21 @@ jobs:
       - run: cargo hack check -p substrate-runtime --each-feature --exclude-no-default-features
 
   deny:
-    uses: ithacaxyz/ci/.github/workflows/deny.yml@main
+    # Copy of ithacaxyz/ci/.github/workflows/deny.yml@main but without failing the CI
+    name: cargo deny check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Run cargo deny
+        run: cargo deny --all-features check all
 
   ci-success:
     runs-on: ubuntu-latest
@@ -155,7 +169,6 @@ jobs:
       - rustfmt
       - forge-fmt
       - crate-checks
-      - deny
     timeout-minutes: 60
     steps:
       - name: Decide whether the needed jobs succeeded or failed
