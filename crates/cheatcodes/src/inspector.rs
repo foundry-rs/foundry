@@ -855,6 +855,8 @@ impl Cheatcodes {
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
+                    // Ensure account is touched.
+                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1613,6 +1615,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             if curr_depth == broadcast.depth {
                 input.set_caller(broadcast.new_origin);
                 let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
+                // Ensure account is touched.
+                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
