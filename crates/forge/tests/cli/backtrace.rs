@@ -306,7 +306,7 @@ Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:12:101)
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
   at LibraryConsumer.externalDivide (src/LibraryConsumer.sol:43:95)
   at LibraryBacktraceTest.testExternalDivisionByZero (test/LibraryBacktrace.t.sol:49:60)
 
@@ -327,18 +327,18 @@ Backtrace:
 [FAIL: Underflow()] testExternalUnderflow() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.sub (src/libraries/ExternalMathLib.sol:26:100)
+  at ExternalMathLib.sub (src/libraries/ExternalMathLib.sol:25:63)
   at LibraryConsumer.externalSubtract (src/LibraryConsumer.sol:55:97)
   at LibraryBacktraceTest.testExternalUnderflow (test/LibraryBacktrace.t.sol:54:55)
 
 [FAIL: DivisionByZero()] testInternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at InternalMathLib.internalDivide (src/libraries/InternalMathLib.sol:12:101)
-  at LibraryConsumer.internalDivide (src/LibraryConsumer.sol:17:95)
+  at LibraryConsumer.internalDivide (src/libraries/InternalMathLib.sol:11:48)
   at LibraryBacktraceTest.testInternalDivisionByZero (test/LibraryBacktrace.t.sol:27:60)
 
 [FAIL: panic: arithmetic underflow or overflow (0x11)] testInternalOverflow() ([GAS])
+Traces:
 ...
 Backtrace:
   at LibraryConsumer.internalMultiply
@@ -348,21 +348,21 @@ Backtrace:
 Traces:
 ...
 Backtrace:
-  at InternalMathLib.internalCheckPositive (src/libraries/InternalMathLib.sol:32:87)
-  at LibraryConsumer.internalCheckPositive (src/LibraryConsumer.sol:35:95)
+  at LibraryConsumer.internalCheckPositive (src/libraries/InternalMathLib.sol:32:87)
   at LibraryBacktraceTest.testInternalRequire (test/LibraryBacktrace.t.sol:42:53)
 
 [FAIL: Underflow()] testInternalUnderflow() ([GAS])
+Traces:
 ...
 Backtrace:
-  at InternalMathLib.internalSubtract (src/libraries/InternalMathLib.sol:26:100)
-  at LibraryConsumer.internalSubtract (src/LibraryConsumer.sol:29:97)
+  at LibraryConsumer.internalSubtract (src/libraries/InternalMathLib.sol:25:63)
   at LibraryBacktraceTest.testInternalUnderflow (test/LibraryBacktrace.t.sol:32:55)
 
 [FAIL: DivisionByZero()] testMixedLibraryFailure() ([GAS])
+Traces:
 ...
 Backtrace:
-  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:12:101)
+  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
   at LibraryConsumer.mixedCalculation (src/LibraryConsumer.sol:72:62)
   at LibraryBacktraceTest.testMixedLibraryFailure (test/LibraryBacktrace.t.sol:72:105)
 
@@ -401,32 +401,32 @@ Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
 [FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
 ...
 Backtrace:
-  at FirstMathLib.useAllLibraries (src/libraries/MultipleLibraries.sol:10:42)
-  at MultipleLibraryConsumer.useAllLibraries (src/MultipleLibraryConsumer.sol:34:114)
+  at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:8:6)
   at MultipleLibraryBacktraceTest.testAllLibrariesFirstFails (test/MultipleLibraryBacktrace.t.sol:31:60)
 
 [FAIL: FirstLibError()] testFirstLibraryError() ([GAS])
+Traces:
 ...
 Backtrace:
-  at FirstMathLib.useFirstLib (src/libraries/MultipleLibraries.sol:10:42)
-  at MultipleLibraryConsumer.useFirstLib (src/MultipleLibraryConsumer.sol:16:92)
+  at MultipleLibraryConsumer.useFirstLib (src/libraries/MultipleLibraries.sol:8:6)
   at MultipleLibraryBacktraceTest.testFirstLibraryError (test/MultipleLibraryBacktrace.t.sol:16:55)
 
 [FAIL: SecondLibError()] testSecondLibraryError() ([GAS])
+Traces:
 ...
 Backtrace:
-  at SecondMathLib.useSecondLib (src/libraries/MultipleLibraries.sol:26:41)
-  at MultipleLibraryConsumer.useSecondLib (src/MultipleLibraryConsumer.sol:22:93)
+  at MultipleLibraryConsumer.useSecondLib (src/libraries/MultipleLibraries.sol:24:6)
   at MultipleLibraryBacktraceTest.testSecondLibraryError (test/MultipleLibraryBacktrace.t.sol:21:56)
 
 [FAIL: ThirdLibError()] testThirdLibraryError() ([GAS])
+Traces:
 ...
 Backtrace:
-  at ThirdMathLib.useThirdLib (src/libraries/MultipleLibraries.sol:42:42)
-  at MultipleLibraryConsumer.useThirdLib (src/MultipleLibraryConsumer.sol:28:92)
+  at MultipleLibraryConsumer.useThirdLib (src/libraries/MultipleLibraries.sol:40:6)
   at MultipleLibraryBacktraceTest.testThirdLibraryError (test/MultipleLibraryBacktrace.t.sol:26:55)
 
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+
 ...
 "#]]);
 });
