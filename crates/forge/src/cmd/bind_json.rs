@@ -71,7 +71,7 @@ impl BindJsonArgs {
             .unwrap();
 
         // Step 2: Preprocess sources to handle potentially invalid bindings
-        self.preprocess_sources(&mut sources)?;
+        // self.preprocess_sources(&mut sources)?;
 
         // Insert empty bindings file.
         sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
