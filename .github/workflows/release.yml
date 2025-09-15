@@ -1,5 +1,8 @@
 name: release
 
+permissions:
+  contents: read
+
 on:
   push:
     tags:
@@ -29,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Compute release name and tag
@@ -129,6 +133,8 @@ jobs:
             arch: amd64
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -287,6 +293,8 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
@@ -312,6 +320,8 @@ jobs:
     if: failure()
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: JasonEtco/create-an-issue@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
