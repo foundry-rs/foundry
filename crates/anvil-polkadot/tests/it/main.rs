@@ -1,2 +1,3 @@
-mod demo_test;
+mod mining;
+mod time_machine;
 mod utils;

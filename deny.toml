@@ -24,7 +24,9 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0442 Dump Undefined Memory by `JitDumpFile`
     "RUSTSEC-2024-0442",
     # https://rustsec.org/advisories/RUSTSEC-2024-0384 `instant` is unmaintained
-    "RUSTSEC-2024-0384"
+    "RUSTSEC-2024-0384",
+    # https://rustsec.org/advisories/RUSTSEC-2025-0057 `fxhash` is unmaintained
+    "RUSTSEC-2025-0057"
 ]
 
 # This section is considered when running `cargo deny check bans`.

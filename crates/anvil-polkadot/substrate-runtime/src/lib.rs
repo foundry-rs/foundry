@@ -17,7 +17,9 @@ use frame_system::limits::BlockWeights;
 use pallet_revive::{evm::runtime::EthExtra, AccountId32Mapper};
 use pallet_transaction_payment::{FeeDetails, RuntimeDispatchInfo};
 use polkadot_sdk::{
-    parachains_common::{AccountId, Balance, BlockNumber, Hash, Header, Nonce, Signature},
+    parachains_common::{
+        AccountId, Balance, BlockNumber, Hash as CommonHash, Header, Nonce, Signature,
+    },
     polkadot_sdk_frame::{
         deps::sp_genesis_builder,
         runtime::{apis, prelude::*},
@@ -119,6 +121,8 @@ pub fn native_version() -> NativeVersion {
 pub type Address = sp_runtime::MultiAddress<AccountId, ()>;
 /// Block type as expected by this runtime.
 pub type Block = sp_runtime::generic::Block<Header, UncheckedExtrinsic>;
+/// Hash type used by the runtime.
+pub type Hash = <Runtime as frame_system::Config>::Hash;
 /// The transaction extensions that are added to the runtime.
 type TxExtension = (
     // Checks that the sender is not the zero address.
@@ -260,7 +264,7 @@ impl frame_system::Config for Runtime {
     type Block = Block;
     type Version = Version;
     type AccountId = AccountId;
-    type Hash = Hash;
+    type Hash = CommonHash;
     type Nonce = Nonce;
     type AccountData = pallet_balances::AccountData<<Runtime as pallet_balances::Config>::Balance>;
 }

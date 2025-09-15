@@ -33,7 +33,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
 snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
-subxt = "0.43.0"
+subxt = "0.41.0"
 tokio.workspace = true
 
 # See /Cargo.toml.

@@ -10,20 +10,27 @@ use anvil_polkadot::{
 };
 use anvil_rpc::response::ResponseResult;
 use eyre::{Result, WrapErr};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, StreamExt};
 use parity_scale_codec::Decode;
 use polkadot_sdk::{
+    pallet_revive_eth_rpc::subxt_client::{self, system::calls::types::Remark},
+    polkadot_sdk_frame::traits::Header,
     sc_cli::CliConfiguration,
-    sc_client_api::{BlockBackend, HeaderBackend},
+    sc_client_api::{BlockBackend, BlockchainEvents},
+    sc_network_types::multiaddr::Protocol,
     sp_core::{storage::StorageKey, twox_128, H256},
 };
 use serde_json::{json, Value};
+use std::fmt::Debug;
+use subxt::{OnlineClient, PolkadotConfig};
+use subxt_signer::sr25519::Keypair;
 use tempfile::TempDir;
 
 pub struct TestNode {
     pub service: Service,
     pub api: ApiHandle,
     _temp_dir: Option<TempDir>,
+    port: u16,
 }
 
 impl TestNode {
@@ -57,7 +64,12 @@ impl TestNode {
         let config = substrate_config.create_configuration(&substrate_client, handle.clone())?;
         let (service, api) = spawn(anvil_config, config, LoggingManager::default()).await?;
 
-        Ok(Self { service, api, _temp_dir: temp_dir })
+        let port = match service.rpc_handlers.listen_addresses()[0].clone().pop().unwrap() {
+            Protocol::Tcp(port) => port,
+            _ => panic!("Expected TCP protocol"),
+        };
+
+        Ok(Self { service, api, _temp_dir: temp_dir, port })
     }
 
     pub async fn eth_rpc(&mut self, req: EthRequest) -> Result<ResponseResult> {
@@ -69,7 +81,7 @@ impl TestNode {
         rx.await.map_err(|e| eyre::eyre!("ApiRequest receiver dropped: {}", e))
     }
 
-    async fn substrate_rpc(&self, method: &str, params: Value) -> Result<Value> {
+    pub async fn substrate_rpc(&self, method: &str, params: Value) -> Result<Value> {
         let rpc = &self.service.rpc_handlers;
 
         let request = json!({
@@ -99,11 +111,6 @@ impl TestNode {
 }
 
 impl TestNode {
-    pub async fn get_best_block_number(&self) -> Result<u32> {
-        let best_number = self.service.client.info().best_number;
-        Ok(best_number)
-    }
-
     pub async fn block_hash_by_number(&self, n: u32) -> eyre::Result<H256> {
         self.service
             .client
@@ -129,7 +136,6 @@ impl TestNode {
             Some(hash) => self.substrate_rpc("state_getStorageAt", json!([key_hex, hash])).await?,
             None => self.substrate_rpc("state_getStorage", json!([key_hex])).await?,
         };
-
         Ok(result.as_str().map(|s| s.to_string()))
     }
 
@@ -140,5 +146,88 @@ impl TestNode {
             hex::decode(encoded_value.strip_prefix("0x").unwrap_or(&encoded_value)).unwrap();
         let mut input = &bytes[..];
         Decode::decode(&mut input).unwrap()
+    }
+
+    async fn wait_for_block_with_number(&self, n: u32) {
+        let mut import_stream = self.service.client.import_notification_stream();
+
+        while let Some(notification) = import_stream.next().await {
+            let block_number = *notification.header.number();
+            if block_number >= n {
+                break;
+            }
+        }
+    }
+
+    pub async fn best_block_number(&self) -> u32 {
+        let num = self
+            .substrate_rpc("chain_getHeader", json!([]))
+            .await
+            .unwrap()
+            .get("number")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_owned();
+        u32::from_str_radix(num.trim_start_matches("0x"), 16).unwrap()
+    }
+
+    pub async fn wait_for_block_with_timeout(
+        &self,
+        n: u32,
+        timeout: std::time::Duration,
+    ) -> eyre::Result<()> {
+        tokio::time::timeout(timeout, self.wait_for_block_with_number(n))
+            .await
+            .map_err(|e| e.into())
+    }
+
+    pub async fn submit_remark(&self, signer: Keypair) {
+        let url = format!("ws://127.0.0.1:{}", self.port);
+        let subxt_client = OnlineClient::<PolkadotConfig>::from_url(url)
+            .await
+            .wrap_err("Failed to create subxt client")
+            .unwrap();
+        let remark_data = b"bonjour".to_vec();
+        let tx_payload = subxt_client::tx().system().remark(remark_data.clone());
+        let res = subxt_client
+            .tx()
+            .sign_and_submit_then_watch_default(&tx_payload, &signer)
+            .await
+            .unwrap()
+            .wait_for_finalized()
+            .await
+            .unwrap();
+
+        let block_hash = res.block_hash();
+        let block = subxt_client.blocks().at(block_hash).await.unwrap();
+        let extrinsics = block.extrinsics().await.unwrap();
+        let remarks =
+            extrinsics.find::<Remark>().map(|remark| remark.unwrap().value).collect::<Vec<_>>();
+        assert_eq!(remarks[0].remark, remark_data);
+    }
+}
+
+pub fn assert_with_tolerance<T>(actual: T, expected: T, tolerance: T, message: &str)
+where
+    T: PartialOrd + std::ops::Sub<Output = T> + Debug + Copy,
+{
+    let diff = if actual > expected { actual - expected } else { expected - actual };
+
+    if diff > tolerance {
+        panic!(
+            "{message}\nExpected: {expected:?} ± {tolerance:?}\nActual: {actual:?}\nDifference: {diff:?}",
+        );
+    }
+}
+
+pub fn unwrap_response<T>(response: ResponseResult) -> Result<T, Box<dyn std::error::Error>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match response {
+        ResponseResult::Success(value) => Ok(serde_json::from_value(value)?),
+        ResponseResult::Error(err) => {
+            Err(format!("Expected success but got error: {err:?}").into())
+        }
     }
 }

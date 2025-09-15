@@ -10,6 +10,14 @@ pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
     DateTime::from_timestamp(secs as i64, 0).unwrap()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimePrecision {
+    /// Make time manager return the timestamp in seconds.
+    Seconds,
+    /// Make the time manager return the timestamp in milliseconds.
+    Milliseconds,
+}
+
 /// Manages block time
 #[derive(Clone, Debug)]
 pub struct TimeManager {
@@ -23,6 +31,7 @@ pub struct TimeManager {
     next_exact_timestamp: Arc<RwLock<Option<u64>>>,
     /// The interval to use when determining the next block's timestamp
     interval: Arc<RwLock<Option<u64>>>,
+    precision: TimePrecision,
 }
 
 impl TimeManager {
@@ -32,15 +41,38 @@ impl TimeManager {
             offset: Default::default(),
             next_exact_timestamp: Default::default(),
             interval: Default::default(),
+            precision: TimePrecision::Seconds,
         };
         time_manager.reset(start_timestamp);
         time_manager
     }
 
+    pub fn new_with_milliseconds(start_timestamp: u64) -> Self {
+        let time_manager = Self {
+            last_timestamp: Default::default(),
+            offset: Default::default(),
+            next_exact_timestamp: Default::default(),
+            interval: Default::default(),
+            precision: TimePrecision::Milliseconds,
+        };
+        let start_timestamp = start_timestamp.saturating_div(1000);
+        time_manager.reset(start_timestamp);
+        time_manager
+    }
+
+    /// Converts a value from milliseconds to the manager's `precision`.
+    fn convert_from_milliseconds(&self, value: u64) -> u64 {
+        match self.precision {
+            TimePrecision::Seconds => value.saturating_div(1000),
+            TimePrecision::Milliseconds => value,
+        }
+    }
+
     /// Resets the current time manager to the given timestamp, resetting the offsets and
     /// next block timestamp option
     pub fn reset(&self, start_timestamp: u64) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
+        let current = duration_since_unix_epoch().as_millis() as i128;
+        let start_timestamp = to_milliseconds(start_timestamp);
         *self.last_timestamp.write() = start_timestamp;
         *self.offset.write() = (start_timestamp as i128) - current;
         self.next_exact_timestamp.write().take();
@@ -63,16 +95,18 @@ impl TimeManager {
     ///
     /// This will apply a permanent offset to the natural UNIX Epoch timestamp
     pub fn increase_time(&self, seconds: u64) -> i128 {
-        self.add_offset(seconds as i128)
+        self.add_offset(to_milliseconds(seconds) as i128)
     }
 
     /// Sets the exact timestamp to use in the next block
     /// Fails if it's before (or at the same time) the last timestamp
     pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
+        let timestamp = to_milliseconds(timestamp);
         if timestamp < *self.last_timestamp.read() {
             return Err(BlockchainError::TimestampError(format!(
-                "{timestamp} is lower than previous block's timestamp"
+                "{} is lower than previous block's timestamp",
+                self.convert_from_milliseconds(timestamp)
             )))
         }
         self.next_exact_timestamp.write().replace(timestamp);
@@ -85,6 +119,7 @@ impl TimeManager {
     /// be set starting with the current timestamp.
     pub fn set_block_timestamp_interval(&self, interval: u64) {
         trace!(target: "time", "set interval {}", interval);
+        let interval = to_milliseconds(interval);
         self.interval.write().replace(interval);
     }
 
@@ -100,7 +135,7 @@ impl TimeManager {
 
     /// Computes the next timestamp without updating internals
     fn compute_next_timestamp(&self) -> (u64, Option<i128>) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
+        let current = duration_since_unix_epoch().as_millis() as i128;
         let last_timestamp = *self.last_timestamp.read();
 
         let (mut next_timestamp, update_offset) =
@@ -113,7 +148,7 @@ impl TimeManager {
             };
         // Ensures that the timestamp is always increasing
         if next_timestamp < last_timestamp {
-            next_timestamp = last_timestamp + 1;
+            next_timestamp = last_timestamp + to_milliseconds(1);
         }
         let next_offset = update_offset.then_some((next_timestamp as i128) - current);
         (next_timestamp, next_offset)
@@ -128,13 +163,13 @@ impl TimeManager {
             *self.offset.write() = next_offset;
         }
         *self.last_timestamp.write() = next_timestamp;
-        next_timestamp
+        self.convert_from_milliseconds(next_timestamp)
     }
 
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
         let (next_timestamp, _) = self.compute_next_timestamp();
-        next_timestamp
+        self.convert_from_milliseconds(next_timestamp)
     }
 }
 
@@ -144,4 +179,9 @@ pub fn duration_since_unix_epoch() -> Duration {
     let now = SystemTime::now();
     now.duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
+}
+
+/// Converts a value from the manager's `precision` to milliseconds.
+fn to_milliseconds(value: u64) -> u64 {
+    value.saturating_mul(1000)
 }

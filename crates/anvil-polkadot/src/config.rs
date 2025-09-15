@@ -221,7 +221,9 @@ impl SubstrateCliConfiguration for SubstrateNodeConfig {
             8192,
             20480 * 1024,
             None,
-            sc_cli::TransactionPoolType::ForkAware.into(),
+            // Replace this back with TransactionPoolType::ForkAware
+            // when we start using polkadot-sdk::master
+            sc_cli::TransactionPoolType::SingleState.into(),
             true,
         ))
     }
