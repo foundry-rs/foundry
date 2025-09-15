@@ -299,7 +299,6 @@ impl NodeArgs {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(err) => {
                     warn!(target: "node", ?count, %err, "invalid mnemonic word count, falling back to 12-word random mnemonic");
-                    // Fallback: generate a valid 12-word random mnemonic instead of using DEFAULT_MNEMONIC
                     Mnemonic::<English>::new_with_count(&mut rng, 12)
                         .expect("valid default word count")
                         .to_phrase()
