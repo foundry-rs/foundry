@@ -39,6 +39,7 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
+use tracing_subscriber::EnvFilter;
 
 /// contains the background service that drives the node
 mod service;
@@ -455,10 +456,23 @@ pub fn init_tracing() -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();
-    // check whether `RUST_LOG` is explicitly set
-    let _ = if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::Registry::default()
-            .with(tracing_subscriber::EnvFilter::from_default_env())
+
+    let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")
+        && !rust_log_val.contains("=")
+    {
+        // Mutate the given filter to include `node` logs if it is not already present.
+        // This prevents the unexpected behaviour of not seeing any node logs if a RUST_LOG
+        // is already present that doesn't set it.
+        let rust_log_val = if !rust_log_val.contains("node") {
+            format!("{rust_log_val},node=info")
+        } else {
+            rust_log_val
+        };
+
+        let env_filter: EnvFilter =
+            rust_log_val.parse().expect("failed to parse modified RUST_LOG");
+        tracing_subscriber::registry()
+            .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
             .try_init()
     } else {
