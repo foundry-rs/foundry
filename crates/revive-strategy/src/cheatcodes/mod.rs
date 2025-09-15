@@ -5,6 +5,7 @@ use std::{
 };
 
 use alloy_primitives::{ruint::aliases::U256, Address, Bytes, B256};
+use alloy_sol_types::SolValue;
 use foundry_common::sh_err;
 use foundry_compilers::resolc::dual_compiled_contracts::DualCompiledContracts;
 use revive_env::{AccountId, Runtime, System};
@@ -12,7 +13,8 @@ use revive_env::{AccountId, Runtime, System};
 use foundry_cheatcodes::{
     Broadcast, BroadcastableTransactions, CheatcodeInspectorStrategy,
     CheatcodeInspectorStrategyContext, CheatcodeInspectorStrategyRunner, CheatsConfig, CheatsCtxt,
-    CommonCreateInput, Ecx, EvmCheatcodeInspectorStrategyRunner, InnerEcx, Result, Vm::pvmCall,
+    CommonCreateInput, Ecx, EvmCheatcodeInspectorStrategyRunner, InnerEcx, Result,
+    Vm::{getNonce_0Call, pvmCall, setNonceCall, setNonceUnsafeCall},
 };
 
 use polkadot_sdk::{
@@ -87,6 +89,29 @@ impl CheatcodeInspectorStrategyContext for PvmCheatcodeInspectorStrategyContext 
     }
 }
 
+fn set_nonce(address: Address, nonce: u64, ecx: InnerEcx<'_, '_, '_>) {
+    execute_with_externalities(|externalities| {
+        externalities.execute_with(|| {
+            let account_id =
+                AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
+            let current_nonce = System::account_nonce(&account_id);
+
+            assert!(
+                current_nonce as u64 <= nonce,
+                "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
+            );
+
+            while (System::account_nonce(&account_id) as u64) < nonce {
+                System::inc_account_nonce(&account_id);
+            }
+        })
+    });
+    let account =
+        ecx.journaled_state.load_account(address, &mut ecx.db).expect("account loaded").data;
+    account.mark_touch();
+    account.info.nonce = nonce;
+}
+
 /// Implements [CheatcodeInspectorStrategyRunner] for PVM.
 #[derive(Debug, Default, Clone)]
 pub struct PvmCheatcodeInspectorStrategyRunner;
@@ -102,6 +127,7 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
             TypeId::of::<T>() == t
         }
 
+        let using_pvm = get_context_ref_mut(ccx.state.strategy.context.as_mut()).using_pvm;
         match cheatcode.as_any().type_id() {
             t if is::<pvmCall>(t) => {
                 let pvmCall { enabled } = cheatcode.as_any().downcast_ref().unwrap();
@@ -113,6 +139,31 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
                 }
 
                 Ok(Default::default())
+            }
+            t if using_pvm && is::<setNonceCall>(t) => {
+                let &setNonceCall { account, newNonce } =
+                    cheatcode.as_any().downcast_ref().unwrap();
+                set_nonce(account, newNonce, ccx.ecx);
+
+                Ok(Default::default())
+            }
+            t if using_pvm && is::<setNonceUnsafeCall>(t) => {
+                // TODO implement unsafe_set_nonce on polkadot-sdk
+                let &setNonceUnsafeCall { account, newNonce } =
+                    cheatcode.as_any().downcast_ref().unwrap();
+                set_nonce(account, newNonce, ccx.ecx);
+                Ok(Default::default())
+            }
+            t if using_pvm && is::<getNonce_0Call>(t) => {
+                let &getNonce_0Call { account } = cheatcode.as_any().downcast_ref().unwrap();
+                let nonce = execute_with_externalities(|externalities| {
+                    externalities.execute_with(|| {
+                        System::account_nonce(AccountId::to_fallback_account_id(&H160::from_slice(
+                            account.as_slice(),
+                        )))
+                    })
+                });
+                Ok(u64::from(nonce).abi_encode())
             }
             // Not custom, just invoke the default behavior
             _ => cheatcode.dyn_apply(ccx, executor),

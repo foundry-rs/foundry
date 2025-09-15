@@ -15447,6 +15447,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives 0.8.25",
  "alloy-rpc-types",
+ "alloy-sol-types 0.8.25",
  "eyre",
  "foundry-cheatcodes",
  "foundry-common",
