@@ -66,7 +66,7 @@ pub struct ExtTester {
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub install_commands: Vec<Vec<String>>,
-    pub verbosity: &'static str,
+    pub verbosity: String,
 }
 
 impl ExtTester {
@@ -81,7 +81,7 @@ impl ExtTester {
             args: vec![],
             envs: vec![],
             install_commands: vec![],
-            verbosity: "-vvv",
+            verbosity: "-vvv".to_string(),
         }
     }
 
@@ -114,8 +114,8 @@ impl ExtTester {
     }
 
     /// Sets the verbosity
-    pub fn verbosity(mut self, verbosity: &str) -> Self {
-        self.verbosity = verbosity;
+    pub fn verbosity(mut self, verbosity: impl Into<String>) -> Self {
+        self.verbosity = verbosity.into();
         self
     }
 
@@ -230,7 +230,7 @@ impl ExtTester {
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=32", "--ffi", self.verbosity]);
+        test_cmd.args(["--fuzz-runs=32", "--ffi", &self.verbosity]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
