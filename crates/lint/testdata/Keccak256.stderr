@@ -57,22 +57,6 @@ LL |         bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c));
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-LL |         bytes32 hash = keccak256(abi.encodePacked(a));
-   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-LL |         return keccak256(abi.encodePacked(a, b));
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
 LL |         bytes32 loadsFromCalldata = keccak256(z);
    |                                     ^^^^^^^^^^^^
    |
@@ -105,22 +89,6 @@ LL |         return keccak256(abi.encode(a, b, c));
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-LL |         return keccak256(abi.encode(a, b));
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-LL |         return keccak256(abi.encodePacked(a, b));
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
 LL |         bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y));
    |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
@@ -139,14 +107,6 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
    |
 LL |         return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace));
    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-LL |         return keccak256(abi.encodePacked(a, b));
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 

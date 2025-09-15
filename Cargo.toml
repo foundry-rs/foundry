@@ -32,7 +32,7 @@ resolver = "2"
 version = "1.3.5"
 edition = "2024"
 # Remember to update clippy.toml as well
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://getfoundry.sh"
@@ -216,6 +216,7 @@ solar = { package = "solar-compiler", version = "=0.1.7", default-features = fal
 alloy-consensus = { version = "1.0.23", default-features = false }
 alloy-contract = { version = "1.0.23", default-features = false }
 alloy-eips = { version = "1.0.23", default-features = false }
+alloy-eip5792 = { version = "1.0.23", default-features = false }
 alloy-ens = { version = "1.0.23", default-features = false }
 alloy-genesis = { version = "1.0.23", default-features = false }
 alloy-json-rpc = { version = "1.0.23", default-features = false }
@@ -235,8 +236,8 @@ alloy-transport = { version = "1.0.23", default-features = false }
 alloy-transport-http = { version = "1.0.23", default-features = false }
 alloy-transport-ipc = { version = "1.0.23", default-features = false }
 alloy-transport-ws = { version = "1.0.23", default-features = false }
-alloy-hardforks = { version = "0.3.0", default-features = false }
-alloy-op-hardforks = { version = "0.3.0", default-features = false }
+alloy-hardforks = { version = "0.3.2", default-features = false }
+alloy-op-hardforks = { version = "0.3.2", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "1.3.1"
