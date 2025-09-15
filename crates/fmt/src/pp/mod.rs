@@ -163,13 +163,14 @@ impl Printer {
                 return self.margin as usize;
             }
 
-            // Stop at first non-End token - if no hard break found by then, none is guaranteed
+            // Stop at first non-end token.
             if !matches!(token, Token::End) {
                 break;
             }
         }
 
-        // No hard break pending - return actual space on current line
+        // If no hard break pending, return actual space on current line or the full margin if space
+        // is negative.
         self.space.max(self.margin) as usize
     }
 

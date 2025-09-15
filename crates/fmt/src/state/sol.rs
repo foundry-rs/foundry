@@ -446,20 +446,13 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(-self.ind);
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
-            MultilineFuncHeaderStyle::ParamsFirst => {
-                ListFormat::AlwaysBreak { break_single: true, with_space: false }
-            }
+            MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
-                ListFormat::AlwaysBreak { break_single: true, with_space: false }
+                ListFormat::always_break()
             }
-            _ => ListFormat::Consistent {
-                break_single: false,
-                cmnts_break: true,
-                with_space: false,
-                with_delimiters: true,
-            },
+            _ => ListFormat::consistent().add_cmnt_break(),
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
@@ -546,12 +539,7 @@ impl<'ast> State<'_, 'ast> {
             self.print_parameter_list(
                 ret,
                 ret.span,
-                ListFormat::Consistent {
-                    break_single: false,
-                    cmnts_break: false,
-                    with_space: false,
-                    with_delimiters: true,
-                },
+                ListFormat::consistent(), // .with_cmnts_break(false),
             );
         }
 
@@ -697,16 +685,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(
-            parameters,
-            parameters.span,
-            ListFormat::Compact {
-                break_single: false,
-                cmnts_break: false,
-                with_space: false,
-                with_delimiters: true,
-            },
-        );
+        self.print_parameter_list(parameters, parameters.span, ListFormat::compact());
         self.word(";");
     }
 
@@ -717,12 +696,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Compact {
-                break_single: false,
-                cmnts_break: true,
-                with_space: false,
-                with_delimiters: true,
-            },
+            ListFormat::compact().add_cmnt_break(),
         );
         if *anonymous {
             self.word(" anonymous");
@@ -969,7 +943,7 @@ impl<'ast> State<'_, 'ast> {
             }) => {
                 self.cbox(0);
                 self.word("function");
-                self.print_parameter_list(parameters, parameters.span, ListFormat::Inline);
+                self.print_parameter_list(parameters, parameters.span, ListFormat::inline());
                 self.space();
 
                 if let Some(v) = visibility {
@@ -990,12 +964,7 @@ impl<'ast> State<'_, 'ast> {
                     self.print_parameter_list(
                         ret,
                         ret.span,
-                        ListFormat::Consistent {
-                            break_single: false,
-                            cmnts_break: false,
-                            with_space: false,
-                            with_delimiters: true,
-                        },
+                        ListFormat::consistent(), // .with_cmnts_break(false),
                     );
                 }
                 self.end();
@@ -1122,12 +1091,7 @@ impl<'ast> State<'_, 'ast> {
                 span.hi(),
                 |this, path| this.print_path(path, false),
                 get_span!(()),
-                ListFormat::Consistent {
-                    break_single: false,
-                    cmnts_break: false,
-                    with_space: false,
-                    with_delimiters: true,
-                },
+                ListFormat::consistent(), // .with_cmnts_break(false),
             );
         }
     }
@@ -1274,15 +1238,17 @@ impl<'ast> State<'_, 'ast> {
                     let expr_fits = expr_size < space_left;
                     let break_single = !all_fits && call_args.len() == 1;
 
+                    let list_format =
+                        ListFormat::compact().add_cmnt_break().break_single_if(break_single);
                     s.print_call_args(
                         call_args,
-                        ListFormat::Compact {
-                            break_single,
-                            cmnts_break: true,
-                            with_space: false,
-                            with_delimiters: break_single
-                                || current_position == MemberPos::Top
-                                || (!expr_fits && current_position == MemberPos::Bottom),
+                        if break_single
+                            || current_position == MemberPos::Top
+                            || (!expr_fits && current_position == MemberPos::Bottom)
+                        {
+                            list_format
+                        } else {
+                            list_format.rmv_delimiters()
                         },
                     );
                 });
@@ -1450,13 +1416,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                 },
                 |e| e.as_deref().map(|e| e.span),
-                ListFormat::Compact {
-                    break_single: is_binary_expr(&expr.kind),
-
-                    cmnts_break: false,
-                    with_space: false,
-                    with_delimiters: true,
-                },
+                ListFormat::compact().break_single_if(is_binary_expr(&expr.kind)),
             ),
             ast::ExprKind::TypeCall(ty) => {
                 self.word("type");
@@ -1466,13 +1426,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     Self::print_ty,
                     get_span!(),
-                    ListFormat::Consistent {
-                        break_single: false,
-
-                        cmnts_break: false,
-                        with_space: false,
-                        with_delimiters: true,
-                    },
+                    ListFormat::consistent(),
                 );
             }
             ast::ExprKind::Type(ty) => self.print_ty(ty),
@@ -1632,11 +1586,10 @@ impl<'ast> State<'_, 'ast> {
                 s.end();
             },
             |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
-            ListFormat::Consistent {
-                break_single: true,
-                cmnts_break: true,
-                with_space: self.config.bracket_spacing,
-                with_delimiters: true,
+            if self.config.bracket_spacing {
+                ListFormat::consistent().add_cmnt_break().break_single_if(true).add_space()
+            } else {
+                ListFormat::consistent().add_cmnt_break().break_single_if(true)
             },
         );
         self.word("}");
@@ -1679,12 +1632,7 @@ impl<'ast> State<'_, 'ast> {
                             block.span.lo(),
                             Self::print_ast_str_lit,
                             get_span!(),
-                            ListFormat::Consistent {
-                                break_single: false,
-                                cmnts_break: false,
-                                with_space: false,
-                                with_delimiters: true,
-                            },
+                            ListFormat::consistent(),
                         );
                         self.print_sep(Separator::Nbsp);
                     }
@@ -1707,12 +1655,7 @@ impl<'ast> State<'_, 'ast> {
                         }
                     },
                     |v| v.as_ref().map(|v| v.span),
-                    ListFormat::Consistent {
-                        break_single: false,
-                        cmnts_break: false,
-                        with_space: false,
-                        with_delimiters: true,
-                    },
+                    ListFormat::consistent(),
                 );
                 self.end();
                 self.word(" =");
@@ -1881,12 +1824,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_parameter_list(
                             args,
                             args.span.with_hi(block.span.lo()),
-                            ListFormat::Compact {
-                                break_single: false,
-                                cmnts_break: false,
-                                with_space: false,
-                                with_delimiters: true,
-                            },
+                            ListFormat::compact(),
                         );
                         self.nbsp();
                     }
@@ -1949,7 +1887,7 @@ impl<'ast> State<'_, 'ast> {
                             self.print_parameter_list(
                                 args,
                                 args.span.with_hi(block.span.lo()),
-                                ListFormat::Inline,
+                                ListFormat::inline(),
                             );
                             self.nbsp();
                         }
@@ -2039,13 +1977,7 @@ impl<'ast> State<'_, 'ast> {
             pos_hi,
             Self::print_expr,
             get_span!(),
-            ListFormat::Compact {
-                break_single: is_binary_expr(&cond.kind),
-
-                cmnts_break: true,
-                with_space: false,
-                with_delimiters: true,
-            },
+            ListFormat::compact().add_cmnt_break().break_single_if(is_binary_expr(&cond.kind)),
         );
     }
 
@@ -2069,11 +2001,10 @@ impl<'ast> State<'_, 'ast> {
         self.print_path(path, false);
         self.print_call_args(
             args,
-            ListFormat::Compact {
-                break_single: false,
-                cmnts_break: true,
-                with_space: false,
-                with_delimiters: args.len() == 1,
+            if args.len() == 1 {
+                ListFormat::compact().add_cmnt_break()
+            } else {
+                ListFormat::compact().add_cmnt_break().rmv_delimiters()
             },
         );
         self.end();

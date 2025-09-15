@@ -277,19 +277,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.print_word("[");
-        self.commasep(
-            values,
-            span.lo(),
-            span.hi(),
-            print,
-            get_span,
-            ListFormat::Compact {
-                break_single: false,
-                cmnts_break: false,
-                with_space: false,
-                with_delimiters: true,
-            },
-        );
+        self.commasep(values, span.lo(), span.hi(), print, get_span, ListFormat::compact());
         self.print_word("]");
     }
 
@@ -406,7 +394,7 @@ impl<'ast> State<'_, 'ast> {
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
         } else if !skip_first_break {
-            format.add_break(true, values.len(), &mut self.s);
+            format.print_break(true, values.len(), &mut self.s);
         }
         if format.is_compact() {
             self.s.cbox(0);
@@ -458,7 +446,7 @@ impl<'ast> State<'_, 'ast> {
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
             {
-                format.add_break(false, values.len(), &mut self.s);
+                format.print_break(false, values.len(), &mut self.s);
             }
         }
 
@@ -467,11 +455,11 @@ impl<'ast> State<'_, 'ast> {
         }
         if !skip_last_break {
             if let Some(sym) = format.post_symbol() {
-                format.add_break(false, values.len(), &mut self.s);
+                format.print_break(false, values.len(), &mut self.s);
                 self.s.offset(-self.ind);
                 self.word(sym);
             } else {
-                format.add_break(true, values.len(), &mut self.s);
+                format.print_break(true, values.len(), &mut self.s);
                 self.s.offset(-self.ind);
             }
         } else if is_single_without_cmnts && format.with_space() {
@@ -712,6 +700,7 @@ pub(crate) enum ListFormat {
 }
 
 impl ListFormat {
+    // -- GETTER METHODS -------------------------------------------------------
     pub(crate) fn break_single(&self) -> bool {
         match self {
             Self::AlwaysBreak { break_single, .. } => *break_single,
@@ -756,7 +745,97 @@ impl ListFormat {
         if let Self::Yul { sym_post, .. } = self { *sym_post } else { None }
     }
 
-    pub(crate) fn add_break(&self, soft: bool, elems: usize, p: &mut Printer) {
+    pub(crate) fn is_compact(&self) -> bool {
+        matches!(self, Self::Compact { .. })
+    }
+
+    // -- BUILDER METHODS ------------------------------------------------------
+    pub(crate) fn always_break() -> Self {
+        Self::AlwaysBreak { break_single: true, with_space: false }
+    }
+
+    pub(crate) fn consistent() -> Self {
+        Self::Consistent {
+            break_single: false,
+            cmnts_break: false,
+            with_space: false,
+            with_delimiters: true,
+        }
+    }
+
+    pub(crate) fn compact() -> Self {
+        Self::Compact {
+            break_single: false,
+            cmnts_break: false,
+            with_space: false,
+            with_delimiters: true,
+        }
+    }
+
+    pub(crate) fn inline() -> Self {
+        Self::Inline
+    }
+
+    pub(crate) fn yul(sym_prev: Option<&'static str>, sym_post: Option<&'static str>) -> Self {
+        Self::Yul { sym_prev, sym_post }
+    }
+
+    pub(crate) fn break_single_if(self, value: bool) -> Self {
+        match self {
+            Self::AlwaysBreak { with_space, .. } => {
+                Self::AlwaysBreak { break_single: value, with_space }
+            }
+            Self::Consistent { cmnts_break, with_space, with_delimiters, .. } => {
+                Self::Consistent { break_single: value, cmnts_break, with_space, with_delimiters }
+            }
+            Self::Compact { cmnts_break, with_space, with_delimiters, .. } => {
+                Self::Compact { break_single: value, cmnts_break, with_space, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn add_cmnt_break(self) -> Self {
+        match self {
+            Self::Consistent { break_single, with_space, with_delimiters, .. } => {
+                Self::Consistent { break_single, cmnts_break: true, with_space, with_delimiters }
+            }
+            Self::Compact { break_single, with_space, with_delimiters, .. } => {
+                Self::Compact { break_single, cmnts_break: true, with_space, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn add_space(self) -> Self {
+        match self {
+            Self::AlwaysBreak { break_single, .. } => {
+                Self::AlwaysBreak { break_single, with_space: true }
+            }
+            Self::Consistent { break_single, cmnts_break, with_delimiters, .. } => {
+                Self::Consistent { break_single, cmnts_break, with_space: true, with_delimiters }
+            }
+            Self::Compact { break_single, cmnts_break, with_delimiters, .. } => {
+                Self::Compact { break_single, cmnts_break, with_space: true, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn rmv_delimiters(self) -> Self {
+        match self {
+            Self::Consistent { break_single, cmnts_break, with_space, .. } => {
+                Self::Consistent { break_single, cmnts_break, with_space, with_delimiters: false }
+            }
+            Self::Compact { break_single, cmnts_break, with_space, .. } => {
+                Self::Compact { break_single, cmnts_break, with_space, with_delimiters: false }
+            }
+            _ => self,
+        }
+    }
+
+    // -- PRINTER METHODS ------------------------------------------------------
+    pub(crate) fn print_break(&self, soft: bool, elems: usize, p: &mut Printer) {
         if let Self::AlwaysBreak { break_single, .. } = self
             && (elems > 1 || (*break_single && elems == 1))
         {
@@ -766,10 +845,6 @@ impl ListFormat {
         } else {
             p.space();
         }
-    }
-
-    pub(crate) fn is_compact(&self) -> bool {
-        matches!(self, Self::Compact { .. })
     }
 }
 
