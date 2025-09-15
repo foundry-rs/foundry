@@ -641,7 +641,7 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
     let mut cmd = Command::new(&input[0]);
     cmd.args(&input[1..]);
 
-    debug!(target: "cheatcodes", ?cmd, "invoking ffi");
+    debug!(target: "cheatcodes", program = %input[0], args_len = input.len().saturating_sub(1), "invoking ffi");
 
     let output = cmd
         .current_dir(&state.config.root)
