@@ -836,6 +836,7 @@ impl Cheatcode for broadcastRawTransactionCall {
             (*ccx.ecx.env).clone(),
             &mut ccx.ecx.journaled_state,
             &mut *executor.get_inspector(ccx.state),
+            Box::new(()),
         )?;
 
         if ccx.state.broadcast.is_some() {

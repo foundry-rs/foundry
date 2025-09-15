@@ -1,9 +1,14 @@
 use std::any::Any;
 
-use foundry_evm::backend::{
-    BackendStrategy, BackendStrategyContext, BackendStrategyRunner, EvmBackendStrategyRunner,
-    ForkDB,
+use alloy_rpc_types::TransactionRequest;
+use foundry_evm::{
+    backend::{
+        Backend, BackendStrategy, BackendStrategyContext, BackendStrategyRunner,
+        EvmBackendStrategyRunner, ForkDB,
+    },
+    InspectorExt,
 };
+use revm::{primitives::Env, JournaledState};
 use serde::{Deserialize, Serialize};
 
 /// Create revive strategy for [BackendStrategy].
@@ -69,6 +74,18 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
         _active: &ForkDB,
         _fork_db: &mut ForkDB,
     ) {
+        todo!()
+    }
+
+    fn transact_from_tx(
+        &self,
+        _backend: &mut Backend,
+        _tx: &TransactionRequest,
+        _env: Env,
+        _journaled_state: &mut JournaledState,
+        _inspector: &mut dyn InspectorExt,
+        _inspect_ctx: Box<dyn Any>,
+    ) -> eyre::Result<()> {
         todo!()
     }
 }
