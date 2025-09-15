@@ -283,7 +283,7 @@ pub fn initialize(target: &Path) {
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             println!("- initializing template dir in {}", prj.root().display());
 
-            cmd.args(["init", "--force"]).assert_success();
+            cmd.args(["init", "--force", "--empty"]).assert_success();
             prj.write_config(Config {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
                 ..Default::default()
@@ -755,6 +755,11 @@ impl TestProject {
         rm_create(&self.paths().sources);
         rm_create(&self.paths().tests);
         rm_create(&self.paths().scripts);
+    }
+
+    pub fn initialize_default_contracts(&self) {
+        let mut cmd = self.forge_command();
+        cmd.args(["init", "--force"]).assert_success();
     }
 }
 
