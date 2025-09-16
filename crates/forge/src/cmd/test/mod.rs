@@ -1,9 +1,9 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::matches_contract,
+    multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -16,20 +16,16 @@ use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
-use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{
+    EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
+};
 use foundry_compilers::{
-    ProjectCompileOutput,
-    artifacts::output_selection::OutputSelection,
-    compilers::{
-        Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
-    },
-    utils::source_files_iter,
+    Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
+    compilers::multi::MultiCompiler, multi::MultiCompilerLanguage, utils::source_files_iter,
 };
 use foundry_config::{
     Config, figment,
@@ -146,10 +142,6 @@ pub struct TestArgs {
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
-    /// The Etherscan API version.
-    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
-    etherscan_api_version: Option<EtherscanApiVersion>,
-
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
     list: bool,
@@ -186,6 +178,10 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 
+    /// Disables the labels in the traces.
+    #[arg(long, help_heading = "Display options")]
+    pub disable_labels: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -205,76 +201,44 @@ impl TestArgs {
         self.execute_tests().await
     }
 
-    /// Returns sources which include any tests to be executed.
-    /// If no filters are provided, sources are filtered by existence of test/invariant methods in
-    /// them, If filters are provided, sources are additionally filtered by them.
+    /// Returns a list of files that need to be compiled in order to run all the tests that match
+    /// the given filter.
+    ///
+    /// This means that it will return all sources that are not test contracts or that match the
+    /// filter. We want to compile all non-test sources always because tests might depend on them
+    /// dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
-        filter: &ProjectPathsAwareFilter,
+        test_filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
+        // An empty filter doesn't filter out anything.
+        // We can still optimize slightly by excluding scripts.
+        if test_filter.is_empty() {
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect());
+        }
+
         let mut project = config.create_project(true, true)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
-
         let output = project.compile()?;
-
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
 
-        // ABIs of all sources
-        let abis = output
-            .into_artifacts()
-            .filter_map(|(id, artifact)| artifact.abi.map(|abi| (id, abi)))
-            .collect::<BTreeMap<_, _>>();
-
-        // Filter sources by their abis and contract names.
-        let mut test_sources = abis
-            .iter()
-            .filter(|(id, abi)| matches_contract(id, abi, filter))
-            .map(|(id, _)| id.source.clone())
-            .collect::<BTreeSet<_>>();
-
-        if test_sources.is_empty() {
-            if filter.is_empty() {
-                sh_println!(
-                    "No tests found in project! \
-                        Forge looks for functions that starts with `test`."
-                )?;
-            } else {
-                sh_println!("No tests match the provided pattern:")?;
-                sh_print!("{filter}")?;
-
-                // Try to suggest a test when there's no match
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    let candidates = abis
-                        .into_iter()
-                        .filter(|(id, _)| {
-                            filter.matches_path(&id.source) && filter.matches_contract(&id.name)
-                        })
-                        .flat_map(|(_, abi)| abi.functions.into_keys())
-                        .collect::<Vec<_>>();
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        sh_println!("\nDid you mean `{suggestion}`?")?;
-                    }
-                }
-            }
-
-            eyre::bail!("No tests to run");
-        }
-
-        // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(
-            &project.paths.sources,
-            MultiCompilerLanguage::FILE_EXTENSIONS,
-        ));
-
-        Ok(test_sources)
+        Ok(output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+            .filter(|(id, abi)| {
+                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+            })
+            .map(|(id, _)| id.source)
+            .collect())
     }
 
     /// Executes all the tests in the project.
@@ -308,13 +272,10 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
-
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(sources_to_compile);
-
+            .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
@@ -355,6 +316,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
@@ -452,6 +414,32 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
+
+        if num_filtered == 0 {
+            let mut total_tests = num_filtered;
+            if !filter.is_empty() {
+                total_tests = runner.matching_test_functions(&EmptyTestFilter::default()).count();
+            }
+            if total_tests == 0 {
+                sh_println!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
+            } else {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        write!(msg, "\nDid you mean `{suggestion}`?")?;
+                    }
+                }
+                sh_warn!("{msg}")?;
+            }
+            return Ok(TestOutcome::empty(false));
+        }
+
         if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
                 "generate a flamegraph"
@@ -526,6 +514,7 @@ impl TestArgs {
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
+            .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
@@ -876,10 +865,6 @@ impl Provider for TestArgs {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
         }
 
-        if let Some(api_version) = &self.etherscan_api_version {
-            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
-        }
-
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
         }
@@ -909,7 +894,14 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
 /// Load persisted filter (with last test run failures) from file.
 fn last_run_failures(config: &Config) -> Option<regex::Regex> {
     match fs::read_to_string(&config.test_failures_file) {
-        Ok(filter) => Some(Regex::new(&filter).unwrap()),
+        Ok(filter) => Regex::new(&filter)
+            .inspect_err(|e| {
+                _ = sh_warn!(
+                    "failed to parse test filter from {:?}: {e}",
+                    config.test_failures_file
+                )
+            })
+            .ok(),
         Err(_) => None,
     }
 }

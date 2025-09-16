@@ -131,7 +131,7 @@ impl VerifyBundle {
                         .to_string(),
                 };
 
-                // We strip the build metadadata information, since it can lead to
+                // We strip the build metadata information, since it can lead to
                 // etherscan not identifying it correctly. eg:
                 // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
                 let version = Version::new(
@@ -163,6 +163,7 @@ impl VerifyBundle {
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
                     language: None,
+                    creation_transaction_hash: None,
                 };
 
                 return Some(verify);

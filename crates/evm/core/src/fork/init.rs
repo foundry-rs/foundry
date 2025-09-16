@@ -9,6 +9,7 @@ use revm::context::{BlockEnv, CfgEnv, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
+#[allow(clippy::too_many_arguments)]
 pub async fn environment<N: Network, P: Provider<N>>(
     provider: &P,
     memory_limit: u64,
@@ -17,6 +18,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
     pin_block: Option<u64>,
     origin: Address,
     disable_block_gas_limit: bool,
+    enable_tx_gas_limit: bool,
 ) -> eyre::Result<(Env, N::BlockResponse)> {
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
@@ -50,6 +52,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
         override_chain_id.unwrap_or(rpc_chain_id),
         memory_limit,
         disable_block_gas_limit,
+        enable_tx_gas_limit,
     );
 
     let mut env = Env {
@@ -81,7 +84,12 @@ pub async fn environment<N: Network, P: Provider<N>>(
 }
 
 /// Configures the environment for the given chain id and memory limit.
-pub fn configure_env(chain_id: u64, memory_limit: u64, disable_block_gas_limit: bool) -> CfgEnv {
+pub fn configure_env(
+    chain_id: u64,
+    memory_limit: u64,
+    disable_block_gas_limit: bool,
+    enable_tx_gas_limit: bool,
+) -> CfgEnv {
     let mut cfg = CfgEnv::default();
     cfg.chain_id = chain_id;
     cfg.memory_limit = memory_limit;
@@ -92,5 +100,10 @@ pub fn configure_env(chain_id: u64, memory_limit: u64, disable_block_gas_limit: 
     cfg.disable_eip3607 = true;
     cfg.disable_block_gas_limit = disable_block_gas_limit;
     cfg.disable_nonce_check = true;
+    // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+    // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
+    if !enable_tx_gas_limit {
+        cfg.tx_gas_limit_cap = Some(u64::MAX);
+    }
     cfg
 }

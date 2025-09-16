@@ -74,6 +74,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -253,6 +256,35 @@ casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
 Created new encrypted keystore file: [..]
 [ADDRESS]
 [PUBLIC_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with default keystore location
+casttest!(new_wallet_default_keystore, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
+        r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#
+    ]]);
+
+    // Verify the default keystore directory was created
+    let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
+    assert!(keystore_path.exists());
+    assert!(keystore_path.is_dir());
+});
+
+// tests that we can outputting multiple keys without a keystore path
+casttest!(new_wallet_multiple_keys, |_prj, cmd| {
+    cmd.args(["wallet", "new", "-n", "2"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
 
 "#]]);
 });
@@ -1758,19 +1790,22 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
-    let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
-    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-    let args = vec![
-        "tx",
-        "--from",
-        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-        "--nonce",
-        "113642",
-        "--rpc-url",
-        rpc,
-    ];
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "reth is currently slightly broken"]
+    tx_using_sender_and_nonce,
+    |_prj, cmd| {
+        let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
+        // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
+        let args = vec![
+            "tx",
+            "--from",
+            "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
+            "--nonce",
+            "113642",
+            "--rpc-url",
+            rpc,
+        ];
+        cmd.args(args).assert_success().stdout_eq(str![[r#"
 
 blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
 blockNumber          22287055
@@ -1794,7 +1829,8 @@ value                0
 yParity              1
 ...
 "#]]);
-});
+    }
+);
 
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {
@@ -1869,6 +1905,40 @@ casttest!(storage, |_prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 0x000000000000000000000000000000000000000000000000000000174876e800
+
+"#]]);
+
+    let decimal_slot_offset_from_total_supply_slot = "0x08";
+    let decimal_slot_offset_from_total_supply_slot_uint = "8";
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
+
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot_uint,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
 
 "#]]);
 });
@@ -1961,6 +2031,41 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 |-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 ╰-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------╯
+
+
+"#]]);
+});
+
+casttest!(storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--md",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 
 "#]]);
@@ -2499,8 +2604,7 @@ contract LocalProjectContract {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "LocalProjectScript",
         r#"
@@ -2515,8 +2619,7 @@ contract LocalProjectScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2667,8 +2770,7 @@ library ExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "CounterInExternalLib",
         r#"
@@ -2683,8 +2785,7 @@ contract CounterInExternalLib {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "CounterInExternalLibScript",
         r#"
@@ -2698,8 +2799,7 @@ contract CounterInExternalLibScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2776,8 +2876,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -2878,8 +2977,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Deploy counter contract.
     cmd.args([
@@ -3146,35 +3244,23 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(fetch_src_blockscout, |_prj, cmd| {
-    let url = "https://eth.blockscout.com/api";
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_blockscout,
+    |_prj, cmd| {
+        let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
-    cmd.args([
-        "source",
-        &weth.to_string(),
-        "--chain-id",
-        "1",
-        "--explorer-api-url",
-        url,
-        "--flatten",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-...
-contract WETH9 {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
-    uint8  public decimals = 18;
-..."#]]);
-});
-
-casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_etherscan_api_key();
-
-    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--chain-id",
+            "1",
+            "--explorer-api-url",
+            url,
+            "--flatten",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -3183,7 +3269,33 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+    }
+);
+
+casttest!(
+    #[cfg_attr(all(target_os = "linux", target_arch = "aarch64"), ignore = "no 0.4 solc")]
+    fetch_src_default,
+    |_prj, cmd| {
+        let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let etherscan_api_key = next_etherscan_api_key();
+
+        cmd.args([
+            "source",
+            &weth.to_string(),
+            "--flatten",
+            "--etherscan-api-key",
+            &etherscan_api_key,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
@@ -3284,8 +3396,7 @@ contract SimpleStorage {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "SimpleStorageScript",
         r#"
@@ -3299,8 +3410,7 @@ contract SimpleStorageScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -3421,8 +3531,7 @@ contract ConstructorContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3497,8 +3606,7 @@ contract EstimateContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile to get bytecode
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3547,8 +3655,7 @@ contract SimpleContract {
     uint256 public constant VALUE = 42;
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3606,8 +3713,7 @@ contract ComplexContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Compile
     cmd.forge_fuse().args(["build"]).assert_success();
@@ -3856,4 +3962,55 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
+});
+
+// tests that cast call properly applies multiple state diff overrides
+// <https://github.com/foundry-rs/foundry/issues/11551>
+casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "call",
+        "--trace",
+        "--from",
+        "0xf6F444fD3B0088c1375671c05A7513661beFa4e6",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0xe75235b8",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::getThreshold()
+...
+
+"#]]);
+
+    cmd.cast_fuse().args([
+        "call",
+        "--trace",
+        "--from",
+        "0x2066901073a33ba2500274704aB04763875cF210",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0x2f54bf6e0000000000000000000000002066901073a33ba2500274704ab04763875cf210",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
+...
+
+"#]]);
 });

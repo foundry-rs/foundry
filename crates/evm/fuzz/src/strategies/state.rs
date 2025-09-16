@@ -3,9 +3,11 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, B256IndexSet, HashMap},
+    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap},
 };
-use foundry_common::ignore_metadata_hash;
+use foundry_common::{
+    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
+};
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
@@ -31,6 +33,11 @@ pub struct EvmFuzzState {
     inner: Arc<RwLock<FuzzDictionary>>,
     /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
     pub deployed_libs: Vec<Address>,
+    /// Records mapping accesses. Used to identify storage slots belonging to mappings and sampling
+    /// the values in the [`FuzzDictionary`].
+    ///
+    /// Only needed when [`StorageLayout`] is available.
+    pub(crate) mapping_slots: Option<AddressMap<MappingSlots>>,
 }
 
 impl EvmFuzzState {
@@ -46,7 +53,16 @@ impl EvmFuzzState {
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
         dictionary.insert_db_values(accs);
-        Self { inner: Arc::new(RwLock::new(dictionary)), deployed_libs: deployed_libs.to_vec() }
+        Self {
+            inner: Arc::new(RwLock::new(dictionary)),
+            deployed_libs: deployed_libs.to_vec(),
+            mapping_slots: None,
+        }
+    }
+
+    pub fn with_mapping_slots(mut self, mapping_slots: AddressMap<MappingSlots>) -> Self {
+        self.mapping_slots = Some(mapping_slots);
+        self
     }
 
     pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
@@ -75,7 +91,11 @@ impl EvmFuzzState {
             dict.insert_result_values(target_function, result, run_depth);
             // Get storage layouts for contracts in the state changeset
             let storage_layouts = targets.get_storage_layouts();
-            dict.insert_new_state_values(state_changeset, &storage_layouts);
+            dict.insert_new_state_values(
+                state_changeset,
+                &storage_layouts,
+                self.mapping_slots.as_ref(),
+            );
         }
     }
 
@@ -154,7 +174,7 @@ impl FuzzDictionary {
                 // Sort storage values before inserting to ensure deterministic dictionary.
                 let values = account.storage.iter().collect::<BTreeMap<_, _>>();
                 for (slot, value) in values {
-                    self.insert_storage_value(slot, value, None);
+                    self.insert_storage_value(slot, value, None, None);
                 }
             }
         }
@@ -233,6 +253,7 @@ impl FuzzDictionary {
         &mut self,
         state_changeset: &StateChangeset,
         storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
+        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         for (address, account) in state_changeset {
             // Insert basic account information.
@@ -241,9 +262,19 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let storage_layout = storage_layouts.get(address).map(|arc| arc.as_ref());
+                let storage_layout = storage_layouts.get(address).cloned();
+                trace!(
+                    "{address:?} has mapping_slots {}",
+                    mapping_slots.is_some_and(|m| m.contains_key(address))
+                );
+                let mapping_slots = mapping_slots.and_then(|m| m.get(address));
                 for (slot, value) in &account.storage {
-                    self.insert_storage_value(slot, &value.present_value, storage_layout);
+                    self.insert_storage_value(
+                        slot,
+                        &value.present_value,
+                        storage_layout.as_deref(),
+                        mapping_slots,
+                    );
                 }
             }
         }
@@ -296,131 +327,41 @@ impl FuzzDictionary {
         }
     }
 
-    /// Resolves storage types from a storage layout for a given slot and all mapping types.
-    /// Returns a tuple of (slot_type, mapping_types) where slot_type is the specific type
-    /// for the storage slot and mapping_types are all mapping value types found in the layout.
-    fn resolve_storage_types(
-        &self,
-        storage_layout: Option<&StorageLayout>,
-        storage_slot: &U256,
-    ) -> (Option<DynSolType>, Vec<DynSolType>) {
-        let Some(layout) = storage_layout else {
-            return (None, Vec::new());
-        };
-
-        // Try to determine the type of this specific storage slot
-        let slot_type =
-            layout.storage.iter().find(|s| s.slot == storage_slot.to_string()).and_then(
-                |storage| {
-                    layout
-                        .types
-                        .get(&storage.storage_type)
-                        .and_then(|t| DynSolType::parse(&t.label).ok())
-                },
-            );
-
-        // Collect all mapping value types from the layout
-        let mapping_types = layout
-            .types
-            .values()
-            .filter_map(|type_info| {
-                if type_info.encoding == "mapping"
-                    && let Some(t_value) = type_info.value.as_ref()
-                    && let Some(mapping_value) = t_value.strip_prefix("t_")
-                {
-                    DynSolType::parse(mapping_value).ok()
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        (slot_type, mapping_types)
-    }
-
     /// Insert values from single storage slot and storage value into fuzz dictionary.
-    /// If storage values are newly collected then they are removed at the end of current run.
+    /// Uses [`SlotIdentifier`] to identify storage slots types.
     fn insert_storage_value(
         &mut self,
-        storage_slot: &U256,
-        storage_value: &U256,
-        storage_layout: Option<&StorageLayout>,
+        slot: &U256,
+        value: &U256,
+        layout: Option<&StorageLayout>,
+        mapping_slots: Option<&MappingSlots>,
     ) {
+        let slot = B256::from(*slot);
+        let value = B256::from(*value);
+
         // Always insert the slot itself
-        self.insert_value(B256::from(*storage_slot));
+        self.insert_value(slot);
 
-        let (slot_type, mapping_types) = self.resolve_storage_types(storage_layout, storage_slot);
-
-        if let Some(sol_type) = slot_type {
-            self.insert_decoded_storage_value(sol_type, storage_value);
-        } else if !mapping_types.is_empty() {
-            self.insert_mapping_storage_values(mapping_types, storage_value);
+        // If we have a storage layout, use SlotIdentifier for better type identification
+        if let Some(slot_identifier) =
+            layout.map(|l| SlotIdentifier::new(l.clone().into()))
+            // Identify Slot Type
+            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
+        {
+            trace!(?slot_info, "inserting typed storage value");
+            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
-            // No type information available, insert as raw values (old behavior)
-            self.insert_value(B256::from(*storage_value));
-            // also add the value below and above the storage value to the dictionary.
-            if *storage_value != U256::ZERO {
-                let below_value = storage_value - U256::from(1);
+            self.insert_value(value);
+            let value = U256::from_be_bytes(value.0);
+
+            // Also add the value below and above the storage value to the dictionary
+            if value != U256::ZERO {
+                let below_value = value - U256::from(1);
                 self.insert_value(B256::from(below_value));
             }
-            if *storage_value != U256::MAX {
-                let above_value = storage_value + U256::from(1);
+            if value != U256::MAX {
+                let above_value = value + U256::from(1);
                 self.insert_value(B256::from(above_value));
-            }
-        }
-    }
-
-    /// Insert decoded storage values into the fuzz dictionary.
-    /// Only simple static type values are inserted as sample values.
-    /// Complex types (dynamic arrays, structs) are inserted as raw values
-    fn insert_decoded_storage_value(&mut self, sol_type: DynSolType, storage_value: &U256) {
-        // Only insert values for types that can be represented as a single word
-        match &sol_type {
-            DynSolType::Address
-            | DynSolType::Uint(_)
-            | DynSolType::Int(_)
-            | DynSolType::Bool
-            | DynSolType::FixedBytes(_)
-            | DynSolType::Bytes => {
-                // Insert as a typed sample value
-                self.sample_values.entry(sol_type).or_default().insert(B256::from(*storage_value));
-            }
-            _ => {
-                // For complex types (arrays, mappings, structs), insert as raw value
-                self.insert_value(B256::from(*storage_value));
-            }
-        }
-    }
-
-    /// Insert storage values of mapping value types as sample values in the fuzz dictionary.
-    ///
-    /// ```solidity
-    /// mapping(uint256 => address) public myMapping;
-    /// // `address` is the mapping value type here.
-    /// // `uint256` is the mapping key type.
-    /// ```
-    ///
-    /// A storage value is inserted if and only if it can be decoded into one of the mapping
-    /// [`DynSolType`] value types found in the [`StorageLayout`].
-    ///
-    /// If decoding fails, the value is inserted as a raw value.
-    fn insert_mapping_storage_values(
-        &mut self,
-        mapping_types: Vec<DynSolType>,
-        storage_value: &U256,
-    ) {
-        for sol_type in mapping_types {
-            match sol_type.abi_decode(storage_value.as_le_slice()) {
-                Ok(_) => {
-                    self.sample_values
-                        .entry(sol_type)
-                        .or_default()
-                        .insert(B256::from(*storage_value));
-                }
-                Err(_) => {
-                    // If decoding fails, insert as raw value
-                    self.insert_value(B256::from(*storage_value));
-                }
             }
         }
     }
