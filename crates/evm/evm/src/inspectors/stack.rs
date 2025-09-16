@@ -7,7 +7,7 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
 };
-use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
+use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -209,6 +209,10 @@ impl InspectorStackBuilder {
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            // Set analysis capabilities if they are provided
+            if let Some(analysis) = analysis {
+                cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
+            }
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
                 cheatcodes.set_wallets(wallets);
@@ -216,9 +220,6 @@ impl InspectorStackBuilder {
             stack.set_cheatcodes(cheatcodes);
         }
 
-        if let Some(analysis) = analysis {
-            stack.set_analysis(analysis);
-        }
         if let Some(fuzzer) = fuzzer {
             stack.set_fuzzer(fuzzer);
         }

@@ -1,8 +1,19 @@
 //! Cheatcode information, extracted from the syntactic and semantic analysis of the sources.
 
-use eyre::{OptionExt, Result};
 use solar::sema::{self, Compiler, Gcx, hir};
-use std::{cell::OnceCell, collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
+use thiserror::Error;
+
+/// Represents a failure in one of the lazy analysis steps.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AnalysisError {
+    /// Indicates that the resolution of struct definitions failed.
+    #[error("unable to resolve struct definitions")]
+    StructDefinitionsResolutionFailed,
+}
 
 /// Provides cached, on-demand syntactic and semantic analysis of a completed `Compiler` instance.
 ///
@@ -10,12 +21,12 @@ use std::{cell::OnceCell, collections::BTreeMap, sync::Arc};
 /// for tools like cheatcode inspectors. It assumes the compiler has already
 /// completed parsing and lowering.
 ///
-/// # Extending with New Analyses
+/// # Adding with new analyses types
 ///
 /// To add support for a new type of cached analysis, follow this pattern:
 ///
-/// 1. Add a new `pub OnceCell<Option<T>>` field to `CheatcodeAnalysis`, where `T` is the type of
-///    the data that you are adding support for.
+/// 1. Add a new `pub OnceCell<Result<T, AnalysisError>>` field to `CheatcodeAnalysis`, where `T` is
+///    the type of the data that you are adding support for.
 ///
 /// 2. Implement a getter method for the new field. Inside the getter, use
 ///    `self.field.get_or_init()` to compute and cache the value on the first call.
@@ -31,7 +42,7 @@ pub struct CheatcodeAnalysis {
 
     /// Cached struct definitions in the sources.
     /// Used to keep field order when parsing JSON values.
-    pub struct_defs: OnceCell<Option<StructDefinitions>>,
+    pub struct_defs: OnceLock<Result<StructDefinitions, AnalysisError>>,
 }
 
 pub type StructDefinitions = BTreeMap<String, Vec<(String, String)>>;
@@ -47,21 +58,20 @@ impl std::fmt::Debug for CheatcodeAnalysis {
 
 impl CheatcodeAnalysis {
     pub fn new(compiler: Arc<solar::sema::Compiler>) -> Self {
-        Self { compiler, struct_defs: OnceCell::new() }
+        Self { compiler, struct_defs: OnceLock::new() }
     }
 
     /// Lazily initializes and returns the struct definitions.
-    pub fn struct_defs(&self) -> Result<&StructDefinitions> {
+    pub fn struct_defs(&self) -> Result<&StructDefinitions, &AnalysisError> {
         self.struct_defs
             .get_or_init(|| {
                 self.compiler.enter(|compiler| {
                     let gcx = compiler.gcx();
 
-                    StructDefinitionResolver::new(gcx).process().ok()
+                    StructDefinitionResolver::new(gcx).process()
                 })
             })
             .as_ref()
-            .ok_or_eyre("unable to resolve struct definitions")
     }
 }
 
@@ -78,7 +88,7 @@ impl<'hir> StructDefinitionResolver<'hir> {
     }
 
     /// Processes the HIR to generate all the struct definitions.
-    pub fn process(mut self) -> Result<StructDefinitions> {
+    pub fn process(mut self) -> Result<StructDefinitions, AnalysisError> {
         for id in self.hir().strukt_ids() {
             self.resolve_struct_definition(id)?;
         }
@@ -91,7 +101,7 @@ impl<'hir> StructDefinitionResolver<'hir> {
     }
 
     /// The recursive core of the generator. Resolves a single struct and adds it to the cache.
-    fn resolve_struct_definition(&mut self, id: hir::StructId) -> Result<()> {
+    fn resolve_struct_definition(&mut self, id: hir::StructId) -> Result<(), AnalysisError> {
         let qualified_name = self.get_fully_qualified_name(id);
         if self.struct_defs.contains_key(&qualified_name) {
             return Ok(());
@@ -103,8 +113,10 @@ impl<'hir> StructDefinitionResolver<'hir> {
 
         for &field_id in strukt.fields {
             let var = hir.variable(field_id);
-            let name =
-                var.name.ok_or_else(|| eyre::eyre!("struct field is missing a name"))?.to_string();
+            let name = var
+                .name
+                .ok_or_else(|| AnalysisError::StructDefinitionsResolutionFailed)?
+                .to_string();
             if let Some(ty_str) = self.ty_to_string(self.gcx.type_of_hir_ty(&var.ty)) {
                 fields.push((name, ty_str));
             }

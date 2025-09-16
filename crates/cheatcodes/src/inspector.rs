@@ -8,7 +8,7 @@ use crate::{
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
-    inspector::{analysis::CheatcodeAnalysis, utils::CommonCreateInput},
+    inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
@@ -75,8 +75,10 @@ use std::{
     sync::Arc,
 };
 
-mod analysis;
 mod utils;
+
+mod analysis;
+pub use analysis::{AnalysisError, CheatcodeAnalysis};
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 
@@ -518,6 +520,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
+            analysis: None,
             fs_commit: true,
             labels: config.labels.clone(),
             config,
@@ -559,6 +562,11 @@ impl Cheatcodes {
             wallets: Default::default(),
             signatures_identifier: SignaturesIdentifier::new(true).ok(),
         }
+    }
+
+    /// Enables cheatcode analysis capabilities by providing a solar [`Compiler`] instance.
+    pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
+        self.analysis = Some(analysis);
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
