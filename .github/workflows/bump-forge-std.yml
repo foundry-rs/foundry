@@ -4,8 +4,8 @@ name: bump-forge-std
 
 on:
   schedule:
-    - cron: "0 0 * * *"
-  workflow_dispatch:
+    - cron: "0 0 * * *" # Run daily at midnight UTC
+  workflow_dispatch: # Needed so we can run it manually
 
 jobs:
   update-tag:
@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Fetch and update forge-std tag
         run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
       - name: Create pull request

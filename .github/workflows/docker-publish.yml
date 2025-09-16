@@ -1,5 +1,8 @@
 name: docker
 
+permissions:
+  contents: read
+
 on:
   # Trigger without any parameters a proactive rebuild
   workflow_dispatch: {}
@@ -21,10 +24,11 @@ jobs:
     permissions:
       id-token: write
       packages: write
-      contents: read
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

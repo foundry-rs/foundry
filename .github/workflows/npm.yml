@@ -1,5 +1,8 @@
 name: npm
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -28,7 +31,6 @@ jobs:
   publish-arch:
     permissions:
       actions: read
-      contents: read
       id-token: write
     name: ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -58,6 +60,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set Isolated Artifact Directory
         id: set-artifact-dir
@@ -195,7 +199,6 @@ jobs:
   publish-meta:
     permissions:
       actions: read
-      contents: read
       id-token: write
     needs: publish-arch
     name: Publish Meta Package
@@ -207,6 +210,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2

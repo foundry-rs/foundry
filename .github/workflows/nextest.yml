@@ -28,7 +28,9 @@ jobs:
       test-matrix: ${{ steps.gen.outputs.test-matrix }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Generate matrices
@@ -63,16 +65,16 @@ jobs:
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.11
       - name: Install Vyper

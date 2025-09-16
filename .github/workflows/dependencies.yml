@@ -2,19 +2,19 @@
 
 name: dependencies
 
+permissions:
+  contents: read
+
 on:
   schedule:
-    # Run weekly
-    - cron: "0 0 * * SUN"
-  workflow_dispatch:
-# Needed so we can run it manually
-
-permissions:
-  contents: write
-  pull-requests: write
+    - cron: "0 0 * * SUN" # Run weekly on Sundays at midnight UTC
+  workflow_dispatch: # Needed so we can run it manually
 
 jobs:
   update:
     uses: ithacaxyz/ci/.github/workflows/cargo-update-pr.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}

@@ -52,7 +52,7 @@ jobs:
       # the changelog.
       - name: Create build-specific nightly tag
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
         with:
@@ -62,7 +62,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@v5
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
@@ -245,7 +245,7 @@ jobs:
 
       - name: Binaries attestation
         id: attestation
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
@@ -259,7 +259,7 @@ jobs:
 
       # Creates the release for this specific version
       - name: Create release
-        uses: softprops/action-gh-release@v2.2.2
+        uses: softprops/action-gh-release@v2.3.3
         with:
           name: ${{ needs.prepare.outputs.release_name }}
           tag_name: ${{ needs.prepare.outputs.tag_name }}
@@ -274,7 +274,7 @@ jobs:
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@v2.2.2
+        uses: softprops/action-gh-release@v2.3.3
         with:
           name: "Nightly"
           tag_name: "nightly"
@@ -299,14 +299,14 @@ jobs:
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const moveTag = require('./.github/scripts/move-tag.js')
             await moveTag({ github, context }, 'nightly')
 
       - name: Delete old nightlies
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
