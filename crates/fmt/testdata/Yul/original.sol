@@ -142,5 +142,17 @@ contract Yul {
             let fmp := mload(0x40)
             // do something
         }
+
+        assembly {
+            let addrSlot :=
+                or(
+                    mul(eq(0x8f283970, fnSel), adminSlot), // `changeAdmin(address)`.
+                    mul(eq(0x0900f010, fnSel), adminSlot) // `upgrade(address)`.
+                )
+
+            for {} 1 {} {
+                if iszero(not(mload(i))) { break } // Break if all limbs are zero.
+            }
+        }
     }
 }

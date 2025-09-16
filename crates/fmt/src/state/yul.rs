@@ -44,10 +44,10 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
                 self.s.offset(self.ind);
                 self.ibox(0);
-                self.print_yul_expr_call(expr_call);
+                self.print_yul_expr_call(expr_call, span);
                 self.end();
             }
-            yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call),
+            yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call, span),
             yul::StmtKind::If(expr, stmts) => {
                 self.word("if ");
                 self.print_yul_expr(expr);
@@ -143,7 +143,7 @@ impl<'ast> State<'_, 'ast> {
                 self.commasep(
                     idents,
                     stmt.span.lo(),
-                    stmt.span.hi(),
+                    idents.last().map_or(stmt.span.lo(), |i| i.span.hi()),
                     Self::print_ident,
                     get_span!(),
                     ListFormat::consistent(),
@@ -166,7 +166,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             yul::ExprKind::Path(path) => self.print_path(path, false),
-            yul::ExprKind::Call(call) => self.print_yul_expr_call(call),
+            yul::ExprKind::Call(call) => self.print_yul_expr_call(call, span),
             yul::ExprKind::Lit(lit) => {
                 if matches!(&lit.kind, ast::LitKind::Address(_)) {
                     self.print_span_cold(lit.span);
@@ -177,17 +177,26 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>) {
+    fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>, span: Span) {
         let yul::ExprCall { name, arguments } = expr;
+        let is_child = if self.call_expr {
+            true
+        } else {
+            self.call_expr = true;
+            false
+        };
         self.print_ident(name);
         self.print_tuple(
             arguments,
-            Span::DUMMY.lo(),
-            Span::DUMMY.hi(),
-            Self::print_yul_expr,
+            span.lo(),
+            span.hi(),
+            |s, arg| s.print_yul_expr(arg),
             get_span!(),
             ListFormat::consistent().break_single_if(true),
         );
+        if !is_child {
+            self.call_expr = false;
+        }
     }
 
     pub(super) fn print_yul_block(
@@ -222,7 +231,9 @@ impl<'ast> State<'_, 'ast> {
                         stmt.span.hi(),
                         CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
                     );
-                    s.print_trailing_comment(stmt.span.hi(), None);
+                    if !s.last_token_is_space() {
+                        s.nbsp();
+                    }
                 },
                 |b| b.span,
                 span.hi(),
@@ -235,7 +246,7 @@ impl<'ast> State<'_, 'ast> {
                 |s, stmt| {
                     s.print_yul_stmt(stmt);
                     s.print_comments(stmt.span.hi(), CommentConfig::default());
-                    s.print_trailing_comment(stmt.span.hi(), None);
+                    s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
                     if i != 0 {
                         s.hardbreak_if_not_bol();
                         i -= 1;
@@ -246,6 +257,7 @@ impl<'ast> State<'_, 'ast> {
             );
         }
         self.print_word("}");
+        self.print_trailing_comment(span.hi(), None);
     }
 
     fn can_yul_block_be_inlined(&self, block: &'ast yul::Block<'ast>) -> bool {

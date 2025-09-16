@@ -52,7 +52,7 @@ pub(super) struct State<'sess, 'ast> {
 
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
-    call_expr_named: bool,
+    call_expr: bool,
     member_expr: Option<MemberCache>,
     binary_expr: bool,
     var_init: bool,
@@ -139,7 +139,7 @@ impl<'sess> State<'sess, '_> {
             cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
             contract: None,
             single_line_stmt: None,
-            call_expr_named: false,
+            call_expr: false,
             member_expr: None,
             binary_expr: false,
             var_init: false,

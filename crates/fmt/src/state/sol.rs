@@ -1556,9 +1556,9 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let parent_call = self.call_expr_named;
+        let parent_call = self.call_expr;
         if !parent_call {
-            self.call_expr_named = true;
+            self.call_expr = true;
         }
 
         self.word("{");
@@ -1597,7 +1597,7 @@ impl<'ast> State<'_, 'ast> {
         self.word("}");
 
         if parent_call {
-            self.call_expr_named = false;
+            self.call_expr = false;
         }
     }
 
@@ -1797,7 +1797,6 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.nbsp();
                     }
-                    // self.word(format!("\n // {:?}\n", expr.kind));
                     self.print_expr(expr);
                     self.end();
                 } else {
