@@ -581,7 +581,7 @@ impl TestArgs {
                     .then_some(BacktraceBuilder::new(
                         output,
                         config.root.clone(),
-                        config.parsed_libraries().ok().map(|libs| libs.libs),
+                        config.parsed_libraries().ok(),
                     ))
             } else {
                 None

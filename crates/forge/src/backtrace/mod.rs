@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, map::HashMap};
 use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{fmt, path::PathBuf};
 use yansi::Paint;
 mod solidity;
 pub mod source_map;
@@ -47,12 +47,13 @@ impl<'a> BacktraceBuilder<'a> {
                 libs.libs
                     .iter()
                     .flat_map(|(path, libs_map)| {
-                        libs_map.iter().filter_map(move |(name, addr_str)| {
-                            Address::from_str(addr_str).ok().map(|address| LinkedLib {
-                                path: path.clone(),
-                                name: name.clone(),
-                                address,
-                            })
+                        libs_map.iter().map(move |(name, addr_str)| (path, name, addr_str))
+                    })
+                    .filter_map(|(path, name, addr_str)| {
+                        addr_str.parse().ok().map(|address| LinkedLib {
+                            path: path.clone(),
+                            name: name.clone(),
+                            address,
                         })
                     })
                     .collect()
