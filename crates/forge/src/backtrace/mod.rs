@@ -348,12 +348,8 @@ impl BacktraceFrame {
     pub fn format(&self) -> String {
         let mut result = String::new();
 
-        if let Some(contract) = &self.contract_name {
-            result.push_str(contract);
-        } else {
-            // No contract name, show address
-            result.push_str(&self.contract_address.to_string());
-        }
+        // No contract name, show address
+        result.push_str(self.contract_name.as_ref().unwrap_or(&self.contract_address.to_string()));
 
         // Add function name if available
         if let Some(func) = &self.function_name {
@@ -361,28 +357,25 @@ impl BacktraceFrame {
             result.push_str(func);
         }
 
+        if let Some(file) = &self.file {
+            result.push_str(" (");
+            result.push_str(&file.display().to_string());
+        }
+
+        if let Some(line) = self.line {
+            result.push(':');
+            result.push_str(&line.to_string());
+
+            if let Some(column) = self.column {
+                result.push(':');
+                result.push_str(&column.to_string());
+            } else {
+                result.push_str(":0");
+            }
+        }
+
         // Add location in parentheses if available
         if self.file.is_some() || self.line.is_some() {
-            result.push_str(" (");
-
-            if let Some(file) = &self.file {
-                result.push_str(&file.display().to_string());
-            } else {
-                result.push_str("unknown");
-            }
-
-            if let Some(line) = self.line {
-                result.push(':');
-                result.push_str(&line.to_string());
-
-                if let Some(column) = self.column {
-                    result.push(':');
-                    result.push_str(&column.to_string());
-                } else {
-                    result.push_str(":0");
-                }
-            }
-
             result.push(')');
         }
 
