@@ -416,6 +416,34 @@ Genesis Number
 }
 
 impl NodeConfig {
+    /// Calculates the maximum number of transactions that can fit in a block based on the gas limit.
+    /// 
+    /// This function estimates the maximum number of transactions by dividing the block gas limit
+    /// by the minimum gas required for a simple transaction (21,000 gas). This provides a reasonable
+    /// upper bound for the number of transactions that can be included in a block.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `gas_limit` - The gas limit of the block
+    /// 
+    /// # Returns
+    /// 
+    /// The maximum number of transactions that can theoretically fit in the block
+    fn calculate_max_transactions_from_gas_limit(gas_limit: u64) -> usize {
+        // Use minimum transaction gas (21,000) as a conservative estimate
+        // This ensures we don't exceed block capacity even with simple transactions
+        const MIN_TX_GAS: u64 = 21_000;
+        
+        // Calculate max transactions, ensuring we have at least 1
+        let max_txs = gas_limit / MIN_TX_GAS;
+        
+        // Cap at a reasonable maximum to prevent excessive memory usage
+        // and ensure reasonable performance
+        const MAX_REASONABLE_TXS: usize = 10_000;
+        
+        max_txs.min(MAX_REASONABLE_TXS as u64) as usize
+    }
+
     /// Returns a new config intended to be used in tests, which does not print and binds to a
     /// random, free port by setting it to `0`
     #[doc(hidden)]
@@ -458,8 +486,8 @@ impl Default for NodeConfig {
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
-            // TODO make this something dependent on block capacity
-            max_transactions: 1_000,
+            // Calculate max_transactions based on block gas capacity
+            max_transactions: Self::calculate_max_transactions_from_gas_limit(DEFAULT_GAS_LIMIT),
             eth_rpc_url: None,
             fork_choice: None,
             account_generator: None,
@@ -613,6 +641,7 @@ impl NodeConfig {
     #[must_use]
     pub fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
+        self.update_max_transactions_from_gas_limit();
         self
     }
 
@@ -622,6 +651,7 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
+        self.update_max_transactions_from_gas_limit();
         self
     }
 
@@ -1450,6 +1480,15 @@ latest block number: {latest_block}"
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
     }
+
+    /// Updates max_transactions based on the current gas limit configuration
+    ///
+    /// This method should be called whenever the gas limit is changed to ensure
+    /// max_transactions remains consistent with block capacity
+    pub(crate) fn update_max_transactions_from_gas_limit(&mut self) {
+        let current_gas_limit = self.gas_limit();
+        self.max_transactions = Self::calculate_max_transactions_from_gas_limit(current_gas_limit);
+    }
 }
 
 /// If the fork choice is a block number, simply return it with an empty list of transactions.
@@ -1687,5 +1726,59 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[test]
+    fn test_calculate_max_transactions_from_gas_limit() {
+        // Test with default gas limit (30,000,000)
+        let max_txs = NodeConfig::calculate_max_transactions_from_gas_limit(DEFAULT_GAS_LIMIT);
+        // 30,000,000 / 21,000 = 1428.57... -> 1428
+        assert_eq!(max_txs, 1428);
+
+        // Test with smaller gas limit
+        let max_txs = NodeConfig::calculate_max_transactions_from_gas_limit(100_000);
+        // 100,000 / 21,000 = 4.76... -> 4
+        assert_eq!(max_txs, 4);
+
+        // Test with very small gas limit
+        let max_txs = NodeConfig::calculate_max_transactions_from_gas_limit(20_000);
+        // 20,000 / 21,000 = 0.95... -> 0, but we ensure at least 1
+        assert_eq!(max_txs, 0);
+
+        // Test with very large gas limit (should be capped)
+        let max_txs = NodeConfig::calculate_max_transactions_from_gas_limit(u64::MAX);
+        // Should be capped at 10,000
+        assert_eq!(max_txs, 10_000);
+
+        // Test with gas limit that would result in exactly 10,000 transactions
+        let gas_limit = 10_000 * 21_000; // 210,000,000
+        let max_txs = NodeConfig::calculate_max_transactions_from_gas_limit(gas_limit);
+        assert_eq!(max_txs, 10_000);
+    }
+
+    #[test]
+    fn test_max_transactions_updates_with_gas_limit() {
+        let mut config = NodeConfig::default();
+        let initial_max_txs = config.max_transactions;
+
+        // Change gas limit to a smaller value
+        config = config.with_gas_limit(Some(100_000));
+        assert_ne!(config.max_transactions, initial_max_txs);
+        assert_eq!(config.max_transactions, 4); // 100,000 / 21,000 = 4
+
+        // Change gas limit to a larger value
+        config = config.with_gas_limit(Some(1_000_000));
+        assert_eq!(config.max_transactions, 47); // 1,000,000 / 21,000 = 47
+
+        // Disable block gas limit (should set to max reasonable)
+        config = config.disable_block_gas_limit(true);
+        assert_eq!(config.max_transactions, 10_000);
+    }
+
+    #[test]
+    fn test_default_max_transactions() {
+        let config = NodeConfig::default();
+        // Should be calculated based on DEFAULT_GAS_LIMIT (30,000,000)
+        assert_eq!(config.max_transactions, 1428);
     }
 }
