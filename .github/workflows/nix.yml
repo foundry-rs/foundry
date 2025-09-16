@@ -1,5 +1,8 @@
 name: nix
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run weekly
@@ -15,6 +18,9 @@ jobs:
   # Opens a PR with an updated flake.lock file
   update:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/checkout@v5
