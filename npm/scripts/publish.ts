@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
-import { colors } from '../src/const'
+
+import { colors } from '#const.ts'
 
 const REGISTRY_URL = Bun.env.NPM_REGISTRY_URL || 'https://registry.npmjs.org'
 
@@ -42,7 +43,7 @@ function getPublishVersion() {
   if (bump && isValidSemver(bump)) return bump
 
   const releaseVersion = (Bun.env.RELEASE_VERSION || '').replace(/^v/, '')
-  const isNightly = releaseVersion.toLowerCase() === 'nightly'
+  const isNightly = releaseVersion.toLowerCase() === 'nightly' || Bun.env.IS_NIGHTLY === 'true'
 
   const cargoToml = NodeFS.readFileSync(
     NodePath.join(import.meta.dirname, '..', '..', 'Cargo.toml'),
@@ -52,7 +53,7 @@ function getPublishVersion() {
   const versionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)
   if (!versionMatch) throw new Error('Version not found in Cargo.toml')
 
-  const base = versionMatch[1]
+  const [, base] = versionMatch
   if (!isNightly) return base
 
   const date = new Date()
