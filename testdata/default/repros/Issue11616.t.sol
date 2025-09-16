@@ -21,7 +21,6 @@ contract Issue11616Test is DSTest {
         e = new Emit();
     }
 
-    /// @dev This test will fail although there is no event `A` emitted before the emission of event `B`.
     function test_emitNotOk() public {
         vm.expectEmit({count: 0});
         emit Emit.A();
