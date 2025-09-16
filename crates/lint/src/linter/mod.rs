@@ -4,6 +4,7 @@ mod late;
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
 
+use foundry_common::comments::inline_config::InlineConfig;
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar::{
@@ -14,8 +15,6 @@ use solar::{
     sema::Compiler,
 };
 use std::path::PathBuf;
-
-use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files.
@@ -50,7 +49,7 @@ pub struct LintContext<'s, 'c> {
 }
 
 pub struct LinterConfig<'s> {
-    pub inline: InlineConfig,
+    pub inline: &'s InlineConfig<Vec<String>>,
     pub mixed_case_exceptions: &'s [String],
 }
 
@@ -79,7 +78,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
 
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
@@ -106,7 +105,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
     /// For Diff snippets, if no span is provided, it will use the lint's span.
     /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 

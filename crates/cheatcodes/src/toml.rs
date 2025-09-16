@@ -180,7 +180,7 @@ impl Cheatcode for writeToml_1Call {
 
         // Read and parse the TOML file
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let toml_data = fs::read_to_string(&data_path)?;
+        let toml_data = fs::locked_read_to_string(&data_path)?;
 
         // Convert to JSON and update the object
         let mut json_data: JsonValue =
