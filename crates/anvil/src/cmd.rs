@@ -279,6 +279,7 @@ impl NodeArgs {
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm.optimism)
             .with_odyssey(self.evm.odyssey)
+            .with_celo(self.evm.celo)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -296,7 +297,14 @@ impl NodeArgs {
             let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
-                Err(_) => DEFAULT_MNEMONIC.to_string(),
+                Err(err) => {
+                    warn!(target: "node", ?count, %err, "failed to generate mnemonic, falling back to 12-word random mnemonic");
+                    // Fallback: generate a valid 12-word random mnemonic instead of using
+                    // DEFAULT_MNEMONIC
+                    Mnemonic::<English>::new_with_count(&mut rng, 12)
+                        .expect("valid default word count")
+                        .to_phrase()
+                }
             };
             generator = generator.phrase(mnemonic);
         } else if let Some(seed) = self.mnemonic_seed {
@@ -450,7 +458,7 @@ pub struct AnvilEvmArgs {
     )]
     pub fork_block_number: Option<i128>,
 
-    /// Fetch state from a specific transaction hash over a remote endpoint.
+    /// Fetch state from after a specific transaction hash has been applied over a remote endpoint.
     ///
     /// See --fork-url.
     #[arg(
@@ -604,6 +612,10 @@ pub struct AnvilEvmArgs {
     /// Enable Odyssey features
     #[arg(long, alias = "alphanet")]
     pub odyssey: bool,
+
+    /// Run a Celo chain
+    #[arg(long)]
+    pub celo: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

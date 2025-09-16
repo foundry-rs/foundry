@@ -7,10 +7,14 @@ use alloy_primitives::{
 };
 use parking_lot::RwLock;
 use revm::precompile::{
-    PrecompileError, PrecompileOutput, PrecompileResult, secp256k1::ec_recover_run,
+    PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult, secp256k1::ec_recover_run,
     utilities::right_pad,
 };
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
+
+/// ID for the [`CheatEcrecover::precompile_id`] precompile.
+static PRECOMPILE_ID_CHEAT_ECRECOVER: PrecompileId =
+    PrecompileId::Custom(Cow::Borrowed("cheat_ecrecover"));
 
 /// Manages user modifications that may affect the node's behavior
 ///
@@ -125,6 +129,10 @@ impl Precompile for CheatEcrecover {
             return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::copy_from_slice(&out)));
         }
         ec_recover_run(input.data, input.gas)
+    }
+
+    fn precompile_id(&self) -> &PrecompileId {
+        &PRECOMPILE_ID_CHEAT_ECRECOVER
     }
 
     fn is_pure(&self) -> bool {

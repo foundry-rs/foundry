@@ -27,6 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
+    evm::celo_precompile::{self, CELO_TRANSFER_ADDRESS},
     inject_precompiles,
     mem::{
         inspector::AnvilInspector,
@@ -40,7 +41,11 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
+use alloy_eip5792::{Capabilities, DelegationCapability};
+use alloy_eips::{
+    eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    eip7910::SystemContract,
+};
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
@@ -84,7 +89,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
-    wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -107,14 +112,18 @@ use op_revm::{
 use parking_lot::{Mutex, RwLock};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+    precompile::{
+        PrecompileId, PrecompileSpecId, Precompiles,
+        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
+        u64_to_address,
+    },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -137,9 +146,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
-/// Helper trait that combines DatabaseRef with Debug.
+/// Helper trait that combines revm::DatabaseRef with Debug.
 /// This is needed because alloy-evm requires Debug on Database implementations.
-/// Specific implementation for dyn Db since trait object upcasting is not stable.
+/// With trait upcasting now stable, we can now upcast from this trait to revm::DatabaseRef.
 pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
 impl DatabaseRef for dyn crate::eth::backend::db::Db {}
@@ -334,7 +343,7 @@ impl Backend {
             let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
             let _ = db.set_balance(EXECUTOR, init_balance);
 
-            let mut capabilities = WalletCapabilities::default();
+            let mut capabilities = HashMap::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
@@ -348,9 +357,9 @@ impl Backend {
 
             let executor_wallet = EthereumWallet::new(signer);
 
-            (capabilities, Some(executor_wallet))
+            (WalletCapabilities(capabilities), Some(executor_wallet))
         } else {
-            (WalletCapabilities::default(), None)
+            (WalletCapabilities(Default::default()), None)
         };
 
         let backend = Self {
@@ -399,9 +408,9 @@ impl Backend {
 
     /// Get the capabilities of the wallet.
     ///
-    /// Currently the only capability is [`DelegationCapability`].
+    /// Currently the only capability is delegation.
     ///
-    /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
+    /// See `anvil_core::eth::wallet::Capabilities` for construction helpers.
     pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
         self.capabilities.read().clone()
     }
@@ -415,13 +424,16 @@ impl Backend {
         self.executor_wallet.read().clone()
     }
 
-    /// Adds an address to the [`DelegationCapability`] of the wallet.
+    /// Adds an address to the wallet's delegation capability.
     pub(crate) fn add_capability(&self, address: Address) {
         let chain_id = self.env.read().evm_env.cfg_env.chain_id;
         let mut capabilities = self.capabilities.write();
-        let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
+        let mut capability = capabilities
+            .get(chain_id)
+            .cloned()
+            .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
         capability.delegation.addresses.push(address);
-        capabilities.insert(chain_id, capability);
+        capabilities.0.insert(chain_id, capability);
     }
 
     pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {
@@ -837,6 +849,61 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns true if Celo features are active
+    pub fn is_celo(&self) -> bool {
+        self.env.read().is_celo
+    }
+
+    /// Returns the precompiles for the current spec.
+    pub fn precompiles(&self) -> BTreeMap<String, Address> {
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
+
+        let mut precompiles_map = BTreeMap::<String, Address>::default();
+        for (address, precompile) in precompiles.inner() {
+            precompiles_map.insert(precompile.id().name().to_string(), *address);
+        }
+
+        if self.odyssey {
+            precompiles_map.insert(
+                PrecompileId::P256Verify.name().to_string(),
+                u64_to_address(P256VERIFY_ADDRESS),
+            );
+        }
+
+        if self.is_celo() {
+            precompiles_map.insert(
+                celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
+                CELO_TRANSFER_ADDRESS,
+            );
+        }
+
+        if let Some(factory) = &self.precompile_factory {
+            for (precompile, _) in &factory.precompiles() {
+                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            }
+        }
+
+        precompiles_map
+    }
+
+    /// Returns the system contracts for the current spec.
+    pub fn system_contracts(&self) -> BTreeMap<SystemContract, Address> {
+        let mut system_contracts = BTreeMap::<SystemContract, Address>::default();
+
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+
+        if spec_id >= SpecId::CANCUN {
+            system_contracts.extend(SystemContract::cancun());
+        }
+
+        if spec_id >= SpecId::PRAGUE {
+            system_contracts.extend(SystemContract::prague(None));
+        }
+
+        system_contracts
+    }
+
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
         let spec_id = self.env.read().evm_env.cfg_env.spec;
@@ -1177,6 +1244,13 @@ impl Backend {
             inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
         }
 
+        if self.is_celo() {
+            evm.precompiles_mut()
+                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                    Some(celo_precompile::precompile())
+                });
+        }
+
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1185,7 +1259,10 @@ impl Backend {
         if cheats.has_recover_overrides() {
             let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
             evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
-                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+                Some(DynPrecompile::new_stateful(
+                    cheat_ecrecover.precompile_id().clone(),
+                    move |input| cheat_ecrecover.call(input),
+                ))
             });
         }
 
@@ -1276,6 +1353,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -1329,10 +1407,12 @@ impl Backend {
             env.evm_env.block_env.basefee = current_base_fee;
             env.evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
 
-            // pick a random value for prevrandao
-            env.evm_env.block_env.prevrandao = Some(B256::random());
-
             let best_hash = self.blockchain.storage.read().best_hash;
+
+            let mut input = Vec::with_capacity(40);
+            input.extend_from_slice(best_hash.as_slice());
+            input.extend_from_slice(&block_number.to_le_bytes());
+            env.evm_env.block_env.prevrandao = Some(keccak256(&input));
 
             if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();
@@ -1364,6 +1444,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
                 };
@@ -1501,7 +1582,7 @@ impl Backend {
                 if let Some(block_overrides) = overrides.block {
                     cache_db.apply_block_overrides(*block_overrides, &mut block);
                 }
-                self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
+                self.call_with_state(&cache_db, request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1514,6 +1595,7 @@ impl Backend {
     ///
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
+    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
     ///  - `nonce` check is skipped if `request.nonce` is None
     fn build_call_env(
         &self,
@@ -1556,6 +1638,7 @@ impl Backend {
         // we want to disable this in eth_call, since this is common practice used by other node
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
         env.evm_env.cfg_env.disable_block_gas_limit = true;
+        env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
         // The basefee should be ignored for calls against state for
         // - eth_call
@@ -1713,7 +1796,7 @@ impl Backend {
                         // recorded and included in logs
                         inspector = inspector.with_transfers();
                         let mut evm= self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
+                            &cache_db,
                             &env,
                             &mut inspector,
                         );
@@ -1722,7 +1805,7 @@ impl Backend {
                         evm.transact(env.tx)?
                     } else {
                         let mut evm = self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
+                            &cache_db,
                             &env,
                             &mut inspector,
                         );
@@ -1930,11 +2013,8 @@ impl Backend {
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm = self.new_evm_with_inspector_ref(
-                                &cache_db as &dyn DatabaseRef,
-                                &env,
-                                &mut inspector,
-                            );
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
                             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
@@ -1966,11 +2046,8 @@ impl Backend {
                                 .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         let env = self.build_call_env(request, fee_details, block.clone());
-                        let mut evm = self.new_evm_with_inspector_ref(
-                            &cache_db as &dyn DatabaseRef,
-                            &env,
-                            &mut inspector,
-                        );
+                        let mut evm =
+                            self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
                         let result = evm.transact(env.tx.clone())?;
                         let res = evm
                             .inspector_mut()
@@ -1988,11 +2065,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(
-                &cache_db as &dyn DatabaseRef,
-                &env,
-                &mut inspector,
-            );
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -2500,7 +2573,7 @@ impl Backend {
 
     pub fn get_code_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         address: Address,
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
@@ -2552,7 +2625,7 @@ impl Backend {
         address: Address,
     ) -> Result<U256, BlockchainError>
     where
-        D: DatabaseRef<Error = DatabaseError>,
+        D: DatabaseRef,
     {
         trace!(target: "backend", "get balance for {:?}", address);
         Ok(state.basic_ref(address)?.unwrap_or_default().balance)
@@ -2728,6 +2801,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -3411,7 +3485,7 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::GasTooLow);
             }
 
-            // Check gas limit against block gas limit, if block gas limit is set.
+            // Check tx gas limit against block gas limit, if block gas limit is set.
             if !env.evm_env.cfg_env.disable_block_gas_limit
                 && tx.gas_limit() > env.evm_env.block_env.gas_limit
             {
@@ -3421,7 +3495,17 @@ impl TransactionValidator for Backend {
                 }));
             }
 
-            // EIP-1559 fee validation (London hard fork and later)
+            // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
+            if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
+                && tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
+            {
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
+                return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+                }));
+            }
+
+            // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
                 if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
                     warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
@@ -3657,5 +3741,64 @@ pub fn op_haltreason_to_instruction_result(op_reason: OpHaltReason) -> Instructi
     match op_reason {
         OpHaltReason::Base(eth_h) => eth_h.into(),
         OpHaltReason::FailedDeposit => InstructionResult::Stop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{NodeConfig, spawn};
+
+    #[tokio::test]
+    async fn test_deterministic_block_mining() {
+        // Test that mine_block produces deterministic block hashes with same initial conditions
+        let genesis_timestamp = 1743944919u64;
+
+        // Create two identical backends
+        let config_a = NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into());
+        let config_b = NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into());
+
+        let (api_a, _handle_a) = spawn(config_a).await;
+        let (api_b, _handle_b) = spawn(config_b).await;
+
+        // Mine empty blocks (no transactions) on both backends
+        let outcome_a_1 = api_a.backend.mine_block(vec![]).await;
+        let outcome_b_1 = api_b.backend.mine_block(vec![]).await;
+
+        // Both should mine the same block number
+        assert_eq!(outcome_a_1.block_number, outcome_b_1.block_number);
+
+        // Get the actual blocks to compare hashes
+        let block_a_1 =
+            api_a.block_by_number(outcome_a_1.block_number.into()).await.unwrap().unwrap();
+        let block_b_1 =
+            api_b.block_by_number(outcome_b_1.block_number.into()).await.unwrap().unwrap();
+
+        // The block hashes should be identical
+        assert_eq!(
+            block_a_1.header.hash, block_b_1.header.hash,
+            "Block hashes should be deterministic. Got {} vs {}",
+            block_a_1.header.hash, block_b_1.header.hash
+        );
+
+        // Mine another block to ensure it remains deterministic
+        let outcome_a_2 = api_a.backend.mine_block(vec![]).await;
+        let outcome_b_2 = api_b.backend.mine_block(vec![]).await;
+
+        let block_a_2 =
+            api_a.block_by_number(outcome_a_2.block_number.into()).await.unwrap().unwrap();
+        let block_b_2 =
+            api_b.block_by_number(outcome_b_2.block_number.into()).await.unwrap().unwrap();
+
+        assert_eq!(
+            block_a_2.header.hash, block_b_2.header.hash,
+            "Second block hashes should also be deterministic. Got {} vs {}",
+            block_a_2.header.hash, block_b_2.header.hash
+        );
+
+        // Ensure the blocks are different (sanity check)
+        assert_ne!(
+            block_a_1.header.hash, block_a_2.header.hash,
+            "Different blocks should have different hashes"
+        );
     }
 }

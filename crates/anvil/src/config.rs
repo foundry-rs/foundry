@@ -98,6 +98,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
@@ -196,6 +198,8 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Enable Odyssey features.
     pub odyssey: bool,
+    /// Enable Celo features.
+    pub celo: bool,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -441,6 +445,7 @@ impl Default for NodeConfig {
             chain_id: None,
             gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -492,6 +497,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             odyssey: false,
+            celo: false,
             silent: false,
             cache_path: None,
         }
@@ -616,6 +622,15 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
+        self
+    }
+
+    /// Enable tx gas limit check
+    ///
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    #[must_use]
+    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+        self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
@@ -1017,6 +1032,17 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable Celo support
+    #[must_use]
+    pub fn with_celo(mut self, celo: bool) -> Self {
+        self.celo = celo;
+        if celo {
+            // Celo requires Optimism support
+            self.enable_optimism = true;
+        }
+        self
+    }
+
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn silent(self) -> Self {
@@ -1054,6 +1080,10 @@ impl NodeConfig {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
+
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
         }
@@ -1071,6 +1101,7 @@ impl NodeConfig {
                 ..Default::default()
             },
             self.enable_optimism,
+            self.celo,
         );
 
         let fees = FeeManager::new(

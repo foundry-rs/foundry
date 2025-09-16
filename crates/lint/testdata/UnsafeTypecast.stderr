@@ -1,2119 +1,2282 @@
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-191 |         uint248 b = uint248(a);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint248' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-192 |         uint240 c = uint240(b);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint240' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-193 |         uint232 d = uint232(c);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint232' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-194 |         uint224 e = uint224(d);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint224' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-195 |         uint216 f = uint216(e);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint216' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-196 |         uint208 g = uint208(f);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint208' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-197 |         uint200 h = uint200(g);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint200' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-198 |         uint192 i = uint192(h);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint192' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-199 |         uint184 j = uint184(i);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint184' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-200 |         uint176 k = uint176(j);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint176' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-201 |         uint168 l = uint168(k);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint168' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-202 |         uint160 m = uint160(l);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint160' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-203 |         uint152 n = uint152(m);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint152' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-204 |         uint144 o = uint144(n);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint144' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-205 |         uint136 p = uint136(o);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint136' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-206 |         uint128 q = uint128(p);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-207 |         uint120 r = uint120(q);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint120' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-208 |         uint112 s = uint112(r);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint112' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-209 |         uint104 t = uint104(s);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint104' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-210 |         uint96 u = uint96(t);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint96' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-211 |         uint88 v = uint88(u);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint88' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-212 |         uint80 w = uint80(v);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint80' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-213 |         uint72 x = uint72(w);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint72' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-214 |         uint64 y = uint64(x);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-215 |         uint56 z = uint56(y);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint56' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-216 |         uint48 A = uint48(z);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint48' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-217 |         uint40 B = uint40(A);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint40' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-218 |         uint32 C = uint32(B);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-219 |         uint24 D = uint24(C);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint24' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-220 |         uint16 E = uint16(D);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint16' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-221 |         uint8 F = uint8(E);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint8' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-226 |         int248 b = int248(a);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int248' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-227 |         int240 c = int240(b);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int240' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-228 |         int232 d = int232(c);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int232' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-229 |         int224 e = int224(d);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int224' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-230 |         int216 f = int216(e);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int216' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-231 |         int208 g = int208(f);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int208' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-232 |         int200 h = int200(g);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int200' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-233 |         int192 i = int192(h);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int192' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-234 |         int184 j = int184(i);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int184' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-235 |         int176 k = int176(j);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int176' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-236 |         int168 l = int168(k);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int168' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-237 |         int160 m = int160(l);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int160' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-238 |         int152 n = int152(m);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int152' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-239 |         int144 o = int144(n);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int144' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-240 |         int136 p = int136(o);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int136' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-241 |         int128 q = int128(p);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-242 |         int120 r = int120(q);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int120' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-243 |         int112 s = int112(r);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int112' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-244 |         int104 t = int104(s);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int104' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-245 |         int96 u = int96(t);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int96' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-246 |         int88 v = int88(u);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int88' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-247 |         int80 w = int80(v);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int80' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-248 |         int72 x = int72(w);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int72' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-249 |         int64 y = int64(x);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-250 |         int56 z = int56(y);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int56' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-251 |         int48 A = int48(z);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int48' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-252 |         int40 B = int40(A);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int40' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-253 |         int32 C = int32(B);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-254 |         int24 D = int24(C);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int24' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-255 |         int16 E = int16(D);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int16' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-256 |         int8 F = int8(E);
-    |                  -------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int8' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-261 |         bytes31 b = bytes31(a);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes31' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-262 |         bytes30 c = bytes30(b);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes30' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-263 |         bytes29 d = bytes29(c);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes29' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-264 |         bytes28 e = bytes28(d);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes28' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-265 |         bytes27 f = bytes27(e);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes27' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-266 |         bytes26 g = bytes26(f);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes26' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-267 |         bytes25 h = bytes25(g);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes25' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-268 |         bytes24 i = bytes24(h);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes24' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-269 |         bytes23 j = bytes23(i);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes23' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-270 |         bytes22 k = bytes22(j);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes22' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-271 |         bytes21 l = bytes21(k);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes21' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-272 |         bytes20 m = bytes20(l);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes20' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-273 |         bytes19 n = bytes19(m);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes19' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-274 |         bytes18 o = bytes18(n);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes18' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-275 |         bytes17 p = bytes17(o);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes17' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-276 |         bytes16 q = bytes16(p);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes16' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-277 |         bytes15 r = bytes15(q);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes15' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-278 |         bytes14 s = bytes14(r);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes14' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-279 |         bytes13 t = bytes13(s);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes13' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-280 |         bytes12 u = bytes12(t);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes12' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-281 |         bytes11 v = bytes11(u);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes11' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-282 |         bytes10 w = bytes10(v);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes10' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-283 |         bytes9 x = bytes9(w);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes9' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-284 |         bytes8 y = bytes8(x);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes8' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-285 |         bytes7 z = bytes7(y);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes7' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-286 |         bytes6 A = bytes6(z);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes6' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-287 |         bytes5 B = bytes5(A);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes5' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-288 |         bytes4 C = bytes4(B);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes4' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-289 |         bytes3 D = bytes3(C);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes3' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-290 |         bytes2 E = bytes2(D);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes2' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-291 |         bytes1 F = bytes1(E);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes1' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-296 |         int256 b = int256(a);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int256' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-298 |         int248 d = int248(c);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int248' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-300 |         int240 f = int240(e);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int240' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-302 |         int232 h = int232(g);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int232' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-304 |         int224 j = int224(i);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int224' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-306 |         int216 l = int216(k);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int216' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-308 |         int208 n = int208(m);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int208' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-310 |         int200 p = int200(o);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int200' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-312 |         int192 r = int192(q);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int192' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-314 |         int184 t = int184(s);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int184' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-316 |         int176 v = int176(u);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int176' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-318 |         int168 x = int168(w);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int168' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-320 |         int160 z = int160(y);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int160' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-322 |         int152 B = int152(A);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int152' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-324 |         int144 D = int144(C);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int144' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-326 |         int136 F = int136(E);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int136' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-328 |         int128 H = int128(G);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-330 |         int120 J = int120(I);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int120' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-332 |         int112 L = int112(K);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int112' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-334 |         int104 N = int104(M);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int104' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-336 |         int96 P = int96(O);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int96' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-338 |         int88 R = int88(Q);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int88' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-340 |         int80 T = int80(S);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int80' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-342 |         int72 V = int72(U);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int72' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-344 |         int64 X = int64(W);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-346 |         int56 Z = int56(Y);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int56' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-348 |         int48 BB = int48(AA);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int48' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-350 |         int40 DD = int40(CC);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int40' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-352 |         int32 FF = int32(EE);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-354 |         int24 HH = int24(GG);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int24' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-356 |         int16 JJ = int16(II);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int16' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-358 |         int8 LL = int8(KK);
-    |                   --------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'int8' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-363 |         uint256 b = uint256(a);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint256' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-365 |         uint248 d = uint248(c);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint248' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-367 |         uint240 f = uint240(e);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint240' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-369 |         uint232 h = uint232(g);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint232' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-371 |         uint224 j = uint224(i);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint224' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-373 |         uint216 l = uint216(k);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint216' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-375 |         uint208 n = uint208(m);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint208' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-377 |         uint200 p = uint200(o);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint200' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-379 |         uint192 r = uint192(q);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint192' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-381 |         uint184 t = uint184(s);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint184' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-383 |         uint176 v = uint176(u);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint176' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-385 |         uint168 x = uint168(w);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint168' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-387 |         uint160 z = uint160(y);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint160' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-389 |         uint152 B = uint152(A);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint152' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-391 |         uint144 D = uint144(C);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint144' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-393 |         uint136 F = uint136(E);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint136' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-395 |         uint128 H = uint128(G);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-397 |         uint120 J = uint120(I);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint120' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-399 |         uint112 L = uint112(K);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint112' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-401 |         uint104 N = uint104(M);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint104' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-403 |         uint96 P = uint96(O);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint96' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-405 |         uint88 R = uint88(Q);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint88' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-407 |         uint80 T = uint80(S);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint80' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-409 |         uint72 V = uint72(U);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint72' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-411 |         uint64 X = uint64(W);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-413 |         uint56 Z = uint56(Y);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint56' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-415 |         uint48 BB = uint48(AA);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint48' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-417 |         uint40 DD = uint40(CC);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint40' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-419 |         uint32 FF = uint32(EE);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-421 |         uint24 HH = uint24(GG);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint24' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-423 |         uint16 JJ = uint16(II);
-    |                     ----------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint16' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-425 |         uint8 LL = uint8(KK);
-    |                    ---------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint8' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-430 |         bytes32 dataSlice = bytes32(data);
-    |                             -------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-432 |         bytes32 strSlice = bytes32(bytes(str));
-    |                            -------------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'bytes32' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-444 |         uint128 aPlusB = uint128(int128(a) + b);
-    |                          ----------------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-447 |         uint64 unsafe = uint64(aPlusB);
-    |                         --------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-450 |         return uint64(uint128(int128(uint128(a)) + b));
-    |                ---------------------------------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint64' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-450 |         return uint64(uint128(int128(uint128(a)) + b));
-    |                       -------------------------------
-    |
-    = note: Consider disabling this lint if you're certain the cast is safe:
-            
-            // casting to 'uint128' is safe because [explain why]
-            // forge-lint: disable-next-line(unsafe-typecast)
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint248 b = uint248(a);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint248' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint240 c = uint240(b);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint240' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint232 d = uint232(c);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint232' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint224 e = uint224(d);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint224' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint216 f = uint216(e);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint216' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint208 g = uint208(f);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint208' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint200 h = uint200(g);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint200' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint192 i = uint192(h);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint192' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint184 j = uint184(i);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint184' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint176 k = uint176(j);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint176' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint168 l = uint168(k);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint168' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint160 m = uint160(l);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint152 n = uint152(m);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint152' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint144 o = uint144(n);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint144' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint136 p = uint136(o);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint136' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint128 q = uint128(p);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint120 r = uint120(q);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint120' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint112 s = uint112(r);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint112' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint104 t = uint104(s);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint104' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint96 u = uint96(t);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint96' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint88 v = uint88(u);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint88' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint80 w = uint80(v);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint80' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint72 x = uint72(w);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint72' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint64 y = uint64(x);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint56 z = uint56(y);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint56' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint48 A = uint48(z);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint48' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint40 B = uint40(A);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint40' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint32 C = uint32(B);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint24 D = uint24(C);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint24' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint16 E = uint16(D);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint16' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint8 F = uint8(E);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint8' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int248 b = int248(a);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int248' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int240 c = int240(b);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int240' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int232 d = int232(c);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int232' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int224 e = int224(d);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int224' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int216 f = int216(e);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int216' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int208 g = int208(f);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int208' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int200 h = int200(g);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int200' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int192 i = int192(h);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int192' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int184 j = int184(i);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int184' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int176 k = int176(j);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int176' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int168 l = int168(k);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int168' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int160 m = int160(l);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int152 n = int152(m);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int152' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int144 o = int144(n);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int144' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int136 p = int136(o);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int136' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int128 q = int128(p);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int120 r = int120(q);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int120' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int112 s = int112(r);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int112' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int104 t = int104(s);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int104' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int96 u = int96(t);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int96' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int88 v = int88(u);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int88' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int80 w = int80(v);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int80' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int72 x = int72(w);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int72' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int64 y = int64(x);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int56 z = int56(y);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int56' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int48 A = int48(z);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int48' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int40 B = int40(A);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int40' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int32 C = int32(B);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int24 D = int24(C);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int24' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int16 E = int16(D);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int16' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int8 F = int8(E);
+   |                  ^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int8' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes31 b = bytes31(a);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes31' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes30 c = bytes30(b);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes30' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes29 d = bytes29(c);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes29' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes28 e = bytes28(d);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes28' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes27 f = bytes27(e);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes27' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes26 g = bytes26(f);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes26' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes25 h = bytes25(g);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes25' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes24 i = bytes24(h);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes24' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes23 j = bytes23(i);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes23' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes22 k = bytes22(j);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes22' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes21 l = bytes21(k);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes21' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes20 m = bytes20(l);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes20' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes19 n = bytes19(m);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes19' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes18 o = bytes18(n);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes18' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes17 p = bytes17(o);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes17' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes16 q = bytes16(p);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes16' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes15 r = bytes15(q);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes15' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes14 s = bytes14(r);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes14' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes13 t = bytes13(s);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes13' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes12 u = bytes12(t);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes12' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes11 v = bytes11(u);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes11' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes10 w = bytes10(v);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes10' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes9 x = bytes9(w);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes9' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes8 y = bytes8(x);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes8' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes7 z = bytes7(y);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes7' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes6 A = bytes6(z);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes6' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes5 B = bytes5(A);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes5' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes4 C = bytes4(B);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes4' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes3 D = bytes3(C);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes3' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes2 E = bytes2(D);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes2' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes1 F = bytes1(E);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes1' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int256 b = int256(a);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int256' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int248 d = int248(c);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int248' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int240 f = int240(e);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int240' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int232 h = int232(g);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int232' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int224 j = int224(i);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int224' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int216 l = int216(k);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int216' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int208 n = int208(m);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int208' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int200 p = int200(o);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int200' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int192 r = int192(q);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int192' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int184 t = int184(s);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int184' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int176 v = int176(u);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int176' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int168 x = int168(w);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int168' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int160 z = int160(y);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int152 B = int152(A);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int152' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int144 D = int144(C);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int144' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int136 F = int136(E);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int136' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int128 H = int128(G);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int120 J = int120(I);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int120' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int112 L = int112(K);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int112' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int104 N = int104(M);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int104' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int96 P = int96(O);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int96' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int88 R = int88(Q);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int88' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int80 T = int80(S);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int80' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int72 V = int72(U);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int72' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int64 X = int64(W);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int56 Z = int56(Y);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int56' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int48 BB = int48(AA);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int48' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int40 DD = int40(CC);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int40' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int32 FF = int32(EE);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int24 HH = int24(GG);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int24' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int16 JJ = int16(II);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int16' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         int8 LL = int8(KK);
+   |                   ^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'int8' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint256 b = uint256(a);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint256' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint248 d = uint248(c);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint248' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint240 f = uint240(e);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint240' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint232 h = uint232(g);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint232' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint224 j = uint224(i);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint224' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint216 l = uint216(k);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint216' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint208 n = uint208(m);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint208' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint200 p = uint200(o);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint200' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint192 r = uint192(q);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint192' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint184 t = uint184(s);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint184' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint176 v = uint176(u);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint176' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint168 x = uint168(w);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint168' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint160 z = uint160(y);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint152 B = uint152(A);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint152' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint144 D = uint144(C);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint144' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint136 F = uint136(E);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint136' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint128 H = uint128(G);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint120 J = uint120(I);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint120' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint112 L = uint112(K);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint112' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint104 N = uint104(M);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint104' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint96 P = uint96(O);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint96' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint88 R = uint88(Q);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint88' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint80 T = uint80(S);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint80' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint72 V = uint72(U);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint72' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint64 X = uint64(W);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint56 Z = uint56(Y);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint56' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint48 BB = uint48(AA);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint48' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint40 DD = uint40(CC);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint40' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint32 FF = uint32(EE);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint24 HH = uint24(GG);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint24' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint16 JJ = uint16(II);
+   |                     ^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint16' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint8 LL = uint8(KK);
+   |                    ^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint8' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes32 dataSlice = bytes32(data);
+   |                             ^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         bytes32 strSlice = bytes32(bytes(str));
+   |                            ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'bytes32' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint128 aPlusB = uint128(int128(uint128(a)) + b);
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         uint64 unsafe = uint64(aPlusB);
+   |                         ^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         return uint64(uint128(int128(uint128(a)) + b));
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint64' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+LL |         return uint64(uint128(int128(uint128(a)) + b));
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint128' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
 

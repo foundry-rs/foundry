@@ -5,7 +5,6 @@ use foundry_compilers::{
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
-    error::Result as SolcResult,
     project_util::{TempProject, copy_dir},
     solc::SolcSettings,
 };
@@ -546,28 +545,28 @@ impl TestProject {
     }
 
     /// Adds a source file to the project.
-    pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, Self::add_source_prelude(contents))
+    pub fn add_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a source file to the project. Prefer using `add_source` instead.
-    pub fn add_raw_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, contents)
+    pub fn add_raw_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, contents).unwrap()
     }
 
     /// Adds a script file to the project.
-    pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_script(name, Self::add_source_prelude(contents))
+    pub fn add_script(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_script(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a test file to the project.
-    pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_test(name, Self::add_source_prelude(contents))
+    pub fn add_test(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_test(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a library file to the project.
-    pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_lib(name, Self::add_source_prelude(contents))
+    pub fn add_lib(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_lib(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     fn add_source_prelude(s: &str) -> String {
@@ -644,19 +643,19 @@ impl TestProject {
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
         let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.add_source("test.sol", s).unwrap()
+        self.add_source("test.sol", s)
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
         let s = include_str!("../../../testdata/default/logs/console.sol");
-        self.add_source("console.sol", s).unwrap()
+        self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
         let s = include_str!("../../../testdata/cheats/Vm.sol");
-        self.add_source("Vm.sol", s).unwrap()
+        self.add_source("Vm.sol", s)
     }
 
     /// Asserts all project paths exist. These are:
@@ -960,6 +959,18 @@ impl TestCommand {
         let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
         let stdout = self.assert_success().get_output().stdout.clone();
         let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
+        assert_data_eq!(actual, expected);
+    }
+
+    /// Runs the command and asserts that it resulted in the expected outcome and JSON data.
+    #[track_caller]
+    pub fn assert_json_stderr(&mut self, success: bool, expected: impl IntoData) {
+        let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
+        let stderr = if success { self.assert_success() } else { self.assert_failure() }
+            .get_output()
+            .stderr
+            .clone();
+        let actual = stderr.into_data().is(snapbox::data::DataFormat::Json).unordered();
         assert_data_eq!(actual, expected);
     }
 

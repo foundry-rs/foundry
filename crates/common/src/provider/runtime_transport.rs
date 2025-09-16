@@ -1,5 +1,6 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
-//! WebSocket, or IPC transport and supports retries based on CUPS logic.
+//! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
+//! `RetryBackoffLayer`) when used.
 
 use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
@@ -67,7 +68,8 @@ pub enum RuntimeTransportError {
 /// A runtime transport is a custom [`alloy_transport::Transport`] that only connects when the
 /// *first* request is made. When the first request is made, it will connect to the runtime using
 /// either an HTTP WebSocket, or IPC transport depending on the URL used.
-/// It also supports retries for rate-limiting and timeout-related errors.
+/// Retries for rate-limiting and timeout-related errors are handled by an external
+/// client layer (e.g., `RetryBackoffLayer`) when configured.
 #[derive(Clone, Debug, Error)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
@@ -239,8 +241,8 @@ impl RuntimeTransport {
 
     /// Sends a request using the underlying transport.
     /// If this is the first request, it will connect to the appropriate transport depending on the
-    /// URL scheme. When sending the request, retries will be automatically handled depending
-    /// on the parameters set on the [RuntimeTransport].
+    /// URL scheme. Retries are performed by an external client layer (e.g., `RetryBackoffLayer`),
+    /// if such a layer is configured by the caller.
     /// For sending the actual request, this action is delegated down to the
     /// underlying transport through Tower's [tower::Service::call]. See tower's [tower::Service]
     /// trait for more information.

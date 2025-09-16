@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
+use solar::ast::{BinOp, BinOpKind, Expr, ExprKind};
 
 declare_forge_lint!(
     INCORRECT_SHIFT,
@@ -13,7 +13,7 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
-    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
+    fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(
             left_expr,
             BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },

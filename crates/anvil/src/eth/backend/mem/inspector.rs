@@ -112,8 +112,8 @@ fn print_traces(tracer: TracingInspector, decoder: Arc<CallTraceDecoder>) {
     });
 
     let traces = SparsedTraceArena { arena, ignored: Default::default() };
-    node_info!("Traces:");
-    node_info!("{}", render_trace_arena_inner(&traces, false, true));
+    let trace = render_trace_arena_inner(&traces, false, true);
+    node_info!(Traces = %format!("\n{}", trace));
 }
 
 impl<CTX> Inspector<CTX, EthInterpreter> for AnvilInspector
@@ -175,7 +175,6 @@ where
         }
     }
 
-    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
             Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)

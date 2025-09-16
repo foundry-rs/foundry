@@ -11,8 +11,7 @@ forgetest_init!(call, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...
@@ -20,7 +19,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
  [FILE]:9:20
   |
 9 |                 vm.ffi(inputs);
-  |                    ---
+  |                    ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 ...
@@ -36,20 +35,19 @@ forgetest_init!(assignment, |prj, cmd| {
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
-                bytes stuff = vm.ffi(inputs);
+                bytes memory stuff = vm.ffi(inputs);
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
- [FILE]:9:34
+ [FILE]:9:41
   |
-9 |                 bytes stuff = vm.ffi(inputs);
-  |                                  ---
+9 |                 bytes memory stuff = vm.ffi(inputs);
+  |                                         ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 ...
@@ -71,8 +69,7 @@ forgetest_init!(exit_code, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("geiger").assert_success().stderr_eq(str![[r#"
 ...
@@ -80,7 +77,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
  [FILE]:9:20
   |
 9 |                 vm.ffi(inputs);
-  |                    ---
+  |                    ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -88,7 +85,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   [FILE]:10:20
    |
 10 |                 vm.ffi(inputs);
-   |                    ---
+   |                    ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 
@@ -96,7 +93,7 @@ note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous op
   [FILE]:11:20
    |
 11 |                 vm.ffi(inputs);
-   |                    ---
+   |                    ^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 ...

@@ -749,7 +749,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     pub async fn codesize(&self, who: Address, block: Option<BlockId>) -> Result<String> {
         let code =
             self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-        Ok(format!("{}", code.len()))
+        Ok(code.len().to_string())
     }
 
     /// # Example
@@ -2284,7 +2284,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().with_chain_id(chain);
+    let mut builder = Client::builder().chain(chain)?;
 
     let deduced = chain.etherscan_urls();
 

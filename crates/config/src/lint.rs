@@ -3,7 +3,7 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar_interface::diagnostics::Level;
+use solar::interface::diagnostics::Level;
 use std::str::FromStr;
 use yansi::Paint;
 
@@ -28,7 +28,8 @@ pub struct LinterConfig {
 
     /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
     ///
-    /// Default's to ["ERC"] to allow common names like `rescueERC20` or `ERC721TokenReceiver`.
+    /// Default's to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
+    /// or `tokenURI`.
     pub mixed_case_exceptions: Vec<String>,
 }
 
@@ -39,7 +40,7 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
-            mixed_case_exceptions: vec!["ERC".to_string()],
+            mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
         }
     }
 }
