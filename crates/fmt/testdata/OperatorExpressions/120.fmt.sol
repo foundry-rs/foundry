@@ -1,4 +1,4 @@
-// config: pow_no_space = true
+// config: line_length = 120
 function test() {
     uint256 expr001 = (1 + 2) + 3;
     uint256 expr002 = 1 + (2 + 3);
@@ -8,9 +8,9 @@ function test() {
     uint256 expr006 = 1 + 2 * 3;
     uint256 expr007 = (1 + 2) * 3;
     uint256 expr008 = 1 + (2 * 3);
-    uint256 expr009 = 1**2**3;
-    uint256 expr010 = 1**(2**3);
-    uint256 expr011 = (1**2)**3;
+    uint256 expr009 = 1 ** 2 ** 3;
+    uint256 expr010 = 1 ** (2 ** 3);
+    uint256 expr011 = (1 ** 2) ** 3;
     uint256 expr012 = ++expr011 + 1;
     bool expr013 = ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
@@ -45,20 +45,16 @@ function test() {
 
 function test_nested() {
     require(
-        keccak256(abi.encodePacked("some long string"))
-            == keccak256(abi.encodePacked("some other long string")),
+        keccak256(abi.encodePacked("some long string")) == keccak256(abi.encodePacked("some other long string")),
         "string mismatch"
     );
 
     state.zeroForOne = IERC20(Currency.unwrap(state.poolKey1.currency0))
         == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
 
-    coreAddresses.evc == address(0)
-        && coreAddresses.protocolConfig == address(0)
-        && coreAddresses.sequenceRegistry == address(0)
-        && coreAddresses.balanceTracker == address(0)
+    coreAddresses.evc == address(0) && coreAddresses.protocolConfig == address(0)
+        && coreAddresses.sequenceRegistry == address(0) && coreAddresses.balanceTracker == address(0)
         && coreAddresses.permit2 == address(0);
 
-    return spender == ownerOf(tokenId) || getApproved[tokenId] == spender
-        || isApprovedForAll[ownerOf(tokenId)][spender];
+    return spender == ownerOf(tokenId) || getApproved[tokenId] == spender || isApprovedForAll[ownerOf(tokenId)][spender];
 }

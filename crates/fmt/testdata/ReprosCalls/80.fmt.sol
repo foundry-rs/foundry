@@ -7,6 +7,18 @@ function test() public {
         })
     );
 
+    SnapshotRegistry(adapterRegistry).add(
+        adapter,
+        LidoFundamentalOracle(adapter).WSTETH(),
+        LidoFundamentalOracle(adapter).WETH()
+    );
+
+    (bool success, bytes memory data) = GenericFactory(eVaultFactory)
+        .implementation()
+        .staticcall(abi.encodePacked(
+            EVCUtil.EVC.selector, uint256(0), uint256(0)
+        ));
+
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
     items[0] = IEVC.BatchItem({
@@ -28,9 +40,9 @@ function test() public {
         targetContract: address(swapVerifier),
         value: 0,
         data: abi.encodeCall(
-                swapVerifier.verifyDebtMax,
-                (address(eUSDC), user, 0, type(uint256).max)
-            )
+            swapVerifier.verifyDebtMax,
+            (address(eSTETH), user, exactOutTolerance, type(uint256).max)
+        )
     });
 
     uint256 fork =

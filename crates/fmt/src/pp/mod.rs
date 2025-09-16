@@ -171,7 +171,7 @@ impl Printer {
 
         // If no hard break pending, return actual space on current line or the full margin if space
         // is negative.
-        self.space.max(self.margin) as usize
+        (if self.space < 0 { self.margin } else { self.space }) as usize
     }
 
     pub(crate) fn last_token(&self) -> Option<&Token> {

@@ -1236,7 +1236,9 @@ impl<'ast> State<'_, 'ast> {
                     );
                     let all_fits = expr_size + args_size + 2 <= space_left;
                     let expr_fits = expr_size < space_left;
-                    let break_single = !all_fits && call_args.len() == 1;
+                    let break_single = !all_fits
+                        && call_args.len() == 1
+                        && !is_call_chain(&call_args.exprs().next().unwrap().kind, false);
 
                     let list_format =
                         ListFormat::compact().add_cmnt_break().break_single_if(break_single);
@@ -1495,7 +1497,7 @@ impl<'ast> State<'_, 'ast> {
 
             (
                 true,
-                if matches!(&child_expr.kind, ast::ExprKind::Member(..)) {
+                if is_call_chain(&child_expr.kind, true) {
                     MemberPos::Bottom
                 } else {
                     MemberPos::Top
@@ -1776,11 +1778,11 @@ impl<'ast> State<'_, 'ast> {
                     self.hardbreak_if_not_bol();
                 }
                 if let Some(expr) = expr {
-                    self.s.ibox(if !has_complex_successor(&expr.kind, true) {
-                        self.ind
+                    if matches!(&expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..)) {
+                        self.s.ibox(self.ind);
                     } else {
-                        0
-                    });
+                        self.ibox(0);
+                    }
                     self.print_word("return");
                     if let Some(cmnt) = self.print_comments(
                         expr.span.lo(),

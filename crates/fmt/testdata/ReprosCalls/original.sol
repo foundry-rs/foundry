@@ -2,6 +2,14 @@ function test() public {
     oracleInfo =
         abi.encode(LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()}));
 
+    SnapshotRegistry(adapterRegistry).add(
+        adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH()
+    );
+
+    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation().staticcall(
+                abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0))
+            );
+
 IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
         items[0] = IEVC.BatchItem({
@@ -20,7 +28,7 @@ IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
             onBehalfOfAccount: user,
             targetContract: address(swapVerifier),
             value: 0,
-            data: abi.encodeCall(swapVerifier.verifyDebtMax, (address(eUSDC), user, 0, type(uint256).max))
+            data: abi.encodeCall(swapVerifier.verifyDebtMax, (address(eSTETH), user, exactOutTolerance, type(uint256).max))
         });
 
     uint256 fork = vm.createSelectFork("arbitrum", bytes32(0xdeadc0ffeedeadbeef));

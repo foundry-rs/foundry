@@ -38,4 +38,11 @@ function test_nested() {
 
     state.zeroForOne = IERC20(Currency.unwrap(state.poolKey1.currency0))
         == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
+
+    coreAddresses.evc == address(0) && coreAddresses.protocolConfig == address(0)
+        && coreAddresses.sequenceRegistry == address(0) && coreAddresses.balanceTracker == address(0)
+        && coreAddresses.permit2 == address(0);
+
+    return spender == ownerOf(tokenId) || getApproved[tokenId] == spender
+        || isApprovedForAll[ownerOf(tokenId)][spender];
 }
