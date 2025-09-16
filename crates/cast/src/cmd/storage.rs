@@ -165,13 +165,13 @@ impl StorageArgs {
         add_storage_layout_output(&mut project);
 
         // Override solc version if provided
-         project.compiler = {
+        project.compiler = {
             if let Some(solc_req) = self.solc_version {
-            SolcCompiler::Specific(Solc::find_or_install(&solc_req)?)
+                SolcCompiler::Specific(Solc::find_or_install(&solc_req)?)
             } else if auto_detect {
-            SolcCompiler::AutoDetect
+                SolcCompiler::AutoDetect
             } else {
-            SolcCompiler::Specific(Solc::find_or_install(&version)?)
+                SolcCompiler::Specific(Solc::find_or_install(&version)?)
             }
         };
 
