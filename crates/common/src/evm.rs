@@ -113,6 +113,7 @@ pub struct EvmArgs {
     ///
     /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(long, alias = "cups", value_name = "CUPS", help_heading = "Fork config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting for this node's provider.
