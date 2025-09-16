@@ -360,7 +360,7 @@ mod tests {
              *    line 2
              */
             contract Test {
-                /*** my function
+                /** my function
                       i like whitespace
             */
                 function test() {}

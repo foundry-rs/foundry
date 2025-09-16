@@ -1,4 +1,4 @@
-use solar_interface::diagnostics::EmittedDiagnostics;
+use solar::interface::diagnostics::EmittedDiagnostics;
 use thiserror::Error;
 
 /// The parser error.

@@ -132,14 +132,46 @@ impl Printer {
         }
     }
 
+    /// Predicts available space on the current or next line based on pending breaks.
+    ///
+    /// This function provides a heuristic for estimating available space by checking if
+    /// an unconditional hard break is pending in the buffer. The printer's internal
+    /// `self.space` value may not accurately reflect pending formatting decisions.
+    ///
+    /// # Returns
+    ///
+    /// - The full `margin` if an unconditional hard break is pending, signaling that a new line
+    ///   will be created. Callers should apply their own indentation logic as they have more
+    ///   semantic context about the code structure.
+    /// - The current space left (`self.space`) if no hard break is found, which can be trusted when
+    ///   no line breaks are imminent.
+    ///
+    /// # Trade-offs
+    ///
+    /// This heuristic may overestimate available space,
+    /// but provides a reliable signal for hard breaks while keeping the implementation
+    /// simple.
     pub(crate) fn space_left(&self) -> usize {
-        if self.space > 0 {
-            self.space as usize
-        } else if self.margin > 0 {
-            self.margin as usize
-        } else {
-            0
+        // Scan backwards through the buffer for the last unconditional hard break.
+        for i in self.buf.index_range().rev() {
+            let token = &self.buf[i].token;
+
+            if let Token::Break(break_token) = token
+                && break_token.blank_space as isize >= SIZE_INFINITY
+                && !break_token.never_break
+            {
+                return self.margin as usize;
+            }
+
+            // Stop at first non-end token.
+            if !matches!(token, Token::End) {
+                break;
+            }
         }
+
+        // If no hard break pending, return actual space on current line or the full margin if space
+        // is negative.
+        self.space.max(self.margin) as usize
     }
 
     pub(crate) fn last_token(&self) -> Option<&Token> {

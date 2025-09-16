@@ -215,24 +215,6 @@ contract NestedCallsTest is Test {
             }
         }
     }
-
-    function test_longCall() public {
-        uint256 fork =
-            vm.createSelectFork("polygon", bytes32(0xdeadc0ffeedeadbeef));
-
-        vm._expectCheatcodeRevert("short msg doesn't break");
-        vm._expectCheatcodeRevert(
-            "failed parsing as `uint256`: missing hex prefix for hex string"
-        );
-
-        bytes4[] memory targets = new bytes4[](0);
-        targets[0] =
-            FuzzArtifactSelector("TargetArtifactSelectors.t.sol:Hi", selectors);
-
-        ConstructorVictim victim = new ConstructorVictim(
-            sender, "msg.sender", "not set during prank"
-        );
-    }
 }
 
 contract ERC1967Factory {

@@ -19,6 +19,27 @@ mod common;
 mod sol;
 mod yul;
 
+/// Represents the position of a specific expression within a call/member chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MemberPos {
+    // The outermost expression in the chain
+    Top,
+    /// An intermediate expression in the chain
+    Middle,
+    /// The very first expression that starts the chain
+    Bottom,
+}
+
+/// Holds the complete state for formatting a single, continuous member access/call chain.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MemberCache {
+    /// A pointer to the expression that is the "bottom" of the entire chain.
+    pub bottom: Span,
+
+    /// The position of the expr being formatted within the chain.
+    pub position: MemberPos,
+}
+
 pub(super) struct State<'sess, 'ast> {
     pub(super) s: pp::Printer,
     ind: isize,
@@ -32,8 +53,8 @@ pub(super) struct State<'sess, 'ast> {
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
     call_expr_named: bool,
+    member_expr: Option<MemberCache>,
     binary_expr: bool,
-    member_expr: bool,
     var_init: bool,
     fn_body: bool,
 }
@@ -119,11 +140,21 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_expr_named: false,
+            member_expr: None,
             binary_expr: false,
-            member_expr: false,
             var_init: false,
             fn_body: false,
         }
+    }
+
+    fn space_left(&self) -> usize {
+        std::cmp::min(
+            self.s.space_left(),
+            self.config
+                .line_length
+                .saturating_sub(if self.fn_body { self.config.tab_width } else { 0 })
+                .saturating_sub(if self.contract.is_some() { self.config.tab_width } else { 0 }),
+        )
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -249,9 +280,16 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let mut size = 0;
+            let (mut size, mut first_line) = (0, true);
             for line in snip.lines() {
                 size += line.trim().len();
+
+                // Subsequent lines require either a hardbreak or a space.
+                if first_line {
+                    first_line = false;
+                } else {
+                    size += 1;
+                }
             }
             return size;
         }
@@ -268,20 +306,20 @@ impl State<'_, '_> {
 impl<'sess> State<'sess, '_> {
     /// Returns `None` if the span is disabled and has been printed as-is.
     #[must_use]
-    fn handle_comment(&mut self, cmnt: Comment) -> Option<Comment> {
+    fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
                 if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);
-                if cmnt.style.is_isolated() || cmnt.style.is_trailing() {
+                if !skip_break && (cmnt.style.is_isolated() || cmnt.style.is_trailing()) {
                     self.print_sep(Separator::Hardbreak);
                 }
                 return None;
             }
         } else if self.print_span_if_disabled(cmnt.span) {
-            if cmnt.style.is_isolated() || cmnt.style.is_trailing() {
+            if !skip_break && (cmnt.style.is_isolated() || cmnt.style.is_trailing()) {
                 self.print_sep(Separator::Hardbreak);
             }
             return None;
@@ -314,7 +352,22 @@ impl<'sess> State<'sess, '_> {
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
-            let Some(cmnt) = self.handle_comment(cmnt) else {
+
+            // Ensure breaks are never skipped when there are multiple comments
+            if self.peek_comment_before(pos).is_some() {
+                config.iso_no_break = false;
+                config.trailing_no_break = false;
+            }
+
+            // Handle disabled comments
+            let Some(cmnt) = self.handle_comment(
+                cmnt,
+                if style_cache.is_isolated() {
+                    config.iso_no_break
+                } else {
+                    config.trailing_no_break
+                },
+            ) else {
                 last_style = Some(style_cache);
                 continue;
             };
@@ -490,8 +543,12 @@ impl<'sess> State<'sess, '_> {
                     }
                     if pos.is_last {
                         self.end();
+                        if !config.iso_no_break {
+                            hb(self);
+                        }
+                    } else {
+                        hb(self);
                     }
-                    hb(self);
                 }
             }
             CommentStyle::Trailing => {
@@ -615,7 +672,7 @@ impl<'sess> State<'sess, '_> {
                 config.unwrap_or(CommentConfig::skip_ws().mixed_no_break().mixed_prev_space());
             while printed <= n {
                 let cmnt = self.comments.next().unwrap();
-                if let Some(cmnt) = self.handle_comment(cmnt) {
+                if let Some(cmnt) = self.handle_comment(cmnt, config.trailing_no_break) {
                     self.print_comment(cmnt, config);
                 };
                 printed += 1;
@@ -644,7 +701,7 @@ impl<'sess> State<'sess, '_> {
         }
 
         while let Some(cmnt) = self.next_comment() {
-            if let Some(cmnt) = self.handle_comment(cmnt) {
+            if let Some(cmnt) = self.handle_comment(cmnt, false) {
                 self.print_comment(cmnt, CommentConfig::default());
             } else if self.peek_comment().is_none() {
                 self.hardbreak();
@@ -667,6 +724,9 @@ pub(crate) struct CommentConfig {
     skip_blanks: Option<Skip>,
     current_ind: isize,
     offset: isize,
+
+    // Config: isolated comments
+    iso_no_break: bool,
     // Config: trailing comments
     trailing_no_break: bool,
     // Config: mixed comments
@@ -690,6 +750,18 @@ impl CommentConfig {
 
     pub(crate) fn offset(mut self, off: isize) -> Self {
         self.offset = off;
+        self
+    }
+
+    pub(crate) fn no_breaks(mut self) -> Self {
+        self.iso_no_break = true;
+        self.trailing_no_break = true;
+        self.mixed_no_break = true;
+        self
+    }
+
+    pub(crate) fn iso_no_break(mut self) -> Self {
+        self.iso_no_break = true;
         self
     }
 

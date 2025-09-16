@@ -190,6 +190,25 @@ impl<'ast> State<'_, 'ast> {
         s
     }
 
+    pub(super) fn print_tuple_empty(&mut self, pos_lo: BytePos, pos_hi: BytePos) {
+        if self.handle_span(Span::new(pos_lo, pos_hi), true) {
+            return;
+        }
+
+        self.print_word("(");
+        self.s.cbox(self.ind);
+        if let Some(cmnt) = self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space())
+        {
+            if cmnt.is_mixed() {
+                self.s.offset(-self.ind);
+            } else {
+                self.break_offset_if_not_bol(0, -self.ind, false);
+            }
+        }
+        self.end();
+        self.print_word(")");
+    }
+
     pub(super) fn print_tuple<'a, T, P, S>(
         &mut self,
         values: &'a [T],
@@ -198,29 +217,16 @@ impl<'ast> State<'_, 'ast> {
         mut print: P,
         mut get_span: S,
         format: ListFormat,
-        break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Option<Span> + Copy,
     {
         if self.handle_span(Span::new(pos_lo, pos_hi), true) {
             return;
         }
 
         if values.is_empty() {
-            self.print_word("(");
-            self.s.cbox(self.ind);
-            if let Some(cmnt) =
-                self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space())
-            {
-                if cmnt.is_mixed() {
-                    self.s.offset(-self.ind);
-                } else {
-                    self.break_offset_if_not_bol(0, -self.ind, false);
-                }
-            }
-            self.end();
-            self.print_word(")");
+            self.print_tuple_empty(pos_lo, pos_hi);
             return;
         }
 
@@ -252,7 +258,7 @@ impl<'ast> State<'_, 'ast> {
 
         // Otherwise, use commasep
         self.print_word("(");
-        self.commasep(values, pos_lo, pos_hi, print, get_span, format, break_single_no_cmnts);
+        self.commasep(values, pos_lo, pos_hi, print, get_span, format);
         self.print_word(")");
     }
 
@@ -271,16 +277,83 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.print_word("[");
-        self.commasep(
-            values,
-            span.lo(),
-            span.hi(),
-            print,
-            get_span,
-            ListFormat::Compact { cmnts_break: false, with_space: false },
-            false,
-        );
+        self.commasep(values, span.lo(), span.hi(), print, get_span, ListFormat::compact());
         self.print_word("]");
+    }
+
+    pub(super) fn commasep_opening_logic<T, S>(
+        &mut self,
+        values: &[T],
+        mut get_span: S,
+        format: ListFormat,
+    ) -> bool
+    where
+        S: FnMut(&T) -> Option<Span>,
+    {
+        let pos = if let Some(span) = values.first().and_then(&mut get_span) {
+            span.lo()
+        } else {
+            return false;
+        };
+
+        // Check for comments before the first item.
+        if let Some((cmnt_span, cmnt_style)) =
+            self.peek_comment_before(pos).map(|c| (c.span, c.style))
+        {
+            let cmnt_disabled = self.inline_config.is_disabled(cmnt_span);
+
+            // Handle special formatting for disabled code with isolated comments.
+            if self.cursor.enabled && cmnt_disabled && cmnt_style.is_isolated() {
+                self.print_sep(Separator::Hardbreak);
+                if !format.with_delimiters() {
+                    self.s.offset(self.ind);
+                }
+            };
+
+            // Apply spacing based on comment styles.
+            if let Some(last_style) = self.print_comments(
+                pos,
+                if format.with_delimiters() {
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+                } else {
+                    CommentConfig::skip_ws().no_breaks().mixed_prev_space().offset(self.ind)
+                },
+            ) {
+                if cmnt_style.is_mixed() && last_style.is_mixed() {
+                    if format.breaks_comments() {
+                        self.hardbreak();
+                    } else {
+                        self.space();
+                    }
+                    if !format.with_delimiters() && !cmnt_disabled {
+                        self.s.offset(self.ind);
+                    }
+                } else if !cmnt_style.is_mixed() && last_style.is_mixed() {
+                    self.nbsp();
+                } else if !last_style.is_mixed() && !format.with_delimiters() && !cmnt_disabled {
+                    self.hardbreak();
+                    self.s.offset(self.ind);
+                }
+            }
+
+            if self.cursor.enabled {
+                self.cursor.advance_to(pos, true);
+            }
+
+            return true;
+        }
+
+        if self.cursor.enabled {
+            self.cursor.advance_to(pos, true);
+        }
+
+        if !values.is_empty() && !format.with_delimiters() {
+            self.zerobreak();
+            self.s.offset(self.ind);
+            return true;
+        }
+
+        false
     }
 
     pub(super) fn commasep<'a, T, P, S>(
@@ -291,7 +364,6 @@ impl<'ast> State<'_, 'ast> {
         mut print: P,
         mut get_span: S,
         format: ListFormat,
-        break_single_no_cmnts: bool,
     ) where
         P: FnMut(&mut Self, &'a T),
         S: FnMut(&T) -> Option<Span>,
@@ -301,52 +373,34 @@ impl<'ast> State<'_, 'ast> {
         }
 
         let is_single_without_cmnts = values.len() == 1
-            && !break_single_no_cmnts
+            && !format.break_single()
             && self.peek_comment_before(pos_hi).is_none();
 
-        self.s.cbox(self.ind);
-        let mut skip_first_break = is_single_without_cmnts;
-        if let Some(first_pos) = get_span(&values[0]).map(Span::lo) {
-            if let Some((span, style)) =
-                self.peek_comment_before(first_pos).map(|cmnt| (cmnt.span, cmnt.style))
-            {
-                if self.cursor.enabled
-                    && self.inline_config.is_disabled(span)
-                    && style.is_isolated()
-                {
-                    self.hardbreak();
-                }
-                let last_style = self.print_comments(
-                    first_pos,
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-                );
-                // If mixed comment before the 1st item, manually handle breaks.
-                match (style.is_mixed(), last_style.unwrap().is_mixed(), format.breaks_comments()) {
-                    (true, true, true) => self.hardbreak(),
-                    (true, true, false) => self.space(),
-                    (false, true, _) => self.nbsp(),
-                    _ => {}
-                };
-                skip_first_break = true;
+        let skip_first_break = if format.with_delimiters() {
+            self.s.cbox(self.ind);
+            if is_single_without_cmnts {
+                true
+            } else {
+                self.commasep_opening_logic(values, &mut get_span, format)
             }
-            // Update cursor if previously enabled
-            if self.cursor.enabled {
-                self.cursor.advance_to(first_pos, true);
-            }
-        }
+        } else {
+            let res = self.commasep_opening_logic(values, &mut get_span, format);
+            self.s.cbox(self.ind);
+            res
+        };
 
         if let Some(sym) = format.prev_symbol() {
             self.word_space(sym);
-        } else if !skip_first_break {
-            format.add_break(true, values.len(), &mut self.s);
         } else if is_single_without_cmnts && format.with_space() {
             self.nbsp();
+        } else if !skip_first_break {
+            format.print_break(true, values.len(), &mut self.s);
         }
         if format.is_compact() {
             self.s.cbox(0);
         }
 
-        let mut skip_last_break = is_single_without_cmnts;
+        let mut skip_last_break = is_single_without_cmnts || !format.with_delimiters();
         for (i, value) in values.iter().enumerate() {
             let (is_last, span) = (i == values.len() - 1, get_span(value));
             if let Some(span) = span
@@ -375,7 +429,11 @@ impl<'ast> State<'_, 'ast> {
             }
             self.print_comments(
                 next_pos,
-                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                if !is_last || format.with_delimiters() {
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+                } else {
+                    CommentConfig::skip_ws().no_breaks().mixed_prev_space()
+                },
             );
 
             if is_last && self.is_bol_or_only_ind() {
@@ -388,7 +446,7 @@ impl<'ast> State<'_, 'ast> {
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
             {
-                format.add_break(false, values.len(), &mut self.s);
+                format.print_break(false, values.len(), &mut self.s);
             }
         }
 
@@ -397,11 +455,11 @@ impl<'ast> State<'_, 'ast> {
         }
         if !skip_last_break {
             if let Some(sym) = format.post_symbol() {
-                format.add_break(false, values.len(), &mut self.s);
+                format.print_break(false, values.len(), &mut self.s);
                 self.s.offset(-self.ind);
                 self.word(sym);
             } else {
-                format.add_break(true, values.len(), &mut self.s);
+                format.print_break(true, values.len(), &mut self.s);
                 self.s.offset(-self.ind);
             }
         } else if is_single_without_cmnts && format.with_space() {
@@ -412,6 +470,10 @@ impl<'ast> State<'_, 'ast> {
         }
         self.end();
         self.cursor.advance_to(pos_hi, true);
+
+        if !format.with_delimiters() {
+            self.zerobreak();
+        }
     }
 
     pub(super) fn print_path(&mut self, path: &'ast ast::PathSlice, consistent_break: bool) {
@@ -624,10 +686,9 @@ pub(crate) enum ListFormat {
     /// on the `break_single` flag.
     AlwaysBreak { break_single: bool, with_space: bool },
     /// Breaks all elements if any break.
-    Consistent { cmnts_break: bool, with_space: bool },
+    Consistent { break_single: bool, cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// Attempts to fit all elements in one line, before breaking consistently.
-    /// The boolean indicates whether mixed comments should force a break.
-    Compact { cmnts_break: bool, with_space: bool },
+    Compact { break_single: bool, cmnts_break: bool, with_space: bool, with_delimiters: bool },
     /// If the list contains just one element, it will print unboxed (will not break).
     /// Otherwise, will break consistently.
     Inline,
@@ -639,6 +700,25 @@ pub(crate) enum ListFormat {
 }
 
 impl ListFormat {
+    // -- GETTER METHODS -------------------------------------------------------
+    pub(crate) fn break_single(&self) -> bool {
+        match self {
+            Self::AlwaysBreak { break_single, .. } => *break_single,
+            Self::Consistent { break_single, .. } => *break_single,
+            Self::Compact { break_single, .. } => *break_single,
+            Self::Inline | Self::Yul { .. } => false,
+        }
+    }
+
+    pub(crate) fn with_delimiters(&self) -> bool {
+        match self {
+            Self::AlwaysBreak { .. } | Self::Yul { .. } => true,
+            Self::Consistent { with_delimiters, .. } => *with_delimiters,
+            Self::Compact { with_delimiters, .. } => *with_delimiters,
+            Self::Inline => false,
+        }
+    }
+
     pub(crate) fn breaks_comments(&self) -> bool {
         match self {
             Self::AlwaysBreak { .. } | Self::Yul { .. } => true,
@@ -665,7 +745,97 @@ impl ListFormat {
         if let Self::Yul { sym_post, .. } = self { *sym_post } else { None }
     }
 
-    pub(crate) fn add_break(&self, soft: bool, elems: usize, p: &mut Printer) {
+    pub(crate) fn is_compact(&self) -> bool {
+        matches!(self, Self::Compact { .. })
+    }
+
+    // -- BUILDER METHODS ------------------------------------------------------
+    pub(crate) fn always_break() -> Self {
+        Self::AlwaysBreak { break_single: true, with_space: false }
+    }
+
+    pub(crate) fn consistent() -> Self {
+        Self::Consistent {
+            break_single: false,
+            cmnts_break: false,
+            with_space: false,
+            with_delimiters: true,
+        }
+    }
+
+    pub(crate) fn compact() -> Self {
+        Self::Compact {
+            break_single: false,
+            cmnts_break: false,
+            with_space: false,
+            with_delimiters: true,
+        }
+    }
+
+    pub(crate) fn inline() -> Self {
+        Self::Inline
+    }
+
+    pub(crate) fn yul(sym_prev: Option<&'static str>, sym_post: Option<&'static str>) -> Self {
+        Self::Yul { sym_prev, sym_post }
+    }
+
+    pub(crate) fn break_single_if(self, value: bool) -> Self {
+        match self {
+            Self::AlwaysBreak { with_space, .. } => {
+                Self::AlwaysBreak { break_single: value, with_space }
+            }
+            Self::Consistent { cmnts_break, with_space, with_delimiters, .. } => {
+                Self::Consistent { break_single: value, cmnts_break, with_space, with_delimiters }
+            }
+            Self::Compact { cmnts_break, with_space, with_delimiters, .. } => {
+                Self::Compact { break_single: value, cmnts_break, with_space, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn add_cmnt_break(self) -> Self {
+        match self {
+            Self::Consistent { break_single, with_space, with_delimiters, .. } => {
+                Self::Consistent { break_single, cmnts_break: true, with_space, with_delimiters }
+            }
+            Self::Compact { break_single, with_space, with_delimiters, .. } => {
+                Self::Compact { break_single, cmnts_break: true, with_space, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn add_space(self) -> Self {
+        match self {
+            Self::AlwaysBreak { break_single, .. } => {
+                Self::AlwaysBreak { break_single, with_space: true }
+            }
+            Self::Consistent { break_single, cmnts_break, with_delimiters, .. } => {
+                Self::Consistent { break_single, cmnts_break, with_space: true, with_delimiters }
+            }
+            Self::Compact { break_single, cmnts_break, with_delimiters, .. } => {
+                Self::Compact { break_single, cmnts_break, with_space: true, with_delimiters }
+            }
+            _ => self,
+        }
+    }
+
+    pub(crate) fn rmv_delimiters(self) -> Self {
+        match self {
+            Self::Consistent { break_single, cmnts_break, with_space, .. } => {
+                Self::Consistent { break_single, cmnts_break, with_space, with_delimiters: false }
+            }
+            Self::Compact { break_single, cmnts_break, with_space, .. } => {
+                Self::Compact { break_single, cmnts_break, with_space, with_delimiters: false }
+            }
+            _ => self,
+        }
+    }
+
+    // -- PRINTER METHODS ------------------------------------------------------
+    pub(crate) fn print_break(&self, soft: bool, elems: usize, p: &mut Printer) {
         if let Self::AlwaysBreak { break_single, .. } = self
             && (elems > 1 || (*break_single && elems == 1))
         {
@@ -675,10 +845,6 @@ impl ListFormat {
         } else {
             p.space();
         }
-    }
-
-    pub(crate) fn is_compact(&self) -> bool {
-        matches!(self, Self::Compact { .. })
     }
 }
 

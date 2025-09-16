@@ -38,8 +38,7 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     |this, path| this.print_path(path, false),
                     get_span!(()),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
-                    false,
+                    ListFormat::consistent(),
                 );
                 self.word(" :=");
                 self.space();
@@ -72,31 +71,24 @@ impl<'ast> State<'_, 'ast> {
 
                 self.end();
             }
-            yul::StmtKind::Switch(yul::StmtSwitch { selector, branches, default_case }) => {
+            yul::StmtKind::Switch(yul::StmtSwitch { selector, cases }) => {
                 self.word("switch ");
                 self.print_yul_expr(selector);
 
                 self.print_trailing_comment(selector.span.hi(), None);
 
-                for yul::StmtSwitchCase { constant, body } in branches.iter() {
+                for yul::StmtSwitchCase { constant, body, span } in cases.iter() {
                     self.hardbreak_if_not_bol();
-                    self.word("case ");
-                    self.print_lit(constant);
-                    self.nbsp();
-                    self.print_yul_block(body, span, self.can_yul_block_be_inlined(body), false);
+                    if let Some(constant) = constant {
+                        self.word("case ");
+                        self.print_lit(constant);
+                        self.nbsp();
+                    } else {
+                        self.word("default ");
+                    }
+                    self.print_yul_block(body, *span, self.can_yul_block_be_inlined(body), false);
 
                     self.print_trailing_comment(selector.span.hi(), None);
-                }
-
-                if let Some(default_case) = default_case {
-                    self.hardbreak_if_not_bol();
-                    self.word("default ");
-                    self.print_yul_block(
-                        default_case,
-                        span,
-                        self.can_yul_block_be_inlined(default_case),
-                        false,
-                    );
                 }
             }
             yul::StmtKind::Leave => self.word("leave"),
@@ -118,8 +110,7 @@ impl<'ast> State<'_, 'ast> {
                     params_hi,
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
-                    false,
+                    ListFormat::consistent(),
                 );
                 self.nbsp();
                 let has_returns = !returns.is_empty();
@@ -134,8 +125,7 @@ impl<'ast> State<'_, 'ast> {
                         returns.last().map_or(span.hi(), |ret| ret.span.hi()),
                         Self::print_ident,
                         get_span!(),
-                        ListFormat::Yul { sym_prev: Some("->"), sym_post: Some("{") },
-                        false,
+                        ListFormat::yul(Some("->"), Some("{")),
                     );
                 }
                 self.end();
@@ -156,8 +146,7 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent { cmnts_break: false, with_space: false },
-                    false,
+                    ListFormat::consistent(),
                 );
                 if let Some(expr) = expr {
                     self.word(" :=");
@@ -197,8 +186,7 @@ impl<'ast> State<'_, 'ast> {
             Span::DUMMY.hi(),
             Self::print_yul_expr,
             get_span!(),
-            ListFormat::Consistent { cmnts_break: false, with_space: false },
-            true,
+            ListFormat::consistent().break_single_if(true),
         );
     }
 

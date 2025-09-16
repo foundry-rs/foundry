@@ -270,7 +270,7 @@ impl<'ast> CommentGatherer<'ast> {
         if let Some(line) = lines.next() {
             let line = line.trim_end();
             // Ensure first line of a doc comment only has the `/**` decorator
-            if let Some((_, second)) = line.split_once("/**") {
+            if is_doc && let Some((_, second)) = line.split_once("/**") {
                 res.push("/**".to_string());
                 if !second.trim().is_empty() {
                     let line = normalize_block_comment_ws(second, col).trim_end();
@@ -298,10 +298,11 @@ impl<'ast> CommentGatherer<'ast> {
             if !pos.is_last {
                 res.push(format_doc_block_comment(&line, self.tab_width));
             } else {
+                // Ensure last line of a doc comment only has the `*/` decorator
                 if let Some((first, _)) = line.split_once("*/")
                     && !first.trim().is_empty()
                 {
-                    res.push(format_doc_block_comment(first, self.tab_width));
+                    res.push(format_doc_block_comment(first.trim_end(), self.tab_width));
                 }
                 res.push(" */".to_string());
             }
@@ -356,7 +357,6 @@ fn format_doc_block_comment(line: &str, tab_width: Option<usize>) -> String {
     if line.is_empty() {
         return (" *").to_string();
     }
-}
 
     if let Some((_, rest_of_line)) = line.split_once("*") {
         if rest_of_line.is_empty() {
