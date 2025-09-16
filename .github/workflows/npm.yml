@@ -1,4 +1,4 @@
-name: Publish NPM
+name: npm
 
 on:
   workflow_dispatch:
@@ -22,6 +22,7 @@ defaults:
 env:
   ACTIONS_RUNNER_DEBUG: true
   NPM_CONFIG_PROVENANCE: true
+  NPM_REGISTRY_URL: "https://registry.npmjs.org"
 
 jobs:
   publish-arch:
@@ -54,11 +55,19 @@ jobs:
       }}
     outputs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
-    env:
-      NPM_REGISTRY_URL: "https://registry.npmjs.org"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Set Isolated Artifact Directory
+        id: set-artifact-dir
+        # Use RUNNER_TEMP env var to persist ARTIFACT_DIR across steps
+        run: echo "ARTIFACT_DIR=$RUNNER_TEMP/foundry_artifacts" >> "$GITHUB_ENV"
+
+      - name: Prepare Isolated Artifact Directory
+        run: |
+          mkdir -p "$ARTIFACT_DIR"
+          ls -la "$ARTIFACT_DIR" || true
 
       - name: Download Release Assets
         uses: actions/download-artifact@v5
@@ -66,19 +75,18 @@ jobs:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
           pattern: "foundry_*"
-          path: foundry_artifacts
+          # Extract artifacts into an isolated temp directory, not the workspace
+          path: ${{ runner.temp }}/foundry_artifacts
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@main
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: latest
-          registries: |
-            https://registry.npmjs.org
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -102,12 +110,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Artifacts in foundry_artifacts:"
-          ls -la ../foundry_artifacts || true
+          echo "Artifacts in $ARTIFACT_DIR:"
+          ls -la "$ARTIFACT_DIR" || true
 
           # Derive RELEASE_VERSION from any foundry artifact we downloaded
           # Expected names: foundry_<VERSION>_<platform>_<arch>.{tar.gz,zip}
-          first_file=$(ls ../foundry_artifacts/foundry_* 2>/dev/null | head -n1 || true)
+          first_file=$(ls "$ARTIFACT_DIR"/foundry_* 2>/dev/null | head -n1 || true)
           if [[ -z "${first_file}" ]]; then
             echo "No foundry artifacts found to publish" >&2
             exit 1
@@ -125,20 +133,20 @@ jobs:
           RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
         run: |
           set -euo pipefail
-          mkdir -p tmp
+          mkdir -p "$ARTIFACT_DIR/tmp"
 
-          FILE_PREFIX="../foundry_artifacts/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
+          FILE_PREFIX="$ARTIFACT_DIR/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
           if [[ -f "${FILE_PREFIX}.zip" ]]; then
             echo "Extracting ${FILE_PREFIX}.zip"
             if ! command -v unzip >/dev/null 2>&1; then
               sudo apt-get update -y && sudo apt-get install -y unzip
             fi
-            unzip -o "${FILE_PREFIX}.zip" -d ./tmp
-            BIN=./tmp/forge.exe
+            unzip -o "${FILE_PREFIX}.zip" -d "$ARTIFACT_DIR/tmp"
+            BIN="$ARTIFACT_DIR/tmp/forge.exe"
           else
             echo "Extracting ${FILE_PREFIX}.tar.gz"
-            tar -xzf "${FILE_PREFIX}.tar.gz" -C ./tmp
-            BIN=./tmp/forge
+            tar -xzf "${FILE_PREFIX}.tar.gz" -C "$ARTIFACT_DIR/tmp"
+            BIN="$ARTIFACT_DIR/tmp/forge"
           fi
 
           echo "Staging binary $BIN into @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
@@ -193,23 +201,20 @@ jobs:
     name: Publish Meta Package
     runs-on: ubuntu-latest
     env:
-      RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NPM_REGISTRY_URL: "https://registry.npmjs.org"
+      RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@main
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: latest
-          registries: |
-            https://registry.npmjs.org
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
