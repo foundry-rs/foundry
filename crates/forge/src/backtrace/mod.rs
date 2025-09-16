@@ -5,10 +5,8 @@ use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
-mod solidity;
-pub mod source_map;
-use crate::backtrace::source_map::collect_source_data;
-pub use solidity::{PcToSourceMapper, SourceLocation};
+mod source_map;
+use source_map::collect_source_data;
 pub use source_map::{PcSourceMapper, SourceData};
 
 /// Linked library information for backtrace resolution.
@@ -16,7 +14,7 @@ pub use source_map::{PcSourceMapper, SourceData};
 /// Contains the path, name, and deployed address of a linked library
 /// to enable proper frame resolution in backtraces.
 #[derive(Debug, Clone)]
-pub(crate) struct LinkedLib {
+struct LinkedLib {
     /// The source file path of the library
     path: PathBuf,
     /// The name of the library contract
@@ -47,12 +45,13 @@ impl<'a> BacktraceBuilder<'a> {
                 libs.libs
                     .iter()
                     .flat_map(|(path, libs_map)| {
-                        libs_map.iter().filter_map(move |(name, addr_str)| {
-                            Address::from_str(addr_str).ok().map(|address| LinkedLib {
-                                path: path.clone(),
-                                name: name.clone(),
-                                address,
-                            })
+                        libs_map.iter().map(move |(name, addr_str)| (path, name, addr_str))
+                    })
+                    .filter_map(|(path, name, addr_str)| {
+                        addr_str.parse().ok().map(|address| LinkedLib {
+                            path: path.clone(),
+                            name: name.clone(),
+                            address,
                         })
                     })
                     .collect()
@@ -164,7 +163,7 @@ pub struct Backtrace {
 
 impl Backtrace {
     /// Sets source data from pre-collected artifacts.
-    pub(crate) fn new(
+    fn new(
         artifacts_by_address: HashMap<Address, ArtifactId>,
         mut sources: HashMap<ArtifactId, SourceData>,
         linked_libraries: Vec<LinkedLib>,
@@ -206,7 +205,6 @@ impl Backtrace {
         };
 
         // Build the call stack by walking from the deepest node back to root
-        let mut frames = Vec::new();
         let mut current_idx = Some(deepest_idx);
 
         while let Some(idx) = current_idx {
@@ -214,13 +212,12 @@ impl Backtrace {
             let trace = &node.trace;
 
             if let Some(frame) = self.create_frame(trace) {
-                frames.push(frame);
+                self.frames.push(frame);
             }
 
             current_idx = node.parent;
         }
 
-        self.frames = frames;
         !self.frames.is_empty()
     }
 

@@ -175,7 +175,7 @@ pub fn collect_source_data(
         output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)
     {
         // Build ordered sources from the build context
-        let mut ordered_sources: Vec<(u32, PathBuf, String)> = Vec::new();
+        let mut ordered_sources = Vec::with_capacity(build_context.source_id_to_path.len());
 
         for (source_id, source_path) in &build_context.source_id_to_path {
             // Read source content from file
@@ -187,7 +187,7 @@ pub fn collect_source_data(
 
             let mut source_content =
                 foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
-            // Normalize line endings.
+            // Normalize line endings for windows
             if source_content.contains('\r') {
                 source_content = source_content.replace("\r\n", "\n");
             }

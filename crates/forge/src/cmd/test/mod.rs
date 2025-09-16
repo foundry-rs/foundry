@@ -574,16 +574,18 @@ impl TestArgs {
                 }
             }
 
-            let backtrace_builder = tests
-                .values()
-                .any(|res| {
-                    res.status.is_failure() && !silent && verbosity >= 3 && !res.traces.is_empty()
-                })
-                .then_some(BacktraceBuilder::new(
-                    output,
-                    config.root.clone(),
-                    config.parsed_libraries().ok(),
-                ));
+            let backtrace_builder = if !silent && verbosity >= 3 {
+                tests
+                    .values()
+                    .any(|res| res.status.is_failure() && !res.traces.is_empty())
+                    .then_some(BacktraceBuilder::new(
+                        output,
+                        config.root.clone(),
+                        config.parsed_libraries().ok(),
+                    ))
+            } else {
+                None
+            };
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
