@@ -1518,7 +1518,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _)| expected.count > 0 && !expected.found);
+            // For count=0 expectations, NOT being found is success, so mark them as found
+            for (expected, _) in &mut self.expected_emits {
+                if expected.count == 0 && !expected.found {
+                    expected.found = true;
+                }
+            }
+            self.expected_emits.retain(|(expected, _)| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
