@@ -300,6 +300,26 @@ mod tests {
     use foundry_config::NamedChain;
 
     #[test]
+    fn compute_units_per_second_skips_when_none() {
+        let args = EvmArgs::default();
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+        assert!(
+            !dict.contains_key("compute_units_per_second"),
+            "compute_units_per_second should be skipped when None"
+        );
+    }
+
+    #[test]
+    fn compute_units_per_second_present_when_some() {
+        let args = EvmArgs { compute_units_per_second: Some(1000), ..Default::default() };
+        let data = args.data().expect("provider data");
+        let dict = data.get(&Config::selected_profile()).expect("profile dict");
+        let val = dict.get("compute_units_per_second").expect("cups present");
+        assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
     fn can_parse_chain_id() {
         let args = EvmArgs {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
