@@ -5,10 +5,8 @@ use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
-mod solidity;
-pub mod source_map;
-use crate::backtrace::source_map::collect_source_data;
-pub use solidity::{PcToSourceMapper, SourceLocation};
+mod source_map;
+use source_map::collect_source_data;
 pub use source_map::{PcSourceMapper, SourceData};
 
 /// Linked library information for backtrace resolution.
