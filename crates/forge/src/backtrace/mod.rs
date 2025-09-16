@@ -5,6 +5,7 @@ use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
 use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
+
 mod source_map;
 use source_map::collect_source_data;
 pub use source_map::{PcSourceMapper, SourceData};
