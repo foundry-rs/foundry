@@ -1,13 +1,14 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{U256, hex, keccak256};
+use alloy_primitives::{hex, keccak256};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
-use foundry_cli::opts::BuildOpts;
+use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path, shell,
 };
+use foundry_compilers::artifacts::ast as solast;
 use foundry_compilers::{
     artifacts::{
         StorageLayout,
@@ -20,10 +21,31 @@ use foundry_compilers::{
 };
 use regex::Regex;
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    str::FromStr,
+    sync::LazyLock,
+};
 
-/// Number of bytes in an EVM storage slot
-const SLOT_SIZE_BYTES: u64 = 32;
+// Regexes for storage bucket annotations (module-level LazyLocks)
+static STORAGE_BUCKET_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@custom:storage-bucket\s+(.+)").unwrap());
+
+static STORAGE_BUCKET_SCHEMA_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@custom:storage-bucket-schema\s+(\S+)").unwrap());
+
+static STORAGE_BUCKET_SLOT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@custom:storage-bucket-slot\s+(\S+)(?:\s+(0x[0-9a-fA-F]+))?").unwrap()
+});
+
+// Transient (EIP-1153)
+static STORAGE_BUCKET_TRANSIENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@custom:storage-bucket-transient\s+(.+)").unwrap());
+
+static STORAGE_BUCKET_TRANSIENT_SLOT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@custom:storage-bucket-transient-slot\s+(\S+)(?:\s+(0x[0-9a-fA-F]+))?").unwrap()
+});
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -44,23 +66,19 @@ pub struct InspectArgs {
     #[arg(long, short, help_heading = "Display options")]
     pub strip_yul_comments: bool,
 
-    /// Whether to wrap the table to the terminal width.
-    #[arg(long, short, help_heading = "Display options")]
-    pub wrap: bool,
-
-    /// Enable enhanced EIP-7201 storage bucket parsing with AST information.
+    /// Show EIP-7201 (bucket-based) storage layout instead of compiler layout
     #[arg(long, help_heading = "Display options")]
     pub eip7201: bool,
 }
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, strip_yul_comments, wrap, eip7201 } = self;
+        let Self { contract, field, build, strip_yul_comments, eip7201 } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
         // Map field to ContractOutputSelection
-        let mut cos = build.compiler.extra_output.clone();
+        let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
             cos.push(field.try_into()?);
         }
@@ -75,18 +93,20 @@ impl InspectArgs {
         // Get the solc version if specified
         let solc_version = build.use_solc.clone();
 
-        // Build modified Args with AST if needed
-        let mut final_build_args = build;
-        final_build_args.compiler.extra_output = cos;
-        final_build_args.compiler.optimize = optimized;
-        
-        // For storage layout inspection with EIP-7201, also request AST to enhance bucket information
-        if field == ContractArtifactField::StorageLayout && eip7201 {
-            final_build_args.compiler.ast = true;
-        }
+        // Build modified Args
+        let modified_build_args = BuildOpts {
+            // Ensure AST is included so we can traverse it in this command
+            compiler: CompilerOpts {
+                ast: eip7201,
+                extra_output: cos,
+                optimize: optimized,
+                ..build.compiler
+            },
+            ..build
+        };
 
         // Build the project
-        let project = final_build_args.project()?;
+        let project = modified_build_args.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
         let target_path = find_target_path(&project, &contract)?;
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
@@ -97,8 +117,11 @@ impl InspectArgs {
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
-                let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
-                print_abi(abi, wrap)?;
+                let abi = artifact
+                    .abi
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+                print_abi(abi)?;
             }
             ContractArtifactField::Bytecode => {
                 print_json_str(&artifact.bytecode, Some("object"))?;
@@ -113,27 +136,20 @@ impl InspectArgs {
                 print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                print_method_identifiers(&artifact.method_identifiers, wrap)?;
+                print_method_identifiers(&artifact.method_identifiers)?;
             }
             ContractArtifactField::GasEstimates => {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                let bucket_rows =
-                    parse_storage_buckets_value(artifact.raw_metadata.as_ref()).unwrap_or_default();
-                
-                let source_buckets = if eip7201 {
-                    // Extract EIP-7201 storage buckets directly from AST and build artifacts
-                    if let Some(ast) = &artifact.ast {
-                        extract_eip7201_buckets_from_ast(ast, &output)
-                    } else {
-                        Vec::new()
-                    }
+                if !eip7201 {
+                    print_storage_layout(artifact.storage_layout.as_ref())?;
                 } else {
-                    Vec::new()
-                };
-                
-                print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, source_buckets, eip7201, wrap)?;
+                    let cname = contract.name().ok_or_else(|| {
+                        eyre!("Contract name is required when using --eip7201")
+                    })?;
+                    print_storage_layout_from_ast(&artifact, cname, &output)?;
+                }
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -155,11 +171,11 @@ impl InspectArgs {
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
-                print_errors_events(&out, true, wrap)?;
+                print_errors_events(&out, true)?;
             }
             ContractArtifactField::Events => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
-                print_errors_events(&out, false, wrap)?;
+                print_errors_events(&out, false)?;
             }
             ContractArtifactField::StandardJson => {
                 let standard_json = if let Some(version) = solc_version {
@@ -179,6 +195,1196 @@ impl InspectArgs {
     }
 }
 
+// New AST-only pipeline for storage-bucket inspection
+fn print_storage_layout_from_ast(
+    artifact: &foundry_compilers::artifacts::ConfigurableContractArtifact,
+    contract_name: &str,
+    output: &foundry_compilers::ProjectCompileOutput,
+) -> Result<()> {
+    let ast: &solast::Ast =
+        artifact.ast.as_ref().ok_or_else(|| eyre!("AST not available; re-run with --ast"))?;
+
+    // 1) Initialize buckets from constructor @custom:storage-bucket
+    let mut buckets: Vec<BucketRow> = Vec::new();
+    collect_constructor_buckets(ast, contract_name, &mut buckets);
+
+    // 2) For each bucket: fill schema and slot from matching function annotations
+    fill_bucket_slot(ast, contract_name, &mut buckets);
+
+    // 3) Cross-artifact doc matching for schema and slot annotations
+    fill_bucket_schema_across_artifacts(output, &mut buckets);
+
+    // Build type registry for expansions and constants
+    let type_registry = build_type_registry(output);
+
+    // Assign base slots from function bodies via AST referenced ids
+    resolve_bucket_slots_from_function_bodies(output, &type_registry, &mut buckets);
+
+    // Print
+    if shell::is_json() {
+        return print_json(&buckets);
+    }
+
+    let headers = vec![
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Contract"),
+    ];
+    print_table(headers, |table| {
+        // First, add standard compiler-provided storage layout rows (if available)
+        if let Some(std_layout) = artifact.storage_layout.as_ref() {
+            for slot in &std_layout.storage {
+                let storage_type = std_layout.types.get(&slot.storage_type);
+                table.add_row([
+                    slot.label.as_str(),
+                    storage_type.map_or("?", |t| &t.label),
+                    &slot.slot,
+                    &slot.offset.to_string(),
+                    storage_type.map_or("?", |t| &t.number_of_bytes),
+                    &slot.contract,
+                ]);
+            }
+        }
+
+        let mut used_aliases: BTreeSet<String> = BTreeSet::new();
+        for b in &buckets {
+            let raw_typ = b.bucket_type.clone();
+            let mut display_typ = if raw_typ.starts_with("singleton(") && raw_typ.ends_with(')') {
+                raw_typ.trim_start_matches("singleton(").trim_end_matches(')').trim().to_string()
+            } else {
+                raw_typ.clone()
+            };
+            if b.transient {
+                display_typ = format!("[transient] {}", display_typ);
+            }
+            let mut base_slot = b.slot.clone();
+            let mut slot_cell = base_slot.clone();
+            let mut make_unique_alias = |alias: String| {
+                if !used_aliases.contains(&alias) {
+                    used_aliases.insert(alias.clone());
+                    return alias;
+                }
+                let mut alias_star = format!("{}*", alias);
+                while used_aliases.contains(&alias_star) {
+                    alias_star.push('*');
+                }
+                used_aliases.insert(alias_star.clone());
+                alias_star
+            };
+            // If bucket is a singleton/struct, introduce an alias for the base slot for readability
+            if raw_typ.starts_with("singleton(") {
+                if let Some(inner) =
+                    raw_typ.strip_prefix("singleton(").and_then(|s| s.strip_suffix(')'))
+                {
+                    let inner = inner.trim();
+                    let struct_name = inner.strip_prefix("struct ").unwrap_or(inner);
+                    if has_struct_named(&type_registry, struct_name) {
+                        let alias = make_unique_alias(get_struct_alias(struct_name));
+                        let displayed = if base_slot.is_empty() {
+                            "<slot>".to_string()
+                        } else {
+                            base_slot.clone()
+                        };
+                        slot_cell = format!("{} = {}", alias, displayed);
+                        base_slot = alias.clone();
+                    }
+                }
+            } else if raw_typ.starts_with("struct ") {
+                let struct_name = raw_typ.trim_start_matches("struct ").trim();
+                if has_struct_named(&type_registry, struct_name) {
+                    let alias = make_unique_alias(get_struct_alias(struct_name));
+                    let displayed =
+                        if b.slot.is_empty() { "<slot>".to_string() } else { b.slot.clone() };
+                    slot_cell = format!("{} = {}", alias, displayed);
+                    base_slot = alias.clone();
+                }
+            } else if raw_typ.starts_with("mapping(") {
+                // If mapping to struct, prefer aliasing its base slot to something readable
+                if let Some(value_part) = raw_typ.split("=>").nth(1) {
+                    let v = value_part.trim().trim_end_matches(')');
+                    let struct_name = v.strip_prefix("struct ").unwrap_or(v);
+                    if has_struct_named(&type_registry, struct_name) {
+                        let alias = make_unique_alias(get_struct_alias(struct_name));
+                        let displayed = if base_slot.is_empty() {
+                            "<slot>".to_string()
+                        } else {
+                            base_slot.clone()
+                        };
+                        slot_cell = format!("{} = keccak(key, {})", alias, displayed);
+                        base_slot = alias.clone();
+                    }
+                }
+            }
+
+            table.add_row([&b.name, &display_typ, &slot_cell, "0", "32", &b.contract]);
+
+            if raw_typ.starts_with("singleton(") {
+                if let Some(inner) =
+                    raw_typ.strip_prefix("singleton(").and_then(|s| s.strip_suffix(')'))
+                {
+                    let inner = inner.trim();
+                    let struct_name = inner.strip_prefix("struct ").unwrap_or(inner);
+                    if has_struct_named(&type_registry, struct_name) {
+                        expand_struct_layout_rows(
+                            &type_registry,
+                            struct_name,
+                            &b.name,
+                            &b.contract,
+                            &base_slot,
+                            table,
+                            0,
+                            &mut used_aliases,
+                        );
+                    }
+                }
+            } else if raw_typ.starts_with("struct ") {
+                let struct_name = raw_typ.trim_start_matches("struct ").trim();
+                expand_struct_layout_rows(
+                    &type_registry,
+                    struct_name,
+                    &b.name,
+                    &b.contract,
+                    &base_slot,
+                    table,
+                    0,
+                    &mut used_aliases,
+                );
+            } else if raw_typ.starts_with("mapping(") {
+                if let Some(value_part) = raw_typ.split("=>").nth(1) {
+                    let v = value_part.trim().trim_end_matches(')');
+                    let struct_name = v.strip_prefix("struct ").unwrap_or(v);
+                    if has_struct_named(&type_registry, struct_name) {
+                        // base_slot already set to alias above (e.g., M); use it so children render as M, M + 1, ...
+                        let base = if base_slot.is_empty() {
+                            "<slot>".to_string()
+                        } else {
+                            base_slot.clone()
+                        };
+                        expand_struct_layout_rows(
+                            &type_registry,
+                            struct_name,
+                            &b.name,
+                            &b.contract,
+                            &base,
+                            table,
+                            0,
+                            &mut used_aliases,
+                        );
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn fill_bucket_schema_across_artifacts(
+    output: &foundry_compilers::ProjectCompileOutput,
+    buckets: &mut [BucketRow],
+) {
+    for (_id, artifact) in output.artifact_ids() {
+        if let Some(ast) = &artifact.ast {
+            for node in &ast.nodes {
+                match node.node_type {
+                    // Walk into contracts/libraries and inspect child functions/vars
+                    solast::NodeType::ContractDefinition => {
+                        for child in &node.nodes {
+                            if matches!(child.node_type, solast::NodeType::FunctionDefinition) {
+                                let docs: Option<solast::Documentation> =
+                                    child.attribute("documentation");
+                                let doc_text = documentation_text(docs);
+                                for bucket in buckets.iter_mut() {
+                                    if let Some(caps) = STORAGE_BUCKET_SCHEMA_RE.captures(&doc_text)
+                                    {
+                                        let schema_id = caps.get(1).unwrap().as_str();
+                                        if schema_id == bucket.name {
+                                            bucket.schema_func = Some(child.clone());
+                                            bucket.bucket_type =
+                                                infer_typed_schema_from_function_ast(child)
+                                                    .unwrap_or_else(|| {
+                                                        infer_untyped_schema_from_function_ast(
+                                                            child,
+                                                        )
+                                                        .unwrap_or_else(|| "unknown".into())
+                                                    });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Some tools may emit free-standing FunctionDefinition/VariableDeclaration
+                    solast::NodeType::FunctionDefinition => {
+                        let docs: Option<solast::Documentation> = node.attribute("documentation");
+                        let doc_text = documentation_text(docs);
+                        for bucket in buckets.iter_mut() {
+                            if let Some(caps) = STORAGE_BUCKET_SCHEMA_RE.captures(&doc_text) {
+                                let schema_id = caps.get(1).unwrap().as_str();
+                                if schema_id == bucket.name {
+                                    bucket.schema_func = Some(node.clone());
+                                    bucket.bucket_type = infer_typed_schema_from_function_ast(node)
+                                        .unwrap_or_else(|| {
+                                            infer_untyped_schema_from_function_ast(node)
+                                                .unwrap_or_else(|| "unknown".into())
+                                        });
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct BucketRow {
+    name: String,
+    bucket_type: String,
+    slot: String,
+    contract: String,
+    transient: bool,
+    #[serde(skip_serializing)]
+    schema_func: Option<solast::Node>,
+}
+
+#[derive(Debug, Clone)]
+struct StructInfo {
+    id: Option<usize>,
+    name: String,
+    source_path: String,
+    members: Vec<solast::VariableDeclaration>,
+}
+
+#[derive(Debug, Clone)]
+struct MemberLayout {
+    name: String,
+    kind: TypeKind,
+    slot_offset: usize,
+    byte_offset: usize,
+    size_bytes: usize,
+    type_name: String,
+    struct_id: Option<usize>,
+    mapping_keys: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum TypeKind {
+    Primitive,
+    Enum,
+    UserDefinedType,
+    Struct(usize),
+    MappingToStruct { struct_id: usize, key_types: Vec<String> },
+    MappingOther { key_types: Vec<String> },
+    Array { base_kind: Box<TypeKind>, is_dynamic: bool },
+}
+
+#[derive(Debug, Clone)]
+struct EnumInfo {
+    id: Option<usize>,
+    name: String,
+    source_path: String,
+    num_values: usize,
+}
+
+#[derive(Debug, Clone)]
+struct UserTypeInfo {
+    id: Option<usize>,
+    name: String,
+    source_path: String,
+    underlying_label: String,
+}
+
+#[derive(Debug, Default, Clone)]
+struct TypeRegistry {
+    structs_by_id: BTreeMap<isize, StructInfo>,
+    enums_by_id: BTreeMap<isize, EnumInfo>,
+    usertypes_by_id: BTreeMap<isize, UserTypeInfo>,
+    structs_by_name: BTreeMap<String, StructInfo>,
+    enums_by_name: BTreeMap<String, EnumInfo>,
+    usertypes_by_name: BTreeMap<String, UserTypeInfo>,
+    slot_consts_by_name: BTreeMap<String, String>,
+    slot_consts_by_id: BTreeMap<isize, String>,
+}
+
+fn build_type_registry(output: &foundry_compilers::ProjectCompileOutput) -> TypeRegistry {
+    let mut reg = TypeRegistry::default();
+    for (_id, artifact) in output.artifact_ids() {
+        if let Some(ast) = &artifact.ast {
+            collect_types_from_ast(ast, &mut reg);
+        }
+    }
+    reg
+}
+
+fn collect_types_from_ast(ast: &solast::Ast, reg: &mut TypeRegistry) {
+    let src_path = ast.absolute_path.clone();
+    for node in &ast.nodes {
+        collect_types_from_node(node, &src_path, reg);
+    }
+}
+
+fn collect_types_from_node(node: &solast::Node, src_path: &str, reg: &mut TypeRegistry) {
+    match node.node_type {
+        solast::NodeType::StructDefinition => {
+            let name: Option<String> = node.attribute("name");
+            let members: Option<Vec<solast::VariableDeclaration>> = node.attribute("members");
+            let info = StructInfo {
+                id: node.id,
+                name: name.clone().unwrap_or_default(),
+                source_path: src_path.to_string(),
+                members: members.unwrap_or_default(),
+            };
+            if let Some(id) = node.id.map(|v| v as isize) {
+                reg.structs_by_id.insert(id, info.clone());
+            }
+            if let Some(n) = name {
+                reg.structs_by_name.insert(format!("{}:{}", short_path(src_path), n), info);
+            }
+        }
+        solast::NodeType::EnumDefinition => {
+            let name: Option<String> = node.attribute("name");
+            let members: Option<Vec<solast::EnumValue>> = node.attribute("members");
+            let info = EnumInfo {
+                id: node.id,
+                name: name.clone().unwrap_or_default(),
+                source_path: src_path.to_string(),
+                num_values: members.as_ref().map(|v| v.len()).unwrap_or(0),
+            };
+            if let Some(id) = node.id.map(|v| v as isize) {
+                reg.enums_by_id.insert(id, info.clone());
+            }
+            if let Some(n) = name {
+                reg.enums_by_name.insert(n, info);
+            }
+        }
+        solast::NodeType::UserDefinedValueTypeDefinition => {
+            let name: Option<String> = node.attribute("name");
+            let underlying: Option<solast::TypeName> = node.attribute("underlyingType");
+            let info = UserTypeInfo {
+                id: node.id,
+                name: name.clone().unwrap_or_default(),
+                source_path: src_path.to_string(),
+                underlying_label: underlying
+                    .map(|t| type_string_from_typename(&t))
+                    .unwrap_or_else(|| "uint256".to_string()),
+            };
+            if let Some(id) = node.id.map(|v| v as isize) {
+                reg.usertypes_by_id.insert(id, info.clone());
+            }
+            if let Some(n) = name {
+                reg.usertypes_by_name.insert(n, info);
+            }
+        }
+        solast::NodeType::VariableDeclaration => {
+            // Capture global and file-level constants
+            let is_const: bool = node.attribute::<bool>("constant").unwrap_or(false);
+            let mutability: Option<String> = node.attribute("mutability");
+            let is_const_mut = matches!(mutability.as_deref(), Some("constant"));
+            if is_const || is_const_mut {
+                if let Some(name) = node.attribute::<String>("name") {
+                    if let Some(expr) = node.attribute::<solast::Expression>("value") {
+                        if let Some(val) = literal_hex_or_value(expr) {
+                            reg.slot_consts_by_name.entry(name.clone()).or_insert(val.clone());
+                            if let Some(id) = node.id {
+                                reg.slot_consts_by_id.insert(id as isize, val.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for child in &node.nodes {
+        collect_types_from_node(child, src_path, reg);
+    }
+    if let Some(body) = &node.body {
+        collect_types_from_node(body, src_path, reg);
+    }
+}
+
+fn short_path(path: &str) -> String {
+    if let Some(pos) = path.rfind('/') { path[pos + 1..].to_string() } else { path.to_string() }
+}
+
+fn expand_struct_layout_rows(
+    reg: &TypeRegistry,
+    struct_name: &str,
+    _bucket_display: &str,
+    _contract: &str,
+    base_slot: &str,
+    table: &mut comfy_table::Table,
+    indent_level: usize,
+    used_aliases: &mut BTreeSet<String>,
+) {
+    if let Some(si) = find_struct_by_simple_name(reg, struct_name) {
+        // Add a struct header row with requested indentation
+        let origin_label = format!("{}:{}", short_path(&si.source_path), si.name);
+        let struct_bytes = struct_total_slots(si, reg) * 32;
+        table.add_row([
+            &format!("{}├─ {}", " ".repeat(indent_level * 8), si.name),
+            &format!("struct {}", si.name),
+            "",
+            "0",
+            &struct_bytes.to_string(),
+            &origin_label,
+        ]);
+
+        let layout = compute_typed_struct_layout(si, reg);
+        render_member_layouts(
+            &layout,
+            &si.name,
+            base_slot,
+            reg,
+            table,
+            indent_level + 1,
+            used_aliases,
+        );
+    }
+}
+
+fn render_member_layouts(
+    layout: &[MemberLayout],
+    bucket_display: &str,
+    base_slot: &str,
+    reg: &TypeRegistry,
+    table: &mut comfy_table::Table,
+    indent_level: usize,
+    used_aliases: &mut BTreeSet<String>,
+) {
+    for member in layout {
+        let slot_formula = combine_slot_offset(base_slot, member.slot_offset);
+        let indent = " ".repeat(indent_level * 8);
+
+        match &member.kind {
+            TypeKind::Struct(struct_id) => {
+                // Struct header row + expand members using simple struct name
+                if let Some(si) = reg.structs_by_id.get(&(*struct_id as isize)) {
+                    let origin_label = format!("{}:{}", short_path(&si.source_path), si.name);
+                    table.add_row([
+                        &format!("{}├─ {}", indent, si.name),
+                        &format!("struct {}", si.name),
+                        "",
+                        "0",
+                        &(struct_total_slots(si, reg) * 32).to_string(),
+                        &origin_label,
+                    ]);
+
+                    let nested_layout = compute_typed_struct_layout(si, reg);
+                    render_member_layouts(
+                        &nested_layout,
+                        &si.name,
+                        &slot_formula,
+                        reg,
+                        table,
+                        indent_level + 1,
+                        used_aliases,
+                    );
+                }
+            }
+            TypeKind::MappingToStruct { struct_id, key_types } => {
+                // Mapping to struct: print alias header, then expand using alias
+                if let Some(si) = reg.structs_by_id.get(&(*struct_id as isize)) {
+                    let origin_label = format!("{}:{}", short_path(&si.source_path), si.name);
+                    let keys = key_types.join(", ");
+                    // Ensure unique alias across the whole table
+                    let mut alias = get_struct_alias(&si.name);
+                    if used_aliases.contains(&alias) {
+                        let mut tmp = format!("{}*", alias);
+                        while used_aliases.contains(&tmp) {
+                            tmp.push('*');
+                        }
+                        alias = tmp;
+                    }
+                    used_aliases.insert(alias.clone());
+                    let map_base = format!("keccak({}, {})", keys, slot_formula);
+
+                    table.add_row([
+                        &format!("{}├─ {}.{}", indent, bucket_display, member.name),
+                        &member.type_name,
+                        &format!("{} = {}", alias, map_base),
+                        "0",
+                        &member.size_bytes.to_string(),
+                        &origin_label,
+                    ]);
+                    // Insert a struct header row under the mapping row
+                    let struct_bytes = struct_total_slots(si, reg) * 32;
+                    table.add_row([
+                        &format!("{}├─ {}", " ".repeat((indent_level + 1) * 8), si.name),
+                        &format!("struct {}", si.name),
+                        "",
+                        "0",
+                        &struct_bytes.to_string(),
+                        &origin_label,
+                    ]);
+
+                    let nested_layout = compute_typed_struct_layout(si, reg);
+                    render_member_layouts(
+                        &nested_layout,
+                        &si.name,
+                        &alias,
+                        reg,
+                        table,
+                        indent_level + 1,
+                        used_aliases,
+                    );
+                }
+            }
+            _ => {
+                // Primitive/enum/UDT/array/mapping-other: leaf row
+                let origin = if let Some(struct_id) = member.struct_id {
+                    if let Some(si) = reg.structs_by_id.get(&(struct_id as isize)) {
+                        format!("{}:{}", short_path(&si.source_path), si.name)
+                    } else {
+                        "Unknown".to_string()
+                    }
+                } else {
+                    "Built-in".to_string()
+                };
+
+                table.add_row([
+                    &format!("{}├─ {}.{}", indent, bucket_display, member.name),
+                    &member.type_name,
+                    &slot_formula,
+                    &member.byte_offset.to_string(),
+                    &member.size_bytes.to_string(),
+                    &origin,
+                ]);
+            }
+        }
+    }
+}
+
+fn get_struct_alias(struct_name: &str) -> String {
+    struct_name.chars().next().unwrap_or('S').to_uppercase().collect()
+}
+
+fn combine_slot_offset(base: &str, offset: usize) -> String {
+    if offset == 0 {
+        return base.to_string();
+    }
+    // Try to fold existing "+ N" at the end of base
+    // Pattern: "<any> + <number>"
+    if let Some(pos) = base.rfind('+') {
+        let (head, tail) = base.split_at(pos);
+        let n_str = tail.trim_start_matches('+').trim();
+        if let Ok(n) = n_str.parse::<usize>() {
+            return format!("{} + {}", head.trim_end(), n + offset);
+        }
+    }
+    format!("{} + {}", base, offset)
+}
+
+fn struct_total_slots(si: &StructInfo, reg: &TypeRegistry) -> usize {
+    let layout = compute_typed_struct_layout(si, reg);
+    if layout.is_empty() {
+        return 1;
+    }
+    let last = layout.last().unwrap();
+    if last.size_bytes >= 32 {
+        last.slot_offset + ((last.size_bytes + 31) / 32)
+    } else {
+        last.slot_offset + 1
+    }
+}
+
+fn compute_typed_struct_layout(si: &StructInfo, reg: &TypeRegistry) -> Vec<MemberLayout> {
+    let mut layout = Vec::new();
+    let mut slot_index: usize = 0;
+    let mut used_in_slot: usize = 0;
+
+    for m in &si.members {
+        let kind = classify_type_from_var(m, reg);
+        let type_name = type_string_from_var(m);
+        let size = member_size_bytes(&kind, &type_name, reg);
+
+        // Check if we need to advance to next slot
+        let is_full_slot = matches!(
+            kind,
+            TypeKind::MappingToStruct { .. }
+                | TypeKind::MappingOther { .. }
+                | TypeKind::Array { .. }
+        ) || size >= 32;
+        let is_struct = matches!(kind, TypeKind::Struct(_));
+
+        if is_full_slot || is_struct || used_in_slot + size > 32 {
+            if used_in_slot > 0 {
+                slot_index += 1;
+                used_in_slot = 0;
+            }
+        }
+
+        let byte_offset = if is_full_slot || is_struct { 0 } else { used_in_slot };
+
+        layout.push(MemberLayout {
+            name: m.name.clone(),
+            kind: kind.clone(),
+            slot_offset: slot_index,
+            byte_offset,
+            size_bytes: size,
+            type_name,
+            struct_id: si.id,
+            mapping_keys: extract_mapping_keys(&kind),
+        });
+
+        if is_full_slot || is_struct {
+            let slots_consumed = match &kind {
+                TypeKind::Struct(struct_id) => reg
+                    .structs_by_id
+                    .get(&(*struct_id as isize))
+                    .map(|s| struct_total_slots(s, reg))
+                    .unwrap_or(1),
+                _ => (size + 31) / 32,
+            };
+            slot_index += slots_consumed;
+            used_in_slot = 0;
+        } else {
+            used_in_slot += size;
+            if used_in_slot == 32 {
+                slot_index += 1;
+                used_in_slot = 0;
+            }
+        }
+    }
+
+    layout
+}
+
+fn classify_type_from_var(var: &solast::VariableDeclaration, reg: &TypeRegistry) -> TypeKind {
+    if let Some(type_name) = &var.type_name {
+        classify_type_from_typename(type_name, reg)
+    } else {
+        TypeKind::Primitive
+    }
+}
+
+fn classify_type_from_typename(type_name: &solast::TypeName, reg: &TypeRegistry) -> TypeKind {
+    match type_name {
+        solast::TypeName::ElementaryTypeName(_) => TypeKind::Primitive,
+        solast::TypeName::UserDefinedTypeName(udt) => {
+            // Prefer resolving by type string/name to avoid version-specific referenced_declaration shapes
+            let name = if let Some(n) = &udt.name {
+                clean_ast_type_str(n)
+            } else if let Some(path) = &udt.path_node {
+                clean_ast_type_str(&path.name)
+            } else if let Some(ts) = &udt.type_descriptions.type_string {
+                clean_ast_type_str(ts)
+            } else {
+                String::new()
+            };
+
+            if !name.is_empty() {
+                if let Some(si) = reg.structs_by_name.iter().find_map(|(k, v)| {
+                    if k.ends_with(&format!(":{}", name)) { Some(v) } else { None }
+                }) {
+                    if let Some(id) = si.id {
+                        return TypeKind::Struct(id);
+                    }
+                }
+                if reg.enums_by_name.contains_key(&name) {
+                    return TypeKind::Enum;
+                }
+                if reg.usertypes_by_name.contains_key(&name) {
+                    return TypeKind::UserDefinedType;
+                }
+            }
+            TypeKind::Primitive
+        }
+        solast::TypeName::Mapping(mapping) => {
+            let key_types = vec![type_string_from_typename(&mapping.key_type)];
+            match classify_type_from_typename(&mapping.value_type, reg) {
+                TypeKind::Struct(struct_id) => TypeKind::MappingToStruct { struct_id, key_types },
+                _ => TypeKind::MappingOther { key_types },
+            }
+        }
+        solast::TypeName::ArrayTypeName(array) => {
+            let base_kind = Box::new(classify_type_from_typename(&array.base_type, reg));
+            let is_dynamic = array.length.is_none();
+            TypeKind::Array { base_kind, is_dynamic }
+        }
+        solast::TypeName::FunctionTypeName(_) => TypeKind::Primitive,
+    }
+}
+
+fn member_size_bytes(kind: &TypeKind, type_label: &str, reg: &TypeRegistry) -> usize {
+    match kind {
+        TypeKind::Primitive => elementary_size_bytes(type_label).unwrap_or(32),
+        TypeKind::Enum => 1,
+        TypeKind::UserDefinedType => {
+            if let Some(ut) = reg.usertypes_by_name.get(type_label) {
+                elementary_size_bytes(&ut.underlying_label).unwrap_or(32)
+            } else {
+                32
+            }
+        }
+        TypeKind::Struct(struct_id) => {
+            if let Some(si) = reg.structs_by_id.get(&(*struct_id as isize)) {
+                struct_total_slots(si, reg) * 32
+            } else {
+                32
+            }
+        }
+        TypeKind::MappingToStruct { .. } | TypeKind::MappingOther { .. } => 32,
+        TypeKind::Array { .. } => 32,
+    }
+}
+
+fn extract_mapping_keys(kind: &TypeKind) -> Option<String> {
+    match kind {
+        TypeKind::MappingToStruct { key_types, .. } | TypeKind::MappingOther { key_types } => {
+            if key_types.len() == 1 {
+                Some("key".to_string())
+            } else {
+                Some(format!(
+                    "key{}",
+                    (1..=key_types.len()).map(|i| i.to_string()).collect::<Vec<_>>().join(", key")
+                ))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn elementary_size_bytes(t: &str) -> Option<usize> {
+    if t.starts_with("uint") || t.starts_with("int") {
+        let bits: usize = t.trim_start_matches(|c: char| c.is_alphabetic()).parse().unwrap_or(256);
+        return Some((bits + 7) / 8);
+    }
+    if t == "bool" {
+        return Some(1);
+    }
+    if t == "address" || t == "address payable" {
+        return Some(20);
+    }
+    if t == "bytes32" {
+        return Some(32);
+    }
+    if t.starts_with("bytes") {
+        let n: usize = t[5..].parse().unwrap_or(32);
+        return Some(n);
+    }
+    None
+}
+
+fn literal_hex_or_value(expr: solast::Expression) -> Option<String> {
+    match expr {
+        solast::Expression::Literal(lit) => {
+            if let Some(v) = lit.value {
+                return Some(v);
+            }
+            if !lit.hex_value.is_empty() {
+                return Some(format!("0x{}", lit.hex_value));
+            }
+            None
+        }
+        solast::Expression::FunctionCall(fc) => {
+            if let solast::Expression::Identifier(id) = fc.expression {
+                if id.name == "keccak256" {
+                    return Some("keccak256(...)".to_string());
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+// removed unused is_dynamic_type helper
+
+fn has_struct_named(reg: &TypeRegistry, simple_name: &str) -> bool {
+    reg.structs_by_name.keys().any(|k| k.ends_with(&format!(":{}", simple_name)))
+}
+
+fn find_struct_by_simple_name<'a>(
+    reg: &'a TypeRegistry,
+    simple_name: &str,
+) -> Option<&'a StructInfo> {
+    reg.structs_by_name
+        .iter()
+        .find(|(k, _)| k.ends_with(&format!(":{}", simple_name)))
+        .map(|(_, v)| v)
+}
+
+fn collect_constructor_buckets(ast: &solast::Ast, contract_name: &str, out: &mut Vec<BucketRow>) {
+    for node in &ast.nodes {
+        if matches!(node.node_type, solast::NodeType::ContractDefinition) {
+            // get contract name
+            let name: Option<String> = node.attribute("name");
+            if name.as_deref() != Some(contract_name) {
+                continue;
+            }
+
+            // iterate members
+            for child in &node.nodes {
+                if !matches!(child.node_type, solast::NodeType::FunctionDefinition) {
+                    continue;
+                }
+                let kind: Option<String> = child.attribute("kind");
+                if kind.as_deref() != Some("constructor") {
+                    continue;
+                }
+                // documentation
+                let docs: Option<solast::Documentation> = child.attribute("documentation");
+                let doc_text = documentation_text(docs);
+                if !doc_text.is_empty() {
+                    for caps in STORAGE_BUCKET_RE.captures_iter(doc_text.trim()) {
+                        let name = caps.get(1).unwrap().as_str().trim().to_string();
+                        out.push(BucketRow {
+                            name,
+                            bucket_type: "unknown".into(),
+                            slot: "".into(),
+                            contract: contract_name.into(),
+                            transient: false,
+                            schema_func: None,
+                        });
+                    }
+                    for caps in STORAGE_BUCKET_TRANSIENT_RE.captures_iter(doc_text.trim()) {
+                        let name = caps.get(1).unwrap().as_str().trim().to_string();
+                        out.push(BucketRow {
+                            name,
+                            bucket_type: "unknown".into(),
+                            slot: "".into(),
+                            contract: contract_name.into(),
+                            transient: true,
+                            schema_func: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn fill_bucket_slot(ast: &solast::Ast, contract_name: &str, buckets: &mut [BucketRow]) {
+    for node in &ast.nodes {
+        if !matches!(node.node_type, solast::NodeType::ContractDefinition) {
+            continue;
+        }
+        let name: Option<String> = node.attribute("name");
+        if name.as_deref() != Some(contract_name) {
+            continue;
+        }
+
+        for child in &node.nodes {
+            if !matches!(child.node_type, solast::NodeType::FunctionDefinition) {
+                continue;
+            }
+            let docs: Option<solast::Documentation> = child.attribute("documentation");
+            let doc_text = documentation_text(docs);
+
+            // Match by SCHEMA_ID in annotations (schema/slot lines contain schema id)
+            for bucket in buckets.iter_mut() {
+                // Fill slot
+                if let Some(caps) = STORAGE_BUCKET_SLOT_RE.captures(&doc_text) {
+                    let schema_id = caps.get(1).unwrap().as_str();
+                    let slot_hex = caps.get(2).map(|m| m.as_str()).unwrap_or("0x0");
+                    if schema_id == bucket.name {
+                        bucket.slot = slot_hex.to_string();
+                    }
+                }
+
+                // Fill transient slot
+                if let Some(caps) = STORAGE_BUCKET_TRANSIENT_SLOT_RE.captures(&doc_text) {
+                    let schema_id = caps.get(1).unwrap().as_str();
+                    let slot_hex = caps.get(2).map(|m| m.as_str()).unwrap_or("0x0");
+                    if schema_id == bucket.name {
+                        bucket.slot = slot_hex.to_string();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn infer_untyped_schema_from_function_ast(func: &solast::Node) -> Option<String> {
+    let params: Option<solast::ParameterList> = func.attribute("parameters");
+    let returns: Option<solast::ParameterList> = func.attribute("returnParameters");
+    let param_count = params.map(|p| p.parameters.len()).unwrap_or(0);
+    let ret_count = returns.map(|r| r.parameters.len()).unwrap_or(0);
+    match (param_count, ret_count) {
+        (0, 1) => Some("singleton".into()),
+        (1, 1) => Some("mapping(K => V)".into()),
+        (n, 1) if n > 1 => Some("mapping(K1, K2, ... => V)".into()),
+        _ => None,
+    }
+}
+
+fn infer_typed_schema_from_function_ast(func: &solast::Node) -> Option<String> {
+    let param_types = extract_param_types_from_node(func);
+    let return_types = extract_return_types_from_node(func);
+    match (param_types.len(), return_types.get(0)) {
+        (0, Some(v)) => Some(format!("singleton({})", v)),
+        (1, Some(v)) => Some(format!("mapping({} => {})", param_types[0], v)),
+        (n, Some(v)) if n > 1 => Some(format!("mapping({} => {})", param_types.join(", "), v)),
+        _ => None,
+    }
+}
+
+fn extract_param_types_from_node(func: &solast::Node) -> Vec<String> {
+    if let Some(list) = func.attribute::<solast::ParameterList>("parameters") {
+        return type_strings_from_parameter_list(&list);
+    }
+    Vec::new()
+}
+
+fn extract_return_types_from_node(func: &solast::Node) -> Vec<String> {
+    if let Some(list) = func.attribute::<solast::ParameterList>("returnParameters") {
+        return type_strings_from_parameter_list(&list);
+    }
+    Vec::new()
+}
+
+fn type_strings_from_parameter_list(list: &solast::ParameterList) -> Vec<String> {
+    list.parameters.iter().map(type_string_from_var).collect()
+}
+
+fn type_string_from_var(v: &solast::VariableDeclaration) -> String {
+    if let Some(ts) = &v.type_descriptions.type_string {
+        return clean_ast_type_str(ts);
+    }
+    if let Some(ty) = &v.type_name {
+        return type_string_from_typename(ty);
+    }
+    "unknown".to_string()
+}
+
+fn type_string_from_typename(ty: &solast::TypeName) -> String {
+    match ty {
+        solast::TypeName::ElementaryTypeName(t) => t.name.clone(),
+        solast::TypeName::UserDefinedTypeName(u) => {
+            if let Some(name) = &u.name {
+                clean_ast_type_str(name)
+            } else if let Some(path) = &u.path_node {
+                clean_ast_type_str(&path.name)
+            } else if let Some(ts) = &u.type_descriptions.type_string {
+                clean_ast_type_str(ts)
+            } else {
+                "userdefined".to_string()
+            }
+        }
+        solast::TypeName::Mapping(m) => {
+            let k = type_string_from_typename(&m.key_type);
+            let v = type_string_from_typename(&m.value_type);
+            format!("mapping({} => {})", k, v)
+        }
+        solast::TypeName::ArrayTypeName(a) => {
+            let base = type_string_from_typename(&a.base_type);
+            format!("{}[]", base)
+        }
+        solast::TypeName::FunctionTypeName(_) => "function".to_string(),
+    }
+}
+
+fn clean_ast_type_str(s: &str) -> String {
+    let mut out = s.to_string();
+    if let Some(rest) = out.strip_prefix("struct ") {
+        out = rest.to_string();
+    }
+    if let Some(idx) = out.find(" storage") {
+        out.truncate(idx);
+    }
+    if let Some(idx) = out.find(" ref") {
+        out.truncate(idx);
+    }
+    out
+}
+
+fn extract_bucket_function_name(bucket_name: &str) -> String {
+    // Accept forms like "Namespace.func" or "Namespace:func" and extract the function part
+    if let Some(idx) = bucket_name.rfind(['.', ':']) {
+        bucket_name[idx + 1..].to_string()
+    } else {
+        bucket_name.to_string()
+    }
+}
+
+fn resolve_bucket_slots_from_function_bodies(
+    output: &foundry_compilers::ProjectCompileOutput,
+    reg: &TypeRegistry,
+    buckets: &mut [BucketRow],
+) {
+    // Map function simple name -> (idents, ref ids) found in body across all artifacts
+    let mut func_body_refs: BTreeMap<String, (Vec<String>, Vec<isize>)> = BTreeMap::new();
+    // Map schema id (from @custom:storage-bucket-schema <ID>) -> (idents, ref ids)
+    let mut schema_body_refs: BTreeMap<String, (Vec<String>, Vec<isize>)> = BTreeMap::new();
+    for (_id, artifact) in output.artifact_ids() {
+        if let Some(ast) = &artifact.ast {
+            for node in &ast.nodes {
+                match node.node_type {
+                    // Libraries are represented as ContractDefinition with kind==Library
+                    solast::NodeType::ContractDefinition => {
+                        for child in &node.nodes {
+                            if !matches!(child.node_type, solast::NodeType::FunctionDefinition) {
+                                continue;
+                            }
+                            let func_name: Option<String> = child.attribute("name");
+                            let Some(fname) = func_name else {
+                                continue;
+                            };
+                            if let Ok(json) = serde_json::to_value(child) {
+                                let mut ids = Vec::new();
+                                let mut ref_ids = Vec::new();
+
+                                collect_idents_and_refs_in_node_json(&json, &mut ids, &mut ref_ids);
+                                let entry = func_body_refs.entry(fname).or_default();
+                                entry.0.extend(ids);
+                                entry.1.extend(ref_ids);
+                                // Also index by schema id if present in docs
+                                let docs: Option<solast::Documentation> =
+                                    child.attribute("documentation");
+                                let doc_text = documentation_text(docs);
+                                if let Some(caps) = STORAGE_BUCKET_SCHEMA_RE.captures(&doc_text) {
+                                    let schema_id = caps.get(1).unwrap().as_str().to_string();
+                                    let entry = schema_body_refs.entry(schema_id).or_default();
+                                    // recompute to avoid moving previous vectors
+                                    let mut ids2 = Vec::new();
+                                    let mut ref_ids2 = Vec::new();
+                                    collect_idents_and_refs_in_node_json(
+                                        &json,
+                                        &mut ids2,
+                                        &mut ref_ids2,
+                                    );
+                                    entry.0.extend(ids2);
+                                    entry.1.extend(ref_ids2);
+                                }
+                            }
+                        }
+                    }
+                    solast::NodeType::FunctionDefinition => {
+                        let func_name: Option<String> = node.attribute("name");
+                        if let Some(fname) = func_name {
+                            if let Ok(json) = serde_json::to_value(node) {
+                                let mut ids = Vec::new();
+                                let mut ref_ids = Vec::new();
+
+                                collect_idents_and_refs_in_node_json(&json, &mut ids, &mut ref_ids);
+                                let entry = func_body_refs.entry(fname).or_default();
+                                entry.0.extend(ids);
+                                entry.1.extend(ref_ids);
+                                // Index by schema id if present on this function
+                                let docs: Option<solast::Documentation> =
+                                    node.attribute("documentation");
+                                let doc_text = documentation_text(docs);
+                                if let Some(caps) = STORAGE_BUCKET_SCHEMA_RE.captures(&doc_text) {
+                                    let schema_id = caps.get(1).unwrap().as_str().to_string();
+                                    let entry = schema_body_refs.entry(schema_id).or_default();
+                                    let mut ids2 = Vec::new();
+                                    let mut ref_ids2 = Vec::new();
+                                    collect_idents_and_refs_in_node_json(
+                                        &json,
+                                        &mut ids2,
+                                        &mut ref_ids2,
+                                    );
+                                    entry.0.extend(ids2);
+                                    entry.1.extend(ref_ids2);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    for b in buckets.iter_mut() {
+        if !b.slot.is_empty() {
+            continue;
+        }
+        let fname = extract_bucket_function_name(&b.name);
+        if let Some((idents, ref_ids)) = func_body_refs.get(&fname).cloned() {
+            // Try ref ids first
+            for rid in ref_ids {
+                if let Some(hex) = reg.slot_consts_by_id.get(&rid) {
+                    b.slot = short_hex_str(hex);
+                    break;
+                }
+            }
+            if b.slot.is_empty() {
+                for ident in idents {
+                    if let Some(hex) = reg.slot_consts_by_name.get(&ident) {
+                        b.slot = short_hex_str(hex);
+                        break;
+                    }
+                }
+            }
+        }
+        // Fallback to schema-id based matching
+        if b.slot.is_empty() {
+            if let Some((ids, ref_ids)) = schema_body_refs.get(&b.name).cloned() {
+                for rid in ref_ids {
+                    if let Some(hex) = reg.slot_consts_by_id.get(&rid) {
+                        b.slot = short_hex_str(hex);
+                        break;
+                    }
+                }
+                if b.slot.is_empty() {
+                    for ident in ids {
+                        if let Some(hex) = reg.slot_consts_by_name.get(&ident) {
+                            b.slot = short_hex_str(hex);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_idents_and_refs_in_node_json(
+    node: &serde_json::Value,
+    ids: &mut Vec<String>,
+    ref_ids: &mut Vec<isize>,
+) {
+    if let Some(obj) = node.as_object() {
+        if let Some(nt) = obj.get("nodeType").and_then(|v| v.as_str()) {
+            if nt == "Identifier" {
+                if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                    ids.push(name.to_string());
+                }
+                if let Some(rd) = obj.get("referencedDeclaration").and_then(|v| v.as_i64()) {
+                    ref_ids.push(rd as isize);
+                }
+            }
+            // Inline assembly externalReferences entries carry { declaration: <id>, slot: bool, offset: bool }
+            if nt == "InlineAssembly" {
+                if let Some(ext) = obj.get("externalReferences").and_then(|v| v.as_array()) {
+                    for e in ext {
+                        if let Some(decl) = e.get("declaration").and_then(|v| v.as_i64()) {
+                            ref_ids.push(decl as isize);
+                        }
+                    }
+                }
+            }
+        }
+        for (_k, v) in obj {
+            collect_idents_and_refs_in_node_json(v, ids, ref_ids);
+        }
+    } else if let Some(arr) = node.as_array() {
+        for v in arr {
+            collect_idents_and_refs_in_node_json(v, ids, ref_ids);
+        }
+    }
+}
+
+fn short_hex_str(hex_in: &str) -> String {
+    let s = hex_in.strip_prefix("0x").unwrap_or(hex_in);
+    if s.len() > 12 { format!("0x{}…{}", &s[..6], &s[s.len() - 4..]) } else { format!("0x{}", s) }
+}
+
+fn documentation_text(docs: Option<solast::Documentation>) -> String {
+    match docs {
+        Some(solast::Documentation::Structured(sd)) => sd.text.trim().to_string(),
+        Some(solast::Documentation::Raw(s)) => s.trim().to_string(),
+        None => String::new(),
+    }
+}
+
+// Removed JSON-based inference helpers in favor of typed AST traversal
 fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
@@ -213,70 +1419,66 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .join(",")
 }
 
-fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
+fn print_abi(abi: &JsonAbi) -> Result<()> {
     if shell::is_json() {
         return print_json(abi);
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
-    print_table(
-        headers,
-        |table| {
-            // Print events
-            for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                let types = parse_event_params(&ev.inputs);
-                let selector = ev.selector().to_string();
-                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
-            }
+    print_table(headers, |table| {
+        // Print events
+        for ev in abi.events.iter().flat_map(|(_, events)| events) {
+            let types = parse_event_params(&ev.inputs);
+            let selector = ev.selector().to_string();
+            table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+        }
 
-            // Print errors
-            for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-                let selector = er.selector().to_string();
-                table.add_row([
-                    "error",
-                    &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
-                    &selector,
-                ]);
-            }
+        // Print errors
+        for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+            let selector = er.selector().to_string();
+            table.add_row([
+                "error",
+                &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
+                &selector,
+            ]);
+        }
 
-            // Print functions
-            for func in abi.functions.iter().flat_map(|(_, f)| f) {
-                let selector = func.selector().to_string();
-                let state_mut = func.state_mutability.as_json_str();
-                let func_sig = if !func.outputs.is_empty() {
-                    format!(
-                        "{}({}) {state_mut} returns ({})",
-                        func.name,
-                        get_ty_sig(&func.inputs),
-                        get_ty_sig(&func.outputs)
-                    )
-                } else {
-                    format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
-                };
-                table.add_row(["function", &func_sig, &selector]);
-            }
+        // Print functions
+        for func in abi.functions.iter().flat_map(|(_, f)| f) {
+            let selector = func.selector().to_string();
+            let state_mut = func.state_mutability.as_json_str();
+            let func_sig = if !func.outputs.is_empty() {
+                format!(
+                    "{}({}) {state_mut} returns ({})",
+                    func.name,
+                    get_ty_sig(&func.inputs),
+                    get_ty_sig(&func.outputs)
+                )
+            } else {
+                format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+            };
+            table.add_row(["function", &func_sig, &selector]);
+        }
 
-            if let Some(constructor) = abi.constructor() {
-                let state_mut = constructor.state_mutability.as_json_str();
-                table.add_row([
-                    "constructor",
-                    &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
-                    "",
-                ]);
-            }
+        if let Some(constructor) = abi.constructor() {
+            let state_mut = constructor.state_mutability.as_json_str();
+            table.add_row([
+                "constructor",
+                &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
+                "",
+            ]);
+        }
 
-            if let Some(fallback) = &abi.fallback {
-                let state_mut = fallback.state_mutability.as_json_str();
-                table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
-            }
+        if let Some(fallback) = &abi.fallback {
+            let state_mut = fallback.state_mutability.as_json_str();
+            table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
+        }
 
-            if let Some(receive) = &abi.receive {
-                let state_mut = receive.state_mutability.as_json_str();
-                table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
-            }
-        },
-        should_wrap,
-    )
+        if let Some(receive) = &abi.receive {
+            let state_mut = receive.state_mutability.as_json_str();
+            table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
+        }
+    })
 }
 
 fn get_ty_sig(inputs: &[Param]) -> String {
@@ -304,15 +1506,9 @@ fn internal_ty(ty: &InternalType) -> String {
     }
 }
 
-pub fn print_storage_layout(
-    storage_layout: Option<&StorageLayout>,
-    bucket_rows: Vec<(String, String)>,
-    source_buckets: Vec<StorageBucket>,
-    eip7201: bool,
-    should_wrap: bool,
-) -> Result<()> {
+pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
-        return Err(missing_error("storage layout"));
+        eyre::bail!("Could not get storage layout");
     };
 
     if shell::is_json() {
@@ -328,179 +1524,24 @@ pub fn print_storage_layout(
         Cell::new("Contract"),
     ];
 
-    print_table(
-        headers,
-        |table| {
-            for slot in &storage_layout.storage {
-                let storage_type = storage_layout.types.get(&slot.storage_type);
-                table.add_row([
-                    slot.label.as_str(),
-                    storage_type.map_or("?", |t| &t.label),
-                    &slot.slot,
-                    &slot.offset.to_string(),
-                    storage_type.map_or("?", |t| &t.number_of_bytes),
-                    &slot.contract,
-                ]);
-            }
-            
-            // Add legacy bucket rows for backward compatibility (only when not using EIP-7201)
-            if !eip7201 {
-                for (type_str, slot_dec) in &bucket_rows {
-                    table.add_row([
-                        "storage-bucket",
-                        type_str.as_str(),
-                        slot_dec.as_str(),
-                        "0",
-                        "32",
-                        type_str,
-                    ]);
-                }
-            }
-            
-            // Add enhanced source buckets with EIP-7201 information (only when using EIP-7201)
-            if eip7201 {
-                for bucket in &source_buckets {
-                let display_type = if !bucket.bucket_type.is_empty() && bucket.bucket_type != "unknown" {
-                    if bucket.bucket_type == "singleton" {
-                        // Handle singleton type - prioritize explicit value identifier from natspec
-                        let value_type = if let Some(value_id) = &bucket.value_identifier {
-                            // Use explicit @custom:storage-bucket-value annotation
-                            value_id
-                        } else if let Some(ret_type) = &bucket.return_type {
-                            if ret_type.contains("storage") {
-                                extract_storage_type(ret_type)
-                            } else {
-                                // Direct from AST - extract struct name if it's a struct type
-                                if ret_type.starts_with("struct ") {
-                                    ret_type.strip_prefix("struct ").unwrap_or(ret_type)
-                                        .split(' ').next().unwrap_or(ret_type)
-                                } else {
-                                    ret_type
-                                }
-                            }
-                        } else {
-                            "unknown"
-                        };
-                        
-                        format!("{}", value_type)
-                    } else if let (Some(params), Some(ret_type)) = (&bucket.parameters, &bucket.return_type) {
-                        if bucket.bucket_type == "keyvalue" {
-                            // Extract value type - prioritize explicit value identifier from natspec
-                            let value_type = if let Some(value_id) = &bucket.value_identifier {
-                                // Use explicit @custom:storage-bucket-value annotation
-                                value_id
-                            } else if ret_type.contains("storage") {
-                                extract_storage_type(ret_type)
-                            } else {
-                                // Direct from AST - extract struct name if it's a struct type
-                                if ret_type.starts_with("struct ") {
-                                    ret_type.strip_prefix("struct ").unwrap_or(ret_type)
-                                        .split(' ').next().unwrap_or(ret_type)
-                                } else {
-                                    ret_type
-                                }
-                            };
-                            
-                            // Extract key types - handle multiple parameters properly
-                            let key_types = extract_all_param_types(params);
-                            
-                            format!("key({}) => {}", key_types, value_type)
-                        } else {
-                            bucket.bucket_type.clone()
-                        }
-                    } else {
-                        bucket.bucket_type.clone()
-                    }
-                } else {
-                    "storage-bucket".to_string()
-                };
-                
-                let slot_display = if bucket.slot.is_empty() {
-                    "0x0"
-                } else {
-                    bucket.slot.as_str()
-                };
-                let contract_display = format_contract_name(bucket);
-                
-                // Add transient indicator for transient storage buckets
-                let name_display = if bucket.is_transient {
-                    format!("[T] {}", bucket.name)
-                } else {
-                    bucket.name.clone()
-                };
-                
-                table.add_row([
-                    &name_display,
-                    &display_type,
-                    slot_display,
-                    "0",
-                    "32",
-                    &contract_display,
-                ]);
-                
-                // Add struct members if available
-                if let Some(struct_members) = &bucket.struct_members {
-                    // First, add a struct header row showing the struct info
-                    let struct_name = extract_struct_name_from_bucket(bucket);
-                    let total_struct_size = calculate_total_struct_size(struct_members);
-                    let struct_header_slot = generate_member_slot_formula_base(bucket);
-                    
-                    // Use the first member's source info for the struct header
-                    let struct_contract_display = if let Some(first_member) = struct_members.first() {
-                        format_struct_contract_name(first_member)
-                    } else {
-                        "Unknown.sol:Unknown".to_string()
-                    };
-                    
-                    table.add_row([
-                        &format!("  ├─ {}", struct_name),
-                        "struct",
-                        &struct_header_slot,
-                        "0",
-                        &total_struct_size.to_string(),
-                        &struct_contract_display,
-                    ]);
-                    
-                    // Then add individual struct members
-                    for member in struct_members {
-                        let member_slot = generate_member_slot_formula(bucket, member);
-                        let member_contract_display = format_struct_contract_name(member);
-                        
-                        table.add_row([
-                            &format!("  ├─ {}", member.name),
-                            &member.type_string,
-                            &member_slot,
-                            &member.byte_offset.to_string(),
-                            &member.size_bytes.to_string(),
-                            &member_contract_display,
-                        ]);
-                        
-                        // Recursively display nested struct members
-                        if let Some(nested_members) = &member.nested_members {
-                            print_nested_struct_members_with_parent(
-                                nested_members, 
-                                bucket, 
-                                table, 
-                                2, 
-                                None, 
-                                Some(member.slot_offset)
-                            );
-                        }
-                    }
-                }
-                }
-            }
-        },
-        should_wrap,
-    )
+    print_table(headers, |table| {
+        for slot in &storage_layout.storage {
+            let storage_type = storage_layout.types.get(&slot.storage_type);
+            table.add_row([
+                slot.label.as_str(),
+                storage_type.map_or("?", |t| &t.label),
+                &slot.slot,
+                &slot.offset.to_string(),
+                storage_type.map_or("?", |t| &t.number_of_bytes),
+                &slot.contract,
+            ]);
+        }
+    })
 }
 
-fn print_method_identifiers(
-    method_identifiers: &Option<BTreeMap<String, String>>,
-    should_wrap: bool,
-) -> Result<()> {
+fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
     let Some(method_identifiers) = method_identifiers else {
-        return Err(missing_error("method identifiers"));
+        eyre::bail!("Could not get method identifiers");
     };
 
     if shell::is_json() {
@@ -509,18 +1550,14 @@ fn print_method_identifiers(
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
 
-    print_table(
-        headers,
-        |table| {
-            for (method, identifier) in method_identifiers {
-                table.add_row([method, identifier]);
-            }
-        },
-        should_wrap,
-    )
+    print_table(headers, |table| {
+        for (method, identifier) in method_identifiers {
+            table.add_row([method, identifier]);
+        }
+    })
 }
 
-fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool) -> Result<()> {
+fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
     if shell::is_json() {
         return print_json(map);
     }
@@ -530,291 +1567,14 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool
     } else {
         vec![Cell::new("Event"), Cell::new("Topic")]
     };
-    print_table(
-        headers,
-        |table| {
-            for (method, selector) in map {
-                table.add_row([method, selector.as_str().unwrap()]);
-            }
-        },
-        should_wrap,
-    )
+    print_table(headers, |table| {
+        for (method, selector) in map {
+            table.add_row([method, selector.as_str().unwrap()]);
+        }
+    })
 }
 
-
-fn print_nested_struct_members_with_parent(
-    nested_members: &[StructMember], 
-    bucket: &StorageBucket, 
-    table: &mut Table, 
-    indent_level: usize,
-    parent_base_slot: Option<&str>,
-    parent_offset: Option<u64>
-) {
-    let mut current_struct_var: Option<String> = None;
-    let mut struct_base_offset: u64 = 0; // Track the base offset where the current struct starts
-    
-    for nested_member in nested_members {
-        let nested_member_slot = if nested_member.name.starts_with("struct ") {
-            // For struct headers, introduce a new variable
-            let struct_name = nested_member.name.replace("struct ", "");
-                let var_name = generate_struct_variable_name(&struct_name);
-            
-            let slot_formula = if let Some(parent_base) = parent_base_slot {
-                // This is a deeply nested struct - calculate properly from the parent mapping
-                let parent_field_offset = parent_offset.unwrap_or(0);
-                let mapping_keys = extract_mapping_keys_from_parent(nested_member);
-                format!("{} = keccak({}, {} + {})", var_name, mapping_keys, parent_base, parent_field_offset)
-            } else {
-                // Top-level nested struct - calculate from the parent mapping field
-                let parent_field_slot = parent_offset.unwrap_or(1); // Default to mapping at slot + 1
-                let mapping_keys = extract_mapping_keys_from_parent(nested_member);
-                format!("{} = keccak({}, {} + {})", var_name, mapping_keys, bucket.slot, parent_field_slot)
-            };
-            
-            current_struct_var = Some(var_name.clone());
-            struct_base_offset = nested_member.slot_offset; // Remember where this struct starts
-            slot_formula
-        } else {
-            // For regular members, use the current struct variable with relative offset
-            if let Some(ref struct_var) = current_struct_var {
-                // Calculate relative offset within the current struct
-                let relative_offset = nested_member.slot_offset - struct_base_offset;
-                if relative_offset == 0 {
-                    struct_var.clone()
-                } else {
-                    format!("{} + {}", struct_var, relative_offset)
-                }
-            } else if let Some(parent_base) = parent_base_slot {
-                // Use parent variable for members without their own struct header
-                let relative_offset = nested_member.slot_offset - parent_offset.unwrap_or(0);
-                if relative_offset == 0 {
-                    parent_base.to_string()
-                } else {
-                    format!("{} + {}", parent_base, relative_offset)
-                }
-            } else {
-                generate_nested_member_slot_formula(bucket, nested_member, None)
-            }
-        };
-        
-        let nested_contract_display = format_struct_contract_name(nested_member);
-        let indent_str = "  ".repeat(indent_level);
-        
-        table.add_row([
-            &format!("{}├─ {}", indent_str, nested_member.name),
-            &nested_member.type_string,
-            &nested_member_slot,
-            &nested_member.byte_offset.to_string(),
-            &nested_member.size_bytes.to_string(),
-            &nested_contract_display,
-        ]);
-        
-        // Recursively display deeper nested members
-        if let Some(deeper_nested_members) = &nested_member.nested_members {
-            let base_slot = current_struct_var.as_deref();
-            print_nested_struct_members_with_parent(
-                deeper_nested_members, 
-                bucket, 
-                table, 
-                indent_level + 1, 
-                base_slot,
-                Some(nested_member.slot_offset)
-            );
-        }
-    }
-}
-
-// Generate concise variable names for struct slots (M, P, B, etc.)
-fn generate_struct_variable_name(struct_name: &str) -> String {
-    let first_char = struct_name.chars().next().unwrap_or('S').to_uppercase().collect::<String>();
-    first_char
-}
-
-// Extract the mapping keys pattern from the parent field
-fn extract_mapping_keys_from_parent(_target_member: &StructMember) -> String {
-    // Generic key pattern - always use "key" for simplicity
-    "key".to_string()
-}
-
-// Find struct definition with namespace preference
-fn find_struct_with_namespace_preference(
-    struct_name: &str, 
-    parent_namespace: Option<&str>,
-    struct_definitions: &std::collections::HashMap<String, (Vec<StructMember>, Option<String>, Option<String>)>
-) -> Option<(Vec<StructMember>, Option<String>, Option<String>)> {
-    // If we have a parent namespace, prefer structs from the same namespace
-    if let Some(namespace) = parent_namespace {
-        let preferred_key = format!("{}:{}", namespace, struct_name);
-        if let Some(definition) = struct_definitions.get(&preferred_key) {
-            return Some(definition.clone());
-        }
-    }
-    
-    // Fallback: try exact struct name
-    if let Some(definition) = struct_definitions.get(struct_name) {
-        return Some(definition.clone());
-    }
-    
-    // Last resort: find any struct with this name in the identifier
-    for (key, definition) in struct_definitions {
-        if key.ends_with(&format!(":{}", struct_name)) || key == struct_name {
-            return Some(definition.clone());
-        }
-    }
-    
-    None
-}
-
-
-// Extract namespace from the current processing context
-fn extract_namespace_from_context(members: &[StructMember]) -> Option<String> {
-    // Look for struct_identifier in any of the members to determine current namespace
-    for member in members {
-        if let Some(identifier) = &member.struct_identifier {
-            if let Some(colon_pos) = identifier.find(':') {
-                return Some(identifier[..colon_pos].to_string());
-            }
-        }
-    }
-    None
-}
-
-// Enhance type information by replacing generic types with proper enum names
-fn enhance_enum_types(
-    buckets: &mut [StorageBucket],
-    enum_definitions: &std::collections::HashMap<String, (String, Option<String>)>
-) {
-    for bucket in buckets.iter_mut() {
-        if let Some(members) = &mut bucket.struct_members {
-            enhance_enum_types_in_members(members, enum_definitions);
-        }
-    }
-}
-
-// Recursively enhance enum types in struct members
-fn enhance_enum_types_in_members(
-    members: &mut [StructMember],
-    enum_definitions: &std::collections::HashMap<String, (String, Option<String>)>
-) {
-    for member in members.iter_mut() {
-        // Check if this member's type can be enhanced with enum information
-        if let Some(enhanced_type) = enhance_type_with_enum(&member.type_string, enum_definitions) {
-            member.type_string = enhanced_type;
-        }
-        
-        // Recursively enhance nested members
-        if let Some(nested_members) = &mut member.nested_members {
-            enhance_enum_types_in_members(nested_members, enum_definitions);
-        }
-    }
-}
-
-// Try to enhance a type string with proper enum name
-fn enhance_type_with_enum(
-    type_string: &str,
-    enum_definitions: &std::collections::HashMap<String, (String, Option<String>)>
-) -> Option<String> {
-    // Look for patterns that might be enhanced with enum information
-    // For example, "uint8" might become "enum Status" if we find a matching context
-    
-    // Simple enhancement for direct uint8 -> enum mappings
-    // This is a placeholder - you'd want more sophisticated logic here
-    if type_string == "uint8" {
-        // Try to find an enum that makes sense in this context
-        // For now, return None to keep the original type
-        return None;
-    }
-    
-    // Look for enum names in the type string
-    for (enum_key, (canonical_name, _source)) in enum_definitions {
-        if type_string.contains(canonical_name) {
-            return Some(format!("enum {}", enum_key));
-        }
-    }
-    
-    None
-}
-
-// Enhance type information by replacing generic types with proper usertype names
-fn enhance_usertype_types(
-    buckets: &mut [StorageBucket],
-    usertype_definitions: &std::collections::HashMap<String, (String, String, Option<String>)>
-) {
-    for bucket in buckets.iter_mut() {
-        if let Some(members) = &mut bucket.struct_members {
-            enhance_usertype_types_in_members(members, usertype_definitions);
-        }
-    }
-}
-
-// Recursively enhance usertype types in struct members
-fn enhance_usertype_types_in_members(
-    members: &mut [StructMember],
-    usertype_definitions: &std::collections::HashMap<String, (String, String, Option<String>)>
-) {
-    for member in members.iter_mut() {
-        // Check if this member's type can be enhanced with usertype information
-        if let Some(enhanced_type) = enhance_type_with_usertype(&member.type_string, usertype_definitions) {
-            member.type_string = enhanced_type;
-        }
-        
-        // Recursively enhance nested members
-        if let Some(nested_members) = &mut member.nested_members {
-            enhance_usertype_types_in_members(nested_members, usertype_definitions);
-        }
-    }
-}
-
-// Try to enhance a type string with proper usertype name
-fn enhance_type_with_usertype(
-    type_string: &str,
-    usertype_definitions: &std::collections::HashMap<String, (String, String, Option<String>)>
-) -> Option<String> {
-    // Look for usertype patterns in the type string
-    for (_usertype_key, (usertype_name, underlying_type, _source)) in usertype_definitions {
-        // Check if the current type matches the underlying type of a defined usertype
-        if type_string == underlying_type {
-            // Simple direct replacement
-            return Some(usertype_name.clone());
-        }
-        
-        // Handle more complex patterns like arrays, mappings, etc.
-        if type_string.contains(underlying_type) {
-            // Replace the underlying type with the usertype name in complex patterns
-            // For example: "uint256[]" -> "OrderId[]"
-            // Or: "mapping(address => uint256)" -> "mapping(address => OrderId)"
-            let enhanced = type_string.replace(underlying_type, usertype_name);
-            return Some(enhanced);
-        }
-    }
-    
-    None
-}
-
-// Generate slot formula for nested struct members
-fn generate_nested_member_slot_formula(bucket: &StorageBucket, member: &StructMember, parent_slot_var: Option<&str>) -> String {
-    if let Some(var) = parent_slot_var {
-        // Use the parent variable for nested members
-        if member.slot_offset == 0 {
-            var.to_string()
-        } else {
-            format!("{} + {}", var, member.slot_offset)
-        }
-    } else {
-        // For top-level nested structs, calculate from bucket slot
-        if member.slot_offset == 0 && member.byte_offset < SLOT_SIZE_BYTES {
-            format!("keccak(key, {})", bucket.slot)
-        } else {
-            format!("keccak(key, {}) + {}", bucket.slot, member.slot_offset)
-        }
-    }
-}
-
-fn print_table(
-    headers: Vec<Cell>,
-        mut add_rows: impl FnMut(&mut Table),
-    should_wrap: bool,
-) -> Result<()> {
+fn print_table(headers: Vec<Cell>, add_rows: impl FnOnce(&mut Table)) -> Result<()> {
     let mut table = Table::new();
     if shell::is_markdown() {
         table.load_preset(ASCII_MARKDOWN);
@@ -822,9 +1582,6 @@ fn print_table(
         table.apply_modifier(UTF8_ROUND_CORNERS);
     }
     table.set_header(headers);
-    if should_wrap {
-        table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
-    }
     add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
@@ -860,6 +1617,7 @@ macro_rules! impl_value_enum {
             pub const ALL: &'static [Self] = &[$(Self::$field),+];
 
             /// Returns the string representation of `self`.
+            #[inline]
             pub const fn as_str(&self) -> &'static str {
                 match self {
                     $(
@@ -869,6 +1627,7 @@ macro_rules! impl_value_enum {
             }
 
             /// Returns all the aliases of `self`.
+            #[inline]
             pub const fn aliases(&self) -> &'static [&'static str] {
                 match self {
                     $(
@@ -879,14 +1638,17 @@ macro_rules! impl_value_enum {
         }
 
         impl ::clap::ValueEnum for $name {
+            #[inline]
             fn value_variants<'a>() -> &'a [Self] {
                 Self::ALL
             }
 
+            #[inline]
             fn to_possible_value(&self) -> Option<::clap::builder::PossibleValue> {
                 Some(::clap::builder::PossibleValue::new(Self::as_str(self)).aliases(Self::aliases(self)))
             }
 
+            #[inline]
             fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
                 let _ = ignore_case;
                 <Self as ::std::str::FromStr>::from_str(input)
@@ -1020,7 +1782,7 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
 
 fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     let Some(yul) = yul else {
-        return Err(missing_error("IR output"));
+        eyre::bail!("Could not get IR output");
     };
 
     static YUL_COMMENTS: LazyLock<Regex> =
@@ -1037,1451 +1799,18 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
 
 fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
     let value = serde_json::to_value(obj)?;
-    let value = if let Some(key) = key
-        && let Some(value) = value.get(key)
+    let mut value_ref = &value;
+    if let Some(key) = key
+        && let Some(value2) = value.get(key)
     {
-        value
-    } else {
-        &value
-    };
-    Ok(match value.as_str() {
+        value_ref = value2;
+    }
+    let s = match value_ref.as_str() {
         Some(s) => s.to_string(),
-        None => format!("{value:#}"),
-    })
-}
-
-fn missing_error(field: &str) -> eyre::Error {
-    eyre!(
-        "{field} missing from artifact; \
-         this could be a spurious caching issue, consider running `forge clean`"
-    )
-}
-
-#[derive(Debug, Clone)]
-pub struct StorageBucket {
-    pub name: String,
-    pub bucket_type: String,
-    pub slot: String,
-    pub function_signature: Option<String>,
-    pub parameters: Option<String>,
-    pub return_type: Option<String>,
-    pub struct_members: Option<Vec<StructMember>>,
-    pub source_file: Option<String>,
-    pub contract_name: Option<String>,
-    pub value_identifier: Option<String>, // For @custom:storage-bucket-value matching
-    pub is_transient: bool, // For EIP-1153 transient storage
-}
-
-static BUCKET_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?ix)
-        (?P<name>[A-Za-z_][A-Za-z0-9_:\.\-]*)
-        \s+
-        (?:0x)?(?P<hex>[0-9a-f]{1,64})
-    ",
-    )
-    .unwrap()
-});
-
-static STORAGE_BUCKET_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket\s+(.+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_TYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-type\s+(\S+)\s+(\S+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_SLOT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-slot\s+(\S+)(?:\s+(0x[0-9a-fA-F]+))?")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_STRUCT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-struct\s+(\S+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_VALUE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-value\s+(\S+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_ENUM_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-enum\s+(\S+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_USERTYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-usertype\s+(\S+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_TRANSIENT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-transient\s+(.+)")
-        .unwrap()
-});
-
-static STORAGE_BUCKET_TRANSIENT_SLOT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@custom:storage-bucket-transient-slot\s+(\S+)(?:\s+(0x[0-9a-fA-F]+))?")
-        .unwrap()
-});
-
-#[derive(Debug, Clone)]
-pub struct StructMember {
-    pub name: String,
-    pub type_string: String,
-    pub slot_offset: u64,
-    pub byte_offset: u64,
-    pub size_bytes: u64,
-    pub source_file: Option<String>,
-    pub struct_name: Option<String>,
-    pub struct_identifier: Option<String>, // For @custom:storage-bucket-struct matching
-    pub nested_members: Option<Vec<StructMember>>, // For recursive struct expansion
-}
-
-fn parse_storage_buckets_value(raw_metadata: Option<&String>) -> Option<Vec<(String, String)>> {
-    let parse_bucket_pairs = |s: &str| {
-        BUCKET_PAIR_RE
-            .captures_iter(s)
-            .filter_map(|caps| {
-                let name = caps.get(1)?.as_str();
-                let hex_str = caps.get(2)?.as_str();
-
-                hex::decode(hex_str.trim_start_matches("0x"))
-                    .ok()
-                    .filter(|bytes| bytes.len() == SLOT_SIZE_BYTES as usize)
-                    .map(|_| (name.to_owned(), hex_str.to_owned()))
-            })
-            .collect::<Vec<_>>()
+        None => format!("{value_ref:#}"),
     };
-    let raw = raw_metadata?;
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    v.get("output")
-        .and_then(|o| o.get("devdoc"))
-        .and_then(|d| d.get("methods"))
-        .and_then(|m| m.get("constructor"))
-        .and_then(|c| c.as_object())
-        .and_then(|obj| obj.get("custom:storage-bucket"))
-        .map(|val| {
-            val.as_str()
-                .into_iter() // Option<&str> → Iterator<Item=&str>
-                .flat_map(parse_bucket_pairs)
-                .filter_map(|(name, hex): (String, String)| {
-                    let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
-                    let slot = U256::from_str_radix(hex_str, 16).ok()?;
-                    let slot_hex = short_hex(&alloy_primitives::hex::encode_prefixed(
-                        slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>(),
-                    ));
-                    Some((name, slot_hex))
-                })
-                .collect()
-        })
+    Ok(s)
 }
-
-fn short_hex(h: &str) -> String {
-    let s = h.strip_prefix("0x").unwrap_or(h);
-    if s.len() > 12 { format!("0x{}…{}", &s[..6], &s[s.len() - 4..]) } else { format!("0x{s}") }
-}
-
-fn extract_eip7201_buckets_from_ast(ast: &foundry_compilers::artifacts::ast::Ast, output: &foundry_compilers::ProjectCompileOutput) -> Vec<StorageBucket> {
-    let mut buckets = Vec::new();
-    
-    if let Ok(ast_value) = serde_json::to_value(ast) {
-        extract_buckets_from_ast_node(&ast_value, &mut buckets, None, Some(&ast_value));
-        process_bucket_information(&mut buckets, output);
-        enhance_bucket_types(&mut buckets, output);
-    }
-    
-    buckets
-}
-
-fn process_bucket_information(buckets: &mut Vec<StorageBucket>, output: &foundry_compilers::ProjectCompileOutput) {
-    // Fill missing function info (return types, parameters)
-    for (_artifact_id, contract_artifact) in output.artifact_ids() {
-        if let Some(contract_ast) = &contract_artifact.ast {
-            if let Ok(contract_ast_value) = serde_json::to_value(contract_ast) {
-                fill_missing_bucket_info(&contract_ast_value, buckets);
-            }
-        }
-    }
-    
-    // Search for struct definitions with return types properly set
-    for (_artifact_id, contract_artifact) in output.artifact_ids() {
-        if let Some(contract_ast) = &contract_artifact.ast {
-            if let Ok(contract_ast_value) = serde_json::to_value(contract_ast) {
-                let source_file = contract_ast_value.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .map(|path| extract_filename_from_path(path));
-                
-                search_for_struct_definitions_with_source(&contract_ast_value, buckets, source_file.as_deref());
-            }
-        }
-    }
-}
-
-fn enhance_bucket_types(buckets: &mut Vec<StorageBucket>, output: &foundry_compilers::ProjectCompileOutput) {
-    let all_struct_definitions = collect_all_struct_definitions(buckets, output);
-    let all_enum_definitions = collect_all_enum_definitions(output);
-    let all_usertype_definitions = collect_all_usertype_definitions(output);
-    
-    expand_nested_structs(buckets, &all_struct_definitions);
-    enhance_enum_types(buckets, &all_enum_definitions);
-    enhance_usertype_types(buckets, &all_usertype_definitions);
-}
-
-fn extract_buckets_from_ast_node(node: &Value, buckets: &mut Vec<StorageBucket>, current_source: Option<&str>, ast_root: Option<&Value>) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                // Extract source file path from SourceUnit
-                let source_file = node.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .or_else(|| node.get("src").and_then(|src| src.as_str()))
-                    .map(|path| extract_filename_from_path(path));
-                
-                // Root node - recurse into child nodes
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        extract_buckets_from_ast_node(child_node, buckets, source_file.as_deref(), ast_root);
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if let Some(contract_name) = node.get("name").and_then(|n| n.as_str()) {
-                    // Check all child nodes for constructors, functions, variables, and structs
-                    if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                        for child_node in nodes {
-                            extract_constructor_buckets(child_node, buckets, contract_name, current_source);
-                            extract_function_buckets(child_node, buckets, contract_name, current_source, ast_root);
-                            extract_struct_buckets(child_node, buckets, current_source);
-                        }
-                    }
-                }
-            }
-            "StructDefinition" => {
-                // Also check for top-level struct definitions
-                extract_struct_buckets(node, buckets, current_source);
-            }
-            _ => {
-                // For other node types, continue recursing
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        extract_buckets_from_ast_node(child_node, buckets, current_source, ast_root);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn extract_constructor_buckets(node: &Value, buckets: &mut Vec<StorageBucket>, contract_name: &str, source_file: Option<&str>) {
-    if node.get("nodeType").and_then(|nt| nt.as_str()) == Some("FunctionDefinition") 
-        && node.get("kind").and_then(|k| k.as_str()) == Some("constructor") {
-        
-        // Look for @custom:storage-bucket in documentation
-        if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-            // Find all @custom:storage-bucket matches in the constructor documentation
-            for caps in STORAGE_BUCKET_RE.captures_iter(doc_text.trim()) {
-                let bucket_name = caps.get(1).unwrap().as_str().trim();
-                
-                // Create initial bucket entry
-                buckets.push(StorageBucket {
-                    name: bucket_name.to_string(),
-                    bucket_type: "unknown".to_string(),
-                    slot: "".to_string(),
-                    function_signature: None,
-                    parameters: None,
-                    return_type: None,
-                    struct_members: None,
-                    source_file: source_file.map(|s| s.to_string()),
-                    contract_name: Some(contract_name.to_string()),
-                    value_identifier: None,
-                    is_transient: false,
-                });
-            }
-            
-            // Find all @custom:storage-bucket-transient matches in the constructor documentation
-            for caps in STORAGE_BUCKET_TRANSIENT_RE.captures_iter(doc_text.trim()) {
-                let bucket_name = caps.get(1).unwrap().as_str().trim();
-                
-                // Create initial transient bucket entry
-                buckets.push(StorageBucket {
-                    name: bucket_name.to_string(),
-                    bucket_type: "unknown".to_string(),
-                    slot: "".to_string(),
-                    function_signature: None,
-                    parameters: None,
-                    return_type: None,
-                    struct_members: None,
-                    source_file: source_file.map(|s| s.to_string()),
-                    contract_name: Some(contract_name.to_string()),
-                    value_identifier: None,
-                    is_transient: true,
-                });
-            }
-        }
-    }
-}
-
-fn extract_function_buckets(node: &Value, buckets: &mut Vec<StorageBucket>, contract_name: &str, source_file: Option<&str>, _ast_root: Option<&Value>) {
-    let node_type = node.get("nodeType").and_then(|nt| nt.as_str());
-    
-    if node_type == Some("FunctionDefinition") {
-        // Look for @custom:storage-bucket-type in documentation
-        if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-            if let Some(caps) = STORAGE_BUCKET_TYPE_RE.captures(doc_text.trim()) {
-                let function_ref = caps.get(1).unwrap().as_str();
-                let bucket_type = caps.get(2).unwrap().as_str();
-                
-                // Find existing bucket or create new one
-                if let Some(existing_bucket) = buckets.iter_mut().find(|b| b.name == function_ref) {
-                    // Update existing bucket
-                    existing_bucket.bucket_type = bucket_type.to_string();
-                    existing_bucket.source_file = source_file.map(|s| s.to_string());
-                    existing_bucket.contract_name = Some(contract_name.to_string());
-                    extract_function_signature_from_ast(node, existing_bucket);
-                } else {
-                    // Create new bucket - this should only happen in the target file
-                    let mut new_bucket = StorageBucket {
-                        name: function_ref.to_string(),
-                        bucket_type: bucket_type.to_string(),
-                        slot: "".to_string(),
-                        function_signature: None,
-                        parameters: None,
-                        return_type: None,
-                        struct_members: None,
-                        source_file: source_file.map(|s| s.to_string()),
-                        contract_name: Some(contract_name.to_string()),
-                        value_identifier: None,
-                        is_transient: false,
-                    };
-                    extract_function_signature_from_ast(node, &mut new_bucket);
-                    buckets.push(new_bucket);
-                }
-            }
-        }
-    }
-
-    // Also check for slot definitions - these might be on separate constant declarations
-    if node_type == Some("VariableDeclaration") {
-        if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-            if let Some(caps) = STORAGE_BUCKET_SLOT_RE.captures(doc_text.trim()) {
-                let function_ref = caps.get(1).unwrap().as_str();
-                let slot_hex = caps.get(2).unwrap().as_str();
-                
-                let slot = U256::from_str_radix(slot_hex.strip_prefix("0x").unwrap_or(slot_hex), 16).ok();
-                let short_slot = if let Some(slot) = slot {
-                    short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>()))
-                } else {
-                    slot_hex.to_string()
-                };
-                
-                // Find existing bucket or create new one  
-                if let Some(existing_bucket) = buckets.iter_mut().find(|b| b.name == function_ref) {
-                    // Update existing bucket with slot info
-                    existing_bucket.slot = short_slot;
-                } else {
-                    // Create new bucket with slot info - this should only happen in the target file
-                    buckets.push(StorageBucket {
-                        name: function_ref.to_string(),
-                        bucket_type: "unknown".to_string(),
-                        slot: short_slot,
-                        function_signature: None,
-                        parameters: None,
-                        return_type: None,
-                        struct_members: None,
-                        source_file: source_file.map(|s| s.to_string()),
-                        contract_name: Some(contract_name.to_string()),
-                        value_identifier: None,
-                        is_transient: false,
-                    });
-                }
-            }
-            
-            // Also check for @custom:storage-bucket-transient-slot in documentation  
-            if let Some(caps) = STORAGE_BUCKET_TRANSIENT_SLOT_RE.captures(doc_text.trim()) {
-                let function_ref = caps.get(1).unwrap().as_str();
-                
-                // Get slot value from natspec annotation (if provided)
-                let slot_hex = caps.get(2).map(|m| m.as_str()).unwrap_or("0x0").to_string();
-                
-                let slot = U256::from_str_radix(slot_hex.strip_prefix("0x").unwrap_or(&slot_hex), 16).ok();
-                let short_slot = if let Some(slot) = slot {
-                    short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>()))
-                } else {
-                    // If we can't parse the hex, show it as-is (might be an expression)
-                    if slot_hex == "0x0" {
-                        "0x0".to_string() // Keep explicit 0x0
-                    } else {
-                        format!("0x{}", slot_hex.trim_start_matches("0x")) // Ensure hex prefix
-                    }
-                };
-                
-                // Find existing bucket or create new one, mark as transient
-                if let Some(existing_bucket) = buckets.iter_mut().find(|b| b.name == function_ref) {
-                    // Update existing bucket with slot info and mark as transient
-                    existing_bucket.slot = short_slot;
-                    existing_bucket.is_transient = true;
-                } else {
-                    // Create new transient bucket with slot info
-                    buckets.push(StorageBucket {
-                        name: function_ref.to_string(),
-                        bucket_type: "unknown".to_string(),
-                        slot: short_slot,
-                        function_signature: None,
-                        parameters: None,
-                        return_type: None,
-                        struct_members: None,
-                        source_file: source_file.map(|s| s.to_string()),
-                        contract_name: Some(contract_name.to_string()),
-                        value_identifier: None,
-                        is_transient: true,
-                    });
-                }
-            }
-        }
-    }
-}
-
-fn extract_struct_buckets(node: &Value, buckets: &mut Vec<StorageBucket>, source_file: Option<&str>) {
-    if node.get("nodeType").and_then(|nt| nt.as_str()) == Some("StructDefinition") {
-        // Look for @custom:storage-bucket-struct in documentation
-        if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-            if let Some(caps) = STORAGE_BUCKET_STRUCT_RE.captures(doc_text.trim()) {
-                let struct_name = caps.get(1).unwrap().as_str().trim();
-                let canonical_name = node.get("canonicalName").and_then(|n| n.as_str()).unwrap_or(struct_name);
-                
-                // Extract struct members and calculate their storage layout
-                let struct_members = if let Some(members_array) = node.get("members").and_then(|m| m.as_array()) {
-                    calculate_struct_layout(members_array, source_file, Some(canonical_name))
-                } else {
-                    Vec::new()
-                };
-                
-                // Find existing EIP-7201 bucket that matches this struct's return type
-                let found_match = false;
-                for existing_bucket in buckets.iter_mut() {
-                    if let Some(ret_type) = &existing_bucket.return_type {
-                        // Match struct name against return type (e.g., "MarketSettings" matches "MarketSettings")
-                        if ret_type == struct_name || ret_type == canonical_name || 
-                           ret_type.contains(struct_name) || ret_type.contains(canonical_name) {
-                            // This struct is the return type of an existing EIP-7201 bucket
-                            existing_bucket.struct_members = Some(struct_members.clone());
-                            let _ = found_match; // Suppress warning
-                            break;
-                        }
-                    }
-                }
-                
-                // Only try precise function-struct matching if no direct match found
-                if !found_match {
-                    for existing_bucket in buckets.iter_mut() {
-                        // NEVER override explicit value identifiers - they have absolute priority
-                        if existing_bucket.value_identifier.is_some() {
-                            continue;
-                        }
-                        
-                        // Only allow struct assignment for functions that clearly return structs
-                        // Use precise matching patterns instead of substring matching
-                        if let Some(ret_type) = &existing_bucket.return_type {
-                            // Direct return type match (e.g., "MarketSettings" == "MarketSettings")  
-                            if ret_type == struct_name || ret_type == canonical_name {
-                                existing_bucket.struct_members = Some(struct_members.clone());
-                                break;
-                            }
-                            
-                            // Namespace-qualified match (e.g., "Contract:StructName" contains "StructName")
-                            if ret_type.contains(&format!(":{}", struct_name)) || ret_type.contains(&format!(":{}", canonical_name)) {
-                                existing_bucket.struct_members = Some(struct_members.clone());
-                                break;  
-                            }
-                        }
-                        
-                        // Pattern-based matching ONLY for load functions with exact struct name correspondence
-                        if existing_bucket.name.starts_with("load") || existing_bucket.name.contains(".load") {
-                            let bucket_name = existing_bucket.name.to_lowercase();
-                            let struct_lower = struct_name.to_lowercase();
-                            let canonical_lower = canonical_name.to_lowercase();
-                            
-                            // Exact suffix match: function name ends with struct name
-                            if bucket_name.ends_with(&struct_lower) || bucket_name.ends_with(&canonical_lower) {
-                                existing_bucket.struct_members = Some(struct_members.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Don't create standalone struct buckets - only update existing EIP-7201 buckets
-                // This prevents duplicate entries and ensures struct members appear under their parent slot
-            }
-        }
-    }
-}
-
-fn calculate_struct_layout(members: &[Value], source_file: Option<&str>, struct_name: Option<&str>) -> Vec<StructMember> {
-    calculate_struct_layout_with_buckets(members, source_file, struct_name, &[])
-}
-
-fn calculate_struct_layout_with_buckets(
-    members: &[Value], 
-    source_file: Option<&str>, 
-    struct_name: Option<&str>,
-    all_buckets: &[StorageBucket]
-) -> Vec<StructMember> {
-    let mut struct_members = Vec::new();
-    let mut current_slot = 0u64;
-    let mut current_byte_offset = 0u64;
-    
-    for member in members {
-        if let (Some(name), Some(type_desc)) = (
-            member.get("name").and_then(|n| n.as_str()),
-            member.get("typeDescriptions").and_then(|td| td.get("typeString")).and_then(|ts| ts.as_str())
-        ) {
-            let size_bytes = calculate_type_size(type_desc);
-            
-            // Check if we need to move to the next slot
-            if current_byte_offset + size_bytes > SLOT_SIZE_BYTES {
-                current_slot += 1;
-                current_byte_offset = 0;
-            }
-            
-            // Check if this field contains a struct that we should expand
-            let nested_members = extract_and_expand_nested_structs(&type_desc, current_slot, all_buckets);
-            
-            struct_members.push(StructMember {
-                name: name.to_string(),
-                type_string: type_desc.to_string(),
-                slot_offset: current_slot,
-                byte_offset: current_byte_offset,
-                size_bytes,
-            source_file: source_file.map(|s| s.to_string()),
-            struct_name: struct_name.map(|s| s.to_string()),
-            struct_identifier: None,
-            nested_members,
-            });
-            
-            current_byte_offset += size_bytes;
-            
-            // If we exactly fill a slot, move to the next one
-            if current_byte_offset == SLOT_SIZE_BYTES {
-                current_slot += 1;
-                current_byte_offset = 0;
-            }
-        }
-    }
-    
-    struct_members
-}
-
-// Extract and expand nested structs from type descriptions
-fn extract_and_expand_nested_structs(
-    type_desc: &str, 
-    base_slot_offset: u64,
-    all_buckets: &[StorageBucket]
-) -> Option<Vec<StructMember>> {
-    // Look for patterns like "struct StructName" or "mapping(...=> struct StructName)"
-    if let Some(struct_name) = extract_struct_name_from_type(type_desc) {
-        // Find the bucket that defines this struct
-        for bucket in all_buckets {
-            if let Some(members) = &bucket.struct_members {
-                if let Some(bucket_ret_type) = &bucket.return_type {
-                    if bucket_ret_type == &struct_name || bucket_ret_type.contains(&struct_name) {
-                        // Found the struct definition, create nested members with adjusted slots
-                        let mut nested = Vec::new();
-                        
-                        // Add struct header
-                        let struct_header = StructMember {
-                            name: format!("struct {}", struct_name),
-                            type_string: "struct".to_string(),
-                            slot_offset: base_slot_offset,
-                            byte_offset: 0,
-                            size_bytes: members.len() as u64 * SLOT_SIZE_BYTES, // Rough estimate
-                            source_file: bucket.source_file.clone(),
-                            struct_name: Some(struct_name.clone()),
-                            struct_identifier: None,
-                            nested_members: None,
-                        };
-                        nested.push(struct_header);
-                        
-                        // Add all struct members with adjusted slot formulas
-                        for member in members {
-                            let mut nested_member = member.clone();
-                            // Adjust slot formula for nested context
-                            if is_mapping_type(type_desc) {
-                                // For mappings, use keccak(key, base_slot) + member_offset
-                                nested_member.slot_offset = base_slot_offset;
-                            }
-                            nested.push(nested_member);
-                        }
-                        
-                        return Some(nested);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-// Extract struct name from type descriptions like "struct Market" or "mapping(bytes32 => struct Market)"  
-fn extract_struct_name_from_type(type_desc: &str) -> Option<String> {
-    // Pattern to match "struct StructName" 
-    let struct_re = regex::Regex::new(r"struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    
-    if let Some(caps) = struct_re.captures(type_desc) {
-        return Some(caps.get(1).unwrap().as_str().to_string());
-    }
-    
-    None
-}
-
-// Check if a type is a mapping type
-fn is_mapping_type(type_desc: &str) -> bool {
-    type_desc.starts_with("mapping(")
-}
-
-// Collect all struct definitions from buckets and standalone annotated structs
-fn collect_all_struct_definitions(
-    buckets: &[StorageBucket], 
-    output: &foundry_compilers::ProjectCompileOutput
-) -> std::collections::HashMap<String, (Vec<StructMember>, Option<String>, Option<String>)> {
-    let mut struct_definitions = std::collections::HashMap::new();
-    
-    // First, collect from existing buckets
-    for bucket in buckets.iter() {
-        if let (Some(return_type), Some(members)) = (&bucket.return_type, &bucket.struct_members) {
-            struct_definitions.insert(
-                return_type.clone(),
-                (members.clone(), bucket.source_file.clone(), bucket.contract_name.clone())
-            );
-        }
-    }
-    
-    // Then, collect standalone annotated structs from all contracts
-    for (_artifact_id, contract_artifact) in output.artifact_ids() {
-        if let Some(contract_ast) = &contract_artifact.ast {
-            if let Ok(contract_ast_value) = serde_json::to_value(contract_ast) {
-                let source_file = contract_ast_value.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .map(|path| extract_filename_from_path(path));
-                
-                collect_standalone_structs_recursive(&contract_ast_value, &mut struct_definitions, source_file.as_deref());
-            }
-        }
-    }
-    
-    struct_definitions
-}
-
-// Collect all enum definitions from build artifacts
-fn collect_all_enum_definitions(
-    output: &foundry_compilers::ProjectCompileOutput
-) -> std::collections::HashMap<String, (String, Option<String>)> {
-    let mut enum_definitions = std::collections::HashMap::new();
-    
-    // Collect annotated enums from all contracts
-    for (_artifact_id, contract_artifact) in output.artifact_ids() {
-        if let Some(contract_ast) = &contract_artifact.ast {
-            if let Ok(contract_ast_value) = serde_json::to_value(contract_ast) {
-                let source_file = contract_ast_value.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .map(|path| extract_filename_from_path(path));
-                
-                collect_enum_definitions_recursive(&contract_ast_value, &mut enum_definitions, source_file.as_deref());
-            }
-        }
-    }
-    
-    enum_definitions
-}
-
-// Collect all usertype definitions from build artifacts
-fn collect_all_usertype_definitions(
-    output: &foundry_compilers::ProjectCompileOutput
-) -> std::collections::HashMap<String, (String, String, Option<String>)> {
-    let mut usertype_definitions = std::collections::HashMap::new();
-    
-    // Collect annotated usertypes from all contracts
-    for (_artifact_id, contract_artifact) in output.artifact_ids() {
-        if let Some(contract_ast) = &contract_artifact.ast {
-            if let Ok(contract_ast_value) = serde_json::to_value(contract_ast) {
-                let source_file = contract_ast_value.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .map(|path| extract_filename_from_path(path));
-                
-                collect_usertype_definitions_recursive(&contract_ast_value, &mut usertype_definitions, source_file.as_deref());
-            }
-        }
-    }
-    
-    usertype_definitions
-}
-
-// Collect annotated enum definitions from AST
-fn collect_enum_definitions_recursive(
-    node: &Value,
-    enum_definitions: &mut std::collections::HashMap<String, (String, Option<String>)>,
-    current_source: Option<&str>
-) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_enum_definitions_recursive(child_node, enum_definitions, current_source);
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_enum_definitions_recursive(child_node, enum_definitions, current_source);
-                    }
-                }
-            }
-            "EnumDefinition" => {
-                if let Some(canonical_name) = node.get("canonicalName").and_then(|n| n.as_str()) {
-                    // Check if this enum has the storage-bucket-enum annotation
-                    if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-                        if let Some(caps) = STORAGE_BUCKET_ENUM_RE.captures(doc_text.trim()) {
-                            let enum_identifier = caps.get(1).unwrap().as_str().to_string();
-                            enum_definitions.insert(
-                                enum_identifier.clone(),
-                                (canonical_name.to_string(), current_source.map(|s| s.to_string()))
-                            );
-                            // Also add without namespace for fallback
-                            if enum_identifier.contains(':') {
-                                let enum_name = enum_identifier.split(':').last().unwrap();
-                                enum_definitions.insert(
-                                    enum_name.to_string(),
-                                    (canonical_name.to_string(), current_source.map(|s| s.to_string()))
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_enum_definitions_recursive(child_node, enum_definitions, current_source);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Collect annotated usertype definitions from AST
-fn collect_usertype_definitions_recursive(
-    node: &Value,
-    usertype_definitions: &mut std::collections::HashMap<String, (String, String, Option<String>)>,
-    current_source: Option<&str>
-) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_usertype_definitions_recursive(child_node, usertype_definitions, current_source);
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_usertype_definitions_recursive(child_node, usertype_definitions, current_source);
-                    }
-                }
-            }
-            "UserDefinedValueTypeDefinition" => {
-                if let Some(name) = node.get("name").and_then(|n| n.as_str()) {
-                    if let Some(underlying_type) = node.get("underlyingType")
-                        .and_then(|ut| ut.get("typeDescriptions"))
-                        .and_then(|td| td.get("typeString"))
-                        .and_then(|ts| ts.as_str()) {
-                        
-                        // Check if this usertype has the storage-bucket-usertype annotation
-                        if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-                            if let Some(caps) = STORAGE_BUCKET_USERTYPE_RE.captures(doc_text.trim()) {
-                                let usertype_identifier = caps.get(1).unwrap().as_str().to_string();
-                                usertype_definitions.insert(
-                                    usertype_identifier.clone(),
-                                    (name.to_string(), underlying_type.to_string(), current_source.map(|s| s.to_string()))
-                                );
-                                // Also add without namespace for fallback
-                                if usertype_identifier.contains(':') {
-                                    let usertype_name = usertype_identifier.split(':').last().unwrap();
-                                    usertype_definitions.insert(
-                                        usertype_name.to_string(),
-                                        (name.to_string(), underlying_type.to_string(), current_source.map(|s| s.to_string()))
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_usertype_definitions_recursive(child_node, usertype_definitions, current_source);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Collect standalone annotated structs from AST
-fn collect_standalone_structs_recursive(
-    node: &Value,
-    struct_definitions: &mut std::collections::HashMap<String, (Vec<StructMember>, Option<String>, Option<String>)>,
-    current_source: Option<&str>
-) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_standalone_structs_recursive(child_node, struct_definitions, current_source);
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_standalone_structs_recursive(child_node, struct_definitions, current_source);
-                    }
-                }
-            }
-            "StructDefinition" => {
-                if let Some(canonical_name) = node.get("canonicalName").and_then(|n| n.as_str()) {
-                    // Check if this struct has the storage-bucket-struct annotation
-                    if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-                        if STORAGE_BUCKET_STRUCT_RE.is_match(doc_text.trim()) {
-                            // This is a standalone annotated struct - add it to definitions
-                            if let Some(members_array) = node.get("members").and_then(|m| m.as_array()) {
-                                let struct_members = calculate_struct_layout(
-                                    members_array,
-                                    current_source, 
-                                    Some(canonical_name)
-                                );
-                                
-                                struct_definitions.insert(
-                                    canonical_name.to_string(),
-                                    (struct_members, current_source.map(|s| s.to_string()), None)
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        collect_standalone_structs_recursive(child_node, struct_definitions, current_source);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Expand nested structs in all buckets (post-processing step)
-fn expand_nested_structs(
-    buckets: &mut [StorageBucket],
-    struct_definitions: &std::collections::HashMap<String, (Vec<StructMember>, Option<String>, Option<String>)>
-) {
-    // Now expand nested structs in each bucket
-    for bucket in buckets.iter_mut() {
-        if let Some(members) = &mut bucket.struct_members {
-            expand_members_recursively(members, struct_definitions, 0);
-        }
-    }
-}
-
-// Recursively expand struct members
-fn expand_members_recursively(
-    members: &mut [StructMember], 
-    struct_definitions: &std::collections::HashMap<String, (Vec<StructMember>, Option<String>, Option<String>)>,
-    recursion_depth: usize
-) {
-    // Prevent infinite recursion
-    if recursion_depth > 3 {
-        return;
-    }
-    
-    // Extract parent namespace once before the loop to avoid borrow checker issues
-    let parent_namespace = extract_namespace_from_context(members);
-    
-    for member in members.iter_mut() {
-        if let Some(struct_name) = extract_struct_name_from_type(&member.type_string) {
-            // Skip if we already have nested members (avoid double expansion)
-            if member.nested_members.is_some() {
-                continue;
-            }
-            
-            // Look for this struct definition with namespace preference
-            if let Some((struct_members, source_file, _contract_name)) = 
-                find_struct_with_namespace_preference(&struct_name, parent_namespace.as_deref(), struct_definitions) {
-                let mut nested = Vec::new();
-                
-                // Add struct header
-                let struct_header = StructMember {
-                    name: format!("struct {}", struct_name),
-                    type_string: "struct".to_string(),
-                    slot_offset: member.slot_offset,
-                    byte_offset: 0,
-                    size_bytes: calculate_struct_total_bytes(&struct_members),
-                    source_file: source_file.clone(),
-                    struct_name: Some(struct_name.clone()),
-                    struct_identifier: None,
-                    nested_members: None,
-                };
-                nested.push(struct_header);
-                
-                // Add all struct members with adjusted slot formulas
-                for (_index, struct_member) in struct_members.iter().enumerate() {
-                    let mut nested_member = struct_member.clone();
-                    
-                    // Adjust slot offset for nested context
-                    if is_mapping_type(&member.type_string) {
-                        // For mappings like mapping(bytes32 => struct Market), 
-                        // the formula becomes keccak(key, base_slot) + member_offset
-                        nested_member.slot_offset = member.slot_offset + struct_member.slot_offset;
-                    } else {
-                        // For direct struct fields, just add offset
-                        nested_member.slot_offset = member.slot_offset + struct_member.slot_offset;
-                    }
-                    
-                    nested.push(nested_member);
-                }
-                
-                // Recursively expand any nested structs within these members
-                expand_members_recursively(&mut nested, struct_definitions, recursion_depth + 1);
-                
-                member.nested_members = Some(nested);
-            }
-        }
-    }
-}
-
-// Calculate total bytes for a struct
-fn calculate_struct_total_bytes(members: &[StructMember]) -> u64 {
-    if members.is_empty() {
-        return 0;
-    }
-    
-    // Find the last member and calculate total size
-    let last_member = members.last().unwrap();
-    (last_member.slot_offset + 1) * SLOT_SIZE_BYTES // Each slot is SLOT_SIZE_BYTES bytes
-}
-
-fn extract_filename_from_path(path: &str) -> String {
-    // Extract filename from full path (e.g., "contracts/types/Contract.sol" -> "Contract.sol")
-    if let Some(filename) = path.split('/').last() {
-        filename.to_string()
-    } else {
-        path.to_string()
-    }
-}
-
-fn format_contract_name(bucket: &StorageBucket) -> String {
-    // Use actual source file and contract name from AST if available
-    let source_file = bucket.source_file.as_deref().unwrap_or("Unknown.sol");
-    let contract_name = bucket.contract_name.as_deref().unwrap_or("Unknown");
-    
-    format!("{}:{}", source_file, contract_name)
-}
-
-fn format_struct_contract_name(member: &StructMember) -> String {
-    // Use actual source file and struct name from AST if available
-    let source_file = member.source_file.as_deref().unwrap_or("Unknown.sol");
-    let struct_name = member.struct_name.as_deref().unwrap_or("Unknown");
-    
-    format!("{}:{}", source_file, struct_name)
-}
-
-fn extract_struct_name_from_bucket(bucket: &StorageBucket) -> String {
-    // Extract struct name from return type or bucket name
-    if let Some(ret_type) = &bucket.return_type {
-        ret_type.clone()
-    } else {
-        // Fallback: extract from bucket name
-        bucket.name.split('.').last().unwrap_or(&bucket.name).to_string()
-    }
-}
-
-fn calculate_total_struct_size(struct_members: &[StructMember]) -> u64 {
-    if struct_members.is_empty() {
-        return 0;
-    }
-    
-    // Find the last member and calculate total size based on its position + size
-    let last_member = struct_members.iter().max_by_key(|m| m.slot_offset * SLOT_SIZE_BYTES + m.byte_offset).unwrap();
-    let last_slot_end = last_member.slot_offset * SLOT_SIZE_BYTES + last_member.byte_offset + last_member.size_bytes;
-    
-    // Round up to next SLOT_SIZE_BYTES-byte boundary if needed
-    if last_slot_end % SLOT_SIZE_BYTES == 0 {
-        last_slot_end
-    } else {
-        ((last_slot_end / SLOT_SIZE_BYTES) + 1) * SLOT_SIZE_BYTES
-    }
-}
-
-fn generate_member_slot_formula_base(bucket: &StorageBucket) -> String {
-    match bucket.bucket_type.as_str() {
-        "keyvalue" => "keccak(key, slot)".to_string(),
-        "singleton" => bucket.slot.clone(),
-        _ => "base".to_string(),
-    }
-}
-
-fn generate_member_slot_formula(bucket: &StorageBucket, member: &StructMember) -> String {
-    match bucket.bucket_type.as_str() {
-        "keyvalue" => {
-            // For mapping types, struct members use keccak(key, base_slot) + member_offset
-            if member.slot_offset == 0 {
-                "keccak(key, slot)".to_string()
-            } else {
-                format!("keccak(key, slot) + {}", member.slot_offset)
-            }
-        }
-        "singleton" => {
-            // For singleton types, just use base slot + offset
-            if member.slot_offset == 0 {
-                bucket.slot.clone()
-            } else {
-                format!("{} + {}", bucket.slot, member.slot_offset)
-            }
-        }
-        _ => {
-            // Default: show relative offset
-            if member.slot_offset == 0 {
-                "base".to_string()
-            } else {
-                format!("base + {}", member.slot_offset)
-            }
-        }
-    }
-}
-
-fn clean_param_type(type_str: &str) -> String {
-    // Clean up parameter types from AST
-    if type_str.starts_with("enum ") {
-        // "enum BookType" -> "BookType"
-        type_str.strip_prefix("enum ").unwrap_or(type_str).to_string()
-    } else if type_str.contains("uint256") && type_str != "uint256" {
-        // "uint256" from things like "OrderId" which is really uint256
-        if type_str.starts_with("uint256") {
-            "bytes32".to_string() // EIP-7201 slots typically use bytes32 as keys
-        } else {
-            type_str.to_string()
-        }
-    } else {
-        type_str.to_string()
-    }
-}
-
-fn calculate_type_size(type_string: &str) -> u64 {
-    match type_string {
-        "bool" => 1,
-        "address" => 20,
-        "bytes32" => SLOT_SIZE_BYTES,
-        s if s.starts_with("uint") => {
-            if let Some(bits_str) = s.strip_prefix("uint") {
-                if bits_str.is_empty() {
-                    256 / 8 // uint defaults to uint256
-                } else if let Ok(bits) = bits_str.parse::<u32>() {
-                    bits as u64 / 8
-                } else {
-                    SLOT_SIZE_BYTES // fallback
-                }
-            } else {
-                32
-            }
-        },
-        s if s.starts_with("int") => {
-            if let Some(bits_str) = s.strip_prefix("int") {
-                if bits_str.is_empty() {
-                    256 / 8 // int defaults to int256
-                } else if let Ok(bits) = bits_str.parse::<u32>() {
-                    bits as u64 / 8
-                } else {
-                    SLOT_SIZE_BYTES // fallback
-                }
-            } else {
-                32
-            }
-        },
-        s if s.starts_with("bytes") && !s.starts_with("bytes32") => {
-            // Dynamic bytes type
-            SLOT_SIZE_BYTES // Takes full slot for length + pointer
-        },
-        s if s.starts_with("enum ") => {
-            // Enums are typically uint8 unless they have > 256 members
-            1
-        },
-        _ => {
-            // For complex types (structs, arrays, mappings), assume they take a full slot
-            32
-        }
-    }
-}
-
-//     // Search for struct definitions and update buckets with missing struct members
-//     search_struct_definitions_recursive(node, buckets, None);
-// }
-
-fn search_for_struct_definitions_with_source(node: &Value, buckets: &mut Vec<StorageBucket>, source_file: Option<&str>) {
-    // Search for struct definitions with proper source file attribution
-    search_struct_definitions_recursive(node, buckets, source_file);
-}
-
-fn search_struct_definitions_recursive(node: &Value, buckets: &mut Vec<StorageBucket>, current_source: Option<&str>) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                // Extract source file path
-                let source_file = node.get("absolutePath")
-                    .and_then(|ap| ap.as_str())
-                    .or_else(|| node.get("src").and_then(|src| src.as_str()))
-                    .map(|path| extract_filename_from_path(path));
-                
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        search_struct_definitions_recursive(child_node, buckets, source_file.as_deref());
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        search_struct_definitions_recursive(child_node, buckets, current_source);
-                    }
-                }
-            }
-            "StructDefinition" => {
-                // Check if this struct matches any return type in our buckets
-                if let Some(canonical_name) = node.get("canonicalName").and_then(|n| n.as_str()) {
-                    
-                    // Look for buckets that need this struct definition
-                    for bucket in buckets.iter_mut() {
-                        
-                        if let Some(ret_type) = &bucket.return_type {
-                            if canonical_name == ret_type || ret_type.contains(canonical_name) {
-                                
-                                // Get struct identifier from @custom:storage-bucket-struct annotation
-                                let struct_identifier = node
-                                    .get("documentation")
-                                    .and_then(|d| d.get("text"))
-                                    .and_then(|t| t.as_str())
-                                    .and_then(|doc| STORAGE_BUCKET_STRUCT_RE.captures(doc.trim()))
-                                    .map(|caps| caps.get(1).unwrap().as_str().to_string());
-                                
-                                // Check if identifiers match (if both bucket and struct have identifiers)
-                                let identifiers_match = match (&bucket.value_identifier, &struct_identifier) {
-                                    (Some(bucket_id), Some(struct_id)) => bucket_id == struct_id,
-                                    _ => true, // If either doesn't have identifier, allow match (backward compatibility)
-                                };
-                                
-                                // This bucket needs this struct definition
-                                // Priority: 1) Matching identifiers, 2) No existing struct, 3) Has annotation
-                                let should_update = identifiers_match && (
-                                    bucket.struct_members.is_none() || 
-                                    struct_identifier.is_some() ||
-                                    (current_source.is_some() && bucket.struct_members.as_ref().map_or(true, |members|
-                                        members.iter().any(|m| m.source_file.is_none())
-                                    ))
-                                );
-                                
-                                if should_update {
-                                    if let Some(members_array) = node.get("members").and_then(|m| m.as_array()) {
-                                        // For now, use basic struct layout without recursive expansion to avoid borrow issues
-                                        let mut struct_members = calculate_struct_layout(
-                                            members_array, 
-                                            current_source, 
-                                            Some(canonical_name)
-                                        );
-                                        
-                                        // Set struct identifier on all members
-                                        if let Some(struct_id) = &struct_identifier {
-                                            for member in &mut struct_members {
-                                                member.struct_identifier = Some(struct_id.clone());
-                                            }
-                                        }
-                                        
-                                        bucket.struct_members = Some(struct_members);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                // Continue recursing for other node types
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        search_struct_definitions_recursive(child_node, buckets, current_source);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// New function to fill missing info in existing buckets from other files
-fn fill_missing_bucket_info(node: &Value, buckets: &mut Vec<StorageBucket>) {
-    if let Some(node_type) = node.get("nodeType").and_then(|nt| nt.as_str()) {
-        match node_type {
-            "SourceUnit" => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        fill_missing_bucket_info(child_node, buckets);
-                    }
-                }
-            }
-            "ContractDefinition" | "LibraryDefinition" => {
-                if node.get("name").is_some() {
-                    if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                        for child_node in nodes {
-                            fill_missing_function_info(child_node, buckets);
-                            extract_struct_buckets(child_node, buckets, None);
-                        }
-                    }
-                }
-            }
-            "StructDefinition" => {
-                // Also check for top-level struct definitions when filling missing info
-                extract_struct_buckets(node, buckets, None);
-            }
-            _ => {
-                if let Some(nodes) = node.get("nodes").and_then(|n| n.as_array()) {
-                    for child_node in nodes {
-                        fill_missing_bucket_info(child_node, buckets);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn update_bucket_type_from_function(node: &Value, buckets: &mut Vec<StorageBucket>) {
-    if let Some(doc_text) = get_documentation_text(node) {
-        if let Some(caps) = STORAGE_BUCKET_TYPE_RE.captures(doc_text.trim()) {
-            let function_ref = caps.get(1).unwrap().as_str();
-            let bucket_type = caps.get(2).unwrap().as_str();
-            
-            if let Some(existing_bucket) = buckets.iter_mut().find(|b| b.name == function_ref) {
-                if existing_bucket.bucket_type == "unknown" {
-                    existing_bucket.bucket_type = bucket_type.to_string();
-                }
-                if existing_bucket.parameters.is_none() || existing_bucket.return_type.is_none() {
-                    extract_function_signature_from_ast(node, existing_bucket);
-                }
-            }
-        }
-    }
-}
-
-fn update_bucket_slot_from_variable(node: &Value, buckets: &mut Vec<StorageBucket>) {
-    if let Some(doc_text) = get_documentation_text(node) {
-        if let Some(caps) = STORAGE_BUCKET_SLOT_RE.captures(doc_text.trim()) {
-            let function_ref = caps.get(1).unwrap().as_str();
-            
-            // Prefer AST constant value over natspec documentation
-            let slot_hex = if let Some(ast_value) = extract_constant_value_from_ast(node) {
-                ast_value
-            } else if let Some(natspec_hex) = caps.get(2) {
-                natspec_hex.as_str().to_string()
-            } else {
-                "0x0".to_string()
-            };
-            
-            if let Some(existing_bucket) = buckets.iter_mut().find(|b| b.name == function_ref) {
-                if existing_bucket.slot.is_empty() {
-                    let slot = U256::from_str_radix(slot_hex.strip_prefix("0x").unwrap_or(&slot_hex), 16).ok();
-                    let short_slot = if let Some(slot) = slot {
-                        short_hex(&alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>()))
-                    } else {
-                        slot_hex
-                    };
-                    existing_bucket.slot = short_slot;
-                }
-            }
-        }
-    }
-}
-
-fn extract_constant_value_from_ast(node: &Value) -> Option<String> {
-    // Try the refreshed AST format first: value.value field
-    if let Some(hex_value) = node.get("value")
-        .and_then(|literal| literal.get("value"))
-        .and_then(|v| v.as_str()) {
-        
-        // Check if it's already a proper hex value
-        if hex_value.starts_with("0x") {
-            if let Ok(slot) = U256::from_str_radix(&hex_value[2..], 16) {
-                let full_hex = alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>());
-                return Some(short_hex(&full_hex));
-            }
-        }
-        return Some(hex_value.to_string());
-    }
-    
-    // Fallback: Try hexValue field (older AST format)
-    if let Some(hex_value) = node.get("value")
-        .and_then(|literal| literal.get("hexValue"))
-        .and_then(|v| v.as_str()) {
-        
-        // Handle double-encoded hex values (AST stores string literals as hex-encoded bytes)
-        let actual_hex = if let Ok(decoded_bytes) = hex::decode(hex_value) {
-            if let Ok(decoded_string) = String::from_utf8(decoded_bytes) {
-                // If it decodes to a hex string like "0x4241b72...", use it
-                if decoded_string.starts_with("0x") {
-                    decoded_string.strip_prefix("0x").unwrap_or(&decoded_string).to_string()
-                } else {
-                    hex_value.to_string()  // Use original if decode didn't yield hex string
-                }
-            } else {
-                hex_value.to_string()  // Use original if UTF-8 decode fails
-            }
-        } else {
-            hex_value.to_string()  // Use original if hex decode fails
-        };
-        
-        // Convert hex value to short format 
-        if let Ok(slot) = U256::from_str_radix(&actual_hex, 16) {
-            let full_hex = alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>());
-            return Some(short_hex(&full_hex));
-        }
-    }
-    
-    None
-}
-
-
-fn get_documentation_text(node: &Value) -> Option<&str> {
-    node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str())
-}
-
-fn fill_missing_function_info(node: &Value, buckets: &mut Vec<StorageBucket>) {
-    let node_type = node.get("nodeType").and_then(|nt| nt.as_str());
-    
-    match node_type {
-        Some("FunctionDefinition") => update_bucket_type_from_function(node, buckets),
-        Some("VariableDeclaration") => update_bucket_slot_from_variable(node, buckets),
-        _ => {}
-    }
-}
-
-fn extract_function_signature_from_ast(node: &Value, bucket: &mut StorageBucket) {
-    // Check for @custom:storage-bucket-value annotation to get specific identifier
-    if let Some(doc_text) = node.get("documentation").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-        if let Some(caps) = STORAGE_BUCKET_VALUE_RE.captures(doc_text.trim()) {
-            bucket.value_identifier = Some(caps.get(1).unwrap().as_str().to_string());
-        }
-    }
-    // Extract parameters
-    if let Some(parameters) = node
-        .get("parameters")
-        .and_then(|p| p.get("parameters"))
-        .and_then(|p| p.as_array())
-    {
-        let param_types: Vec<String> = parameters
-            .iter()
-            .filter_map(|param| {
-                param
-                    .get("typeDescriptions")
-                    .and_then(|td| td.get("typeString"))
-                    .and_then(|ts| ts.as_str())
-                    .map(|s| clean_param_type(s))
-            })
-            .collect();
-        
-        if !param_types.is_empty() {
-            bucket.parameters = Some(param_types.join(", "));
-        }
-    }
-
-    // Extract return parameters
-    if let Some(return_params) = node
-        .get("returnParameters")
-        .and_then(|rp| rp.get("parameters"))
-        .and_then(|p| p.as_array())
-    {
-        let return_types: Vec<String> = return_params
-            .iter()
-            .filter_map(|param| {
-                param
-                    .get("typeDescriptions")
-                    .and_then(|td| td.get("typeString"))
-                    .and_then(|ts| ts.as_str())
-                    .map(|s| {
-                        // Clean up return type - extract struct name from storage references
-                        if s.starts_with("struct ") && s.contains(" storage") {
-                            let struct_part = s.strip_prefix("struct ").unwrap_or(s);
-                            if let Some(space_idx) = struct_part.find(" storage") {
-                                struct_part[..space_idx].to_string()
-                            } else {
-                                s.to_string()
-                            }
-                        } else {
-                            s.to_string()
-                        }
-                    })
-            })
-            .collect();
-        
-        if !return_types.is_empty() {
-            bucket.return_type = Some(return_types.join(", "));
-        }
-    }
-    
-    // Create function signature
-    if let Some(func_name) = node.get("name").and_then(|n| n.as_str()) {
-        let params = bucket.parameters.as_ref().map(|p| p.as_str()).unwrap_or("");
-        bucket.function_signature = Some(format!("{}({})", func_name, params));
-        
-    }
-}
-
-fn extract_all_param_types(params: &str) -> String {
-    // Extract all parameter types from comma-separated parameters
-    // Handle both AST format (direct types) and storage format (type + name)
-    // e.g., "bytes32, enum BookType" -> "bytes32, BookType" 
-    // or "bytes32 asset, BookType bookType" -> "bytes32, BookType"
-    params
-        .split(',')
-        .map(|param| {
-            let param = param.trim();
-            
-            // Check if this looks like an enum type
-            if param.starts_with("enum ") {
-                // Extract just the enum name: "enum BookType" -> "BookType"
-                param.strip_prefix("enum ").unwrap_or(param)
-            } else if param.contains(' ') {
-                // This is likely storage format: "bytes32 asset" -> "bytes32"
-                param.split_whitespace().next().unwrap_or("unknown")
-            } else {
-                // This is likely already a clean type from AST
-                param
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn extract_storage_type(return_type: &str) -> &str {
-    // Extract the type from return like "StructName storage structInstance" -> "StructName"
-    return_type.split_whitespace().next().unwrap_or("unknown")
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -2510,132 +1839,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn parses_eip7201_storage_buckets_from_metadata() {
-        let raw_wrapped = r#"
-        {
-            "metadata": {
-                "compiler": { "version": "0.8.30+commit.73712a01" },
-                "language": "Solidity",
-                "output": {
-                    "abi": [],
-                    "devdoc": {
-                        "kind": "dev",
-                        "methods": {
-                            "constructor": {
-                                "custom:storage-bucket": "EIP712Storage 0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100NoncesStorage 0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00"
-                            }
-                        },
-                        "version": 1
-                    },
-                    "userdoc": { "kind": "user", "methods": {}, "version": 1 }
-                },
-                "settings": { "optimizer": { "enabled": false, "runs": 200 } },
-                "sources": {},
-                "version": 1
-            }
-        }"#;
-
-        let v: serde_json::Value = serde_json::from_str(raw_wrapped).unwrap();
-        let inner_meta_str = v.get("metadata").unwrap().to_string();
-
-        let rows =
-            parse_storage_buckets_value(Some(&inner_meta_str)).expect("parser returned None");
-        assert_eq!(rows.len(), 2, "expected two EIP-7201 buckets");
-
-        assert_eq!(rows[0].0, "EIP712Storage");
-        assert_eq!(rows[1].0, "NoncesStorage");
-
-        let expect_short = |h: &str| {
-            let hex_str = h.trim_start_matches("0x");
-            let slot = U256::from_str_radix(hex_str, 16).unwrap();
-            let full = alloy_primitives::hex::encode_prefixed(slot.to_be_bytes::<{ SLOT_SIZE_BYTES as usize }>());
-            short_hex(&full)
-        };
-
-        let eip712_slot_hex =
-            expect_short("0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100");
-        let nonces_slot_hex =
-            expect_short("0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00");
-
-        assert_eq!(rows[0].1, eip712_slot_hex);
-        assert_eq!(rows[1].1, nonces_slot_hex);
-
-        assert!(rows[0].1.starts_with("0x") && rows[0].1.contains('…'));
-        assert!(rows[1].1.starts_with("0x") && rows[1].1.contains('…'));
-    }
-
-    #[test]
-    fn parses_eip7201_storage_buckets_from_ast() {
-        assert_eq!(extract_all_param_types("bytes32 asset"), "bytes32");
-        assert_eq!(extract_storage_type("EIP712Storage storage eip712Storage"), "EIP712Storage");
-    }
-
-    #[test]
-    fn extracts_param_and_storage_types() {
-        assert_eq!(extract_all_param_types("bytes32 asset"), "bytes32");
-        assert_eq!(extract_all_param_types("uint256 value"), "uint256");
-        assert_eq!(extract_all_param_types("address user"), "address");
-        assert_eq!(extract_all_param_types("bytes32 asset, BookType bookType"), "bytes32, BookType");
-        
-        assert_eq!(extract_storage_type("EIP712Storage storage eip712Storage"), "EIP712Storage");
-        assert_eq!(extract_storage_type("NoncesStorage storage noncesStorage"), "NoncesStorage");
-        assert_eq!(extract_storage_type("uint256 storage value"), "uint256");
-    }
-
-    #[test]
-    fn handles_transient_storage_buckets() {
-        let mut buckets = vec![StorageBucket {
-            name: "TransientCounter".to_string(),
-            bucket_type: "unknown".to_string(),
-            slot: "0xa16a46d9…57d100".to_string(),
-            function_signature: None,
-            parameters: None,
-            return_type: None,
-            struct_members: None,
-            source_file: None,
-            contract_name: None,
-            value_identifier: None,
-            is_transient: false,
-        }];
-
-        // Test transient storage display
-        let display_name = if buckets[0].is_transient {
-            format!("[T] {}", buckets[0].name)
-        } else {
-            buckets[0].name.clone()
-        };
-        
-        assert_eq!(display_name, "TransientCounter");
-        
-        // Mark as transient
-        buckets[0].is_transient = true;
-        let display_name_transient = if buckets[0].is_transient {
-            format!("[T] {}", buckets[0].name)
-        } else {
-            buckets[0].name.clone()
-        };
-        
-        assert_eq!(display_name_transient, "[T] TransientCounter");
-    }
-
-    #[test]
-    fn parses_transient_annotations() {
-        // Test @custom:storage-bucket-transient
-        let doc_text_basic = "@custom:storage-bucket-transient TransientCounter ReentrantLock";
-        let caps_basic = STORAGE_BUCKET_TRANSIENT_RE.captures(doc_text_basic.trim());
-        assert!(caps_basic.is_some());
-        assert_eq!(caps_basic.unwrap().get(1).unwrap().as_str(), "TransientCounter ReentrantLock");
-
-        // Test @custom:storage-bucket-transient-slot
-        let doc_text_slot = "@custom:storage-bucket-transient-slot TransientCounter 0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100";
-        let caps_slot = STORAGE_BUCKET_TRANSIENT_SLOT_RE.captures(doc_text_slot.trim());
-        assert!(caps_slot.is_some());
-        
-        let caps_slot = caps_slot.unwrap();
-        assert_eq!(caps_slot.get(1).unwrap().as_str(), "TransientCounter");
-        assert_eq!(caps_slot.get(2).unwrap().as_str(), "0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100");
     }
 }
