@@ -237,27 +237,24 @@ impl Backtrace {
                 .with_byte_offset(source_location.offset);
         }
 
-        // Add contract name from decoded trace or linked library info
-        if let Some(decoded) = &trace.decoded
-            && let Some(label) = &decoded.label
-        {
-            frame = frame.with_contract_name(label.clone());
-        } else if frame.contract_name.is_none() {
-            // Check if this is a linked library by address
-            if let Some(lib) = self.linked_libraries.iter().find(|l| l.address == contract_address)
-            {
-                frame = frame.with_contract_name(lib.name.clone());
+        if let Some(decoded) = &trace.decoded {
+            if let Some(label) = &decoded.label {
+                frame = frame.with_contract_name(label.clone());
+            } else {
+                // Check if this is a linked library by address
+                if let Some(lib) =
+                    self.linked_libraries.iter().find(|l| l.address == contract_address)
+                {
+                    frame = frame.with_contract_name(lib.name.clone());
+                }
             }
-        }
 
-        // Add function name from decoded trace
-        if let Some(decoded) = &trace.decoded
-            && let Some(call_data) = &decoded.call_data
-        {
-            let sig = &call_data.signature;
-            let func_name =
-                if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
-            frame = frame.with_function_name(func_name.to_string());
+            if let Some(call_data) = &decoded.call_data {
+                let sig = &call_data.signature;
+                let func_name =
+                    if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
+                frame = frame.with_function_name(func_name.to_string());
+            }
         }
 
         Some(frame)
