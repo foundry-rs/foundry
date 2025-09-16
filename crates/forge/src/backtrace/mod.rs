@@ -182,30 +182,30 @@ impl Backtrace {
     }
 
     /// Extracts backtrace frames from a trace arena.
-    pub fn extract_frames(&mut self, arena: &SparsedTraceArena) -> bool {
+    pub fn extract_frames(&mut self, arena: &SparsedTraceArena) {
         let resolved_arena = &arena.arena;
 
         if resolved_arena.nodes().is_empty() {
-            return false;
+            return;
         }
 
         // Find the deepest failed node (where the actual revert happened)
-        let mut deepest_failed_idx = None;
+        let mut deepest_idx = None;
         let mut max_depth = 0;
 
         for (idx, node) in resolved_arena.nodes().iter().enumerate() {
             if !node.trace.success && node.trace.depth >= max_depth {
                 max_depth = node.trace.depth;
-                deepest_failed_idx = Some(idx);
+                deepest_idx = Some(idx);
             }
         }
 
-        let Some(deepest_idx) = deepest_failed_idx else {
-            return false;
-        };
+        if deepest_idx.is_none() {
+            return;
+        }
 
         // Build the call stack by walking from the deepest node back to root
-        let mut current_idx = Some(deepest_idx);
+        let mut current_idx = Some(deepest_idx.unwrap());
 
         while let Some(idx) = current_idx {
             let node = &resolved_arena.nodes()[idx];
@@ -217,8 +217,6 @@ impl Backtrace {
 
             current_idx = node.parent;
         }
-
-        !self.frames.is_empty()
     }
 
     /// Creates a frame from a call trace.
