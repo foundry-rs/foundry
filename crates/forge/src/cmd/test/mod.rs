@@ -314,7 +314,7 @@ impl TestArgs {
         let dcx = analysis.dcx_mut();
         dcx.set_emitter(Box::new(
             solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
-                .source_map(Some(dcx.source_map().unwrap().clone())),
+                .source_map(Some(dcx.source_map().unwrap())),
         ));
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
         // Populate solar's global context by parsing and lowering the sources.

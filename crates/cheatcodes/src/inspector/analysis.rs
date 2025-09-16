@@ -113,10 +113,8 @@ impl<'hir> StructDefinitionResolver<'hir> {
 
         for &field_id in strukt.fields {
             let var = hir.variable(field_id);
-            let name = var
-                .name
-                .ok_or_else(|| AnalysisError::StructDefinitionsResolutionFailed)?
-                .to_string();
+            let name =
+                var.name.ok_or(AnalysisError::StructDefinitionsResolutionFailed)?.to_string();
             if let Some(ty_str) = self.ty_to_string(self.gcx.type_of_hir_ty(&var.ty)) {
                 fields.push((name, ty_str));
             }

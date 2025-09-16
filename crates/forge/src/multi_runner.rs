@@ -575,13 +575,13 @@ impl MultiContractRunnerBuilder {
         let dcx = analysis.dcx_mut();
         dcx.set_emitter(Box::new(
             solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
-                .source_map(Some(dcx.source_map().unwrap().clone())),
+                .source_map(Some(dcx.source_map().unwrap())),
         ));
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
 
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> =
-            output.output().sources.as_ref().iter().map(|(path, _)| path.to_path_buf()).collect();
+            output.output().sources.as_ref().keys().map(|path| path.to_path_buf()).collect();
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
             configure_pcx(&mut pcx, self.config(), Some(self.project()), Some(&files))?;
