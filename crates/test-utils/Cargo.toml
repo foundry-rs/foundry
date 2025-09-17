@@ -35,8 +35,10 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
 subxt = "0.41.0"
 tokio.workspace = true
+ui_test = "0.29.2"
 
-# See /Cargo.toml.
+# Pinned dependencies. See /Cargo.toml.
+[target.'cfg(any())'.dependencies]
 idna_adapter.workspace = true
 
 [dev-dependencies]

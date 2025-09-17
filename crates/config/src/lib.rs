@@ -9,38 +9,39 @@
 extern crate tracing;
 
 use crate::cache::StorageCachingConfig;
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
+    Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
-    Error, Figment, Metadata, Profile, Provider,
 };
 use filter::GlobMatcher;
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    RestrictionsWithVersion, VyperLanguage,
     artifacts::{
+        BytecodeHash, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
+        ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
+        Severity,
         output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
-        serde_helpers, BytecodeHash, DebuggingSettings, EofVersion, EvmVersion, Libraries,
-        ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
-        Settings, SettingsMetadata, Severity,
+        serde_helpers,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
+        Compiler,
         multi::{MultiCompiler, MultiCompilerSettings, SolidityCompiler},
         solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
-        Compiler,
     },
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     resolc::Resolc,
     solc::{CliSettings, SolcSettings},
-    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
-    RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
-use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
+use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
@@ -74,6 +75,9 @@ use cache::{Cache, ChainCache};
 
 pub mod fmt;
 pub use fmt::FormatterConfig;
+
+pub mod lint;
+pub use lint::{LinterConfig, Severity as LintSeverity};
 
 pub mod fs_permissions;
 pub use fs_permissions::FsPermissions;
@@ -116,7 +120,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-use vyper::VyperConfig;
+pub use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -271,6 +275,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// Whether to accept invalid certificates for the rpc server.
+    pub eth_rpc_accept_invalid_certs: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
@@ -344,7 +350,11 @@ pub struct Config {
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,
     /// the block.number value during EVM execution
-    pub block_number: u64,
+    #[serde(
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
+    )]
+    pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
     /// The chain name or EIP-155 chain ID.
@@ -364,7 +374,11 @@ pub struct Config {
     /// The `block.coinbase` value during EVM execution.
     pub block_coinbase: Address,
     /// The `block.timestamp` value during EVM execution.
-    pub block_timestamp: u64,
+    #[serde(
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
+    )]
+    pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
@@ -453,6 +467,8 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configuration for `forge lint`
+    pub lint: LinterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
     /// Configuration for `forge bind-json`
@@ -504,19 +520,12 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Optional EOF version.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eof_version: Option<EofVersion>,
-
     /// Whether to enable Odyssey features.
     #[serde(alias = "alphanet")]
     pub odyssey: bool,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
-
-    /// Use EOF-enabled solc for compilation.
-    pub eof: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -571,6 +580,7 @@ impl Config {
         "rpc_endpoints",
         "etherscan",
         "fmt",
+        "lint",
         "doc",
         "fuzz",
         "invariant",
@@ -658,11 +668,11 @@ impl Config {
             }
         };
         let figment = figment.select(Self::PROFILE_SECTION);
-        if let Ok(data) = figment.data() {
-            if let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION)) {
-                for profile in profiles.keys() {
-                    add_profile(&Profile::new(profile));
-                }
+        if let Ok(data) = figment.data()
+            && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
+        {
+            for profile in profiles.keys() {
+                add_profile(&Profile::new(profile));
             }
         }
         add_profile(&Self::DEFAULT_PROFILE);
@@ -868,10 +878,10 @@ impl Config {
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version() {
-            if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
-                return evm_version;
-            }
+        if let Some(version) = self.solc_version()
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        {
+            return evm_version;
         }
         self.evm_version
     }
@@ -889,8 +899,6 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
-        config.sanitize_eof_settings();
-
         config
     }
 
@@ -905,26 +913,6 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
-        }
-    }
-
-    /// Adjusts settings if EOF compilation is enabled.
-    ///
-    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
-    /// lower than Osaka.
-    pub fn sanitize_eof_settings(&mut self) {
-        if self.eof {
-            self.optimizer = Some(true);
-            self.normalize_optimizer_settings();
-
-            if self.eof_version.is_none() {
-                self.eof_version = Some(EofVersion::V1);
-            }
-
-            self.via_ir = true;
-            if self.evm_version < EvmVersion::Osaka {
-                self.evm_version = EvmVersion::Osaka;
-            }
         }
     }
 
@@ -1092,6 +1080,7 @@ impl Config {
             }
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -1153,9 +1142,9 @@ impl Config {
 
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching &&
-            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
-            self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        !self.no_storage_caching
+            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
+            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.
@@ -1361,8 +1350,38 @@ impl Config {
             return Some(endpoint.url().map(Cow::Owned));
         }
 
-        if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)));
+        if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
+            return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        None
+    }
+
+    /// Attempts to resolve the URL for the given alias from [`mesc`](https://github.com/paradigmxyz/mesc)
+    pub fn get_rpc_url_from_mesc(&self, maybe_alias: &str) -> Option<String> {
+        // Note: mesc requires a MESC_PATH in the env, which the user can configure and is expected
+        // to be part of the shell profile, default is ~/mesc.json
+        let mesc_config = mesc::load::load_config_data()
+            .inspect_err(|err| debug!(%err, "failed to load mesc config"))
+            .ok()?;
+
+        if let Ok(Some(endpoint)) =
+            mesc::query::get_endpoint_by_query(&mesc_config, maybe_alias, Some("foundry"))
+        {
+            return Some(endpoint.url);
+        }
+
+        if maybe_alias.chars().all(|c| c.is_numeric()) {
+            // try to lookup the mesc network by chain id if alias is numeric
+            // This only succeeds if the chain id has a default:
+            // "network_defaults": {
+            //    "50104": "sophon_50104"
+            // }
+            if let Ok(Some(endpoint)) =
+                mesc::query::get_endpoint_by_network(&mesc_config, maybe_alias, Some("foundry"))
+            {
+                return Some(endpoint.url);
+            }
         }
 
         None
@@ -1383,11 +1402,7 @@ impl Config {
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
     ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
-        if let Some(url) = self.get_rpc_url() {
-            url
-        } else {
-            Ok(fallback.into())
-        }
+        if let Some(url) = self.get_rpc_url() { url } else { Ok(fallback.into()) }
     }
 
     /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set
@@ -1442,15 +1457,15 @@ impl Config {
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let default_api_version = self.etherscan_api_version.unwrap_or_default();
 
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
-            if self.etherscan.contains_key(maybe_alias) {
-                return self
-                    .etherscan
-                    .clone()
-                    .resolved(default_api_version)
-                    .remove(maybe_alias)
-                    .transpose();
-            }
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
+            && self.etherscan.contains_key(maybe_alias)
+        {
+            return self
+                .etherscan
+                .clone()
+                .resolved(default_api_version)
+                .remove(maybe_alias)
+                .transpose();
         }
 
         // try to find by comparing chain IDs after resolving
@@ -1480,7 +1495,6 @@ impl Config {
                 default_api_version,
             ));
         }
-
         Ok(None)
     }
 
@@ -1516,20 +1530,12 @@ impl Config {
 
     /// Returns the remapping for the project's _test_ directory, but only if it exists
     pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.test).exists() {
-            get_dir_remapping(&self.test)
-        } else {
-            None
-        }
+        if self.root.join(&self.test).exists() { get_dir_remapping(&self.test) } else { None }
     }
 
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.script).exists() {
-            get_dir_remapping(&self.script)
-        } else {
-            None
-        }
+        if self.root.join(&self.script).exists() { get_dir_remapping(&self.script) } else { None }
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -1561,7 +1567,7 @@ impl Config {
             extra_output.push(ContractOutputSelection::Metadata);
         }
 
-        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().cloned())
+        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().copied())
     }
 
     /// Parses all libraries in the form of
@@ -1585,10 +1591,10 @@ impl Config {
         // This might be too much here, so only enable assertion checks.
         // If users wish to enable all options they need to do so explicitly.
         let mut model_checker = self.model_checker.clone();
-        if let Some(model_checker_settings) = &mut model_checker {
-            if model_checker_settings.targets.is_none() {
-                model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
-            }
+        if let Some(model_checker_settings) = &mut model_checker
+            && model_checker_settings.targets.is_none()
+        {
+            model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
         }
 
         let mut settings = Settings {
@@ -1618,7 +1624,6 @@ impl Config {
             remappings: Vec::new(),
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
-            eof_version: self.eof_version,
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
@@ -1746,8 +1751,8 @@ impl Config {
     pub fn dapptools() -> Self {
         Self {
             chain: Some(Chain::from_id(99)),
-            block_timestamp: 0,
-            block_number: 0,
+            block_timestamp: U256::ZERO,
+            block_number: U256::ZERO,
             ..Self::default()
         }
     }
@@ -2099,8 +2104,8 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file() &&
-                file_name.to_string_lossy().chars().all(char::is_numeric)
+            } else if file_type.is_file()
+                && file_name.to_string_lossy().chars().all(char::is_numeric)
             {
                 block.path()
             } else {
@@ -2189,14 +2194,13 @@ impl Config {
         }
 
         // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
-            if let Some(version) = solc
+        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = solc
                 .try_version()
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
-            {
-                figment = figment.merge(("evm_version", version));
-            }
+        {
+            figment = figment.merge(("evm_version", version));
         }
 
         figment
@@ -2403,7 +2407,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Cancun,
+            evm_version: EvmVersion::Prague,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
@@ -2438,7 +2442,7 @@ impl Default for Config {
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from((1u128 << 96) - 1),
-            block_number: 1,
+            block_number: U256::from(1),
             fork_block_number: None,
             chain: None,
             gas_limit: (1u64 << 30).into(), // ~1B
@@ -2446,13 +2450,14 @@ impl Default for Config {
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::ZERO,
-            block_timestamp: 1,
+            block_timestamp: U256::from(1),
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
             disable_block_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
+            eth_rpc_accept_invalid_certs: false,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
@@ -2485,6 +2490,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            lint: Default::default(),
             doc: Default::default(),
             bind_json: Default::default(),
             labels: Default::default(),
@@ -2498,12 +2504,10 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            eof_version: None,
             odyssey: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
-            eof: false,
             script_execution_protection: true,
             _non_exhaustive: (),
             resolc: Default::default(),
@@ -2573,11 +2577,7 @@ impl SolcReq {
 impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
-        if let Ok(v) = Version::from_str(s) {
-            Self::Version(v)
-        } else {
-            Self::Local(s.into())
-        }
+        if let Ok(v) = Version::from_str(s) { Self::Version(v) } else { Self::Local(s.into()) }
     }
 }
 
@@ -2660,19 +2660,20 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpoint, RpcEndpointType},
+        endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
+        fmt::IndentStyle,
     };
+    use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
-        vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
+        ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{collections::BTreeMap, fs::File, io::Write};
+    use std::{fs::File, io::Write};
     use tempfile::tempdir;
-    use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
@@ -3105,11 +3106,15 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            assert!(config
-                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
-                .is_err());
+            assert!(
+                config
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
+                    .is_err()
+            );
 
-            std::env::set_var(env_key, env_value);
+            unsafe {
+                std::env::set_var(env_key, env_value);
+            }
 
             assert_eq!(
                 config
@@ -3132,7 +3137,9 @@ mod tests {
                 "via etherscan_api_key"
             );
 
-            std::env::remove_var(env_key);
+            unsafe {
+                std::env::remove_var(env_key);
+            }
             Ok(())
         });
     }
@@ -3369,7 +3376,10 @@ mod tests {
 
             let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
             assert!(config.is_err());
-            assert_eq!(config.unwrap_err().to_string(), "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`");
+            assert_eq!(
+                config.unwrap_err().to_string(),
+                "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`"
+            );
 
             Ok(())
         });
@@ -4238,7 +4248,7 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert_eq!(config.block_number, 1337);
+            assert_eq!(config.block_number, U256::from(1337));
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
@@ -4260,8 +4270,10 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
-                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
-                    .to_string()]
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string()
+                ]
             );
 
             jail.set_env(
@@ -4271,8 +4283,10 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
-                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
-                    .to_string(),]
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string(),
+                ]
             );
 
             jail.set_env(
@@ -4562,12 +4576,13 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fmt]
                 line_length = 100
                 tab_width = 2
                 bracket_spacing = true
-            ",
+                style = "space"
+            "#,
             )?;
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(
@@ -4576,6 +4591,32 @@ mod tests {
                     line_length: 100,
                     tab_width: 2,
                     bracket_spacing: true,
+                    style: IndentStyle::Space,
+                    ..Default::default()
+                }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_lint_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [lint]
+                severity = ['high', 'medium']
+                exclude_lints = ['incorrect-shift']
+                ",
+            )?;
+            let loaded = Config::load().unwrap().sanitized();
+            assert_eq!(
+                loaded.lint,
+                LinterConfig {
+                    severity: vec![LintSeverity::High, LintSeverity::Med],
+                    exclude_lints: vec!["incorrect-shift".into()],
                     ..Default::default()
                 }
             );
@@ -4603,6 +4644,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: None,
                     ..Default::default()
                 }
             );
@@ -5038,6 +5080,110 @@ mod tests {
                 })
             );
 
+            Ok(())
+        });
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10926>
+    #[test]
+    fn test_resolve_mesc_by_chain_id() {
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+    },
+    "network_names": {},
+    "profiles": {
+        "foundry": {
+            "name": "foundry",
+            "default_endpoint": "local_ethereum",
+            "network_defaults": {
+                "50104": "sophon_50104"
+            },
+            "profile_metadata": {},
+            "use_mesc": true
+        }
+    },
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
+
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+        "50104": "sophon_50104"
+    },
+    "network_names": {},
+    "profiles": {},
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
+    }
+
+    #[test]
+    fn test_get_etherscan_config_with_unknown_chain() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { chain = 3658348, key = "api-key"}
+            "#,
+            )?;
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(3658348);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            assert!(result.is_err());
+            let error_msg = result.unwrap_err().to_string();
+            assert!(error_msg.contains("No known Etherscan API URL for chain `3658348`"));
+            assert!(error_msg.contains("Specify a `url`"));
+            assert!(error_msg.contains("Verify the chain `3658348` is correct"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_get_etherscan_config_with_existing_chain_and_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { chain = 1, key = "api-key" }
+            "#,
+            )?;
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(1);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            assert!(result.is_ok());
             Ok(())
         });
     }

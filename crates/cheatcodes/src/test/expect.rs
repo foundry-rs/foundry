@@ -5,10 +5,15 @@ use std::{
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
+    map::{AddressHashMap, HashMap, hash_map::Entry},
 };
-use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
+use revm::{
+    context::JournalTr,
+    interpreter::{
+        InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
+    },
+};
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -66,7 +71,7 @@ pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any.
     pub reason: Option<Vec<u8>>,
     /// The depth at which the revert is expected.
-    pub depth: u64,
+    pub depth: usize,
     /// The type of expected revert.
     pub kind: ExpectedRevertKind,
     /// If true then only the first 4 bytes of expected data returned by the revert are checked.
@@ -76,7 +81,7 @@ pub struct ExpectedRevert {
     /// Address that reverted the call.
     pub reverted_by: Option<Address>,
     /// Max call depth reached during next call execution.
-    pub max_depth: u64,
+    pub max_depth: usize,
     /// Number of times this revert is expected.
     pub count: u64,
     /// Actual number of times this revert has been seen.
@@ -86,7 +91,7 @@ pub struct ExpectedRevert {
 #[derive(Clone, Debug)]
 pub struct ExpectedEmit {
     /// The depth at which we expect this emit to have occurred
-    pub depth: u64,
+    pub depth: usize,
     /// The log we expect
     pub log: Option<RawLog>,
     /// The checks to perform:
@@ -132,12 +137,21 @@ impl Display for CreateScheme {
     }
 }
 
+impl From<revm::context_interface::CreateScheme> for CreateScheme {
+    fn from(scheme: revm::context_interface::CreateScheme) -> Self {
+        match scheme {
+            revm::context_interface::CreateScheme::Create => Self::Create,
+            revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
+            _ => unimplemented!("Unsupported create scheme"),
+        }
+    }
+}
+
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: Self) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, Self::Create) | (Self::Create2, Self::Create2 { .. })
         )
     }
 }
@@ -623,14 +637,14 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
 impl Cheatcode for expectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
+        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth().try_into()?)
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth().try_into()?);
         Ok(Default::default())
     }
 }
@@ -638,7 +652,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
+        expect_safe_memory(ccx.state, min, max, (ccx.ecx.journaled_state.depth() + 1).try_into()?)
     }
 }
 
@@ -685,17 +699,17 @@ fn expect_call(
 ) -> Result {
     let expecteds = state.expected_calls.entry(*target).or_default();
 
-    if let Some(val) = value {
-        if *val > U256::ZERO {
-            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
-            // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = 2300;
-            if let Some(gas) = &mut gas {
-                *gas += positive_value_cost_stipend;
-            }
-            if let Some(min_gas) = &mut min_gas {
-                *min_gas += positive_value_cost_stipend;
-            }
+    if let Some(val) = value
+        && *val > U256::ZERO
+    {
+        // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+        // to ensure that the basic fallback function can be called.
+        let positive_value_cost_stipend = 2300;
+        if let Some(gas) = &mut gas {
+            *gas += positive_value_cost_stipend;
+        }
+        if let Some(min_gas) = &mut min_gas {
+            *min_gas += positive_value_cost_stipend;
         }
     }
 
@@ -742,7 +756,7 @@ fn expect_call(
 
 fn expect_emit(
     state: &mut Cheatcodes,
-    depth: u64,
+    depth: usize,
     checks: [bool; 5],
     address: Option<Address>,
     anonymous: bool,
@@ -778,7 +792,7 @@ pub(crate) fn handle_expect_emit(
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|(expected, _)| expected.found) {
-        return
+        return;
     }
 
     let should_fill_logs = state.expected_emits.iter().any(|(expected, _)| expected.log.is_none());
@@ -812,16 +826,13 @@ pub(crate) fn handle_expect_emit(
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            interpreter.instruction_result = InstructionResult::Revert;
-            interpreter.next_action = InterpreterAction::Return {
-                result: InterpreterResult {
-                    output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.gas,
-                    result: InstructionResult::Revert,
-                },
-            };
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
+                interpreter.gas,
+            ));
         }
-        return
+        return;
     };
 
     // Increment/set `count` for `log.address` and `log.data`
@@ -846,7 +857,7 @@ pub(crate) fn handle_expect_emit(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            return false
+            return false;
         }
 
         // Maybe match source address.
@@ -911,11 +922,11 @@ impl LogCountMap {
         if self.map.contains_key(log) {
             self.map.entry(log.clone()).and_modify(|c| *c += 1);
 
-            return true
+            return true;
         }
 
         if !self.satisfies_checks(log) {
-            return false
+            return false;
         }
 
         self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
@@ -930,7 +941,7 @@ impl LogCountMap {
 
     pub fn count(&self, log: &RawLog) -> u64 {
         if !self.satisfies_checks(log) {
-            return 0
+            return 0;
         }
 
         self.count_unchecked()
@@ -956,7 +967,7 @@ fn expect_create(
 fn expect_revert(
     state: &mut Cheatcodes,
     reason: Option<&[u8]>,
-    depth: u64,
+    depth: usize,
     cheatcode: bool,
     partial_match: bool,
     reverter: Option<Address>,
@@ -986,7 +997,7 @@ fn expect_revert(
 
 fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) -> bool {
     if log.topics().len() != expected.topics().len() {
-        return false
+        return false;
     }
 
     // Check topics.
@@ -997,12 +1008,12 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
         .filter(|(i, _)| checks[*i])
         .all(|(i, topic)| topic == &expected.topics()[i])
     {
-        return false
+        return false;
     }
 
     // Check data
     if checks[4] && expected.data.as_ref() != log.data.as_ref() {
-        return false
+        return false;
     }
 
     true

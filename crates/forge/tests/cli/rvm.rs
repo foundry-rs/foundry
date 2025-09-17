@@ -1,7 +1,7 @@
 //! rvm sanity checks
 
 use lazy_static::lazy_static;
-use rvm::{self, Binary};
+use rvm::Binary;
 use semver::Version;
 
 const LATEST_SOLC: Version = Version::new(0, 8, 29);

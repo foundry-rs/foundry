@@ -1,14 +1,14 @@
 use crate::config::{
-    AccountGenerator, AnvilNodeConfig, SubstrateNodeConfig, CHAIN_ID, DEFAULT_MNEMONIC,
+    AccountGenerator, AnvilNodeConfig, CHAIN_ID, DEFAULT_MNEMONIC, SubstrateNodeConfig,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{utils::Unit, U256};
+use alloy_primitives::{U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use foundry_common::shell;
 use foundry_config::Chain;
-use rand::{rngs::StdRng, SeedableRng};
+use rand_08::{SeedableRng, rngs::StdRng};
 use std::{net::IpAddr, path::PathBuf, time::Duration};
 
 #[derive(Clone, Debug, Parser)]
@@ -142,27 +142,27 @@ impl NodeArgs {
     }
 
     fn account_generator(&self) -> AccountGenerator {
-        let mut gen = AccountGenerator::new(self.accounts as usize)
+        let mut rng_gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
             .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
-            gen = gen.phrase(mnemonic);
+            rng_gen = rng_gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(_) => DEFAULT_MNEMONIC.to_string(),
             };
-            gen = gen.phrase(mnemonic);
+            rng_gen = rng_gen.phrase(mnemonic);
         } else if let Some(seed) = self.mnemonic_seed {
             let mut seed = StdRng::seed_from_u64(seed);
             let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
-            gen = gen.phrase(mnemonic);
+            rng_gen = rng_gen.phrase(mnemonic);
         }
         if let Some(ref derivation) = self.derivation_path {
-            gen = gen.derivation_path(derivation);
+            rng_gen = rng_gen.derivation_path(derivation);
         }
-        gen
+        rng_gen
     }
 }
 
@@ -307,11 +307,14 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
-        env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        unsafe {
+            env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        };
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
-
-        env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        unsafe {
+            env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        };
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,

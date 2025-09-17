@@ -2,26 +2,24 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{
-    executors::ExecutorStrategy, revm::primitives::SpecId, MultiContractRunner,
-    MultiContractRunnerBuilder,
-};
+use forge::{MultiContractRunner, MultiContractRunnerBuilder, executors::ExecutorStrategy};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
+    Project, ProjectCompileOutput, SolcConfig, Vyper,
     artifacts::{EvmVersion, Libraries, Settings},
     compilers::multi::MultiCompiler,
     utils::RuntimeOrHandle,
-    Project, ProjectCompileOutput, SolcConfig, Vyper,
 };
 use foundry_config::{
-    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpointUrl, RpcEndpoints,
+    Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig, InvariantConfig, RpcEndpointUrl,
+    RpcEndpoints, fs_permissions::PathPermission,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
 use foundry_test_utils::{
     fd_lock, init_tracing,
     rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
 };
+use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
     io::Write,
@@ -102,8 +100,8 @@ impl ForgeTestProfile {
         config.gas_limit = u64::MAX.into();
         config.chain = None;
         config.tx_origin = CALLER;
-        config.block_number = 1;
-        config.block_timestamp = 1;
+        config.block_number = U256::from(1);
+        config.block_timestamp = U256::from(1);
 
         config.sender = CALLER;
         config.initial_balance = U256::MAX;
@@ -117,6 +115,7 @@ impl ForgeTestProfile {
 
         config.fuzz = FuzzConfig {
             runs: 256,
+            fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig {
@@ -127,7 +126,7 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
-            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
             failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
             timeout: None,
@@ -147,16 +146,21 @@ impl ForgeTestProfile {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_min_mutations: 5,
+            corpus_min_size: 0,
             failure_persist_dir: Some(
                 tempfile::Builder::new()
                     .prefix(&format!("foundry-{self}"))
                     .tempdir()
                     .unwrap()
-                    .into_path(),
+                    .keep(),
             ),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
+            show_edge_coverage: false,
         };
 
         config.sanitized()
@@ -294,7 +298,7 @@ pub fn get_vyper() -> Vyper {
                  install it manually and add it to $PATH"
             ),
         };
-        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
+        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.3/vyper.0.4.3+commit.bff19ea2.{suffix}");
 
         let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
 
@@ -352,7 +356,7 @@ pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
-/// Data for tests requiring Cancun support on Solc and EVM level.
+/// Data for tests requiring Prague support on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 

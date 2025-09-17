@@ -3252,7 +3252,7 @@
     },
     {
       "func": {
-        "id": "attachDelegation",
+        "id": "attachDelegation_0",
         "description": "Designate the next call as an EIP-7702 transaction",
         "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
         "visibility": "external",
@@ -3264,6 +3264,26 @@
           174,
           53,
           25
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "attachDelegation_1",
+        "description": "Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address),bool)",
+        "selector": "0xf4460d34",
+        "selectorBytes": [
+          244,
+          70,
+          13,
+          52
         ]
       },
       "group": "scripting",
@@ -4157,7 +4177,7 @@
     {
       "func": {
         "id": "deriveKey_0",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4177,7 +4197,7 @@
     {
       "func": {
         "id": "deriveKey_1",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4197,7 +4217,7 @@
     {
       "func": {
         "id": "deriveKey_2",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4217,7 +4237,7 @@
     {
       "func": {
         "id": "deriveKey_3",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4273,6 +4293,106 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "eip712HashStruct_0",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,bytes)",
+        "selector": "0xaedeaebc",
+        "selectorBytes": [
+          174,
+          222,
+          174,
+          188
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashStruct_1",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nRequires previous binding generation with `forge bind-json`.\nParams:\n * `bindingsPath`: path where the output of `forge bind-json` is stored.\n * `typeName`: Name of the type (i.e. \"PermitSingle\").\n * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.",
+        "declaration": "function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,string,bytes)",
+        "selector": "0x6d06c57c",
+        "selectorBytes": [
+          109,
+          6,
+          197,
+          124
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashType_0",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "declaration": "function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashType(string)",
+        "selector": "0x6792e9e2",
+        "selectorBytes": [
+          103,
+          146,
+          233,
+          226
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashType_1",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nRequires previous binding generation with `forge bind-json`.\nParams:\n * `bindingsPath`: path where the output of `forge bind-json` is stored.\n * `typeName`: Name of the type (i.e. \"Transaction\").",
+        "declaration": "function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashType(string,string)",
+        "selector": "0x18fb6406",
+        "selectorBytes": [
+          24,
+          251,
+          100,
+          6
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashTypedData",
+        "description": "Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.",
+        "declaration": "function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashTypedData(string)",
+        "selector": "0xea25e615",
+        "selectorBytes": [
+          234,
+          37,
+          230,
+          21
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -6248,6 +6368,26 @@
           116,
           138,
           173
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getRawBlockHeader",
+        "description": "Gets the RLP encoded block header for a given block number.\nReturns the block header in the same format as `cast block <block_number> --raw`.",
+        "declaration": "function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getRawBlockHeader(uint256)",
+        "selector": "0x2c667606",
+        "selectorBytes": [
+          44,
+          102,
+          118,
+          6
         ]
       },
       "group": "evm",
@@ -9582,6 +9722,26 @@
     },
     {
       "func": {
+        "id": "setSeed",
+        "description": "Set RNG seed.",
+        "declaration": "function setSeed(uint256 seed) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setSeed(uint256)",
+        "selector": "0xc32a50f9",
+        "selectorBytes": [
+          195,
+          42,
+          80,
+          249
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "shuffle",
         "description": "Randomly shuffles an array.",
         "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",
@@ -9634,6 +9794,26 @@
           227,
           229,
           190
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_2",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256,bool)",
+        "selector": "0xd936e146",
+        "selectorBytes": [
+          217,
+          54,
+          225,
+          70
         ]
       },
       "group": "scripting",
@@ -9754,6 +9934,26 @@
           186,
           46,
           195
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation_2",
+        "description": "Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(address,uint256,bool)",
+        "selector": "0xcdd7563d",
+        "selectorBytes": [
+          205,
+          215,
+          86,
+          61
         ]
       },
       "group": "scripting",

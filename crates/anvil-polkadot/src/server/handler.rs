@@ -1,8 +1,8 @@
 //! Contains RPC handlers
-use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
+use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
-use futures::{channel::oneshot, SinkExt};
+use futures::{SinkExt, channel::oneshot};
 
 use crate::{
     api_server::{ApiHandle, ApiRequest},

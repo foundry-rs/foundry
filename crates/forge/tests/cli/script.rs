@@ -1,14 +1,15 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use alloy_hardforks::EthereumHardfork;
+use alloy_primitives::{Address, Bytes, address, hex};
+use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
+    ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
-    ScriptOutcome, ScriptTester,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -901,7 +902,7 @@ forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| 
         .broadcast(ScriptOutcome::ScriptFailed);
 });
 
-forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
+forgetest_async!(cannot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
     let create2 = address!("0x0000000000000000000000000000000000b4956c");
@@ -1375,7 +1376,7 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
     tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
 });
 
-forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
+forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
     cmd.args(["init", "--force"])
         .arg(prj.root())
         .assert_success()
@@ -1952,7 +1953,7 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
@@ -2244,11 +2245,12 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 "#]]);
 
-    assert!(!api
-        .get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        !api.get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
@@ -2291,7 +2293,7 @@ Script ran successfully.
 "#]]);
 });
 
-forgetest_init!(can_remeber_keys, |prj, cmd| {
+forgetest_init!(can_remember_keys, |prj, cmd| {
     let script = prj
         .add_source(
             "Foo",
@@ -2575,7 +2577,7 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             228231
+gasLimit             [..]
 gasPrice             
 input                [..]
 maxFeePerBlobGas     
@@ -2663,10 +2665,7 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
     .unwrap();
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
-...
-Error: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
-Error: script failed: <empty revert data>
-...
+Error: script failed: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
 
 "#]]);
 
@@ -2753,7 +2752,7 @@ contract EIP7702Script is Script {
         )
         .unwrap();
 
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
 
     cmd.args([
@@ -2855,5 +2854,253 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_SENSITIVE_VALUES]
 
 
+"#]]);
+});
+
+// Tests EIP-7702 with multiple auth <https://github.com/foundry-rs/foundry/issues/10551>
+// Alice sends 5 ETH from Bob to Receiver1 and 1 ETH to Receiver2
+forgetest_async!(can_broadcast_txes_with_multiple_auth, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "BatchCallDelegation.sol",
+        r#"
+contract BatchCallDelegation {
+    event CallExecuted(address indexed to, uint256 indexed value, bytes data, bool success);
+
+    struct Call {
+        bytes data;
+        address to;
+        uint256 value;
+    }
+
+    function execute(Call[] calldata calls) external payable {
+        for (uint256 i = 0; i < calls.length; i++) {
+            Call memory call = calls[i];
+            (bool success,) = call.to.call{value: call.value}(call.data);
+            require(success, "call reverted");
+            emit CallExecuted(call.to, call.value, call.data, success);
+        }
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+            "BatchCallDelegationScript.s.sol",
+            r#"
+import {Script, console} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {BatchCallDelegation} from "../src/BatchCallDelegation.sol";
+
+contract BatchCallDelegationScript is Script {
+    // Alice's address and private key (EOA with no initial contract code).
+    address payable ALICE_ADDRESS = payable(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+    uint256 constant ALICE_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+
+    // Bob's address and private key (Bob will execute transactions on Alice's behalf).
+    address constant BOB_ADDRESS = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    uint256 constant BOB_PK = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+
+    address constant RECEIVER_1 = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
+    address constant RECEIVER_2 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
+
+    uint256 constant DEPLOYER_PK = 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6;
+
+    function run() public {
+        BatchCallDelegation.Call[] memory aliceCalls = new BatchCallDelegation.Call[](1);
+        aliceCalls[0] = BatchCallDelegation.Call({to: RECEIVER_1, value: 5 ether, data: ""});
+
+        BatchCallDelegation.Call[] memory bobCalls = new BatchCallDelegation.Call[](2);
+        bobCalls[0] = BatchCallDelegation.Call({to: RECEIVER_1, value: 5 ether, data: ""});
+        bobCalls[1] = BatchCallDelegation.Call({to: RECEIVER_2, value: 1 ether, data: ""});
+
+        vm.startBroadcast(DEPLOYER_PK);
+        BatchCallDelegation batcher = new BatchCallDelegation();
+        vm.stopBroadcast();
+
+        vm.startBroadcast(ALICE_PK);
+        vm.signAndAttachDelegation(address(batcher), ALICE_PK);
+        vm.signAndAttachDelegation(address(batcher), BOB_PK);
+        vm.signAndAttachDelegation(address(batcher), BOB_PK);
+
+        BatchCallDelegation(BOB_ADDRESS).execute(bobCalls);
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/BatchCallDelegationScript.s.sol",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--non-interactive",
+        "--slow",
+        "--broadcast",
+        "--evm-version",
+        "prague",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+
+    // Alice nonce should be 2 (tx sender and one auth)
+    let alice_acc = api
+        .get_account(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), None)
+        .await
+        .unwrap();
+    assert_eq!(alice_acc.nonce, 2);
+
+    // Bob nonce should be 2 (two auths) and balance reduced by 6 ETH.
+    let bob_acc = api
+        .get_account(address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"), None)
+        .await
+        .unwrap();
+    assert_eq!(bob_acc.nonce, 2);
+    assert_eq!(bob_acc.balance.to_string(), "94000000000000000000");
+
+    // Receiver balances should be updated with 5 ETH and 1 ETH.
+    let receiver1 = api
+        .get_account(address!("0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"), None)
+        .await
+        .unwrap();
+    assert_eq!(receiver1.nonce, 0);
+    assert_eq!(receiver1.balance.to_string(), "105000000000000000000");
+    let receiver2 = api
+        .get_account(address!("0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"), None)
+        .await
+        .unwrap();
+    assert_eq!(receiver2.nonce, 0);
+    assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
 "#]]);
 });

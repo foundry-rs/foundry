@@ -14,7 +14,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
-  RESOLC_VERSION: 0.1.0-dev.13
+  RESOLC_VERSION: 0.3.0
   DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
   ETHERSCAN_API_KEYS: ${{ secrets.ETHERSCAN_API_KEYS }}
   ETH_RPC_VERSION: 0.5.0
@@ -167,7 +167,7 @@ jobs:
         with:
           python-version: 3.11
       - name: Install Vyper
-        run: pip --version && pip install vyper==0.4.0
+        run: pip --version && pip install vyper==0.4.3
       - name: Install Resolc
         run: |
           cargo install rvm-rs
@@ -216,4 +216,3 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
-

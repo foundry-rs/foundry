@@ -5,6 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
+        env::Env,
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -13,10 +14,11 @@ use crate::eth::{
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
+    B256, Bytes, U256,
     map::{B256HashMap, HashMap},
-    Bytes, B256, U256, U64,
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
@@ -25,7 +27,6 @@ use alloy_rpc_types::{
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
@@ -34,13 +35,12 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
     backend::MemDb,
-    revm::primitives::Env,
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
     },
 };
 use parking_lot::RwLock;
-use revm::primitives::SpecId;
+use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
@@ -176,11 +176,11 @@ impl InMemoryBlockStates {
     /// Returns the state for the given `hash` if present
     pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
+            if let Some(state) = self.on_disk_states.get_mut(hash)
+                && let Some(cached) = self.disk_cache.read(*hash)
+            {
+                state.init_from_state_snapshot(cached);
+                return Some(state);
             }
             None
         })
@@ -250,16 +250,16 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
-    pub hashes: HashMap<U64, B256>,
+    pub hashes: HashMap<u64, B256>,
     /// The current best hash
     pub best_hash: B256,
     /// The current best block number
-    pub best_number: U64,
+    pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
@@ -286,11 +286,11 @@ impl BlockchainStorage {
         let partial_header = PartialHeader {
             timestamp,
             base_fee,
-            gas_limit: env.block.gas_limit.to::<u64>(),
-            beneficiary: env.block.coinbase,
-            difficulty: env.block.difficulty,
-            blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.block.get_blob_excess_gas(),
+            gas_limit: env.evm_env.block_env.gas_limit,
+            beneficiary: env.evm_env.block_env.beneficiary,
+            difficulty: env.evm_env.block_env.difficulty,
+            blob_gas_used: env.evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas: env.evm_env.block_env.blob_excess_gas(),
             number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
@@ -300,7 +300,7 @@ impl BlockchainStorage {
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number: U64 = U64::from(genesis_number);
+        let best_number = genesis_number;
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -320,13 +320,13 @@ impl BlockchainStorage {
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         let mut hashes = HashMap::default();
-        hashes.insert(U64::from(block_number), block_hash);
+        hashes.insert(block_number, block_hash);
 
         Self {
             blocks: B256HashMap::default(),
             hashes,
             best_hash: block_hash,
-            best_number: U64::from(block_number),
+            best_number: block_number,
             genesis_hash: Default::default(),
             transactions: Default::default(),
             total_difficulty,
@@ -337,17 +337,20 @@ impl BlockchainStorage {
     ///
     /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
     /// remain in the state.
-    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
-        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) -> Vec<Block> {
+        let mut removed = vec![];
+        let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
-            if let Some(hash) = self.hashes.remove(&U64::from(i)) {
-                if let Some(block) = self.blocks.remove(&hash) {
-                    self.remove_block_transactions_by_number(block.header.number);
-                }
+            if let Some(hash) = self.hashes.remove(&i)
+                && let Some(block) = self.blocks.remove(&hash)
+            {
+                self.remove_block_transactions_by_number(block.header.number);
+                removed.push(block);
             }
         }
         self.best_hash = block_hash;
-        self.best_number = U64::from(block_number);
+        self.best_number = block_number;
+        removed
     }
 
     pub fn empty() -> Self {
@@ -364,7 +367,7 @@ impl BlockchainStorage {
 
     /// Removes all stored transactions for the given block number
     pub fn remove_block_transactions_by_number(&mut self, num: u64) {
-        if let Some(hash) = self.hashes.get(&(U64::from(num))).copied() {
+        if let Some(hash) = self.hashes.get(&num).copied() {
             self.remove_block_transactions(hash);
         }
     }
@@ -383,12 +386,12 @@ impl BlockchainStorage {
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = U64::from(32u64);
+        let slots_in_an_epoch = 32;
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
             BlockNumberOrTag::Pending => None,
-            BlockNumberOrTag::Number(num) => self.hashes.get(&U64::from(num)).copied(),
+            BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
                 if self.best_number > (slots_in_an_epoch) {
                     self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
@@ -397,10 +400,8 @@ impl BlockchainStorage {
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > (slots_in_an_epoch * U64::from(2)) {
-                    self.hashes
-                        .get(&(self.best_number - (slots_in_an_epoch * U64::from(2))))
-                        .copied()
+                if self.best_number > (slots_in_an_epoch * 2) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -409,13 +410,7 @@ impl BlockchainStorage {
     }
 
     pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        let mut blocks = self
-            .blocks
-            .values()
-            .map(|block| block.clone().into())
-            .collect::<Vec<SerializableBlock>>();
-        blocks.sort_by_key(|block| block.header.number);
-        blocks
+        self.blocks.values().map(|block| block.clone().into()).collect()
     }
 
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
@@ -429,7 +424,7 @@ impl BlockchainStorage {
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
-            self.hashes.insert(U64::from(block_number), block_hash);
+            self.hashes.insert(block_number, block_hash);
         }
     }
 
@@ -443,7 +438,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -505,7 +500,7 @@ impl Blockchain {
 #[derive(Clone, Debug)]
 pub struct MinedBlockOutcome {
     /// The block that was mined
-    pub block_number: U64,
+    pub block_number: u64,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were attempted to be included but were invalid at the time of
@@ -582,10 +577,10 @@ impl MinedTransaction {
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer |
-                    GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer |
-                    GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    GethDebugBuiltInTracerType::PreStateTracer
+                    | GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
@@ -617,16 +612,10 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
-    use foundry_evm::{
-        backend::MemDb,
-        revm::{
-            db::DatabaseRef,
-            primitives::{AccountInfo, U256},
-        },
-    };
+    use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
     fn test_interval_update() {

@@ -1,17 +1,15 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
+use alloy_consensus::BlobTransactionSidecar;
 use alloy_primitives::TxKind;
-use alloy_rpc_types::{TransactionInput, TransactionRequest};
-use revm::{
-    interpreter::{CallInputs, Interpreter},
-    primitives::SignedAuthorization,
-};
+use alloy_rpc_types::{SignedAuthorization, TransactionInput, TransactionRequest};
+use revm::interpreter::{CallInputs, Interpreter};
 
 use crate::{
-    inspector::{check_if_fixed_gas_limit, CommonCreateInput, Ecx, InnerEcx},
-    script::Broadcast,
     BroadcastableTransaction, BroadcastableTransactions, CheatcodesExecutor, CheatsConfig,
     CheatsCtxt, DynCheatcode, Result,
+    inspector::{CommonCreateInput, Ecx, check_if_fixed_gas_limit},
+    script::Broadcast,
 };
 
 /// Context for [CheatcodeInspectorStrategy].
@@ -68,7 +66,7 @@ pub trait CheatcodeInspectorStrategyRunner:
         _ctx: &mut dyn CheatcodeInspectorStrategyContext,
         config: Arc<CheatsConfig>,
         input: &dyn CommonCreateInput,
-        ecx_inner: InnerEcx,
+        ecx: Ecx,
         broadcast: &Broadcast,
         broadcastable_transactions: &mut BroadcastableTransactions,
     );
@@ -80,10 +78,11 @@ pub trait CheatcodeInspectorStrategyRunner:
         _ctx: &mut dyn CheatcodeInspectorStrategyContext,
         _config: Arc<CheatsConfig>,
         input: &CallInputs,
-        ecx_inner: InnerEcx,
+        ecx: Ecx,
         broadcast: &Broadcast,
         broadcastable_transactions: &mut BroadcastableTransactions,
-        active_delegation: &mut Option<SignedAuthorization>,
+        active_delegations: Vec<SignedAuthorization>,
+        active_blob_sidecar: Option<BlobTransactionSidecar>,
     );
 
     /// Hook for pre initialize_interp.
@@ -127,21 +126,26 @@ impl CheatcodeInspectorStrategyRunner for EvmCheatcodeInspectorStrategyRunner {
         _ctx: &mut dyn CheatcodeInspectorStrategyContext,
         _config: Arc<CheatsConfig>,
         input: &dyn CommonCreateInput,
-        ecx_inner: InnerEcx,
+        ecx: Ecx,
         broadcast: &Broadcast,
         broadcastable_transactions: &mut BroadcastableTransactions,
     ) {
-        let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx_inner, input.gas_limit());
+        let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
 
-        let account = &ecx_inner.journaled_state.state()[&broadcast.new_origin];
+        let to = None;
+        let nonce: u64 = ecx.journaled_state.state()[&broadcast.new_origin].info.nonce;
+        //drop the mutable borrow of account
+        let call_init_code = input.init_code();
+        let rpc = ecx.journaled_state.database.active_fork_url();
+
         broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc: ecx_inner.db.active_fork_url(),
+            rpc,
             transaction: TransactionRequest {
                 from: Some(broadcast.new_origin),
-                to: None,
+                to,
                 value: Some(input.value()),
-                input: TransactionInput::new(input.init_code()),
-                nonce: Some(account.info.nonce),
+                input: TransactionInput::new(call_init_code),
+                nonce: Some(nonce),
                 gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                 ..Default::default()
             }
@@ -153,41 +157,55 @@ impl CheatcodeInspectorStrategyRunner for EvmCheatcodeInspectorStrategyRunner {
         &self,
         _ctx: &mut dyn CheatcodeInspectorStrategyContext,
         _config: Arc<CheatsConfig>,
-        input: &CallInputs,
-        ecx_inner: InnerEcx,
+        inputs: &CallInputs,
+        ecx: Ecx,
         broadcast: &Broadcast,
         broadcastable_transactions: &mut BroadcastableTransactions,
-        active_delegation: &mut Option<SignedAuthorization>,
+        active_delegations: Vec<SignedAuthorization>,
+        active_blob_sidecar: Option<BlobTransactionSidecar>,
     ) {
-        let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx_inner, input.gas_limit);
+        let input = TransactionInput::new(inputs.input.bytes(ecx));
+        let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, inputs.gas_limit);
 
-        let account = ecx_inner.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
+        let account = ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
+        let nonce = account.info.nonce;
 
         let mut tx_req = TransactionRequest {
             from: Some(broadcast.new_origin),
-            to: Some(TxKind::from(Some(input.target_address))),
-            value: input.transfer_value(),
-            input: TransactionInput::new(input.input.clone()),
-            nonce: Some(account.info.nonce),
-            chain_id: Some(ecx_inner.env.cfg.chain_id),
-            gas: if is_fixed_gas_limit { Some(input.gas_limit) } else { None },
+            to: Some(TxKind::from(Some(inputs.target_address))),
+            value: inputs.transfer_value(),
+            input,
+            nonce: Some(nonce),
+            chain_id: Some(ecx.cfg.chain_id),
+            gas: if is_fixed_gas_limit { Some(inputs.gas_limit) } else { None },
             ..Default::default()
         };
 
-        // Handle delegation if present
-        if let Some(auth_list) = active_delegation.take() {
-            tx_req.authorization_list = Some(vec![auth_list]);
-            tx_req.sidecar = None;
+        match (active_delegations.is_empty(), active_blob_sidecar) {
+            (false, Some(_)) => {
+                // Note(zk): We can't return a call outcome from here
+                return;
+            }
+            (false, None) => {
+                tx_req.authorization_list = Some(active_delegations);
+                tx_req.sidecar = None;
 
-            // Increment nonce to reflect the signed authorization.
-            account.info.nonce += 1;
-        } else {
-            tx_req.authorization_list = None;
-            tx_req.sidecar = None;
+                // Increment nonce to reflect the signed authorization.
+                account.info.nonce += 1;
+            }
+            (true, Some(blob_sidecar)) => {
+                use alloy_network::TransactionBuilder4844;
+                tx_req.set_blob_sidecar(blob_sidecar);
+                tx_req.authorization_list = None;
+            }
+            (true, None) => {
+                tx_req.sidecar = None;
+                tx_req.authorization_list = None;
+            }
         }
 
         broadcastable_transactions.push_back(BroadcastableTransaction {
-            rpc: ecx_inner.db.active_fork_url(),
+            rpc: ecx.journaled_state.database.active_fork_url(),
             transaction: tx_req.into(),
         });
         debug!(target: "cheatcodes", tx=?broadcastable_transactions.back().unwrap(), "broadcastable call");
@@ -223,7 +241,7 @@ pub trait CheatcodeInspectorStrategyExt {
     fn revive_try_create(
         &self,
         _state: &mut crate::Cheatcodes,
-        _ecx: InnerEcx,
+        _ecx: Ecx,
         _input: &dyn CommonCreateInput,
         _executor: &mut dyn CheatcodesExecutor,
     ) -> Option<revm::interpreter::CreateOutcome> {
@@ -233,7 +251,7 @@ pub trait CheatcodeInspectorStrategyExt {
     fn revive_try_call(
         &self,
         _state: &mut crate::Cheatcodes,
-        _ecx: InnerEcx,
+        _ecx: Ecx,
         _input: &CallInputs,
         _executor: &mut dyn CheatcodesExecutor,
     ) -> Option<revm::interpreter::CallOutcome> {

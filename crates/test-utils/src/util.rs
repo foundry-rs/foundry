@@ -1,18 +1,18 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     error::Result as SolcResult,
-    project_util::{copy_dir, TempProject},
+    project_util::{TempProject, copy_dir},
     solc::SolcSettings,
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{assert_data_eq, cmd::OutputAssert, Data, IntoData};
+use snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert};
 use std::{
     env,
     ffi::OsStr,
@@ -21,15 +21,15 @@ use std::{
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, LazyLock,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
-const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -48,7 +48,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.27";
+pub const SOLC_VERSION: &str = "0.8.30";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -138,15 +138,22 @@ impl ExtTester {
         self
     }
 
-    /// Runs the test.
-    pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
+    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
+
+        // Export vyper and forge in test command - workaround for snekmate venom tests.
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
+            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_dir = forge_bin.parent().expect("forge path should have a parent");
+
+            let existing_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut new_paths = vec![vyper_dir.to_path_buf(), forge_dir.to_path_buf()];
+            new_paths.extend(std::env::split_paths(&existing_path));
+
+            let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
+            test_cmd.env("PATH", joined_path);
+        }
 
         // Wipe the default structure.
         prj.wipe();
@@ -178,7 +185,10 @@ impl ExtTester {
             }
         }
 
-        // Run installation command.
+        (prj, test_cmd)
+    }
+
+    pub fn run_install_commands(&self, root: &str) {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
@@ -195,6 +205,20 @@ impl ExtTester {
                 }
             }
         }
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut test_cmd) = self.setup_forge_prj();
+
+        // Run installation command.
+        self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");
@@ -237,7 +261,7 @@ pub fn initialize(target: &Path) {
 
     // Initialize the global template if necessary.
     let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
-    let mut _read = Some(lock.read().unwrap());
+    let mut _read = lock.read().unwrap();
     if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
@@ -248,7 +272,7 @@ pub fn initialize(target: &Path) {
         // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
         // Release the read lock and acquire a write lock, initializing the lock file.
-        _read = None;
+        drop(_read);
 
         let mut write = lock.write().unwrap();
 
@@ -291,7 +315,7 @@ pub fn initialize(target: &Path) {
 
         // Release the write lock and acquire a new read lock.
         drop(write);
-        _read = Some(lock.read().unwrap());
+        _read = lock.read().unwrap();
     }
 
     println!("- copying template dir from {}", tpath.display());
@@ -302,7 +326,7 @@ pub fn initialize(target: &Path) {
 /// Clones a remote repository into the specified directory. Panics if the command fails.
 pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
     println!("{cmd:?}");
     let status = cmd.status().unwrap();
@@ -886,6 +910,14 @@ impl TestCommand {
         output.success();
     }
 
+    /// Runs `git submodule status` inside the project's dir
+    #[track_caller]
+    pub fn git_submodule_status(&self) -> Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("submodule").arg("status").current_dir(self.project.root());
+        cmd.output().unwrap()
+    }
+
     /// Runs `git add .` inside the project's dir
     #[track_caller]
     pub fn git_add(&self) {
@@ -1008,12 +1040,16 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
+            ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
-            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
+            ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
+            ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),

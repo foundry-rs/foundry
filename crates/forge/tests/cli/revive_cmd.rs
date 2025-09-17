@@ -2,7 +2,7 @@ use std::{fs, path::Path, str::FromStr};
 
 use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, Remapping};
 use foundry_config::SolidityErrorCode;
-use foundry_test_utils::{snapbox::IntoData, TestProject};
+use foundry_test_utils::{TestProject, snapbox::IntoData};
 
 use crate::constants::*;
 const CONTRACT_ARTIFACT_JSON: &str = "Foo.sol/Foo.json";
@@ -979,10 +979,9 @@ Compiler run successful!
 forgetest!(can_use_absolute_imports_for_resolc, |prj, cmd| {
     prj.update_config(|config| {
         let remapping = prj.paths().libraries[0].join("myDependency");
-        config.remappings =
-            vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
-                .unwrap()
-                .into()];
+        config.remappings = vec![
+            Remapping::from_str(&format!("myDependency/={}", remapping.display())).unwrap().into(),
+        ];
     });
 
     prj.add_lib(

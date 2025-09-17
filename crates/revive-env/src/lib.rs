@@ -11,7 +11,7 @@ use polkadot_sdk::{
     polkadot_runtime_common::BuildStorage,
     sp_core::H160,
     sp_io,
-    sp_keystore::{testing::MemoryKeystore, KeystoreExt},
+    sp_keystore::{KeystoreExt, testing::MemoryKeystore},
     sp_runtime::AccountId32,
     sp_tracing,
 };

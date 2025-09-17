@@ -1,6 +1,6 @@
 use foundry_compilers::{
-    error::SolcError, multi::MultiCompilerLanguage, resolc::ResolcSettings, solc::SolcSettings,
-    ProjectPathsConfig,
+    ProjectPathsConfig, error::SolcError, multi::MultiCompilerLanguage, resolc::ResolcSettings,
+    solc::SolcSettings,
 };
 use serde::{Deserialize, Serialize};
 

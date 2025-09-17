@@ -3,21 +3,21 @@ use super::{
     sequence::ScriptSequenceKind, transaction::ScriptTransactionBuilder,
 };
 use crate::{
-    broadcast::{estimate_gas, BundledState},
+    ScriptArgs, ScriptConfig, ScriptResult,
+    broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
     sequence::get_commit_hash,
-    ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{shell, ContractData};
+use foundry_common::{ContractData, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -139,7 +139,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env_mut().block.number += U256::from(1);
+                    runner.executor.env_mut().evm_env.block_env.number += U256::from(1);
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -181,9 +181,9 @@ impl PreSimulationState {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast() &&
-                        !self.args.non_interactive &&
-                        !Confirm::new()
+                    if self.args.should_broadcast()
+                        && !self.args.non_interactive
+                        && !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
                     {
@@ -328,10 +328,10 @@ impl FilledTransactionsState {
             new_sequence.push_back(tx);
             // We only create a [`ScriptSequence`] object when we collect all the rpc related
             // transactions.
-            if let Some(next_tx) = txes_iter.peek() {
-                if next_tx.rpc == tx_rpc {
-                    continue;
-                }
+            if let Some(next_tx) = txes_iter.peek()
+                && next_tx.rpc == tx_rpc
+            {
+                continue;
             }
 
             let sequence =
@@ -454,7 +454,7 @@ impl FilledTransactionsState {
             receipts: vec![],
             pending: vec![],
             paths,
-            timestamp: now().as_secs(),
+            timestamp: now().as_millis(),
             libraries,
             chain,
             commit,

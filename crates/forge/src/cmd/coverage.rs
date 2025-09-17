@@ -1,28 +1,28 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::{
+    MultiContractRunnerBuilder,
     coverage::{
-        analysis::{SourceAnalysis, SourceFile, SourceFiles},
-        anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
+        analysis::{SourceAnalysis, SourceFile, SourceFiles},
+        anchors::find_anchors,
     },
-    utils::IcPcMap,
-    MultiContractRunnerBuilder,
 };
-use alloy_primitives::{map::HashMap, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
-        sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
+        CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source, sourcemap::SourceMap,
     },
     compilers::multi::MultiCompiler,
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use foundry_evm::opts::EvmOpts;
+use foundry_evm_core::ic::IcPcMap;
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
@@ -74,6 +74,10 @@ pub struct CoverageArgs {
     /// Whether to include libraries in the coverage report.
     #[arg(long)]
     include_libs: bool,
+
+    /// Whether to exclude tests from the coverage report.
+    #[arg(long)]
+    exclude_tests: bool,
 
     /// The coverage reporters to use. Constructed from the other fields.
     #[arg(skip)]
@@ -194,8 +198,10 @@ impl CoverageArgs {
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
-            // Filter out dependencies.
-            if !self.include_libs && project_paths.has_library_ancestor(path) {
+            // Filter out libs dependencies and tests.
+            if (!self.include_libs && project_paths.has_library_ancestor(path))
+                || (self.exclude_tests && project_paths.is_test(path))
+            {
                 continue;
             }
 
@@ -284,7 +290,7 @@ impl CoverageArgs {
         let data = outcome.results.iter().flat_map(|(_, suite)| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
-                let Some(hit_maps) = result.coverage.as_ref() else { continue };
+                let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
                 for map in hit_maps.0.values() {
                     if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
                         hits.push((id, map, true));
@@ -410,7 +416,7 @@ pub struct BytecodeData {
     /// The source maps are indexed by *instruction counters*, which are the indexes of
     /// instructions in the bytecode *minus any push bytes*.
     ///
-    /// Since our coverage inspector collects hit data using program counters, the anchors
+    /// Since our line coverage inspector collects hit data using program counters, the anchors
     /// also need to be based on program counters.
     ic_pc_map: IcPcMap,
 }

@@ -18,10 +18,10 @@ pub use foundry_common_fmt as fmt;
 
 pub mod abi;
 pub mod calc;
+pub mod comments;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
-pub mod ens;
 pub mod errors;
 pub mod evm;
 pub mod fs;
@@ -39,7 +39,7 @@ pub mod version;
 
 pub use constants::*;
 pub use contracts::*;
-pub use io::{shell, stdin, Shell};
+pub use io::{Shell, shell, stdin};
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;

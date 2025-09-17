@@ -1,13 +1,21 @@
+use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
-use eyre::{Ok, OptionExt, Result};
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::artifacts::{
-    output_selection::OutputSelection,
-    visitor::{Visitor, Walk},
-    ContractDefinition, EnumDefinition, SourceUnit, StructDefinition, TypeDescriptions, TypeName,
+use eyre::Result;
+use foundry_cli::opts::{BuildOpts, solar_pcx_from_build_opts};
+use serde::Serialize;
+use solar_parse::interface::Session;
+use solar_sema::{
+    GcxWrapper, Hir,
+    hir::StructId,
+    thread_local::ThreadLocal,
+    ty::{Ty, TyKind},
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt::{Display, Formatter, Result as FmtResult, Write},
+    path::{Path, PathBuf},
+    slice,
+};
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
 
@@ -18,238 +26,224 @@ pub struct Eip712Args {
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
+    /// Output in JSON format.
+    #[arg(long, help = "Output in JSON format")]
+    pub json: bool,
+
     #[command(flatten)]
     build: BuildOpts,
 }
 
+#[derive(Debug, Serialize)]
+struct Eip712Output {
+    path: String,
+    #[serde(rename = "type")]
+    ty: String,
+    hash: B256,
+}
+
+impl Display for Eip712Output {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f, "{}:", self.path)?;
+        writeln!(f, " - type: {}", self.ty)?;
+        writeln!(f, " - hash: {}", self.hash)
+    }
+}
+
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
-        let mut project = config.ephemeral_project()?;
-        let target_path = dunce::canonicalize(self.target_path)?;
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::ast_output_selection();
-        });
+        let mut sess = Session::builder().with_stderr_emitter().build();
+        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let output = ProjectCompiler::new().files([target_path.clone()]).compile(&project)?;
+        sess.enter_parallel(|| -> Result<()> {
+            // Set up the parsing context with the project paths and sources.
+            let parsing_context = solar_pcx_from_build_opts(
+                &sess,
+                &self.build,
+                None,
+                Some(slice::from_ref(&self.target_path)),
+            )?;
 
-        // Collect ASTs by getting them from sources and converting into strongly typed
-        // `SourceUnit`s.
-        let asts = output
-            .into_output()
-            .sources
-            .into_iter()
-            .filter_map(|(path, mut sources)| Some((path, sources.swap_remove(0).source_file.ast?)))
-            .map(|(path, ast)| {
-                Ok((path, serde_json::from_str::<SourceUnit>(&serde_json::to_string(&ast)?)?))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+            // Parse and resolve
+            let hir_arena = ThreadLocal::new();
+            let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) else {
+                return Err(eyre::eyre!("failed parsing"));
+            };
+            let resolver = Resolver::new(gcx);
 
-        let resolver = Resolver::new(&asts);
+            let outputs = resolver
+                .struct_ids()
+                .filter_map(|id| {
+                    let resolved = resolver.resolve_struct_eip712(id)?;
+                    Some(Eip712Output {
+                        path: resolver.get_struct_path(id),
+                        hash: keccak256(resolved.as_bytes()),
+                        ty: resolved,
+                    })
+                })
+                .collect::<Vec<_>>();
 
-        let target_ast = asts
-            .get(&target_path)
-            .ok_or_else(|| eyre::eyre!("Could not find AST for target file {target_path:?}"))?;
-
-        let structs_in_target = {
-            let mut collector = StructCollector::default();
-            target_ast.walk(&mut collector);
-            collector.0
-        };
-
-        for id in structs_in_target.keys() {
-            if let Some(resolved) = resolver.resolve_struct_eip712(*id)? {
-                sh_println!("{resolved}\n")?;
+            if self.json {
+                sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
+            } else {
+                for output in &outputs {
+                    sh_println!("{output}")?;
+                }
             }
-        }
+
+            Ok(())
+        })?;
+
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
 
         Ok(())
     }
 }
 
-/// AST [Visitor] used for collecting struct definitions.
-#[derive(Debug, Clone, Default)]
-pub struct StructCollector(pub BTreeMap<usize, StructDefinition>);
-
-impl Visitor for StructCollector {
-    fn visit_struct_definition(&mut self, def: &StructDefinition) {
-        self.0.insert(def.id, def.clone());
-    }
-}
-
-/// Collects mapping from AST id of type definition to representation of this type for EIP-712
-/// encoding.
+/// Generates the EIP-712 `encodeType` string for a given struct.
 ///
-/// For now, maps contract definitions to `address` and enums to `uint8`.
-#[derive(Debug, Clone, Default)]
-struct SimpleCustomTypesCollector(BTreeMap<usize, String>);
-
-impl Visitor for SimpleCustomTypesCollector {
-    fn visit_contract_definition(&mut self, def: &ContractDefinition) {
-        self.0.insert(def.id, "address".to_string());
-    }
-
-    fn visit_enum_definition(&mut self, def: &EnumDefinition) {
-        self.0.insert(def.id, "uint8".to_string());
-    }
+/// Requires a reference to the source HIR.
+pub struct Resolver<'hir> {
+    gcx: GcxWrapper<'hir>,
 }
 
-pub struct Resolver {
-    simple_types: BTreeMap<usize, String>,
-    structs: BTreeMap<usize, StructDefinition>,
-}
-
-impl Resolver {
-    pub fn new(asts: &BTreeMap<PathBuf, SourceUnit>) -> Self {
-        let simple_types = {
-            let mut collector = SimpleCustomTypesCollector::default();
-            asts.values().for_each(|ast| ast.walk(&mut collector));
-
-            collector.0
-        };
-
-        let structs = {
-            let mut collector = StructCollector::default();
-            asts.values().for_each(|ast| ast.walk(&mut collector));
-            collector.0
-        };
-
-        Self { simple_types, structs }
+impl<'hir> Resolver<'hir> {
+    /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
+    pub fn new(gcx: GcxWrapper<'hir>) -> Self {
+        Self { gcx }
     }
 
-    /// Converts a given struct definition into EIP-712 `encodeType` representation.
+    #[inline]
+    fn hir(&self) -> &'hir Hir<'hir> {
+        &self.gcx.get().hir
+    }
+
+    /// Returns the [`StructId`]s of every user-defined struct in source order.
+    pub fn struct_ids(&self) -> impl Iterator<Item = StructId> {
+        self.hir().strukt_ids()
+    }
+
+    /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
+    pub fn get_struct_path(&self, id: StructId) -> String {
+        let strukt = self.hir().strukt(id).name.as_str();
+        match self.hir().strukt(id).contract {
+            Some(cid) => {
+                let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
+                let relevant = Path::new(&full_name)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&full_name);
+
+                if let Some((file, contract)) = relevant.rsplit_once(':') {
+                    format!("{file} > {contract} > {strukt}")
+                } else {
+                    format!("{relevant} > {strukt}")
+                }
+            }
+            None => strukt.to_string(),
+        }
+    }
+
+    /// Converts a given struct into its EIP-712 `encodeType` representation.
     ///
-    /// Returns `None` if struct contains any fields that are not supported by EIP-712 (e.g.
-    /// mappings or function pointers).
-    pub fn resolve_struct_eip712(&self, id: usize) -> Result<Option<String>> {
+    /// Returns `None` if the struct, or any of its fields, contains constructs
+    /// not supported by EIP-712 (mappings, function types, errors, etc).
+    pub fn resolve_struct_eip712(&self, id: StructId) -> Option<String> {
         let mut subtypes = BTreeMap::new();
-        subtypes.insert(self.structs[&id].name.clone(), id);
+        subtypes.insert(self.hir().strukt(id).name.as_str().into(), id);
         self.resolve_eip712_inner(id, &mut subtypes, true, None)
     }
 
     fn resolve_eip712_inner(
         &self,
-        id: usize,
-        subtypes: &mut BTreeMap<String, usize>,
+        id: StructId,
+        subtypes: &mut BTreeMap<String, StructId>,
         append_subtypes: bool,
         rename: Option<&str>,
-    ) -> Result<Option<String>> {
-        let def = &self.structs[&id];
-        let mut result = format!("{}(", rename.unwrap_or(&def.name));
+    ) -> Option<String> {
+        let def = self.hir().strukt(id);
+        let mut result = format!("{}(", rename.unwrap_or(def.name.as_str()));
 
-        for (idx, member) in def.members.iter().enumerate() {
-            let Some(ty) = self.resolve_type(
-                member.type_name.as_ref().ok_or_eyre("missing type name")?,
-                subtypes,
-            )?
-            else {
-                return Ok(None)
-            };
+        for (idx, field_id) in def.fields.iter().enumerate() {
+            let field = self.hir().variable(*field_id);
+            let ty = self.resolve_type(self.gcx.get().type_of_hir_ty(&field.ty), subtypes)?;
 
-            write!(result, "{ty} {name}", name = member.name)?;
+            write!(result, "{ty} {name}", name = field.name?.as_str()).ok()?;
 
-            if idx < def.members.len() - 1 {
+            if idx < def.fields.len() - 1 {
                 result.push(',');
             }
         }
 
         result.push(')');
 
-        if !append_subtypes {
-            return Ok(Some(result))
-        }
-
-        for (subtype_name, subtype_id) in
-            subtypes.iter().map(|(name, id)| (name.clone(), *id)).collect::<Vec<_>>()
-        {
-            if subtype_id == id {
-                continue
-            }
-            let Some(encoded_subtype) =
-                self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?
-            else {
-                return Ok(None)
-            };
-            result.push_str(&encoded_subtype);
-        }
-
-        Ok(Some(result))
-    }
-
-    /// Converts given [TypeName] into a type which can be converted to
-    /// [`alloy_dyn_abi::DynSolType`].
-    ///
-    /// Returns `None` if the type is not supported for EIP712 encoding.
-    pub fn resolve_type(
-        &self,
-        type_name: &TypeName,
-        subtypes: &mut BTreeMap<String, usize>,
-    ) -> Result<Option<String>> {
-        match type_name {
-            TypeName::FunctionTypeName(_) | TypeName::Mapping(_) => Ok(None),
-            TypeName::ElementaryTypeName(ty) => Ok(Some(ty.name.clone())),
-            TypeName::ArrayTypeName(ty) => {
-                let Some(inner) = self.resolve_type(&ty.base_type, subtypes)? else {
-                    return Ok(None)
-                };
-                let len = parse_array_length(&ty.type_descriptions)?;
-
-                Ok(Some(format!("{inner}[{}]", len.unwrap_or(""))))
-            }
-            TypeName::UserDefinedTypeName(ty) => {
-                if let Some(name) = self.simple_types.get(&(ty.referenced_declaration as usize)) {
-                    Ok(Some(name.clone()))
-                } else if let Some(def) = self.structs.get(&(ty.referenced_declaration as usize)) {
-                    let name =
-                        // If we've already seen struct with this ID, just use assigned name.
-                        if let Some((name, _)) = subtypes.iter().find(|(_, id)| **id == def.id) {
-                            name.clone()
-                        } else {
-                            // Otherwise, assign new name.
-                            let mut i = 0;
-                            let mut name = def.name.clone();
-                            while subtypes.contains_key(&name) {
-                                i += 1;
-                                name = format!("{}_{i}", def.name);
-                            }
-
-                            subtypes.insert(name.clone(), def.id);
-
-                            // iterate over members to check if they are resolvable and to populate subtypes
-                            for member in &def.members {
-                                if self.resolve_type(
-                                    member.type_name.as_ref().ok_or_eyre("missing type name")?,
-                                    subtypes,
-                                )?
-                                .is_none()
-                                {
-                                    return Ok(None)
-                                }
-                            }
-                            name
-                        };
-
-                    Ok(Some(name))
-                } else {
-                    Ok(None)
+        if append_subtypes {
+            for (subtype_name, subtype_id) in
+                subtypes.iter().map(|(name, id)| (name.clone(), *id)).collect::<Vec<_>>()
+            {
+                if subtype_id == id {
+                    continue;
                 }
+                let encoded_subtype =
+                    self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?;
+
+                result.push_str(&encoded_subtype);
             }
         }
+
+        Some(result)
     }
-}
 
-fn parse_array_length(type_description: &TypeDescriptions) -> Result<Option<&str>> {
-    let type_string =
-        type_description.type_string.as_ref().ok_or_eyre("missing typeString for array type")?;
-    let Some(inside_brackets) =
-        type_string.rsplit_once("[").and_then(|(_, right)| right.split("]").next())
-    else {
-        eyre::bail!("failed to parse array type string: {type_string}")
-    };
+    fn resolve_type(
+        &self,
+        ty: Ty<'hir>,
+        subtypes: &mut BTreeMap<String, StructId>,
+    ) -> Option<String> {
+        let ty = ty.peel_refs();
+        match ty.kind {
+            TyKind::Elementary(elem_ty) => Some(elem_ty.to_abi_str().to_string()),
+            TyKind::Array(element_ty, size) => {
+                let inner_type = self.resolve_type(element_ty, subtypes)?;
+                let size = size.to_string();
+                Some(format!("{inner_type}[{size}]"))
+            }
+            TyKind::DynArray(element_ty) => {
+                let inner_type = self.resolve_type(element_ty, subtypes)?;
+                Some(format!("{inner_type}[]"))
+            }
+            TyKind::Udvt(ty, _) => self.resolve_type(ty, subtypes),
+            TyKind::Struct(id) => {
+                let def = self.hir().strukt(id);
+                let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
+                    Some((name, _)) => name.to_string(),
+                    None => {
+                        // Otherwise, assign new name
+                        let mut i = 0;
+                        let mut name = def.name.as_str().into();
+                        while subtypes.contains_key(&name) {
+                            i += 1;
+                            name = format!("{}_{i}", def.name.as_str());
+                        }
 
-    if inside_brackets.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(inside_brackets))
+                        subtypes.insert(name.clone(), id);
+
+                        // Recursively resolve fields to populate subtypes
+                        for &field_id in def.fields {
+                            let field_ty = self.gcx.get().type_of_item(field_id.into());
+                            self.resolve_type(field_ty, subtypes)?;
+                        }
+                        name
+                    }
+                };
+
+                Some(name)
+            }
+            // For now, map enums to `uint8`
+            TyKind::Enum(_) => Some("uint8".to_string()),
+            // For now, map contracts to `address`
+            TyKind::Contract(_) => Some("address".to_string()),
+            // EIP-712 doesn't support tuples (should use structs), functions, mappings, nor errors
+            _ => None,
+        }
     }
 }

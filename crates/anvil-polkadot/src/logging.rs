@@ -2,8 +2,8 @@
 
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tracing::{subscriber::Interest, Metadata};
-use tracing_subscriber::{layer::Context, Layer};
+use tracing::{Metadata, subscriber::Interest};
+use tracing_subscriber::{Layer, layer::Context};
 
 /// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";

@@ -75,12 +75,13 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .stdout_eq(
             r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'my cool error' when it was expected not to revert] testShouldFailIfExpectRevertWrongString() ([GAS])
 [FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
 [FAIL: expected 0 reverts with reason: revert, but got one] testShouldFailNoRevertSpecific() ([GAS])
-[FAIL: Error != expected error: second-revert != revert] testShouldFailReverCountSpecifc() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertCountAny() ([GAS])
 [FAIL: Error != expected error: wrong revert != called a function and then reverted] testShouldFailRevertCountCallsThenReverts() ([GAS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+[FAIL: Error != expected error: second-revert != revert] testShouldFailRevertCountSpecific() ([GAS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
@@ -90,11 +91,13 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         .assert_failure()
         .stdout_eq(r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'revert' from 0x2e234DAe75C793f67A35089C9d99245E1C58470b, but expected 0 reverts from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoRevertWithWrongReverter() ([GAS])
+[FAIL: call reverted with 'revert2' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but expected 0 reverts with reason 'revert' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoReverterCountWithData() ([GAS])
 [FAIL: expected 0 reverts from address: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but got one] testShouldFailNoRevertWithReverter() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailRevertCountWithReverter() ([GAS])
 [FAIL: Error != expected error: wrong revert != revert] testShouldFailReverterCountWithWrongData() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailWrongReverterCountWithData() ([GAS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#);
 });

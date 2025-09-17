@@ -1,4 +1,4 @@
-use crate::utils::{assert_with_tolerance, unwrap_response, TestNode};
+use crate::utils::{TestNode, assert_with_tolerance, unwrap_response};
 use alloy_primitives::U256;
 use alloy_rpc_types::anvil::MineOptions;
 use anvil::eth::backend::time::duration_since_unix_epoch;

@@ -1,13 +1,17 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
+use alloy_ens::namehash;
+use alloy_primitives::{B64, Bytes, U256, aliases::B32, keccak256, map::HashMap};
 use alloy_sol_types::SolValue;
-use foundry_common::ens::namehash;
+use foundry_common::{TYPE_BINDING_PREFIX, fs};
+use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
-use rand::{seq::SliceRandom, Rng, RngCore};
+use rand::{Rng, RngCore, seq::SliceRandom};
+use revm::context::JournalTr;
+use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -115,7 +119,7 @@ impl Cheatcode for randomInt_1Call {
 
 impl Cheatcode for randomBoolCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let rand_bool: bool = state.rng().gen();
+        let rand_bool: bool = state.rng().random();
         Ok(rand_bool.abi_encode())
     }
 }
@@ -155,12 +159,12 @@ impl Cheatcode for pauseTracingCall {
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to pause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         // If paused earlier, ignore the call
         if ccx.state.ignored_traces.last_pause_call.is_some() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         }
 
         let cur_node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -178,12 +182,12 @@ impl Cheatcode for resumeTracingCall {
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let Some(start) = ccx.state.ignored_traces.last_pause_call.take() else {
             // Nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -232,11 +236,11 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.load_account(*from) {
+        if let Ok(from_account) = ccx.ecx.journaled_state.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.load_account(*to) {
+            if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
                 to_account.storage = from_storage;
-                if let Some(ref mut arbitrary_storage) = &mut ccx.state.arbitrary_storage {
+                if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }
             }
@@ -269,6 +273,14 @@ impl Cheatcode for shuffleCall {
     }
 }
 
+impl Cheatcode for setSeedCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { seed } = self;
+        ccx.state.set_seed(*seed);
+        Ok(Default::default())
+    }
+}
+
 /// Helper to generate a random `uint` value (with given bits or bounded if specified)
 /// from type strategy.
 fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256, U256)>) -> Result {
@@ -279,20 +291,20 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
             .new_tree(state.test_runner())
             .unwrap()
             .current()
-            .abi_encode())
+            .abi_encode());
     }
 
     if let Some((min, max)) = bounds {
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let exclusive_modulo = max - min;
-        let mut random_number: U256 = state.rng().gen();
+        let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
             random_number %= inclusive_modulo;
         }
         random_number += min;
-        return Ok(random_number.abi_encode())
+        return Ok(random_number.abi_encode());
     }
 
     // Generate random `uint256` value.
@@ -312,4 +324,149 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .unwrap()
         .current()
         .abi_encode())
+}
+
+impl Cheatcode for eip712HashType_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { typeNameOrDefinition } = self;
+
+        let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
+
+        Ok(keccak256(type_def.as_bytes()).to_vec())
+    }
+}
+
+impl Cheatcode for eip712HashType_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bindingsPath, typeName } = self;
+
+        let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
+        let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
+
+        Ok(keccak256(type_def.as_bytes()).to_vec())
+    }
+}
+
+impl Cheatcode for eip712HashStruct_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { typeNameOrDefinition, abiEncodedData } = self;
+
+        let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
+        let primary = &type_def[..type_def.find('(').unwrap_or(type_def.len())];
+
+        get_struct_hash(primary, &type_def, abiEncodedData)
+    }
+}
+
+impl Cheatcode for eip712HashStruct_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bindingsPath, typeName, abiEncodedData } = self;
+
+        let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
+        let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
+
+        get_struct_hash(typeName, &type_def, abiEncodedData)
+    }
+}
+
+impl Cheatcode for eip712HashTypedDataCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { jsonData } = self;
+        let typed_data: TypedData = serde_json::from_str(jsonData)?;
+        let digest = typed_data.eip712_signing_hash()?;
+
+        Ok(digest.to_vec())
+    }
+}
+
+/// Returns EIP-712 canonical type definition from the provided string type representation or type
+/// name. If type name provided, then it looks up bindings from file generated by `forge bind-json`.
+fn get_canonical_type_def(
+    name_or_def: &String,
+    state: &mut Cheatcodes,
+    path: Option<PathBuf>,
+) -> Result<String> {
+    let type_def = if name_or_def.contains('(') {
+        // If the input contains '(', it must be the type definition.
+        EncodeType::parse(name_or_def).and_then(|parsed| parsed.canonicalize())?
+    } else {
+        // Otherwise, it must be the type name.
+        let path = path.as_ref().unwrap_or(&state.config.bind_json_path);
+        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        get_type_def_from_bindings(name_or_def, path, &state.config.root)?
+    };
+
+    Ok(type_def)
+}
+
+/// Returns the EIP-712 type definition from the bindings in the provided path.
+/// Assumes that read validation for the path has already been checked.
+fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> Result<String> {
+    let content = fs::read_to_string(&path)?;
+
+    let type_defs: HashMap<&str, &str> = content
+        .lines()
+        .filter_map(|line| {
+            let relevant = line.trim().strip_prefix(TYPE_BINDING_PREFIX)?;
+            let (name, def) = relevant.split_once('=')?;
+            Some((name.trim(), def.trim().strip_prefix('"')?.strip_suffix("\";")?))
+        })
+        .collect();
+
+    match type_defs.get(name.as_str()) {
+        Some(value) => Ok(value.to_string()),
+        None => {
+            let bindings =
+                type_defs.keys().map(|k| format!(" - {k}")).collect::<Vec<String>>().join("\n");
+
+            bail!(
+                "'{}' not found in '{}'.{}",
+                name,
+                path.strip_prefix(root).unwrap_or(&path).to_string_lossy(),
+                if bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nAvailable bindings:\n{bindings}\n")
+                }
+            );
+        }
+    }
+}
+
+/// Returns the EIP-712 struct hash for provided name, definition and ABI encoded data.
+fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -> Result {
+    let mut resolver = Resolver::default();
+
+    // Populate the resolver by ingesting the canonical type definition, and then get the
+    // corresponding `DynSolType` of the primary type.
+    resolver
+        .ingest_string(type_def)
+        .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
+
+    let resolved_sol_type = resolver
+        .resolve(primary)
+        .map_err(|e| fmt_err!("Failed to resolve EIP-712 primary type '{primary}': {e}"))?;
+
+    // ABI-decode the bytes into `DynSolValue::CustomStruct`.
+    let sol_value = resolved_sol_type.abi_decode(abi_encoded_data.as_ref()).map_err(|e| {
+        fmt_err!("Failed to ABI decode using resolved_sol_type directly for '{primary}': {e}.")
+    })?;
+
+    // Use the resolver to properly encode the data.
+    let encoded_data: Vec<u8> = resolver
+        .encode_data(&sol_value)
+        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{primary}': {e}"))?
+        .ok_or_else(|| fmt_err!("EIP-712 data encoding returned 'None' for struct '{primary}'"))?;
+
+    // Compute the type hash of the primary type.
+    let type_hash = resolver
+        .type_hash(primary)
+        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{primary}': {e}"))?;
+
+    // Compute the struct hash of the concatenated type hash and encoded data.
+    let mut bytes_to_hash = Vec::with_capacity(32 + encoded_data.len());
+    bytes_to_hash.extend_from_slice(type_hash.as_slice());
+    bytes_to_hash.extend_from_slice(&encoded_data);
+
+    Ok(keccak256(&bytes_to_hash).to_vec())
 }

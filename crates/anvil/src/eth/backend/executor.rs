@@ -1,18 +1,23 @@
 use crate::{
+    PrecompileFactory,
     eth::{
-        backend::{db::Db, validate::TransactionValidator},
+        backend::{
+            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            validate::TransactionValidator,
+        },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
     inject_precompiles,
-    mem::inspector::Inspector,
-    PrecompileFactory,
+    mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+    Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
 };
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_primitives::{Bloom, BloomInput, Log, B256};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
+use alloy_evm::{EthEvm, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_op_evm::OpEvm;
+use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
     transaction::{
@@ -21,18 +26,24 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::DatabaseError,
-    revm::{
-        interpreter::InstructionResult,
-        primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
-            SpecId,
-        },
-    },
-    traces::CallTraceNode,
-    utils::odyssey_handler_register,
+    traces::{CallTraceDecoder, CallTraceNode},
 };
-use revm::db::WrapDatabaseRef;
-use std::sync::Arc;
+use foundry_evm_core::either_evm::EitherEvm;
+use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
+use revm::{
+    Database, DatabaseRef, Inspector, Journal,
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context_interface::result::{EVMError, ExecutionResult, Output},
+    database::WrapDatabaseRef,
+    handler::{EthPrecompiles, instructions::EthInstructions},
+    interpreter::InstructionResult,
+    precompile::{
+        PrecompileSpecId, Precompiles,
+        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+    },
+    primitives::hardfork::SpecId,
+};
+use std::{fmt::Debug, sync::Arc};
 
 /// Represents an executed transaction (transacted on the DB)
 #[derive(Debug)]
@@ -69,9 +80,9 @@ impl ExecutedTransaction {
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
+            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
-                deposit_nonce: Some(tx.nonce),
+                deposit_nonce: Some(0),
                 deposit_receipt_version: Some(1),
             }),
         }
@@ -100,7 +111,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
     /// The configuration environment and spec id
-    pub cfg_env: CfgEnvWithHandlerCfg,
+    pub cfg_env: CfgEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -108,10 +119,14 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
+    pub optimism: bool,
     pub print_logs: bool,
     pub print_traces: bool,
+    /// Recorder used for decoding traces, used together with print_traces
+    pub call_trace_decoder: Arc<CallTraceDecoder>,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    pub blob_params: BlobParams,
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
@@ -124,22 +139,23 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit.to::<u64>();
+        let gas_limit = self.block_env.gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number.to::<u64>();
+        let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
-        let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee.to::<u64>())
+        let mix_hash = self.block_env.prevrandao;
+        let beneficiary = self.block_env.beneficiary;
+        let timestamp = self.block_env.timestamp;
+        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.block_env.basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
+        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
+        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
+        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -150,22 +166,22 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                 }
                 TransactionExecutionOutcome::Exhausted(tx) => {
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
                     trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::DatabaseError(_, err) => {
                     // Note: this is only possible in forking mode, if for example a rpc request
                     // failed
                     trace!(target: "backend", ?err,  "Failed to execute transaction due to database error");
-                    continue
+                    continue;
                 }
             };
             if is_cancun {
@@ -221,12 +237,12 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             receipts_root,
             logs_bloom: bloom,
             difficulty,
-            number: block_number,
+            number: block_number.saturating_to(),
             gas_limit,
             gas_used: cumulative_gas_used,
-            timestamp,
+            timestamp: timestamp.saturating_to(),
             extra_data: Default::default(),
-            mix_hash: Default::default(),
+            mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
             base_fee,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
@@ -241,14 +257,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         ExecutedTransactions { block, included, invalid }
     }
 
-    fn env_for(&self, tx: &PendingTransaction) -> EnvWithHandlerCfg {
+    fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
-        if self.cfg_env.handler_cfg.is_optimism {
-            tx_env.optimism.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+
+        if self.optimism {
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        EnvWithHandlerCfg::new_with_cfg_env(self.cfg_env.clone(), self.block_env.clone(), tx_env)
+        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism)
     }
 }
 
@@ -280,17 +296,18 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
-        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u64>() {
-            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+        let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
+        if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
+        {
+            return Some(TransactionExecutionOutcome::Exhausted(transaction));
         }
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
-        if max_blob_gas > alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK {
-            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
+        if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
         }
 
         // validate before executing
@@ -300,13 +317,12 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &env,
         ) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err));
         }
 
         let nonce = account.nonce;
 
-        // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
+        let mut inspector = AnvilInspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }
@@ -318,14 +334,19 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+
+            if self.odyssey {
+                inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
-            match evm.transact_commit() {
+            match evm.transact_commit(env.tx) {
                 Ok(exec_result) => exec_result,
                 Err(err) => {
                     warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -334,13 +355,13 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                             return Some(TransactionExecutionOutcome::DatabaseError(
                                 transaction,
                                 err,
-                            ))
+                            ));
                         }
                         EVMError::Transaction(err) => {
                             return Some(TransactionExecutionOutcome::Invalid(
                                 transaction,
                                 err.into(),
-                            ))
+                            ));
                         }
                         // This will correspond to prevrandao not set, and it should never happen.
                         // If it does, it's a bug.
@@ -351,7 +372,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         };
 
         if self.print_traces {
-            inspector.print_traces();
+            inspector.print_traces(self.call_trace_decoder.clone());
         }
         inspector.print_logs();
 
@@ -362,7 +383,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None, None)
+            }
         };
 
         if exit_reason == InstructionResult::OutOfGas {
@@ -407,35 +430,88 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
 }
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<DB: revm::Database>(
+pub fn new_evm_with_inspector<DB, I>(
     db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<DB>,
-    odyssey: bool,
-) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
-    let EnvWithHandlerCfg { env, handler_cfg } = env;
+    env: &Env,
+    inspector: I,
+) -> EitherEvm<DB, I, PrecompilesMap>
+where
+    DB: Database<Error = DatabaseError> + Debug,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+{
+    if env.is_optimism {
+        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
+        let op_context = OpContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                // Converting SpecId into OpSpecId
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: op_cfg.clone(),
+            tx: env.tx.clone(),
+            chain: L1BlockInfo::default(),
+            local: LocalContext::default(),
+            error: Ok(()),
+        };
 
-    let mut handler = revm::Handler::new(handler_cfg);
+        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
+        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
+            op_context,
+            inspector,
+            EthInstructions::default(),
+            PrecompilesMap::from_static(op_precompiles),
+        ));
 
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    if odyssey {
-        handler.append_handler_register_plain(odyssey_handler_register);
+        let op = OpEvm::new(op_evm, true);
+
+        EitherEvm::Op(op)
+    } else {
+        let spec = env.evm_env.cfg_env.spec;
+        let eth_context = EthEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.base.clone(),
+            chain: (),
+            local: LocalContext::default(),
+            error: Ok(()),
+        };
+
+        let eth_precompiles = EthPrecompiles {
+            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+            spec,
+        }
+        .precompiles;
+        let eth_evm = RevmEvm::new_with_inspector(
+            eth_context,
+            inspector,
+            EthInstructions::default(),
+            PrecompilesMap::from_static(eth_precompiles),
+        );
+
+        let eth = EthEvm::new(eth_evm, true);
+
+        EitherEvm::Eth(eth)
     }
-
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-
-    revm::Evm::new(context, handler)
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'a, DB>(
-    db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
-    odyssey: bool,
-) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
+pub fn new_evm_with_inspector_ref<'db, DB, I>(
+    db: &'db DB,
+    env: &Env,
+    inspector: &'db mut I,
+) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
 where
-    DB: revm::DatabaseRef,
+    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
+    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

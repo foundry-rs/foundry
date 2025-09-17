@@ -107,7 +107,7 @@ impl TimeManager {
             return Err(BlockchainError::TimestampError(format!(
                 "{} is lower than previous block's timestamp",
                 self.convert_from_milliseconds(timestamp)
-            )))
+            )));
         }
         self.next_exact_timestamp.write().replace(timestamp);
         Ok(())

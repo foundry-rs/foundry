@@ -1,5 +1,5 @@
 use foundry_compilers::{
-    resolc::dual_compiled_contracts::DualCompiledContracts, ProjectCompileOutput,
+    ProjectCompileOutput, resolc::dual_compiled_contracts::DualCompiledContracts,
 };
 use foundry_evm::executors::ExecutorStrategyContext;
 

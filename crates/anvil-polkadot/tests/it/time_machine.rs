@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::utils::{assert_with_tolerance, unwrap_response, TestNode};
+use crate::utils::{TestNode, assert_with_tolerance, unwrap_response};
 use alloy_primitives::U256;
 use anvil_core::eth::EthRequest;
 use anvil_polkadot::config::{AnvilNodeConfig, SubstrateNodeConfig};
@@ -167,10 +167,12 @@ async fn test_evm_set_remove_block_timestamp_interval() {
         100,
         "Interval between the blocks if greater than the desired value.",
     );
-    assert!(unwrap_response::<bool>(
-        node.eth_rpc(EthRequest::EvmRemoveBlockTimeStampInterval(())).await.unwrap()
-    )
-    .unwrap());
+    assert!(
+        unwrap_response::<bool>(
+            node.eth_rpc(EthRequest::EvmRemoveBlockTimeStampInterval(())).await.unwrap()
+        )
+        .unwrap()
+    );
 
     let _ = node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap();
     let hash3 = node.block_hash_by_number(3).await.unwrap();

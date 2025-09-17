@@ -1,23 +1,24 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
-    hex,
-    utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, Selector, TxHash, TxKind, B256, I256, U256, U64,
+    Address, B256, I256, Keccak256, Selector, TxHash, TxKind, U64, U256, hex,
+    utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{
-    network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
+    network::eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -26,15 +27,17 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
+    TransactionReceiptWithRevertReason,
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
-    ens::NameOrAddress,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, shell,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use futures::{future::Either, FutureExt, StreamExt};
+use foundry_evm_core::ic::decode_instructions;
+use futures::{FutureExt, StreamExt, future::Either};
+use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -46,7 +49,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -88,12 +90,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// # Ok(())
     /// # }
@@ -108,7 +110,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
+    /// use alloy_rpc_types::{TransactionRequest, BlockOverrides, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
@@ -134,9 +136,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// account_override.balance = Some(U256::from(1000));
     /// state_override.insert(to, account_override);
     /// let state_override_object = StateOverridesBuilder::default().build();
+    /// let block_override_object = BlockOverrides::default();
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, Some(state_override_object)).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -147,8 +150,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
+        block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        let mut call = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_override);
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
         }
@@ -158,7 +166,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -170,10 +178,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                                 .get_code_at(addr)
                                 .block_id(block.unwrap_or_default())
                                 .await
+                                && code.is_empty()
                             {
-                                if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not have any code")
-                                }
+                                eyre::bail!("contract {addr:?} does not have any code")
                             }
                         } else if Some(TxKind::Create) == req.to {
                             eyre::bail!("tx req is a contract deployment");
@@ -218,7 +225,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
@@ -279,7 +286,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetCall { greeting: "hello".to_string() }.abi_encode();
@@ -309,12 +316,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let res = cast.publish("0x1234".to_string()).await?;
     /// println!("{:?}", res);
@@ -338,14 +345,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None).await?;
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -355,31 +362,34 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         block: B,
         full: bool,
         field: Option<String>,
+        raw: bool,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field {
-            if field == "transactions" && !full {
-                eyre::bail!("use --full to view transactions")
-            }
+        if let Some(ref field) = field
+            && field == "transactions"
+            && !full
+        {
+            eyre::bail!("use --full to view transactions")
         }
 
         let block = self
             .provider
             .get_block(block)
-            .full()
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
-        let block = if let Some(ref field) = field {
+        Ok(if raw {
+            let header: Header = block.into_inner().header.inner.try_into_header()?;
+            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
+        } else if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
-        };
-
-        Ok(block)
+        })
     }
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
@@ -389,6 +399,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             false,
             // Select only select field
             Some(field),
+            false,
         )
         .await?
         .parse()
@@ -417,6 +428,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             false,
             // Select only block hash
             Some(String::from("hash")),
+            false,
         )
         .await?;
 
@@ -425,7 +437,8 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                 "westend-assethub"
             }
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -467,7 +480,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -496,13 +509,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
@@ -524,7 +537,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
@@ -557,7 +570,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
@@ -584,13 +597,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let implementation = cast.implementation(addr, false, None).await?;
@@ -633,13 +646,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let admin = cast.admin(addr, None).await?;
@@ -663,13 +676,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let computed_address = cast.compute_address(addr, None).await?;
@@ -686,13 +699,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let code = cast.code(addr, None, false).await?;
@@ -722,13 +735,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let codesize = cast.codesize(addr, None).await?;
@@ -745,7 +758,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -791,7 +804,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         };
 
         Ok(if raw {
-            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
+            // also consider opstack deposit transactions
+            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
+            let encoded = either_tx.encoded_2718();
+            format!("0x{}", hex::encode(encoded))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
@@ -806,12 +822,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
     /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
@@ -867,12 +883,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let result = cast
     ///     .rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
@@ -898,13 +914,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, B256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
     /// let slot = B256::ZERO;
@@ -959,14 +975,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::fixed_bytes;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::{BlockId, BlockNumberOrTag};
     /// use cast::Cast;
     /// use std::{convert::TryFrom, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let block_number = cast.convert_block_number(Some(BlockId::number(5))).await?;
@@ -1006,7 +1022,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::Filter;
     /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
@@ -1014,7 +1030,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("wss://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("wss://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     ///
     /// let filter =
@@ -1053,11 +1069,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                 } else {
                     Either::Right(futures::future::pending())
                 } => {
-                    if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.number  > to_block {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number)
+                        && block.number  > to_block {
                             break;
                         }
-                    }
                 },
                 // Process incoming log
                 log = subscription.next() => {
@@ -1101,8 +1116,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 
@@ -1237,12 +1251,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // TODO: https://github.com/alloy-rs/core/pull/461
-        let units: Unit = if let Ok(x) = decimals.parse() {
-            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
-        } else {
-            decimals.parse()?
-        };
+        let units: Unit = Unit::from_str(decimals)?;
         let n = ParseUnits::parse_units(value, units)?;
         Ok(n.to_string())
     }
@@ -1416,6 +1425,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
     /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
     /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1437,6 +1447,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1754,7 +1765,10 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!(
+                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
+                e
+            ),
         }
     }
 
@@ -1784,7 +1798,10 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!(
+                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
+                e
+            ),
         };
         Ok(format!("0x{encoded}"))
     }
@@ -1847,20 +1864,20 @@ impl SimpleCast {
         match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool |
-            DynSolType::Int(_) |
-            DynSolType::Uint(_) |
-            DynSolType::FixedBytes(_) |
-            DynSolType::Address |
-            DynSolType::Function => hasher.update(k.as_word().unwrap()),
+            DynSolType::Bool
+            | DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Address
+            | DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..) |
-            DynSolType::FixedArray(..) |
-            DynSolType::Tuple(..) |
-            DynSolType::CustomStruct { .. } => {
+            DynSolType::Array(..)
+            | DynSolType::FixedArray(..)
+            | DynSolType::Tuple(..)
+            | DynSolType::CustomStruct { .. } => {
                 eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }
@@ -2389,16 +2406,21 @@ mod tests {
     #[test]
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
+        );
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
         let disassembled = Cast::disassemble(complete);

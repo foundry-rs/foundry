@@ -1,17 +1,17 @@
 use alloy_primitives::{Address, Bytes, U256 as RU256};
-use foundry_evm::backend::DatabaseError;
+use foundry_cheatcodes::Ecx;
 use polkadot_sdk::{
     frame_support::weights::Weight,
     pallet_revive::{
+        Config, Pallet, U256,
         evm::{
             CallTrace, CallTracer, PrestateTrace, PrestateTraceInfo, PrestateTracer,
             PrestateTracerConfig,
         },
         tracing::trace as trace_revive,
-        Config, Pallet, U256,
     },
 };
-use revm::{primitives::Bytecode, InnerEvmContext};
+use revm::{context::JournalTr, state::Bytecode};
 
 // Traces the execution inside pallet_revive.
 // This is a temporary solution to the fact that custom Tracer is not implementable for the time
@@ -36,17 +36,14 @@ pub fn trace<T: Config, R, F: FnOnce() -> R>(f: F) -> (R, Option<CallTrace<U256>
 }
 
 /// Applies `PrestateTrace` diffs to the revm state
-pub fn apply_prestate_trace<DB: revm::Database<Error = DatabaseError>>(
-    prestate_trace: PrestateTrace,
-    ecx: &mut InnerEvmContext<DB>,
-) {
+pub fn apply_prestate_trace(prestate_trace: PrestateTrace, ecx: Ecx<'_, '_, '_>) {
     match prestate_trace {
         polkadot_sdk::pallet_revive::evm::PrestateTrace::DiffMode { pre: _, post } => {
             for (key, PrestateTraceInfo { balance, nonce, code, storage }) in post {
                 let address = Address::from_slice(key.as_bytes());
                 let account = ecx
                     .journaled_state
-                    .load_account(address, &mut ecx.db)
+                    .load_account(address)
                     .expect("account could not be loaded")
                     .data;
 
@@ -67,19 +64,15 @@ pub fn apply_prestate_trace<DB: revm::Database<Error = DatabaseError>>(
                     account.info.code_hash = bytecode.hash_slow();
                     account.info.code = Some(bytecode);
                 }
-                ecx.journaled_state
-                    .load_account(address, &mut ecx.db)
-                    .expect("account could not be loaded");
+                ecx.journaled_state.load_account(address).expect("account could not be loaded");
 
-                ecx.journaled_state.touch(&address);
+                ecx.journaled_state.touch(address);
                 for (slot, entry) in storage {
                     let key = RU256::from_be_slice(&slot.0);
                     if let Some(e_entry) = entry {
                         let entry = RU256::from_be_slice(&e_entry.0);
 
-                        ecx.journaled_state
-                            .sstore(address, key, entry, &mut ecx.db)
-                            .expect("to succeed");
+                        ecx.journaled_state.sstore(address, key, entry).expect("to succeed");
                     }
                 }
             }

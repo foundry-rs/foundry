@@ -1,23 +1,24 @@
 use alloy_primitives::{Address, U256};
 use foundry_cheatcodes::CheatcodeInspectorStrategy;
 use foundry_compilers::{
-    compilers::resolc::dual_compiled_contracts::DualCompiledContracts, ProjectCompileOutput,
+    ProjectCompileOutput, compilers::resolc::dual_compiled_contracts::DualCompiledContracts,
 };
 use foundry_evm::{
+    Env,
     backend::BackendStrategy,
     executors::{
-        strategy::ExecutorStrategyExt, EvmExecutorStrategyRunner, ExecutorStrategyContext,
-        ExecutorStrategyRunner,
+        EvmExecutorStrategyRunner, ExecutorStrategyContext, ExecutorStrategyRunner,
+        strategy::ExecutorStrategyExt,
     },
 };
 use polkadot_sdk::{
-    frame_support::traits::{fungible::Mutate, Currency},
+    frame_support::traits::{Currency, fungible::Mutate},
     pallet_balances,
     pallet_revive::{AddressMapper, BalanceOf, BalanceWithDust},
     sp_core::{self, H160},
 };
 use revive_env::{AccountId, Runtime, System};
-use revm::primitives::{EnvWithHandlerCfg, ResultAndState};
+use revm::context::result::ResultAndState;
 
 use crate::{
     backend::ReviveBackendStrategyBuilder, cheatcodes::PvmCheatcodeInspectorStrategyBuilder,
@@ -135,8 +136,8 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         &self,
         ctx: &dyn ExecutorStrategyContext,
         backend: &mut foundry_evm::backend::CowBackend<'_>,
-        env: &mut EnvWithHandlerCfg,
-        executor_env: &EnvWithHandlerCfg,
+        env: &mut Env,
+        executor_env: &Env,
         inspector: &mut foundry_evm::inspectors::InspectorStack,
     ) -> eyre::Result<ResultAndState> {
         EvmExecutorStrategyRunner.call(ctx, backend, env, executor_env, inspector)
@@ -146,8 +147,8 @@ impl ExecutorStrategyRunner for ReviveExecutorStrategyRunner {
         &self,
         ctx: &mut dyn ExecutorStrategyContext,
         backend: &mut foundry_evm::backend::Backend,
-        env: &mut EnvWithHandlerCfg,
-        executor_env: &EnvWithHandlerCfg,
+        env: &mut Env,
+        executor_env: &Env,
         inspector: &mut foundry_evm::inspectors::InspectorStack,
     ) -> eyre::Result<ResultAndState> {
         EvmExecutorStrategyRunner.transact(ctx, backend, env, executor_env, inspector)

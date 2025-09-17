@@ -1,9 +1,9 @@
 use alloy_genesis::Genesis;
-use alloy_primitives::{hex, map::HashMap, utils::Unit, U256};
+use alloy_primitives::{U256, hex, map::HashMap, utils::Unit};
 use alloy_signer::Signer;
 use alloy_signer_local::{
-    coins_bip39::{English, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
+    coins_bip39::{English, Mnemonic},
 };
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
@@ -16,8 +16,8 @@ use polkadot_sdk::{
     },
     sc_service,
 };
-use rand::thread_rng;
-use serde_json::{json, Value};
+use rand_08::thread_rng;
+use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
     fs::File,
@@ -334,7 +334,7 @@ Private Keys
             let _ = write!(s, "\n({idx}) 0x{hex}");
         }
 
-        if let Some(ref gen) = self.account_generator {
+        if let Some(ref rng_gen) = self.account_generator {
             let _ = write!(
                 s,
                 r#"
@@ -344,8 +344,8 @@ Wallet
 Mnemonic:          {}
 Derivation path:   {}
 "#,
-                gen.phrase,
-                gen.get_derivation_path()
+                rng_gen.phrase,
+                rng_gen.get_derivation_path()
             );
         }
 
@@ -427,9 +427,9 @@ Genesis Number
             private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
         }
 
-        if let Some(ref gen) = self.account_generator {
-            let phrase = gen.get_phrase().to_string();
-            let derivation_path = gen.get_derivation_path().to_string();
+        if let Some(ref rng_gen) = self.account_generator {
+            let phrase = rng_gen.get_phrase().to_string();
+            let derivation_path = rng_gen.get_derivation_path().to_string();
 
             wallet_description.insert("derivation_path".to_string(), derivation_path);
             wallet_description.insert("mnemonic".to_string(), phrase);
@@ -468,8 +468,10 @@ Genesis Number
 impl Default for AnvilNodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts =
-            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen().expect("Invalid mnemonic.");
+        let genesis_accounts = AccountGenerator::new(10)
+            .phrase(DEFAULT_MNEMONIC)
+            .rng_gen()
+            .expect("Invalid mnemonic.");
         Self {
             chain_id: None,
             gas_limit: None,
@@ -661,7 +663,7 @@ impl AnvilNodeConfig {
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
-        let accounts = generator.gen()?;
+        let accounts = generator.rng_gen()?;
         self.account_generator = Some(generator);
         Ok(self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts))
     }
@@ -866,7 +868,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
+    pub fn rng_gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path

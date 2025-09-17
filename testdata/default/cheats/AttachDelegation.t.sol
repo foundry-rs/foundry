@@ -39,6 +39,22 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 100);
     }
 
+    function testCallSingleAttachCrossChainDelegation() public {
+        Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk, true);
+        SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
+        bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
+        // executing as bob to make clear that we don't need to execute the tx as alice
+        vm.broadcast(bob_pk);
+        vm.attachDelegation(signedDelegation, true);
+
+        bytes memory code = address(alice).code;
+        require(code.length > 0, "no code written to alice");
+        SimpleDelegateContract(alice).execute(calls);
+
+        assertEq(token.balanceOf(bob), 100);
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testCallSingleAttachDelegationWithNonce() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk, 11);
@@ -46,7 +62,7 @@ contract AttachDelegationTest is DSTest {
         vm._expectCheatcodeRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
 
-        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 1);
+        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 0);
         vm.attachDelegation(signedDelegation);
     }
 
@@ -54,6 +70,26 @@ contract AttachDelegationTest is DSTest {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         vm.broadcast(bob_pk);
         vm.attachDelegation(signedDelegation);
+
+        SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](2);
+        calls[0] =
+            SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, bob)), value: 0});
+        calls[1] = SimpleDelegateContract.Call({
+            to: address(token),
+            data: abi.encodeCall(ERC20.mint, (50, address(this))),
+            value: 0
+        });
+
+        SimpleDelegateContract(alice).execute(calls);
+
+        assertEq(token.balanceOf(bob), 50);
+        assertEq(token.balanceOf(address(this)), 50);
+    }
+
+    function testMultiCallAttachCrossChainDelegation() public {
+        Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk, true);
+        vm.broadcast(bob_pk);
+        vm.attachDelegation(signedDelegation, true);
 
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](2);
         calls[0] =
@@ -138,12 +174,48 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 100);
     }
 
+    function testCallSingleSignAndAttachCrossChainDelegation() public {
+        SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
+        bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
+        vm.signAndAttachDelegation(address(implementation), alice_pk, true);
+        bytes memory code = address(alice).code;
+        require(code.length > 0, "no code written to alice");
+        vm.broadcast(bob_pk);
+        SimpleDelegateContract(alice).execute(calls);
+
+        assertEq(token.balanceOf(bob), 100);
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testCallSingleSignAndAttachDelegationWithNonce() public {
         vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
         vm.signAndAttachDelegation(address(implementation), alice_pk, 11);
 
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
+    }
+
+    function testMultipleDelegationsOnTransaction() public {
+        vm.signAndAttachDelegation(address(implementation), alice_pk);
+        vm.signAndAttachDelegation(address(implementation2), bob_pk);
+        SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](2);
+        calls[0] = SimpleDelegateContract.Call({
+            to: address(token),
+            data: abi.encodeCall(ERC20.mint, (50, address(this))),
+            value: 0
+        });
+        calls[1] =
+            SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, alice)), value: 0});
+        vm.broadcast(bob_pk);
+        SimpleDelegateContract(alice).execute(calls);
+
+        assertEq(token.balanceOf(address(this)), 50);
+        assertEq(token.balanceOf(alice), 50);
+
+        vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
         vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
+        vm.signAndAttachDelegation(address(implementation2), bob_pk, 2);
     }
 }
 

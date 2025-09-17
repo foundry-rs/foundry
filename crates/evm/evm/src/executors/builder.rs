@@ -1,6 +1,6 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
-use foundry_evm_core::backend::Backend;
-use revm::primitives::{Env, EnvWithHandlerCfg, SpecId};
+use foundry_evm_core::{Env, backend::Backend};
+use revm::primitives::hardfork::SpecId;
 
 use super::ExecutorStrategy;
 
@@ -29,7 +29,7 @@ impl Default for ExecutorBuilder {
         Self {
             stack: InspectorStackBuilder::new(),
             gas_limit: None,
-            spec_id: SpecId::LATEST,
+            spec_id: SpecId::default(),
             legacy_assertions: false,
         }
     }
@@ -75,16 +75,21 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     #[inline]
-    pub fn build(self, strategy: ExecutorStrategy, env: Env, db: Backend) -> Executor {
+    pub fn build(self, env: Env, db: Backend, strategy: ExecutorStrategy) -> Executor {
         let Self { mut stack, gas_limit, spec_id, legacy_assertions } = self;
         if stack.block.is_none() {
-            stack.block = Some(env.block.clone());
+            stack.block = Some(env.evm_env.block_env.clone());
         }
         if stack.gas_price.is_none() {
             stack.gas_price = Some(env.tx.gas_price);
         }
-        let gas_limit = gas_limit.unwrap_or_else(|| env.block.gas_limit.saturating_to());
-        let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id);
-        Executor::new(strategy, db, env, stack.build(), gas_limit, legacy_assertions)
+        let gas_limit = gas_limit.unwrap_or(env.evm_env.block_env.gas_limit);
+        let env = Env::new_with_spec_id(
+            env.evm_env.cfg_env.clone(),
+            env.evm_env.block_env.clone(),
+            env.tx,
+            spec_id,
+        );
+        Executor::new(db, env, stack.build(), gas_limit, legacy_assertions, strategy)
     }
 }

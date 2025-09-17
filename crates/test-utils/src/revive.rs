@@ -51,7 +51,7 @@ impl ContractsNodeProcess {
                 Err(err) => {
                     if attempts < MAX_ATTEMPTS {
                         attempts += 1;
-                        continue
+                        continue;
                     }
                     let err = eyre::eyre!(
                         "Failed to connect to node rpc after {} attempts: {}",
@@ -102,7 +102,7 @@ impl RpcProxyProcess {
                 Err(err) => {
                     if attempts < MAX_ATTEMPTS {
                         attempts += 1;
-                        continue
+                        continue;
                     }
 
                     let err = eyre::eyre!(

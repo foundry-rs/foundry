@@ -18,14 +18,14 @@ contract ContractB {}
 
 const CONTRACT_C: &str = r#"
 // SPDX-license-identifier: MIT
-pragma solidity 0.8.27;
+pragma solidity 0.8.30;
 
 contract ContractC {}
 "#;
 
 const CONTRACT_D: &str = r#"
 // SPDX-license-identifier: MIT
-pragma solidity 0.8.27;
+pragma solidity 0.8.30;
 
 contract ContractD {}
 "#;
@@ -112,7 +112,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-Solc v0.8.27:
+0.8.30:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -129,8 +129,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.27",
+      "version": "0.8.30",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
@@ -153,12 +152,12 @@ forgetest!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
-- Solc v0.8.4
-- Solc v0.8.11
-- Solc v0.8.27
+- 0.8.4
+- 0.8.11
+- 0.8.30
 
 Vyper:
-- Vyper v0.4.0
+- 0.4.3
 
 
 "#]]);
@@ -176,7 +175,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
         r#"
 Vyper:
 
-Vyper v0.4.0:
+0.4.3:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -200,8 +199,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.27",
+      "version": "0.8.30",
       "paths": [
         "src/ContractD.sol"
       ]
@@ -209,8 +207,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "name": "Vyper",
-      "version": "0.4.0",
+      "version": "0.4.3",
       "paths": [
         "src/Counter.vy",
         "src/ICounter.vyi"
@@ -240,13 +237,13 @@ Solc v0.8.4 (<= istanbul):
 Solc v0.8.11 (<= london):
 └── src/ContractB.sol
 
-Solc v0.8.27 (<= cancun):
+0.8.30 (<= prague):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-Vyper v0.4.0 (<= cancun):
+0.4.3 (<= prague):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -283,8 +280,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
       ]
     },
     {
-      "name": "Solc",
-      "version": "0.8.27",
+      "version": "0.8.30",
       "evm_version": "[..]",
       "paths": [
         "src/ContractC.sol",
@@ -294,8 +290,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "name": "Vyper",
-      "version": "0.4.0",
+      "version": "0.4.3",
       "evm_version": "[..]",
       "paths": [
         "src/Counter.vy",

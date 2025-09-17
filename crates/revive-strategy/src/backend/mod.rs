@@ -2,13 +2,13 @@ use std::any::Any;
 
 use alloy_rpc_types::TransactionRequest;
 use foundry_evm::{
+    Env, InspectorExt,
     backend::{
         Backend, BackendStrategy, BackendStrategyContext, BackendStrategyRunner,
-        EvmBackendStrategyRunner, ForkDB,
+        EvmBackendStrategyRunner, ForkDB, JournaledState,
     },
-    InspectorExt,
 };
-use revm::{primitives::Env, JournaledState};
+use revm::context::result::ResultAndState;
 use serde::{Deserialize, Serialize};
 
 /// Create revive strategy for [BackendStrategy].
@@ -34,10 +34,10 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
     fn inspect(
         &self,
         backend: &mut foundry_evm::backend::Backend,
-        env: &mut revm::primitives::EnvWithHandlerCfg,
+        env: &mut Env,
         inspector: &mut dyn foundry_evm::InspectorExt,
         inspect_ctx: Box<dyn std::any::Any>,
-    ) -> eyre::Result<revm::primitives::ResultAndState> {
+    ) -> eyre::Result<ResultAndState> {
         if !is_revive_inspect_context(inspect_ctx.as_ref()) {
             return EvmBackendStrategyRunner.inspect(backend, env, inspector, inspect_ctx);
         }
@@ -51,7 +51,7 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
         _active_fork: Option<&foundry_evm::backend::Fork>,
         _mem_db: &foundry_evm::backend::FoundryEvmInMemoryDB,
         _backend_inner: &foundry_evm::backend::BackendInner,
-        _active_journaled_state: &mut revm::JournaledState,
+        _active_journaled_state: &mut JournaledState,
         _target_fork: &mut foundry_evm::backend::Fork,
     ) {
         todo!()
@@ -61,8 +61,8 @@ impl BackendStrategyRunner for ReviveBackendStrategyRunner {
         &self,
         _ctx: &mut dyn foundry_evm::backend::BackendStrategyContext,
         _addr: alloy_primitives::Address,
-        _active_journaled_state: &revm::JournaledState,
-        _fork_journaled_state: &mut revm::JournaledState,
+        _active_journaled_state: &JournaledState,
+        _fork_journaled_state: &mut JournaledState,
     ) {
         todo!()
     }

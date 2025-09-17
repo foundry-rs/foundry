@@ -19,9 +19,10 @@ foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+foundry-block-explorers.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
-foundry-block-explorers.workspace = true
+solar-sema.workspace = true
 
 revive-strategy = { workspace = true }
 
@@ -32,7 +33,9 @@ alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rlp.workspace = true
 alloy-chains.workspace = true
+alloy-ens = { workspace = true, features = ["provider"] }
 
+cfg-if = "1.0"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
 dotenvy = "0.15"
@@ -40,6 +43,7 @@ eyre.workspace = true
 futures.workspace = true
 indicatif.workspace = true
 itertools.workspace = true
+mimalloc = { workspace = true, optional = true }
 rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
@@ -49,13 +53,21 @@ strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
+tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
+dunce.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
 [features]
 tracy = ["dep:tracing-tracy"]
+tracy-allocator = ["dep:tracy-client", "tracy"]
+jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]

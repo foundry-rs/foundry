@@ -1,6 +1,6 @@
 use crate::{
-    substrate_node::mining_engine::{run_mining_engine, MiningEngine, MiningMode},
     AnvilNodeConfig,
+    substrate_node::mining_engine::{MiningEngine, MiningMode, run_mining_engine},
 };
 use anvil::eth::backend::time::TimeManager;
 use polkadot_sdk::{
@@ -8,7 +8,7 @@ use polkadot_sdk::{
     sc_executor::WasmExecutor,
     sc_network_types::{self, multiaddr::Multiaddr},
     sc_rpc_api::DenyUnsafe,
-    sc_service::{self, error::Error as ServiceError, Configuration, RpcHandlers, TaskManager},
+    sc_service::{self, Configuration, RpcHandlers, TaskManager, error::Error as ServiceError},
     sc_transaction_pool::{self, TransactionPoolWrapper},
     sc_utils::mpsc::tracing_unbounded,
     sp_io,

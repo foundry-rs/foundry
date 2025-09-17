@@ -2,11 +2,11 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256, U64};
+use alloy_primitives::{Bytes, U256, Uint, address, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -149,12 +149,12 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     let greeter = Greeter::new(*address, provider);
 
     let greeting_at_init =
-        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_at_init, "Hello");
 
     let greeting_after_change =
-        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_after_change, "World!");
 }
@@ -262,7 +262,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     let serialized_state = api.serialized_state(false).await.unwrap();
 
-    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<U64>()));
+    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<u64>()));
 
     let (api, _handle) = spawn(
         NodeConfig::test()

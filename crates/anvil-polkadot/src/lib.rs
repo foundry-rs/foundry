@@ -13,7 +13,7 @@ use eyre::Result;
 use foundry_cli::utils;
 use opts::{Anvil, AnvilSubcommand};
 use polkadot_sdk::{
-    sc_cli::{self, build_runtime, SubstrateCli},
+    sc_cli::{self, SubstrateCli, build_runtime},
     sc_service::{self, TaskManager},
 };
 use server::try_spawn_ipc;

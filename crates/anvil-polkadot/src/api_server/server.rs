@@ -7,7 +7,7 @@ use crate::{
 use alloy_primitives::U256;
 use anvil_core::eth::EthRequest;
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use futures::{channel::mpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc};
 use std::{sync::Arc, time::Duration};
 
 pub struct ApiServer {
@@ -82,7 +82,7 @@ impl ApiServer {
                 if time >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ))
+                    ));
                 }
                 let time = time.to::<u64>();
                 self.mining_engine
@@ -97,7 +97,7 @@ impl ApiServer {
                 if timestamp >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ))
+                    ));
                 }
                 // Make sure here we are not traveling back in time.
                 let time = timestamp.to::<u64>();

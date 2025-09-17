@@ -1,10 +1,10 @@
 use crate::{filter::GlobMatcher, serde_helpers};
 use foundry_compilers::{
+    RestrictionsWithVersion,
     artifacts::{BytecodeHash, EvmVersion},
     multi::{MultiCompilerRestrictions, MultiCompilerSettings},
     settings::VyperRestrictions,
     solc::{Restriction, SolcRestrictions},
-    RestrictionsWithVersion,
 };
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};

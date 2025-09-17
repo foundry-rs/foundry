@@ -1,16 +1,17 @@
 //! Tests for otterscan endpoints.
 
 use crate::abi::Multicall;
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
     BlockNumberOrTag, TransactionRequest,
+    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{sol, SolCall, SolError, SolValue};
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use alloy_sol_types::{SolCall, SolError, SolValue, sol};
+use anvil::{NodeConfig, spawn};
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -233,7 +234,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 0,
             from: sender,
             to: contract_address,
-            value: U256::from(1337),
+            value: Some(U256::from(1337)),
             input: Contract::runCall::SELECTOR.into(),
             output: Bytes::new(),
         },
@@ -242,7 +243,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 1,
             from: contract_address,
             to: contract_address,
-            value: U256::ZERO,
+            value: Some(U256::ZERO),
             input: Contract::do_staticcallCall::SELECTOR.into(),
             output: true.abi_encode().into(),
         },
@@ -251,7 +252,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 1,
             from: contract_address,
             to: contract_address,
-            value: U256::ZERO,
+            value: Some(U256::ZERO),
             input: Contract::do_callCall::SELECTOR.into(),
             output: Bytes::new(),
         },
@@ -260,7 +261,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 2,
             from: contract_address,
             to: sender,
-            value: U256::from(1337),
+            value: Some(U256::from(1337)),
             input: Bytes::new(),
             output: Bytes::new(),
         },
@@ -269,7 +270,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 2,
             from: contract_address,
             to: contract_address,
-            value: U256::ZERO,
+            value: Some(U256::ZERO),
             input: Contract::do_delegatecallCall::SELECTOR.into(),
             output: Bytes::new(),
         },

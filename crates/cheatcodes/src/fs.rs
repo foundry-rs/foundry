@@ -5,14 +5,14 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_primitives::{Bytes, U256, hex, map::Entry};
 use alloy_provider::network::ReceiptResponse;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::interpreter::CreateInputs;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -97,7 +97,7 @@ impl Cheatcode for closeFileCall {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         Ok(Default::default())
     }
@@ -167,7 +167,7 @@ impl Cheatcode for readLineCall {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
         // Get reader for previously opened file to continue reading OR initialize new reader
-        let reader = match state.context.opened_read_files.entry(path.clone()) {
+        let reader = match state.test_context.opened_read_files.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(BufReader::new(fs::open(path)?)),
         };
@@ -212,7 +212,7 @@ impl Cheatcode for removeFileCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         // also remove from the set if opened previously
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         if state.fs_commit {
             fs::remove_file(&path)?;
@@ -365,11 +365,8 @@ fn deploy_code(
         bytecode.extend_from_slice(args);
     }
 
-    let scheme = if let Some(salt) = salt {
-        revm::primitives::CreateScheme::Create2 { salt }
-    } else {
-        revm::primitives::CreateScheme::Create
-    };
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     let outcome = executor.exec_create(
         CreateInputs {
@@ -383,7 +380,7 @@ fn deploy_code(
     )?;
 
     if !outcome.result.result.is_ok() {
-        return Err(crate::Error::from(outcome.result.output))
+        return Err(crate::Error::from(outcome.result.output));
     }
 
     let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
@@ -441,23 +438,22 @@ pub fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Resu
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
-                    if let Some(path) = &file {
-                        if !id.source.ends_with(path) {
-                            return false;
-                        }
+                    if let Some(path) = &file
+                        && !id.source.ends_with(path)
+                    {
+                        return false;
                     }
-                    if let Some(name) = contract_name {
-                        if id_name != name {
-                            return false;
-                        }
+                    if let Some(name) = contract_name
+                        && id_name != name
+                    {
+                        return false;
                     }
-                    if let Some(ref version) = version {
-                        if id.version.minor != version.minor ||
-                            id.version.major != version.major ||
-                            id.version.patch != version.patch
-                        {
-                            return false;
-                        }
+                    if let Some(ref version) = version
+                        && (id.version.minor != version.minor
+                            || id.version.major != version.major
+                            || id.version.patch != version.patch)
+                    {
+                        return false;
                     }
                     true
                 })
@@ -479,17 +475,13 @@ pub fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Resu
 
                             // Return artifact if only one matched
                             if filtered.len() == 1 {
-                                return Some(filtered[0])
+                                return Some(filtered[0]);
                             }
 
                             // Try filtering by profile as well
                             filtered.retain(|(id, _)| id.profile == running.profile);
 
-                            if filtered.len() == 1 {
-                                Some(filtered[0])
-                            } else {
-                                None
-                            }
+                            if filtered.len() == 1 { Some(filtered[0]) } else { None }
                         })
                         .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
@@ -753,7 +745,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.env.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg.chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,

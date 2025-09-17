@@ -1082,7 +1082,7 @@ contract CounterTest is Test {
 
     function test_Increment_In_Counter_With_Salt() public {
         CounterWithSalt counter = new CounterWithSalt{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1);
-        assertEq(address(counter), 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB);
+        assertEq(address(counter), 0x223e63BE3BF01DD04f852d70f1bE217017055f49);
     }
 }
     "#,
@@ -1160,7 +1160,7 @@ contract CounterWithSalt {
 Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
-[FAIL: assertion failed: 0x6cDcb015cFcAd0C23560322EdEE8f324520E4b93 != 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB] test_Increment_In_Counter_With_Salt() (gas: [..])
+[FAIL: assertion failed: 0x11acEfcD29A1BA964A05C0E7F3901054BEfb17c0 != 0x223e63BE3BF01DD04f852d70f1bE217017055f49] test_Increment_In_Counter_With_Salt() (gas: [..])
 ...
 
 "#]]);
@@ -1401,8 +1401,6 @@ Traces:
     ├─ [..] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [..] StdAssertions::assertEq(1, 1)
-    │   ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   │   └─ ← [Return]
     │   └─ ← 
     └─ ← [Stop]
 

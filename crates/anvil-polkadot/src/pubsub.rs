@@ -1,6 +1,6 @@
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::{request::Version, response::ResponseResult};
-use futures::{ready, Stream};
+use futures::{Stream, ready};
 use serde::Serialize;
 use std::{
     pin::Pin,

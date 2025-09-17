@@ -1,4 +1,4 @@
-use alloy_primitives::{utils::ParseUnits, Sign, I256, U256};
+use alloy_primitives::{I256, Sign, U256, utils::ParseUnits};
 use eyre::Result;
 use std::{
     convert::Infallible,
@@ -384,11 +384,7 @@ impl NumberWithBase {
             }
             Base::Hexadecimal => format!("{:x}", self.number),
         };
-        if s.starts_with('0') {
-            s.trim_start_matches('0').to_string()
-        } else {
-            s
-        }
+        if s.starts_with('0') { s.trim_start_matches('0').to_string() } else { s }
     }
 
     fn _parse_int(s: &str, base: Base) -> Result<(U256, bool)> {
@@ -445,11 +441,7 @@ impl ToBase for NumberWithBase {
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = self.with_base(base);
-        if add_prefix {
-            Ok(format!("{n:#?}"))
-        } else {
-            Ok(format!("{n:?}"))
-        }
+        if add_prefix { Ok(format!("{n:#?}")) } else { Ok(format!("{n:?}")) }
     }
 }
 
@@ -458,11 +450,7 @@ impl ToBase for I256 {
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from(*self).with_base(base);
-        if add_prefix {
-            Ok(format!("{n:#?}"))
-        } else {
-            Ok(format!("{n:?}"))
-        }
+        if add_prefix { Ok(format!("{n:#?}")) } else { Ok(format!("{n:?}")) }
     }
 }
 
@@ -471,11 +459,7 @@ impl ToBase for U256 {
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from(*self).with_base(base);
-        if add_prefix {
-            Ok(format!("{n:#?}"))
-        } else {
-            Ok(format!("{n:?}"))
-        }
+        if add_prefix { Ok(format!("{n:#?}")) } else { Ok(format!("{n:?}")) }
     }
 }
 
@@ -492,11 +476,7 @@ impl ToBase for str {
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from_str(self)?.with_base(base);
-        if add_prefix {
-            Ok(format!("{n:#?}"))
-        } else {
-            Ok(format!("{n:?}"))
-        }
+        if add_prefix { Ok(format!("{n:#?}")) } else { Ok(format!("{n:?}")) }
     }
 }
 

@@ -1,9 +1,9 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{hex, Address, TxKind, B256};
+use alloy_primitives::{Address, B256, TxKind, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
-use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
 use foundry_evm::traces::CallTraceDecoder;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -67,7 +67,7 @@ impl ScriptTransactionBuilder {
                 if let Some(function) = function {
                     self.transaction.function = Some(function.signature());
 
-                    let values = function.abi_decode_input(data, false).inspect_err(|_| {
+                    let values = function.abi_decode_input(data).inspect_err(|_| {
                         error!(
                             contract=?self.transaction.contract_name,
                             signature=?function,
@@ -111,7 +111,7 @@ impl ScriptTransactionBuilder {
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
             if data.len() < 32 {
-                return Ok(())
+                return Ok(());
             }
             &data[32..]
         } else {
@@ -126,7 +126,7 @@ impl ScriptTransactionBuilder {
         let constructor_args = &creation_code[bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
-        let values = constructor.abi_decode_input(constructor_args, false).inspect_err(|_| {
+        let values = constructor.abi_decode_input(constructor_args).inspect_err(|_| {
                 error!(
                     contract=?self.transaction.contract_name,
                     signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
@@ -157,11 +157,11 @@ impl ScriptTransactionBuilder {
 
         self.transaction.additional_contracts = created_contracts;
 
-        if !self.transaction.is_fixed_gas_limit {
-            if let Some(unsigned) = self.transaction.transaction.as_unsigned_mut() {
-                // We inflate the gas used by the user specified percentage
-                unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
-            }
+        if !self.transaction.is_fixed_gas_limit
+            && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
+        {
+            // We inflate the gas used by the user specified percentage
+            unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
         }
 
         self

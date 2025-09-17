@@ -5,19 +5,19 @@
 
 use crate::{
     dispatcher::PROMPT_ARROW,
-    prelude::{ChiselCommand, COMMAND_LEADER, PROMPT_ARROW_STR},
+    prelude::{COMMAND_LEADER, ChiselCommand, PROMPT_ARROW_STR},
 };
 use rustyline::{
+    Helper,
     completion::Completer,
     highlight::{CmdKind, Highlighter},
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
-    Helper,
 };
 use solar_parse::{
-    interface::{Session, SessionGlobals},
-    token::{Token, TokenKind},
     Lexer,
+    interface::Session,
+    token::{Token, TokenKind},
 };
 use std::{borrow::Cow, ops::Range, str::FromStr};
 use yansi::{Color, Style};
@@ -37,7 +37,6 @@ pub struct SolidityHelper {
 
     do_paint: bool,
     sess: Session,
-    globals: SessionGlobals,
 }
 
 impl Default for SolidityHelper {
@@ -53,7 +52,6 @@ impl SolidityHelper {
             errored: false,
             do_paint: yansi::is_enabled(),
             sess: Session::builder().with_silent_emitter(None).build(),
-            globals: SessionGlobals::new(),
         }
     }
 
@@ -71,7 +69,7 @@ impl SolidityHelper {
     /// Highlights a Solidity source string.
     pub fn highlight<'a>(&self, input: &'a str) -> Cow<'a, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(input)
+            return Cow::Borrowed(input);
         }
 
         // Highlight commands separately
@@ -147,11 +145,7 @@ impl SolidityHelper {
                 }
             }
         });
-        if depth == [0; 3] {
-            ValidationResult::Valid(None)
-        } else {
-            ValidationResult::Incomplete
-        }
+        if depth == [0; 3] { ValidationResult::Valid(None) } else { ValidationResult::Incomplete }
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
@@ -179,7 +173,7 @@ impl SolidityHelper {
 
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
-        self.globals.set(|| self.sess.enter(|| f(&self.sess)));
+        self.sess.enter(|| f(&self.sess));
     }
 }
 
@@ -198,7 +192,7 @@ impl Highlighter for SolidityHelper {
         _default: bool,
     ) -> Cow<'b, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(prompt)
+            return Cow::Borrowed(prompt);
         }
 
         let mut out = prompt.to_string();
@@ -254,9 +248,9 @@ fn token_style(token: &Token) -> Style {
         Literal(..) => Color::Yellow.foreground(),
 
         Ident(
-            Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
-            Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
-            Modifier | Immutable | Unchecked,
+            Memory | Storage | Calldata | Public | Private | Internal | External | Constant | Pure
+            | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override | Modifier
+            | Immutable | Unchecked,
         ) => Color::Cyan.foreground(),
 
         Ident(s) if s.is_elementary_type() => Color::Blue.foreground(),

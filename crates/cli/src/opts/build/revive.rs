@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_config::{revive::ResolcConfig, SolcReq};
+use foundry_config::{SolcReq, revive::ResolcConfig};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Default, Serialize, Parser)]

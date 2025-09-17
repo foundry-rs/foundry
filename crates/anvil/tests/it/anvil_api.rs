@@ -1,38 +1,39 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{self, Greeter, Multicall, BUSD},
+    abi::{self, BUSD, Greeter, Multicall},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{address, fixed_bytes, utils::Unit, Address, Bytes, TxKind, U256};
-use alloy_provider::{ext::TxPoolApi, Provider};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes, utils::Unit};
+use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
-    BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use anvil::{
+    NodeConfig,
     eth::{
         api::CLIENT_VERSION,
         backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
     },
-    spawn, EthereumHardfork, NodeConfig,
+    spawn,
 };
 use anvil_core::{
     eth::{
-        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
         EthRequest,
+        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
     },
     types::{ReorgOptions, TransactionData},
 };
-use foundry_evm::revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
-    future::IntoFuture,
     str::FromStr,
     time::{Duration, SystemTime},
 };
@@ -180,7 +181,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx.clone()).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap()._0;
+    let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
@@ -195,7 +196,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap()._0;
+    let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
 
@@ -430,12 +431,11 @@ async fn test_can_set_storage_bsc_fork() {
 
     let busd_contract = BUSD::new(busd_addr, &provider);
 
-    let BUSD::balanceOfReturn { _0 } = busd_contract
+    let balance = busd_contract
         .balanceOf(address!("0x0000000000000000000000000000000000000000"))
         .call()
         .await
         .unwrap();
-    let balance = _0;
     assert_eq!(balance, U256::from(12345u64));
 }
 
@@ -449,7 +449,7 @@ async fn can_get_node_info() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
-    let hard_fork: &str = SpecId::CANCUN.into();
+    let hard_fork: &str = SpecId::PRAGUE.into();
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
@@ -625,20 +625,16 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     let multicall_contract =
         Multicall::new(address!("0xeefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
-    let Multicall::getCurrentBlockTimestampReturn { timestamp } =
-        multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
+    let timestamp = multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
-    let Multicall::getCurrentBlockDifficultyReturn { difficulty } =
-        multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
+    let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
     assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
 
-    let Multicall::getCurrentBlockGasLimitReturn { gaslimit } =
-        multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
+    let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
 
-    let Multicall::getCurrentBlockCoinbaseReturn { coinbase } =
-        multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
+    let coinbase = multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
     assert_eq!(coinbase, latest_block.header.beneficiary);
 }
 
@@ -755,7 +751,7 @@ async fn test_reorg() {
         .await
         .unwrap();
     api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
-    let value = storage.getValue().call().await.unwrap()._0;
+    let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
 
     api.mine_one().await;
@@ -952,11 +948,11 @@ async fn test_mine_blk_with_prev_timestamp() {
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     let third_blk_num = block.header.number;
-    let third_blk_timestmap = block.header.timestamp;
+    let third_blk_timestamp = block.header.timestamp;
 
     assert_eq!(third_blk_num, init_number + 2);
-    assert_ne!(third_blk_timestmap, next_blk_timestamp);
-    assert!(third_blk_timestmap > next_blk_timestamp);
+    assert_ne!(third_blk_timestamp, next_blk_timestamp);
+    assert!(third_blk_timestamp > next_blk_timestamp);
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
@@ -1008,7 +1004,7 @@ async fn evm_mine_blk_with_same_timestamp() {
 
 // mine 4 blocks instantly.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mine_blks_with_same_timestamp() {
+async fn test_mine_blk_with_same_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
@@ -1059,4 +1055,96 @@ async fn test_mine_first_block_with_interval() {
 
     let second_block = api.block_by_number(2.into()).await.unwrap().unwrap();
     assert_eq!(second_block.header.timestamp, init_timestamp + 120);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_non_fork() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Get initial state
+    let init_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let init_accounts = api.accounts().unwrap();
+    let init_balance = provider.get_balance(init_accounts[0]).await.unwrap();
+
+    // Store the instance id before reset
+    let instance_id_before = api.instance_id();
+
+    // Mine some blocks and make transactions
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
+
+    // Send a transaction
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_from(init_accounts[0]).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // Check state has changed
+    let block_before_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert!(block_before_reset.header.number > init_block.header.number);
+
+    let balance_before_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert!(balance_before_reset < init_balance);
+
+    let to_balance_before_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_before_reset, val);
+
+    // Reset to fresh in-memory state (non-fork)
+    api.anvil_reset(None).await.unwrap();
+
+    // Check instance id has changed
+    let instance_id_after = api.instance_id();
+    assert_ne!(instance_id_before, instance_id_after);
+
+    // Check we're back at genesis
+    let block_after_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block_after_reset.header.number, 0);
+
+    // Check accounts are restored to initial state
+    let balance_after_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert_eq!(balance_after_reset, init_balance);
+
+    // Check the recipient's balance is zero
+    let to_balance_after_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_after_reset, U256::ZERO);
+
+    // Test we can continue mining after reset
+    api.mine_one().await;
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_fork_to_non_fork() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Verify we're in fork mode
+    let metadata = api.anvil_metadata().await.unwrap();
+    assert!(metadata.forked_network.is_some());
+
+    // Mine some blocks
+    for _ in 0..3 {
+        api.mine_one().await;
+    }
+
+    // Reset to non-fork mode
+    api.anvil_reset(None).await.unwrap();
+
+    // Verify we're no longer in fork mode
+    let metadata_after = api.anvil_metadata().await.unwrap();
+    assert!(metadata_after.forked_network.is_none());
+
+    // Check we're at block 0
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.number, 0);
+
+    // Verify we can still mine blocks
+    api.mine_one().await;
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
 }

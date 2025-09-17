@@ -1,10 +1,11 @@
-use crate::{opts::parse_slot, Cast};
+use crate::{Cast, opts::parse_slot};
+use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -14,21 +15,21 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{etherscan_project, ProjectCompiler},
-    ens::NameOrAddress,
+    compile::{ProjectCompiler, etherscan_project},
     shell,
 };
 use foundry_compilers::{
+    Artifact, Project,
     artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
     compilers::{
-        solc::{Solc, SolcCompiler},
         Compiler,
+        solc::{Solc, SolcCompiler},
     },
-    Artifact, Project,
 };
 use foundry_config::{
-    figment::{self, value::Dict, Metadata, Profile},
-    impl_figment_convert_cast, Config,
+    Config,
+    figment::{self, Metadata, Profile, value::Dict},
+    impl_figment_convert_cast,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -131,7 +132,9 @@ impl StorageArgs {
         }
 
         if !self.etherscan.has_key() {
-            eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
+            eyre::bail!(
+                "You must provide an Etherscan API key if you're fetching a remote contract's storage."
+            );
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
@@ -174,7 +177,9 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                sh_warn!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.")?;
+                sh_warn!(
+                    "The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                )?;
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
                 project.compiler = SolcCompiler::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
@@ -344,11 +349,7 @@ fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: 
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
-    if let Some(ref s) = storage_layout {
-        s.storage.is_empty()
-    } else {
-        true
-    }
+    if let Some(s) = storage_layout { s.storage.is_empty() } else { true }
 }
 
 #[cfg(test)]
@@ -361,9 +362,13 @@ mod tests {
             StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
-        std::env::set_var("ETHERSCAN_API_KEY", "FXY");
+        unsafe {
+            std::env::set_var("ETHERSCAN_API_KEY", "FXY");
+        }
         let config = args.load_config().unwrap();
-        std::env::remove_var("ETHERSCAN_API_KEY");
+        unsafe {
+            std::env::remove_var("ETHERSCAN_API_KEY");
+        }
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 
         let key = config.get_etherscan_api_key(None).unwrap();
