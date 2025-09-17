@@ -1,33 +1,18 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{
-    opts::{BuildOpts, configure_pcx_from_solc},
-    utils::LoadConfig,
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_common::{
+    TYPE_BINDING_PREFIX, compile::ProjectCompiler, errors::convert_solar_errors, fs,
 };
-use foundry_common::{TYPE_BINDING_PREFIX, compile::ProjectCompiler, fs};
-use foundry_compilers::{
-    CompilerInput, Graph, Project,
-    artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParser},
-    solc::{SolcLanguage, SolcVersionedInput},
-};
+use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::Config;
 use itertools::Itertools;
 use path_slash::PathExt;
-use rayon::prelude::*;
-use semver::Version;
-use solar::parse::{
-    Parser as SolarParser,
-    ast::{self, Arena, FunctionKind, Span, VarMut, interface::source_map::FileName, visit::Visit},
-    interface::Session,
-};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
-    ops::ControlFlow,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 foundry_config::impl_figment_convert!(BindJsonArgs, build);
@@ -49,20 +34,13 @@ impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
-        std::fs::write(target_path, JSON_BINDINGS_PLACEHOLDER)?;
+        std::fs::write(&target_path, JSON_BINDINGS_PLACEHOLDER)?;
 
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().compile(&project)?;
 
-        // Read and preprocess sources to handle potentially invalid bindings.
-        let mut sources = self.preprocess_sources(&mut output)?;
-
-        // Insert empty bindings file.
-        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
-
         // Find structs and generate bindings.
-        let structs_to_write =
-            self.find_and_resolve_structs(&config, &project, &mut output, &target_path)?;
+        let structs_to_write = self.find_and_resolve_structs(&config, &project, &mut output)?;
 
         // Write bindings.
         self.write_bindings(&structs_to_write, &target_path)?;
@@ -75,58 +53,39 @@ impl BindJsonArgs {
         &self,
         config: &Config,
         project: &Project,
-        version: Version,
-        sources: Sources,
-        _target_path: &Path,
+        output: &mut ProjectCompileOutput,
     ) -> Result<Vec<StructToWrite>> {
-        let settings = config.solc_settings()?;
         let include = &config.bind_json.include;
         let exclude = &config.bind_json.exclude;
         let root = &config.root;
 
-        let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
-
-        let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx.set_flags_mut(|flags| flags.track_diagnostics = false);
-        let mut compiler = solar::sema::Compiler::new(sess);
-
         let mut structs_to_write = Vec::new();
 
-        compiler.enter_mut(|compiler| -> Result<()> {
-            // Set up the parsing context with the project paths, without adding the source files
-            let mut pcx = compiler.parse();
-            configure_pcx_from_solc(&mut pcx, project, &input, false);
-
-            let mut target_files = HashSet::new();
-            for (path, source) in &input.input.sources {
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        compiler.enter_mut(|compiler| {
+            let exclude = |path: &Path| {
                 if !include.is_empty() {
                     if !include.iter().any(|matcher| matcher.is_match(path)) {
-                        continue;
+                        return true;
                     }
                 } else {
                     // Exclude library files by default
                     if project.paths.has_library_ancestor(path) {
-                        continue;
+                        return true;
                     }
                 }
 
                 if exclude.iter().any(|matcher| matcher.is_match(path)) {
-                    continue;
+                    return true;
                 }
 
-                if let Ok(src_file) = compiler
-                    .sess()
-                    .source_map()
-                    .new_source_file(path.clone(), source.content.as_str())
-                {
-                    target_files.insert(src_file.clone());
-                    pcx.add_file(src_file);
-                }
+                false
+            };
+
+            // Resolve.
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+                let _ = compiler.lower_asts();
             }
-
-            // Parse and resolve
-            pcx.parse();
-            let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
             let gcx = compiler.gcx();
             let hir = &gcx.hir;
             let resolver = Resolver::new(gcx);
@@ -134,8 +93,8 @@ impl BindJsonArgs {
                 if let Some(schema) = resolver.resolve_struct_eip712(id)
                     && let def = hir.strukt(id)
                     && let source = hir.source(def.source)
-                    && target_files.contains(&source.file)
-                    && let FileName::Real(path) = &source.file.name
+                    && let solar::interface::source_map::FileName::Real(path) = &source.file.name
+                    && !exclude(path)
                 {
                     structs_to_write.push(StructToWrite {
                         name: def.name.as_str().into(),
@@ -148,12 +107,11 @@ impl BindJsonArgs {
                     });
                 }
             }
-            Ok(())
-        })?;
+        });
 
-        eyre::ensure!(compiler.sess().dcx.has_errors().is_ok(), "errors occurred");
+        convert_solar_errors(compiler.dcx())?;
 
-        // Resolve import aliases and function names
+        // Resolve import aliases and function names.
         self.resolve_conflicts(&mut structs_to_write);
 
         Ok(structs_to_write)
@@ -227,11 +185,7 @@ impl BindJsonArgs {
     }
 
     /// Write the final bindings file
-    fn write_bindings(
-        &self,
-        structs_to_write: &[StructToWrite],
-        target_path: &PathBuf,
-    ) -> Result<()> {
+    fn write_bindings(&self, structs_to_write: &[StructToWrite], target_path: &Path) -> Result<()> {
         let mut result = String::new();
 
         // Write imports
