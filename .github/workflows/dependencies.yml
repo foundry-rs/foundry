@@ -12,7 +12,7 @@ on:
 
 jobs:
   update:
-    uses: ithacaxyz/ci/.github/workflows/cargo-update-pr.yml@main
+    uses: ithacaxyz/ci/.github/workflows/cargo-update-pr.yml@9c8d0dc20e7ad02455d3fdab2378a05f29907630 # main
     permissions:
       contents: write
       pull-requests: write
