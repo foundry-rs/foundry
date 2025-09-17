@@ -167,48 +167,30 @@ pub fn collect_source_data(
         return None;
     }
 
-    // Get sources for this build
-    let mut sources = Vec::new();
+    let build_ctx = output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)?;
 
-    // Get the build context for this build_id
-    if let Some(build_context) =
-        output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)
-    {
-        // Build ordered sources from the build context
-        let mut ordered_sources = Vec::with_capacity(build_context.source_id_to_path.len());
+    // Determine the size needed for sources vector
+    // Highest source_id
+    let max_source_id = build_ctx.source_id_to_path.keys().max().map_or(0, |id| *id) as usize;
 
-        for (source_id, source_path) in &build_context.source_id_to_path {
-            // Read source content from file
-            let full_path = if source_path.is_absolute() {
-                source_path.clone()
-            } else {
-                root.join(source_path)
-            };
+    let mut sources = vec![(PathBuf::new(), String::new()); max_source_id + 1];
+    // Populate sources at their correct indices i.e by their source IDs
+    for (source_id, source_path) in &build_ctx.source_id_to_path {
+        let idx = *source_id as usize;
 
-            let mut source_content =
-                foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
-            // Normalize line endings for windows
-            if source_content.contains('\r') {
-                source_content = source_content.replace("\r\n", "\n");
-            }
+        let full_path =
+            if source_path.is_absolute() { source_path.clone() } else { root.join(source_path) };
+        let mut source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
 
-            // Convert path to relative PathBuf
-            let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
-
-            ordered_sources.push((*source_id, path_buf, source_content));
+        // Normalize line endings for windows
+        if source_content.contains('\r') {
+            source_content = source_content.replace("\r\n", "\n");
         }
 
-        // Sort by source ID to ensure proper ordering
-        ordered_sources.sort_by_key(|(id, _, _)| *id);
+        // Convert path to relative PathBuf
+        let path_buf = source_path.strip_prefix(root).unwrap_or(source_path).to_path_buf();
 
-        // Build the final sources vector in the correct order
-        for (id, path_buf, content) in ordered_sources {
-            let idx = id as usize;
-            if sources.len() <= idx {
-                sources.resize(idx + 1, (PathBuf::new(), String::new()));
-            }
-            sources[idx] = (path_buf, content);
-        }
+        sources[idx] = (path_buf, source_content);
     }
 
     Some(SourceData { source_map, sources, bytecode })
