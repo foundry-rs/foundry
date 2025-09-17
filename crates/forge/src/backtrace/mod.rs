@@ -77,23 +77,20 @@ impl<'a> BacktraceBuilder<'a> {
         // Add linked library artifacts and their addresses
         for lib in &self.linked_libraries {
             let target_id = format!("{}:{}", lib.path.display(), lib.name);
-            if let Some(artifact_id) = self.output.artifact_ids().find_map(|(id, _)| {
-                let stripped = id.with_stripped_file_prefixes(&self.root);
-                (stripped.identifier() == target_id).then_some(stripped)
+            if let Some((artifact_id, _)) = self.output.artifact_ids().find(|(id, _)| {
+                id.identifier() == target_id
+                    || id.clone().with_stripped_file_prefixes(&self.root).identifier() == target_id
             }) {
-                artifacts_by_address.insert(lib.address, artifact_id);
+                artifacts_by_address.insert(lib.address, artifact_id.clone());
             }
         }
 
         // Collect source data for all needed artifacts
         for artifact_id in artifacts_by_address.values() {
-            // Find the actual artifact from the output
-            if let Some((output_id, artifact)) = self
-                .output
-                .artifact_ids()
-                .find(|(id, _)| id.clone().with_stripped_file_prefixes(&self.root) == *artifact_id)
+            if let Some((_, artifact)) =
+                self.output.artifact_ids().find(|(id, _)| id == artifact_id)
                 && let Some(data) =
-                    collect_source_data(artifact, self.output, &self.root, &output_id.build_id)
+                    collect_source_data(artifact, self.output, &self.root, &artifact_id.build_id)
             {
                 sources.insert(artifact_id.clone(), data);
             }
@@ -122,10 +119,8 @@ impl<'a> BacktraceBuilder<'a> {
             {
                 // Only iterate through artifacts to find matches for labels in the trace
                 for (output_id, _) in self.output.artifact_ids() {
-                    let stripped_id = output_id.with_stripped_file_prefixes(&self.root);
-                    if stripped_id.name == *label {
-                        // Store the artifact ID directly
-                        artifacts_by_address.insert(node.trace.address, stripped_id);
+                    if output_id.name == *label {
+                        artifacts_by_address.insert(node.trace.address, output_id);
                         break;
                     }
                 }
