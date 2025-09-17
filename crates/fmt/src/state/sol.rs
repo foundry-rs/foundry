@@ -464,7 +464,7 @@ impl<'ast> State<'_, 'ast> {
         let mut handle_pre_cmnts = |this: &mut Self, span: Span| -> bool {
             if this.inline_config.is_disabled(span)
                 // Note: `map` is still captured from the outer scope, which is fine.
-                && let Some((pre_cmnts, _)) = map.remove(&span.lo())
+                && let Some((pre_cmnts, ..)) = map.remove(&span.lo())
             {
                 for (pos, cmnt) in pre_cmnts.into_iter().delimited() {
                     if pos.is_first && cmnt.style.is_isolated() && !this.is_bol_or_only_ind() {
@@ -618,16 +618,22 @@ impl<'ast> State<'_, 'ast> {
     fn print_fn_attribute(
         &mut self,
         span: Span,
-        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
+        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>,
         print_fn: &mut dyn FnMut(&mut Self),
     ) {
         match map.remove(&span.lo()) {
-            Some((pre_comments, post_comments)) => {
-                for cmnt in pre_comments {
+            Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
+                // Print preceeding comments.
+                for cmnt in pre_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
                     self.print_comment(cmnt, CommentConfig::default());
+                }
+                // Push the inner comments back to the queue, so that they are printed in their
+                // intended place.
+                for cmnt in inner_cmnts.into_iter().rev() {
+                    self.comments.push_front(cmnt);
                 }
                 let mut enabled = false;
                 if !self.handle_span(span, false) {
@@ -639,7 +645,8 @@ impl<'ast> State<'_, 'ast> {
                     self.cursor.advance_to(span.hi(), true);
                     enabled = true;
                 }
-                for cmnt in post_comments {
+                // Print subsequent comments.
+                for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
@@ -1457,15 +1464,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(
-                arguments,
-                ListFormat::Compact {
-                    break_single: false,
-                    cmnts_break: true,
-                    with_space: false,
-                    with_delimiters: true,
-                },
-            );
+            self.print_call_args(arguments, ListFormat::compact().add_cmnt_break());
         }
     }
 
@@ -2339,20 +2338,24 @@ impl<'ast> AttributeCommentMapper<'ast> {
         mut self,
         state: &mut State<'_, 'ast>,
         header: &'ast ast::FunctionHeader<'ast>,
-    ) -> (HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>, Vec<AttributeInfo<'ast>>, BytePos) {
+    ) -> (
+        HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>,
+        Vec<AttributeInfo<'ast>>,
+        BytePos,
+    ) {
         let first_attr = self.collect_attributes(header);
         self.cache_comments(state);
         (self.map(), self.attributes, first_attr)
     }
 
-    fn map(&mut self) -> HashMap<BytePos, (Vec<Comment>, Vec<Comment>)> {
+    fn map(&mut self) -> HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)> {
         let mut map = HashMap::new();
         for a in 0..self.attributes.len() {
             let is_last = a == self.attributes.len() - 1;
-            let mut before = Vec::new();
-            let mut after = Vec::new();
+            let (mut before, mut inner, mut after) = (Vec::new(), Vec::new(), Vec::new());
 
             let before_limit = self.attributes[a].span.lo();
+            let inner_limit = self.attributes[a].span.hi();
             let after_limit =
                 if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
 
@@ -2360,13 +2363,15 @@ impl<'ast> AttributeCommentMapper<'ast> {
             while c < self.comments.len() {
                 if self.comments[c].pos() <= before_limit {
                     before.push(self.comments.remove(c));
+                } else if self.comments[c].pos() <= inner_limit {
+                    inner.push(self.comments.remove(c));
                 } else if (after.is_empty() || is_last) && self.comments[c].pos() <= after_limit {
                     after.push(self.comments.remove(c));
                 } else {
                     c += 1;
                 }
             }
-            map.insert(before_limit, (before, after));
+            map.insert(before_limit, (before, inner, after));
         }
         map
     }

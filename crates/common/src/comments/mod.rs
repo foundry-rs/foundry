@@ -15,7 +15,7 @@ pub const DISABLE_START: &str = "forgefmt: disable-start";
 pub const DISABLE_END: &str = "forgefmt: disable-end";
 
 pub struct Comments {
-    comments: std::vec::IntoIter<Comment>,
+    comments: std::collections::VecDeque<Comment>,
 }
 
 impl fmt::Debug for Comments {
@@ -36,25 +36,32 @@ impl Comments {
         let gatherer = CommentGatherer::new(sf, sm, normalize_cmnts, tab_width).gather();
 
         Self {
-            comments: if group_cmnts {
-                gatherer.group().into_iter()
-            } else {
-                gatherer.comments.into_iter()
-            },
+            comments: if group_cmnts { gatherer.group().into() } else { gatherer.comments.into() },
         }
     }
 
     pub fn peek(&self) -> Option<&Comment> {
-        self.comments.as_slice().first()
+        self.comments.front()
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Comment> {
-        self.comments.next()
+        self.comments.pop_front()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Comment> {
-        self.comments.as_slice().iter()
+        self.comments.iter()
+    }
+
+    /// Adds a new comment at the beginning of the list.
+    ///
+    /// Should only be used when comments are gathered scattered, and must be manually sorted.
+    ///
+    /// **WARNING:** This struct works under the assumption that comments are always sorted by
+    /// ascending span position. It is the caller's responsability to ensure that this premise
+    /// always holds true.
+    pub fn push_front(&mut self, cmnt: Comment) {
+        self.comments.push_front(cmnt)
     }
 
     /// Finds the first trailing comment on the same line as `span_pos`, allowing for `Mixed`

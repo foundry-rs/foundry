@@ -179,12 +179,6 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>, span: Span) {
         let yul::ExprCall { name, arguments } = expr;
-        let is_child = if self.call_expr {
-            true
-        } else {
-            self.call_expr = true;
-            false
-        };
         self.print_ident(name);
         self.print_tuple(
             arguments,
@@ -194,9 +188,6 @@ impl<'ast> State<'_, 'ast> {
             get_span!(),
             ListFormat::consistent().break_single_if(true),
         );
-        if !is_child {
-            self.call_expr = false;
-        }
     }
 
     pub(super) fn print_yul_block(
@@ -239,17 +230,32 @@ impl<'ast> State<'_, 'ast> {
                 span.hi(),
             );
         } else {
-            let mut i = if block.is_empty() { 0 } else { block.len() - 1 };
+            let (mut i, n_args) = (0, block.len().saturating_sub(1));
             self.print_block_inner(
                 block,
                 BlockFormat::NoBraces(Some(self.ind)),
                 |s, stmt| {
                     s.print_yul_stmt(stmt);
                     s.print_comments(stmt.span.hi(), CommentConfig::default());
-                    s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
-                    if i != 0 {
-                        s.hardbreak_if_not_bol();
-                        i -= 1;
+                    if i != n_args {
+                        let next_span = block[i + 1].span;
+                        s.print_trailing_comment(stmt.span.hi(), Some(next_span.lo()));
+                        if !s.is_bol_or_only_ind() && !s.inline_config.is_disabled(stmt.span) {
+                            // when disabling a single line, manually add a nonbreaking line jump so
+                            // that the indentation of the disabled line is maintained.
+                            if s.inline_config.is_disabled(next_span)
+                                && s.peek_comment_before(next_span.lo())
+                                    .is_none_or(|cmnt| !cmnt.style.is_isolated())
+                            {
+                                s.word("\n");
+                            // otherwise, use a regular hardbreak
+                            } else {
+                                s.hardbreak_if_not_bol();
+                            }
+                        }
+                        i += 1;
+                    } else {
+                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
                     }
                 },
                 |b| b.span,

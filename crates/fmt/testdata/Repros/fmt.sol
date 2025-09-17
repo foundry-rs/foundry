@@ -357,3 +357,24 @@ contract ERC1967Factory {
         }
     }
 }
+
+/// @title Wrapped Ether Hook
+/// @notice Hook for wrapping/unwrapping ETH in Uniswap V4 pools
+/// @dev Implements 1:1 wrapping/unwrapping of ETH to WETH
+contract WETHHook is BaseTokenWrapperHook {
+    /// @notice The WETH9 contract
+    WETH public immutable weth;
+
+    /// @notice Creates a new WETH wrapper hook
+    /// @param _manager The Uniswap V4 pool manager
+    /// @param _weth The WETH9 contract address
+    constructor(IPoolManager _manager, address payable _weth)
+        BaseTokenWrapperHook(
+            _manager,
+            Currency.wrap(_weth), // wrapper token is WETH
+            CurrencyLibrary.ADDRESS_ZERO // underlying token is ETH (address(0))
+        )
+    {
+        weth = WETH(payable(_weth));
+    }
+}
