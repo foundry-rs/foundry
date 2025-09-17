@@ -36,7 +36,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
-use foundry_evm_precompiles::inject_network_precompiles;
+use foundry_evm_precompiles::NetworkPrecompiles;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -357,7 +357,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-            inject_network_precompiles(evm.precompiles_mut(), self.odyssey, self.celo);
+            NetworkPrecompiles::default()
+                .odyssey(self.odyssey)
+                .celo(self.celo)
+                .inject(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
                 inject_custom_precompiles(&mut evm, factory.precompiles());

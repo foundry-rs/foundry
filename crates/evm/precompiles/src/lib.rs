@@ -14,36 +14,56 @@ use std::collections::BTreeMap;
 
 pub mod celo;
 
-/// Conditionally inject network precompiles.
-pub fn inject_network_precompiles(precompiles: &mut PrecompilesMap, odyssey: bool, celo: bool) {
-    if odyssey {
-        precompiles.apply_precompile(P256VERIFY.address(), move |_| {
-            Some(DynPrecompile::from(move |input: PrecompileInput<'_>| {
-                P256VERIFY.precompile()(input.data, P256VERIFY_BASE_GAS_FEE)
-            }))
-        });
-    }
-
-    if celo {
-        precompiles
-            .apply_precompile(&CELO_TRANSFER_ADDRESS, move |_| Some(celo::transfer::precompile()));
-    }
+#[derive(Default)]
+pub struct NetworkPrecompiles {
+    /// Whether to inject Odyssey precompiles.
+    odyssey: bool,
+    /// Whether to inject Celo precompiles.
+    celo: bool,
 }
 
-pub fn map_network_precompiles(
-    precompiles_map: &mut BTreeMap<String, Address>,
-    odyssey: bool,
-    celo: bool,
-) {
-    if odyssey {
-        precompiles_map.insert(
-            PrecompileId::P256Verify.name().to_string(),
-            u64_to_address(P256VERIFY_ADDRESS),
-        );
+impl NetworkPrecompiles {
+    pub fn odyssey(mut self, odyssey: bool) -> Self {
+        self.odyssey = odyssey;
+        self
     }
 
-    if celo {
-        precompiles_map
-            .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+    pub fn celo(mut self, celo: bool) -> Self {
+        self.celo = celo;
+        self
+    }
+
+    /// Inject precompiles for configured networks.
+    pub fn inject(self, precompiles: &mut PrecompilesMap) {
+        if self.odyssey {
+            precompiles.apply_precompile(P256VERIFY.address(), move |_| {
+                Some(DynPrecompile::from(move |input: PrecompileInput<'_>| {
+                    P256VERIFY.precompile()(input.data, P256VERIFY_BASE_GAS_FEE)
+                }))
+            });
+        }
+
+        if self.celo {
+            precompiles.apply_precompile(&CELO_TRANSFER_ADDRESS, move |_| {
+                Some(celo::transfer::precompile())
+            });
+        }
+    }
+
+    /// Returns precompiles for configured networks.
+    pub fn get(self) -> BTreeMap<String, Address> {
+        let mut precompiles = BTreeMap::new();
+        if self.odyssey {
+            precompiles.insert(
+                PrecompileId::P256Verify.name().to_string(),
+                u64_to_address(P256VERIFY_ADDRESS),
+            );
+        }
+
+        if self.celo {
+            precompiles
+                .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+        }
+        precompiles
     }
 }

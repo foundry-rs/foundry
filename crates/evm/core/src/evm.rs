@@ -9,7 +9,7 @@ use crate::{
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_precompiles::inject_network_precompiles;
+use foundry_evm_precompiles::NetworkPrecompiles;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Context, Journal,
@@ -62,10 +62,10 @@ pub fn new_evm_with_inspector<'db, I: InspectorExt>(
         ),
     };
 
-    let is_odyssey = evm.inspector().is_odyssey();
-    let is_celo = evm.inspector().is_celo();
-    inject_network_precompiles(evm.precompiles_mut(), is_odyssey, is_celo);
-
+    NetworkPrecompiles::default()
+        .odyssey(evm.inspector().is_odyssey())
+        .celo(evm.inspector().is_celo())
+        .inject(evm.precompiles_mut());
     evm
 }
 
@@ -84,10 +84,10 @@ pub fn new_evm_with_existing_context<'a>(
         ),
     };
 
-    let is_odyssey = evm.inspector().is_odyssey();
-    let is_celo = evm.inspector().is_celo();
-    inject_network_precompiles(evm.precompiles_mut(), is_odyssey, is_celo);
-
+    NetworkPrecompiles::default()
+        .odyssey(evm.inspector().is_odyssey())
+        .celo(evm.inspector().is_celo())
+        .inject(evm.precompiles_mut());
     evm
 }
 

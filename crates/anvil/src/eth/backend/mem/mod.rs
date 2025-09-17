@@ -103,7 +103,7 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
-use foundry_evm_precompiles::{inject_network_precompiles, map_network_precompiles};
+use foundry_evm_precompiles::NetworkPrecompiles;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -860,7 +860,9 @@ impl Backend {
             precompiles_map.insert(precompile.id().name().to_string(), *address);
         }
 
-        map_network_precompiles(&mut precompiles_map, self.odyssey, self.is_celo());
+        // Extend with configured network precompiles.
+        precompiles_map
+            .extend(NetworkPrecompiles::default().odyssey(self.odyssey).celo(self.is_celo()).get());
 
         if let Some(factory) = &self.precompile_factory {
             for (precompile, _) in &factory.precompiles() {
@@ -1223,7 +1225,10 @@ impl Backend {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        inject_network_precompiles(evm.precompiles_mut(), self.odyssey, self.is_celo());
+        NetworkPrecompiles::default()
+            .odyssey(self.odyssey)
+            .celo(self.is_celo())
+            .inject(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
             inject_custom_precompiles(&mut evm, factory.precompiles());
