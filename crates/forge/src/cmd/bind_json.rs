@@ -5,7 +5,7 @@ use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc},
     utils::LoadConfig,
 };
-use foundry_common::{TYPE_BINDING_PREFIX, fs};
+use foundry_common::{TYPE_BINDING_PREFIX, compile::ProjectCompiler, fs};
 use foundry_compilers::{
     CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
@@ -48,83 +48,25 @@ pub struct BindJsonArgs {
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let project = config.ephemeral_project()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
+        std::fs::write(target_path, JSON_BINDINGS_PLACEHOLDER)?;
 
-        // Step 1: Read and preprocess sources
-        let sources = project.paths.read_input_files()?;
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+        let project = config.solar_project()?;
+        let mut output = ProjectCompiler::new().compile(&project)?;
 
-        // We only generate bindings for a single Solidity version to avoid conflicts.
-        let (version, mut sources, _) = graph
-            // resolve graph into mapping language -> version -> sources
-            .into_sources_by_version(&project)?
-            .sources
-            .into_iter()
-            // we are only interested in Solidity sources
-            .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
-            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
-            .1
-            .into_iter()
-            // For now, we are always picking the latest version.
-            .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap();
-
-        // Step 2: Preprocess sources to handle potentially invalid bindings
-        // self.preprocess_sources(&mut sources)?;
+        // Read and preprocess sources to handle potentially invalid bindings.
+        let mut sources = self.preprocess_sources(&mut output)?;
 
         // Insert empty bindings file.
         sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
 
-        // Step 3: Find structs and generate bindings
+        // Find structs and generate bindings.
         let structs_to_write =
-            self.find_and_resolve_structs(&config, &project, version, sources, &target_path)?;
+            self.find_and_resolve_structs(&config, &project, &mut output, &target_path)?;
 
-        // Step 4: Write bindings
+        // Write bindings.
         self.write_bindings(&structs_to_write, &target_path)?;
 
-        Ok(())
-    }
-
-    /// In cases when user moves/renames/deletes structs, compiler will start failing because
-    /// generated bindings will be referencing non-existing structs or importing non-existing
-    /// files.
-    ///
-    /// Because of that, we need a little bit of preprocessing to make sure that bindings will still
-    /// be valid.
-    ///
-    /// The strategy is:
-    /// 1. Replace bindings file with an empty one to get rid of potentially invalid imports.
-    /// 2. Remove all function bodies to get rid of `serialize`/`deserialize` invocations.
-    /// 3. Remove all `immutable` attributes to avoid errors because of erased constructors
-    ///    initializing them.
-    ///
-    /// After that we'll still have enough information for bindings but compilation should succeed
-    /// in most of the cases.
-    fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
-        let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar::interface::Result<()> {
-            sources.0.par_iter_mut().try_for_each(|(path, source)| {
-                let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
-
-                let arena = Arena::new();
-                let mut parser = SolarParser::from_source_code(
-                    &sess,
-                    &arena,
-                    FileName::Real(path.clone()),
-                    content.to_string(),
-                )?;
-                let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-                let mut visitor = PreprocessorVisitor::new();
-                let _ = visitor.visit_source_unit(&ast);
-                visitor.update(&sess, &mut content);
-
-                source.content = Arc::new(content);
-                Ok(())
-            })
-        });
-        eyre::ensure!(result.is_ok(), "failed parsing");
         Ok(())
     }
 
@@ -189,27 +131,21 @@ impl BindJsonArgs {
             let hir = &gcx.hir;
             let resolver = Resolver::new(gcx);
             for id in resolver.struct_ids() {
-                if let Some(schema) = resolver.resolve_struct_eip712(id) {
-                    let def = hir.strukt(id);
-                    let source = hir.source(def.source);
-
-                    if !target_files.contains(&source.file) {
-                        continue;
-                    }
-
-                    if let FileName::Real(path) = &source.file.name {
-                        structs_to_write.push(StructToWrite {
-                            name: def.name.as_str().into(),
-                            contract_name: def
-                                .contract
-                                .map(|id| hir.contract(id).name.as_str().into()),
-                            path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
-                            schema,
-                            // will be filled later
-                            import_alias: None,
-                            name_in_fns: String::new(),
-                        });
-                    }
+                if let Some(schema) = resolver.resolve_struct_eip712(id)
+                    && let def = hir.strukt(id)
+                    && let source = hir.source(def.source)
+                    && target_files.contains(&source.file)
+                    && let FileName::Real(path) = &source.file.name
+                {
+                    structs_to_write.push(StructToWrite {
+                        name: def.name.as_str().into(),
+                        contract_name: def.contract.map(|id| hir.contract(id).name.as_str().into()),
+                        path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
+                        schema,
+                        // will be filled later
+                        import_alias: None,
+                        name_in_fns: String::new(),
+                    });
                 }
             }
             Ok(())
@@ -390,73 +326,6 @@ library JsonBindings {
         sh_println!("Bindings written to {}", target_path.display())?;
 
         Ok(())
-    }
-}
-
-struct PreprocessorVisitor {
-    updates: Vec<(Span, &'static str)>,
-}
-
-impl PreprocessorVisitor {
-    fn new() -> Self {
-        Self { updates: Vec::new() }
-    }
-
-    fn update(mut self, sess: &Session, content: &mut String) {
-        if self.updates.is_empty() {
-            return;
-        }
-
-        let sf = sess.source_map().lookup_source_file(self.updates[0].0.lo());
-        let base = sf.start_pos.0;
-
-        self.updates.sort_by_key(|(span, _)| span.lo());
-        let mut shift = 0_i64;
-        for (span, new) in self.updates {
-            let lo = span.lo() - base;
-            let hi = span.hi() - base;
-            let start = ((lo.0 as i64) - shift) as usize;
-            let end = ((hi.0 as i64) - shift) as usize;
-
-            content.replace_range(start..end, new);
-            shift += (end - start) as i64;
-            shift -= new.len() as i64;
-        }
-    }
-}
-
-impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    type BreakValue = solar::interface::data_structures::Never;
-
-    fn visit_item_function(
-        &mut self,
-        func: &'ast ast::ItemFunction<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        // Replace function bodies with a noop statement.
-        if let Some(block) = &func.body
-            && !block.is_empty()
-        {
-            let span = block.first().unwrap().span.to(block.last().unwrap().span);
-            let new_body = match func.kind {
-                FunctionKind::Modifier => "_;",
-                _ => "revert();",
-            };
-            self.updates.push((span, new_body));
-        }
-
-        self.walk_item_function(func)
-    }
-
-    fn visit_variable_definition(
-        &mut self,
-        var: &'ast ast::VariableDefinition<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        // Remove `immutable` attributes.
-        if let Some(VarMut::Immutable) = var.mutability {
-            self.updates.push((var.span, ""));
-        }
-
-        self.walk_variable_definition(var)
     }
 }
 
