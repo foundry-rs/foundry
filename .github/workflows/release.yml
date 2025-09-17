@@ -13,10 +13,6 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-defaults:
-  run:
-    shell: bash
-
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}

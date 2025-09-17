@@ -62,22 +62,22 @@ jobs:
       - name: Finalize Docker Metadata
         id: docker_tagging
         run: |
-          if [[ "${{ github.event_name }}" == 'schedule' ]]; then
-            echo "cron trigger, assigning nightly tag"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
-            echo "manual trigger from master/main branch, assigning latest tag"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            printf "cron trigger, assigning nightly tag\n"
+            printf "docker_tags=%s/%s:nightly,%s/%s:nightly-%s\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ "${GITHUB_REF##*/}" == "master" ]]; then
+            printf "manual trigger from master/main branch, assigning latest tag\n"
+            printf "docker_tags=%s/%s:%s,%s/%s:latest\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${GITHUB_REF##*/}" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
           else
-            echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+            printf "Neither scheduled nor manual release from main branch. Just tagging as branch name\n"
+            printf "docker_tags=%s/%s:%s\n" "${{ env.REGISTRY }}" "${{ env.IMAGE_NAME }}" "${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
           fi
 
       # Log docker metadata to explicitly know what is being pushed
       - name: Inspect Docker Metadata
         run: |
-          echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
-          echo "LABELS -> ${{ steps.meta.outputs.labels }}"
+          printf "TAGS -> %s\n" "${{ steps.docker_tagging.outputs.docker_tags }}"
+          printf "LABELS -> %s\n" "${{ steps.meta.outputs.labels }}"
 
       - name: Build and push foundry image
         run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} CARGO_TAG_NAME=${{ inputs.tag_name }} PROFILE=maxperf docker-build-push
