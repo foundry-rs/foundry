@@ -1,7 +1,6 @@
 name: CodeQL
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   push:
@@ -21,6 +20,7 @@ jobs:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
       actions: read
 

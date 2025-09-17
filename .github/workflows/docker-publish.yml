@@ -1,7 +1,6 @@
 name: docker
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   # Trigger without any parameters a proactive rebuild
@@ -22,6 +21,7 @@ jobs:
     name: build and push
     runs-on: Linux-22.04
     permissions:
+      contents: read
       id-token: write
       packages: write
     timeout-minutes: 120
@@ -67,13 +67,13 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == 'schedule' ]]; then
             echo "cron trigger, assigning nightly tag"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
             echo "manual trigger from master/main branch, assigning latest tag"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
           else
             echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
-            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
           fi
 
       # Log docker metadata to explicitly know what is being pushed

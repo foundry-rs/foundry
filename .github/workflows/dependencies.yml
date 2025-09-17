@@ -2,8 +2,7 @@
 
 name: dependencies
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   schedule:

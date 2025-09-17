@@ -1,7 +1,6 @@
 name: npm
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   workflow_dispatch:
@@ -30,6 +29,7 @@ env:
 jobs:
   publish-arch:
     permissions:
+      contents: read
       actions: read
       id-token: write
     name: ${{ matrix.os }}-${{ matrix.arch }}
@@ -203,6 +203,7 @@ jobs:
 
   publish-meta:
     permissions:
+      contents: read
       actions: read
       id-token: write
     needs: publish-arch

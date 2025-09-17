@@ -2,8 +2,7 @@
 
 name: test-isolate
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   schedule:

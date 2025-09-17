@@ -1,7 +1,6 @@
 name: test
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   push:
@@ -27,6 +26,8 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,7 +54,6 @@ jobs:
     needs: [docs]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
     permissions:
       pages: write
       id-token: write
@@ -68,6 +68,8 @@ jobs:
   doctest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -83,6 +85,8 @@ jobs:
   typos:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -92,6 +96,8 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -110,6 +116,8 @@ jobs:
   rustfmt:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -123,6 +131,8 @@ jobs:
   forge-fmt:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -140,6 +150,8 @@ jobs:
   crate-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -157,6 +169,8 @@ jobs:
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@9c8d0dc20e7ad02455d3fdab2378a05f29907630 # main
+    permissions:
+      contents: read
 
   ci-success:
     runs-on: ubuntu-latest

@@ -1,7 +1,6 @@
 name: nix
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   schedule:
@@ -36,6 +35,8 @@ jobs:
       matrix:
         runs-on: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
     steps:
       - uses: DeterminateSystems/determinate-nix-action@dbda91f6efef3ee627f56175120aa9543687d830 # v3
       - uses: actions/checkout@v5

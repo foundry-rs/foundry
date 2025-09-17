@@ -1,7 +1,6 @@
 name: Foundry Benchmarks
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   workflow_dispatch:
@@ -57,9 +56,10 @@ jobs:
       - name: Setup Foundry
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
 
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench

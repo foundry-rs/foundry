@@ -2,8 +2,7 @@
 
 name: bump-forge-std
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   schedule:

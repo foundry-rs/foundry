@@ -2,8 +2,7 @@
 
 name: nextest
 
-permissions:
-  contents: read
+permissions: {}
 
 on:
   workflow_call:
@@ -24,6 +23,8 @@ jobs:
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       test-matrix: ${{ steps.gen.outputs.test-matrix }}
     steps:
@@ -38,15 +39,18 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PROFILE: ${{ inputs.profile }}
+        shell: bash
         run: |
           output=$(python3 .github/scripts/matrices.py)
-          echo "::debug::test-matrix=$output"
-          echo "test-matrix=$output" >> $GITHUB_OUTPUT
+          printf '::debug::test-matrix=%s\n' "$output"
+          printf 'test-matrix=%s\n' "$output" >> "$GITHUB_OUTPUT"
 
   test:
     name: test ${{ matrix.name }}
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
+    permissions:
+      contents: read
     needs: matrices
     strategy:
       fail-fast: false
