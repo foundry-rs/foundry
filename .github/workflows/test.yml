@@ -19,6 +19,8 @@ env:
 jobs:
   nextest:
     uses: ./.github/workflows/nextest.yml
+    permissions:
+      contents: read
     with:
       profile: default
     secrets: inherit

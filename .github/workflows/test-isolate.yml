@@ -12,5 +12,7 @@ on:
 jobs:
   nextest:
     uses: ./.github/workflows/nextest.yml
+    permissions:
+      contents: read
     with:
       profile: isolate
