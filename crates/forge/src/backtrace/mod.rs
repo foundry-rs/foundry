@@ -91,7 +91,7 @@ impl<'a> BacktraceBuilder<'a> {
                         // Match by checking if this artifact file corresponds to the same
                         // artifact
                         if std::ptr::eq(arti, artifact) {
-                            return Some(id.build_id.clone());
+                            return Some(id.build_id);
                         }
                         None
                     });
@@ -348,10 +348,7 @@ impl BacktraceFrame {
         result.push_str(self.contract_name.as_ref().unwrap_or(&self.contract_address.to_string()));
 
         // Add function name if available
-        if let Some(func) = &self.function_name {
-            result.push('.');
-            result.push_str(func);
-        }
+        result.push_str(&self.function_name.as_ref().map_or(String::new(), |f| format!(".{f}")));
 
         if let Some(file) = &self.file {
             result.push_str(" (");
@@ -362,12 +359,8 @@ impl BacktraceFrame {
             result.push(':');
             result.push_str(&line.to_string());
 
-            if let Some(column) = self.column {
-                result.push(':');
-                result.push_str(&column.to_string());
-            } else {
-                result.push_str(":0");
-            }
+            result.push(':');
+            result.push_str(&self.column.as_ref().map_or("0".to_string(), |c| c.to_string()));
         }
 
         // Add location in parentheses if available
