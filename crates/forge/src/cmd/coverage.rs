@@ -4,20 +4,18 @@ use crate::{
     coverage::{
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
-        analysis::{SourceAnalysis, SourceFile, SourceFiles},
+        analysis::{SourceAnalysis, SourceFiles},
         anchors::find_anchors,
     },
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::{Context, Result};
+use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
-    artifacts::{
-        CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source, sourcemap::SourceMap,
-    },
+    artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
     compilers::multi::MultiCompiler,
 };
 use foundry_config::Config;
@@ -100,15 +98,15 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        // Coverage analysis requires the Solc AST output.
-        config.ast = true;
-
-        let (project, output) = self.build(&config)?;
+        let (paths, mut output) = {
+            let (project, output) = self.build(&config)?;
+            (project.paths, output)
+        };
 
         self.populate_reporters(&project.paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&project.paths, &output)?;
+        let report = self.prepare(&paths, &mut output)?;
 
         sh_println!("Running tests...")?;
         self.collect(
@@ -192,12 +190,20 @@ impl CoverageArgs {
     fn prepare(
         &self,
         project_paths: &ProjectPathsConfig,
-        output: &ProjectCompileOutput,
+        output: &mut ProjectCompileOutput,
     ) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
 
+        output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+                let _ = compiler.lower_asts();
+            }
+            convert_solar_errors(compiler.dcx())
+        })?;
+        let output = &*output;
+
         // Collect source files.
-        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
+        let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
@@ -208,21 +214,12 @@ impl CoverageArgs {
                 continue;
             }
 
-            if let Some(ast) = &source_file.ast {
-                let file = project_paths.root.join(path);
-                trace!(root=?project_paths.root, ?file, "reading source file");
-
-                let source = SourceFile {
-                    ast,
-                    source: Source::read(&file)
-                        .wrap_err("Could not read source code for analysis")?,
-                };
-                versioned_sources
-                    .entry(version.clone())
-                    .or_default()
-                    .sources
-                    .insert(source_file.id as usize, source);
-            }
+            let path = project_paths.root.join(path);
+            versioned_sources
+                .entry(version.clone())
+                .or_default()
+                .sources
+                .insert(source_file.id, path);
         }
 
         // Get source maps and bytecodes.
@@ -237,7 +234,7 @@ impl CoverageArgs {
 
         // Add coverage items.
         for (version, sources) in &versioned_sources {
-            let source_analysis = SourceAnalysis::new(sources)?;
+            let source_analysis = SourceAnalysis::new(sources, output)?;
             let anchors = artifacts
                 .par_iter()
                 .filter(|artifact| artifact.contract_id.version == *version)

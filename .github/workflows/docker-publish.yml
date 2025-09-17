@@ -29,10 +29,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Install cross
-        id: cross_main
+      - name: Install gcc aarch64
+        id: aarch_64_setup
         run: |
-          cargo install cross
+          sudo apt update && sudo apt install -y gcc-aarch64-linux-gnu
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}

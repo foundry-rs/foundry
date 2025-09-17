@@ -297,7 +297,14 @@ impl NodeArgs {
             let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
-                Err(_) => DEFAULT_MNEMONIC.to_string(),
+                Err(err) => {
+                    warn!(target: "node", ?count, %err, "failed to generate mnemonic, falling back to 12-word random mnemonic");
+                    // Fallback: generate a valid 12-word random mnemonic instead of using
+                    // DEFAULT_MNEMONIC
+                    Mnemonic::<English>::new_with_count(&mut rng, 12)
+                        .expect("valid default word count")
+                        .to_phrase()
+                }
             };
             generator = generator.phrase(mnemonic);
         } else if let Some(seed) = self.mnemonic_seed {
