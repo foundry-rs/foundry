@@ -48,7 +48,6 @@ impl<'a> TUI<'a> {
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
     fn run_inner(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
         let mut cx = TUIContext::new(self.debugger_context);
-
         cx.init();
         loop {
             cx.draw(terminal)?;
