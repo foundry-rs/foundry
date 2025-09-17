@@ -1777,7 +1777,7 @@ impl<'ast> State<'_, 'ast> {
                     self.hardbreak_if_not_bol();
                 }
                 if let Some(expr) = expr {
-                    if matches!(&expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..)) {
+                    if !has_complex_successor(&expr.kind, false) {
                         self.s.ibox(self.ind);
                     } else {
                         self.ibox(0);
