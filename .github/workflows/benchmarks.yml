@@ -1,5 +1,8 @@
 name: Foundry Benchmarks
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -18,10 +21,6 @@ on:
         type: string
         default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
-permissions:
-  contents: write
-  pull-requests: write
-
 env:
   ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
   VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
@@ -31,6 +30,8 @@ jobs:
   run-benchmarks:
     name: Run All Benchmarks
     runs-on: foundry-runner
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -43,10 +44,12 @@ jobs:
           sudo apt-get install -y build-essential pkg-config
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
         with:
           workspaces: |
             ./
@@ -153,6 +156,9 @@ jobs:
     name: Publish Results
     needs: run-benchmarks
     runs-on: foundry-runner
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

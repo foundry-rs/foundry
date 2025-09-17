@@ -104,5 +104,4 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
-          NEXTEST_PROFILE: ${{ inputs.profile }}
-        run: cargo nextest run --profile "$NEXTEST_PROFILE"
+        run: cargo nextest run ${{ matrix.flags }}
