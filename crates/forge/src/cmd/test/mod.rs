@@ -582,6 +582,7 @@ impl TestArgs {
                         output,
                         config.root.clone(),
                         config.parsed_libraries().ok(),
+                        config.via_ir,
                     ))
             } else {
                 None

@@ -521,3 +521,30 @@ Backtrace:
 ...
 "#]]);
 });
+
+forgetest!(test_backtrace_via_ir_disables_source_lines, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
+    prj.add_source("StaticCall.sol", include_str!("../fixtures/backtraces/StaticCall.sol"));
+    prj.add_source("DelegateCall.sol", include_str!("../fixtures/backtraces/DelegateCall.sol"));
+    prj.add_source("NestedCalls.sol", include_str!("../fixtures/backtraces/NestedCalls.sol"));
+
+    prj.add_test("Backtrace.t.sol", include_str!("../fixtures/backtraces/Backtrace.t.sol"));
+
+    prj.update_config(|c| c.via_ir = true);
+
+    let output = cmd.args(["test", "-vvv"]).assert_failure();
+    output.stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: Static compute failed] testStaticCallRequire() ([GAS])
+...
+Backtrace:
+  at StaticTarget.compute
+  at StaticCaller.staticCompute
+  at BacktraceTest.testStaticCallRequire
+...
+"#]]);
+});

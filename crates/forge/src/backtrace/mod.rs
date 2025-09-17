@@ -32,6 +32,10 @@ pub struct BacktraceBuilder<'a> {
     output: &'a ProjectCompileOutput,
     /// Project root
     root: PathBuf,
+    /// Disable source locations
+    ///
+    /// Source locations will be inaccurately reported if the files have been compiled with via-ir
+    disable_source_locs: bool,
 }
 
 impl<'a> BacktraceBuilder<'a> {
@@ -40,6 +44,7 @@ impl<'a> BacktraceBuilder<'a> {
         output: &'a ProjectCompileOutput,
         root: PathBuf,
         linked_libraries: Option<Libraries>,
+        disable_source_locs: bool,
     ) -> Self {
         let linked_libs = linked_libraries
             .map(|libs| {
@@ -59,7 +64,7 @@ impl<'a> BacktraceBuilder<'a> {
             })
             .unwrap_or_default();
 
-        Self { linked_libraries: linked_libs, output, root }
+        Self { linked_libraries: linked_libs, output, root, disable_source_locs }
     }
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
@@ -107,8 +112,12 @@ impl<'a> BacktraceBuilder<'a> {
             }
         }
 
-        let mut backtrace =
-            Backtrace::new(artifacts_by_address, sources, self.linked_libraries.clone());
+        let mut backtrace = Backtrace::new(
+            artifacts_by_address,
+            sources,
+            self.linked_libraries.clone(),
+            self.disable_source_locs,
+        );
 
         backtrace.extract_frames(arena);
 
@@ -155,6 +164,10 @@ pub struct Backtrace {
     pc_mappers: HashMap<Address, PcSourceMapper>,
     /// Linked libraries from configuration
     linked_libraries: Vec<LinkedLib>,
+    /// Disable pinpointing source locations in files
+    ///
+    /// Should be disabled when via-ir is enabled
+    disable_source_locs: bool,
 }
 
 impl Backtrace {
@@ -163,14 +176,21 @@ impl Backtrace {
         artifacts_by_address: HashMap<Address, ArtifactId>,
         mut sources: HashMap<ArtifactId, SourceData>,
         linked_libraries: Vec<LinkedLib>,
+        disable_source_locs: bool,
     ) -> Self {
-        let mut backtrace =
-            Self { frames: Vec::new(), pc_mappers: HashMap::default(), linked_libraries };
+        let mut backtrace = Self {
+            frames: Vec::new(),
+            pc_mappers: HashMap::default(),
+            linked_libraries,
+            disable_source_locs,
+        };
 
         // Build PC source mappers for each contract
-        for (addr, artifact_id) in artifacts_by_address {
-            if let Some(data) = sources.remove(&artifact_id) {
-                backtrace.pc_mappers.insert(addr, PcSourceMapper::new(data));
+        if !disable_source_locs {
+            for (addr, artifact_id) in artifacts_by_address {
+                if let Some(data) = sources.remove(&artifact_id) {
+                    backtrace.pc_mappers.insert(addr, PcSourceMapper::new(data));
+                }
             }
         }
 
@@ -178,7 +198,7 @@ impl Backtrace {
     }
 
     /// Extracts backtrace frames from a trace arena.
-    pub fn extract_frames(&mut self, arena: &SparsedTraceArena) {
+    fn extract_frames(&mut self, arena: &SparsedTraceArena) {
         let resolved_arena = &arena.arena;
 
         if resolved_arena.nodes().is_empty() {
@@ -221,9 +241,11 @@ impl Backtrace {
         let mut frame = BacktraceFrame::new(contract_address);
 
         // Try to get source location from PC mapper
-        if let Some(source_location) = trace.steps.last().and_then(|last_step| {
-            self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
-        }) {
+        if !self.disable_source_locs
+            && let Some(source_location) = trace.steps.last().and_then(|last_step| {
+                self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
+            })
+        {
             frame = frame
                 .with_source_location(
                     source_location.file,
