@@ -57,10 +57,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
+          toolchain: stable
           target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@e5f8d33e7166e0491b2ab4ff0567cc6cd6772737 # v2
+        with:
+          tool: nextest
 
       # External tests dependencies
       - name: Setup Node.js
@@ -70,7 +73,7 @@ jobs:
           node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
           bun-version: latest
       - name: Setup Python
@@ -88,7 +91,7 @@ jobs:
             ~/.foundry/cache
             ~/.config/.foundry/cache
           key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
         with:
           cache-on-failure: true
       - name: Setup Git config
@@ -101,4 +104,5 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
-        run: cargo nextest run ${{ matrix.flags }}
+          NEXTEST_PROFILE: ${{ inputs.profile }}
+        run: cargo nextest run --profile "$NEXTEST_PROFILE"
