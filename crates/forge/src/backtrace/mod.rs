@@ -88,27 +88,14 @@ impl<'a> BacktraceBuilder<'a> {
         // Collect source data for all needed artifacts
         for artifact_id in artifacts_by_address.values() {
             // Find the actual artifact from the output
-            for (output_id, artifact) in self.output.artifact_ids() {
-                let stripped_id = output_id.with_stripped_file_prefixes(&self.root);
-                if stripped_id == *artifact_id {
-                    // Find the build_id for this specific artifact
-                    let build_id = self.output.artifact_ids().find_map(|(id, arti)| {
-                        // Match by checking if this artifact file corresponds to the same
-                        // artifact
-                        if std::ptr::eq(arti, artifact) {
-                            return Some(id.build_id);
-                        }
-                        None
-                    });
-
-                    if let Some(build_id) = build_id
-                        && let Some(data) =
-                            collect_source_data(artifact, self.output, &self.root, &build_id)
-                    {
-                        sources.insert(artifact_id.clone(), data);
-                    }
-                    break;
-                }
+            if let Some((output_id, artifact)) = self
+                .output
+                .artifact_ids()
+                .find(|(id, _)| id.clone().with_stripped_file_prefixes(&self.root) == *artifact_id)
+                && let Some(data) =
+                    collect_source_data(artifact, self.output, &self.root, &output_id.build_id)
+            {
+                sources.insert(artifact_id.clone(), data);
             }
         }
 
