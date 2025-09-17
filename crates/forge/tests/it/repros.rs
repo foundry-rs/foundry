@@ -8,6 +8,7 @@ use forge::{
     decode::decode_console_logs,
     result::{TestKind, TestStatus},
 };
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -68,6 +69,7 @@ async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) 
         if let Some(sender) = sender {
             config.sender = sender;
         }
+        config.evm_version = EvmVersion::Prague;
     });
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
@@ -317,7 +319,7 @@ test_repro!(6759);
 test_repro!(6966);
 
 // https://github.com/foundry-rs/foundry/issues/6616
-//test_repro!(6616);
+test_repro!(6616);
 
 // https://github.com/foundry-rs/foundry/issues/5529
 test_repro!(5529; |config| {

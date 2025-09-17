@@ -178,7 +178,7 @@ impl RunArgs {
             if evm_version.is_none() {
                 // if the block has the excess_blob_gas field, we assume it's a Cancun block
                 if block.header.excess_blob_gas.is_some() {
-                    evm_version = Some(EvmVersion::Prague);
+                    evm_version = Some(EvmVersion::Cancun);
                 }
             }
             apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);

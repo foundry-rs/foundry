@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use alloy_primitives::U256;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{FsPermissions, fs_permissions::PathPermission};
 use foundry_test_utils::Filter;
 
@@ -29,6 +30,7 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
 
     let runner = test_data.runner_with(|config| {
         config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
+        config.evm_version = EvmVersion::Prague;
     });
 
     TestConfig::with_filter(runner, filter).run().await;
@@ -40,6 +42,7 @@ async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
 
     let runner = test_data.runner_with(|config| {
         config.isolate = true;
+        config.evm_version = EvmVersion::Prague;
     });
 
     TestConfig::with_filter(runner, filter).run().await;
@@ -51,6 +54,7 @@ async fn test_cheats_local_with_seed(test_data: &ForgeTestData) {
 
     let runner = test_data.runner_with(|config| {
         config.fuzz.seed = Some(U256::from(100));
+        config.evm_version = EvmVersion::Prague;
     });
 
     TestConfig::with_filter(runner, filter).run().await;

@@ -128,8 +128,6 @@ pub async fn spawn_anvil_tasks(
     service: &Service,
     logging_manager: LoggingManager,
 ) -> Result<ApiHandle> {
-    let mut addresses = Vec::with_capacity(anvil_config.host.len());
-
     // Spawn the api server.
     let api_handle = api_server::spawn(service, logging_manager);
 
@@ -139,7 +137,6 @@ pub async fn spawn_anvil_tasks(
 
         // Create a TCP listener.
         let tcp_listener = tokio::net::TcpListener::bind(sock_addr).await?;
-        addresses.push(tcp_listener.local_addr()?);
 
         // Spawn the server future on a new task.
         let srv =

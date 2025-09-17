@@ -2716,7 +2716,7 @@ contract CounterInExternalLibScript is Script {
 ...
 Traces:
   [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [..] 0x6fD8bf6770F4bEe578348D24028000cE9c4D2bB9::updateCounterInExternalLib(0, 100) [delegatecall]
+    ├─ [22862] 0x1386895fFEDA3DD4E4BbD8FE21Fd24bFBBF6A843::updateCounterInExternalLib(0, 100) [delegatecall]
     │   └─ ← [Stop]
     └─ ← [Return] 62 bytes of code
 

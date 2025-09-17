@@ -839,7 +839,10 @@ forgetest!(test_inspect_contract_with_same_name_for_resolc, |prj, cmd| {
     let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
     prj.add_source("Counter.sol", &source).unwrap();
 
-    cmd.args(["inspect", "--resolc", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);
+    cmd.args(["inspect", "--resolc", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"
+Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>
+
+"#]]);
 
     cmd.forge_fuse().args(["inspect", "--resolc", "Counter", "errors"]).assert_success().stdout_eq(
         str![[r#"

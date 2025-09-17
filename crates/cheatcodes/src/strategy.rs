@@ -162,7 +162,7 @@ impl CheatcodeInspectorStrategyRunner for EvmCheatcodeInspectorStrategyRunner {
         broadcast: &Broadcast,
         broadcastable_transactions: &mut BroadcastableTransactions,
         active_delegations: Vec<SignedAuthorization>,
-        active_blob_sidecar: Option<BlobTransactionSidecar>,
+        mut active_blob_sidecar: Option<BlobTransactionSidecar>,
     ) {
         let input = TransactionInput::new(inputs.input.bytes(ecx));
         let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, inputs.gas_limit);
@@ -181,27 +181,27 @@ impl CheatcodeInspectorStrategyRunner for EvmCheatcodeInspectorStrategyRunner {
             ..Default::default()
         };
 
-        match (active_delegations.is_empty(), active_blob_sidecar) {
-            (false, Some(_)) => {
-                // Note(zk): We can't return a call outcome from here
-                return;
-            }
-            (false, None) => {
-                tx_req.authorization_list = Some(active_delegations);
-                tx_req.sidecar = None;
+        // Set active blob sidecar, if any.
+        if let Some(blob_sidecar) = active_blob_sidecar.take()
+            && active_delegations.is_empty()
+        {
+            use alloy_network::TransactionBuilder4844;
+            // Ensure blob and delegation are not set for the same tx.
+            tx_req.set_blob_sidecar(blob_sidecar);
+        }
 
-                // Increment nonce to reflect the signed authorization.
-                account.info.nonce += 1;
+        if !active_delegations.is_empty() {
+            for auth in &active_delegations {
+                let Ok(authority) = auth.recover_authority() else {
+                    continue;
+                };
+                if authority == broadcast.new_origin {
+                    // Increment nonce of broadcasting account to reflect signed
+                    // authorization.
+                    account.info.nonce += 1;
+                }
             }
-            (true, Some(blob_sidecar)) => {
-                use alloy_network::TransactionBuilder4844;
-                tx_req.set_blob_sidecar(blob_sidecar);
-                tx_req.authorization_list = None;
-            }
-            (true, None) => {
-                tx_req.sidecar = None;
-                tx_req.authorization_list = None;
-            }
+            tx_req.authorization_list = Some(active_delegations);
         }
 
         broadcastable_transactions.push_back(BroadcastableTransaction {

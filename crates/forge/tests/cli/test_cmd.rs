@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{
     rpc, str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
@@ -1579,6 +1580,7 @@ contract ATest is Test {
    "#,
     )
     .unwrap();
+    prj.update_config(|c| c.evm_version = EvmVersion::Prague);
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
@@ -1779,17 +1781,17 @@ contract ATest is DSTest {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testResetGas() (gas: 96)
-[PASS] testResetGas1() (gas: 96)
-[PASS] testResetGas2() (gas: 96)
+[PASS] testResetGas() (gas: 40)
+[PASS] testResetGas1() (gas: 40)
+[PASS] testResetGas2() (gas: 40)
 [PASS] testResetGas3() (gas: [..])
 [PASS] testResetGas4() (gas: [..])
-[PASS] testResetGas5() (gas: 96)
-[PASS] testResetGas6() (gas: 96)
-[PASS] testResetGas7() (gas: 96)
+[PASS] testResetGas5() (gas: 40)
+[PASS] testResetGas6() (gas: 40)
+[PASS] testResetGas7() (gas: 49)
 [PASS] testResetGas8() (gas: [..])
-[PASS] testResetGas9() (gas: 96)
-[PASS] testResetNegativeGas() (gas: 96)
+[PASS] testResetGas9() (gas: 40)
+[PASS] testResetNegativeGas() (gas: [..])
 ...
 "#]]);
 });
@@ -2653,6 +2655,9 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
+    prj.update_config(|c| {
+        c.evm_version = EvmVersion::Prague;
+    });
 
     prj.add_source(
         "Counter.sol",
@@ -3662,10 +3667,7 @@ forgetest_init!(test_resolc_flag_enables_resolc_compilation, |prj, cmd| {
         "Counter.t.sol",
         r#"
 import "forge-std/Test.sol";
-
-contract Counter {
-    uint256 public number;
-}
+import {Counter} from "../src/Counter.sol";
 
 contract CounterTest is Test {
     Counter counter;
@@ -3925,9 +3927,9 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // but it uses `forge build` to check that the project selectors are cached by default.
 forgetest_init!(build_with_selectors_cache, |prj, cmd| {
     prj.add_source(
-        "LocalProjectContract",
+        "LocalProjectContract.sol",
         r#"
-contract ContractWithCustomError {
+contract LocalProjectContract {
     error AnotherValueTooHigh(uint256, address);
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }

@@ -5,6 +5,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -2861,6 +2862,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Alice sends 5 ETH from Bob to Receiver1 and 1 ETH to Receiver2
 forgetest_async!(can_broadcast_txes_with_multiple_auth, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| {
+        c.evm_version = EvmVersion::Prague;
+    });
     prj.add_source(
         "BatchCallDelegation.sol",
         r#"

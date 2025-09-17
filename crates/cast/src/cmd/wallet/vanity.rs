@@ -149,8 +149,8 @@ impl VanityArgs {
             "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
             timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
-            if nonce.is_some() {
-                wallet.address().create(nonce.unwrap()).to_checksum(None)
+            if let Some(nonce) = nonce {
+                wallet.address().create(nonce).to_checksum(None)
             } else {
                 String::new()
             },

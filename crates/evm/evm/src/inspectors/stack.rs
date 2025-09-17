@@ -1011,9 +1011,19 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
 
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
+
+        ecx.journaled_state.depth += self.in_inner_context as usize;
+        if let Some(cheatcodes) = self.cheatcodes.as_deref_mut()
+            && let Some(output) = cheatcodes.create_with_executor(ecx, create, self.inner)
+        {
+            // If cheatcode produced an explicit result, short-circuit and return it.
+            ecx.journaled_state.depth -= self.in_inner_context as usize;
+            return Some(output);
+        }
+        ecx.journaled_state.depth -= self.in_inner_context as usize;
 
         if !matches!(create.scheme, CreateScheme::Create2 { .. })
             && self.enable_isolation

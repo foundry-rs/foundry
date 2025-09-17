@@ -127,8 +127,8 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
         fn is<T: std::any::Any>(t: TypeId) -> bool {
             TypeId::of::<T>() == t
         }
-
         let using_pvm = get_context_ref_mut(ccx.state.strategy.context.as_mut()).using_pvm;
+
         match cheatcode.as_any().type_id() {
             t if is::<pvmCall>(t) => {
                 let pvmCall { enabled } = cheatcode.as_any().downcast_ref().unwrap();
@@ -138,7 +138,6 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
                 } else {
                     todo!("Switch back to EVM");
                 }
-
                 Ok(Default::default())
             }
             t if using_pvm && is::<setNonceCall>(t) => {
@@ -398,12 +397,13 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                     ));
                     let evm_value = sp_core::U256::from_little_endian(&input.value().as_le_bytes());
 
-                    let (gas_limit, storage_deposit_limit) =
+                    let (gas_limit, _storage_deposit_limit) =
                     <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
                         gas_limit,
                     )
                     .expect("gas limit is valid");
-                    let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
+                    //  TODO: storage deposit limit is incorrect
+                    let storage_deposit_limit = DepositLimit::UnsafeOnlyForDryRun;
                     let code = Code::Upload(contract.resolc_bytecode.as_bytes().unwrap().to_vec());
                     let data = constructor_args.to_vec();
                     let salt = match input.scheme() {
@@ -440,7 +440,7 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                 res.gas_required,
                 res.storage_deposit.charge_or_zero(),
             );
-        let result = match res.result {
+        let result = match &res.result {
             Ok(result) => {
                 let _ = gas.record_cost(gas_used.as_u64());
 
@@ -448,7 +448,7 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                     CreateOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
-                            output: result.result.data.into(),
+                            output: result.result.data.clone().into(),
                             gas,
                         },
                         address: None,

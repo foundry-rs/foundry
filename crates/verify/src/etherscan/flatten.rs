@@ -90,12 +90,12 @@ impl EtherscanFlattenedSource {
 
         let out = compiler.compile(&input)?;
         let compiler_version = compiler.compiler_version(&input);
-        let compund_version = compound_version(compiler_version, &input.version);
+        let compound_version = compound_version(compiler_version, &input.version);
         if out.errors.iter().any(|e| e.is_error()) {
             let mut o = AggregatedCompilerOutput::<SolcCompiler>::default();
             o.extend(
                 version,
-                RawBuildInfo::new(&input, &out, &compund_version, false)?,
+                RawBuildInfo::new(&input, &out, &compound_version, false)?,
                 "default",
                 out,
             );

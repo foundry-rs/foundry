@@ -112,7 +112,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.30:
+Solc v0.8.30:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -129,6 +129,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
 {
   "Solidity": [
     {
+      "name": "Solc",
       "version": "0.8.30",
       "paths": [
         "src/ContractC.sol",
@@ -152,12 +153,12 @@ forgetest!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
-- 0.8.4
-- 0.8.11
-- 0.8.30
+- Solc v0.8.4
+- Solc v0.8.11
+- Solc v0.8.30
 
 Vyper:
-- 0.4.3
+- Vyper v0.4.3
 
 
 "#]]);
@@ -175,7 +176,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
         r#"
 Vyper:
 
-0.4.3:
+Vyper v0.4.3:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -199,6 +200,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
 {
   "Solidity": [
     {
+      "name": "Solc",
       "version": "0.8.30",
       "paths": [
         "src/ContractD.sol"
@@ -207,6 +209,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
   ],
   "Vyper": [
     {
+      "name": "Vyper",
       "version": "0.4.3",
       "paths": [
         "src/Counter.vy",
@@ -237,13 +240,13 @@ Solc v0.8.4 (<= istanbul):
 Solc v0.8.11 (<= london):
 └── src/ContractB.sol
 
-0.8.30 (<= prague):
+Solc v0.8.30 (<= cancun):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-0.4.3 (<= prague):
+Vyper v0.4.3 (<= cancun):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -280,6 +283,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
       ]
     },
     {
+      "name": "Solc",
       "version": "0.8.30",
       "evm_version": "[..]",
       "paths": [
@@ -290,6 +294,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
   ],
   "Vyper": [
     {
+      "name": "Vyper",
       "version": "0.4.3",
       "evm_version": "[..]",
       "paths": [

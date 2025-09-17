@@ -1,3 +1,5 @@
+use foundry_compilers::artifacts::EvmVersion;
+
 forgetest!(can_translate_balances_after_switch_to_pvm, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -29,6 +31,7 @@ contract BalanceTranslationTest is DSTest {
 "#,
     )
     .unwrap();
+    prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
 
     let res = cmd.args(["test", "--resolc", "-vvv"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
@@ -131,6 +134,7 @@ contract CounterTest is DSTest {
 "#,
     )
     .unwrap();
+    prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
 
     let res = cmd.args(["test", "--resolc", "-vvv"]).assert();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
@@ -187,6 +191,7 @@ contract SetNonce is DSTest {
 "#,
     )
     .unwrap();
+    prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
 
     let res = cmd.args(["test", "--resolc", "-vvv"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"

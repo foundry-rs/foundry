@@ -3,6 +3,7 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
@@ -769,6 +770,7 @@ forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
         config.invariant.fail_on_revert = true;
         config.invariant.max_assume_rejects = 10;
         config.fuzz.seed = Some(U256::from(100u32));
+        config.evm_version = EvmVersion::Prague;
     });
 
     // Add initial test that breaks invariant.
@@ -1071,6 +1073,7 @@ contract InvariantSelectorsWeightTest is Test {
 forgetest_init!(invariant_sequence_len, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(10u32));
+        config.evm_version = EvmVersion::Prague;
     });
 
     prj.add_test(

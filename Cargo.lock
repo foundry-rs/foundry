@@ -4003,7 +4003,7 @@ checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.0",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
@@ -5177,7 +5177,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -5862,7 +5862,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6085,7 +6085,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6757,6 +6757,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6794,6 +6795,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -6803,6 +6805,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6822,6 +6825,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6843,6 +6847,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6856,6 +6861,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.18.2"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=pkhry%2Fsync_the_sequel#f1a7ce58f167d00d548c968f432f026d7107d8ca"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -8966,7 +8972,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9057,7 +9063,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11210,7 +11216,7 @@ version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77e878c846a8abae00dd069496dbe8751b16ac1c3d6bd2a7283a938e8228f90d"
 dependencies = [
- "proc-macro-crate 3.3.0",
+ "proc-macro-crate 1.1.3",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -15096,7 +15102,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck 0.4.1",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "log",
  "multimap",
  "once_cell",
@@ -15129,7 +15135,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -15320,7 +15326,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16275,7 +16281,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16288,7 +16294,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -16347,7 +16353,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -18682,7 +18688,7 @@ dependencies = [
  "derive_more 2.0.1",
  "dunce",
  "inturn",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "itoa",
  "match_cfg",
  "normalize-path",
@@ -18693,7 +18699,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -18716,7 +18722,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -19905,7 +19911,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -20588,7 +20594,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -20735,7 +20741,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

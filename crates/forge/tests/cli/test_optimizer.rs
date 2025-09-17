@@ -1,5 +1,7 @@
 //! Tests for the `forge test` with preprocessed cache.
 
+use foundry_compilers::artifacts::EvmVersion;
+
 // Test cache is invalidated when `forge build` if optimize test option toggled.
 forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
     prj.update_config(|config| {
@@ -1021,6 +1023,7 @@ forgetest_init!(preprocess_contracts_with_payable_constructor_and_salt, |prj, cm
     prj.wipe_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
+        config.evm_version = EvmVersion::Prague;
     });
 
     prj.add_source(
@@ -1086,8 +1089,7 @@ contract CounterTest is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    ).unwrap();
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
