@@ -188,23 +188,21 @@ impl Backtrace {
         }
 
         // Find the deepest failed node (where the actual revert happened)
-        let mut deepest_idx = None;
+        let mut current_idx = None;
         let mut max_depth = 0;
 
         for (idx, node) in resolved_arena.nodes().iter().enumerate() {
             if !node.trace.success && node.trace.depth >= max_depth {
                 max_depth = node.trace.depth;
-                deepest_idx = Some(idx);
+                current_idx = Some(idx);
             }
         }
 
-        if deepest_idx.is_none() {
+        if current_idx.is_none() {
             return;
         }
 
         // Build the call stack by walking from the deepest node back to root
-        let mut current_idx = Some(deepest_idx.unwrap());
-
         while let Some(idx) = current_idx {
             let node = &resolved_arena.nodes()[idx];
             let trace = &node.trace;
