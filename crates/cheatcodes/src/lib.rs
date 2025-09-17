@@ -47,6 +47,7 @@ mod evm;
 mod fs;
 
 mod inspector;
+pub use inspector::{AnalysisError, CheatcodeAnalysis};
 
 mod json;
 

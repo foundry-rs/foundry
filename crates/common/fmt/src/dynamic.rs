@@ -2,8 +2,11 @@ use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
 use eyre::Result;
-use serde_json::Value;
-use std::fmt;
+use serde_json::{Map, Value};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+};
 
 /// [`DynSolValue`] formatter.
 struct DynValueFormatter {
@@ -147,7 +150,22 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 }
 
 /// Serializes given [DynSolValue] into a [serde_json::Value].
-pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
+pub fn serialize_value_as_json(
+    value: DynSolValue,
+    defs: Option<&BTreeMap<String, Vec<(String, String)>>>,
+) -> Result<Value> {
+    if let Some(defs) = defs {
+        _serialize_value_as_json(value, defs)
+    } else {
+        let defs = BTreeMap::new();
+        _serialize_value_as_json(value, &defs)
+    }
+}
+
+fn _serialize_value_as_json(
+    value: DynSolValue,
+    defs: &BTreeMap<String, Vec<(String, String)>>,
+) -> Result<Value> {
     match value {
         DynSolValue::Bool(b) => Ok(Value::Bool(b)),
         DynSolValue::String(s) => {
@@ -162,38 +180,43 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
         DynSolValue::Int(i, _) => {
-            if let Ok(n) = i64::try_from(i) {
-                // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
-            } else {
-                // Otherwise, fallback to its string representation to preserve precision and ensure
-                // compatibility with alloy's `DynSolType` coercion.
-                Ok(Value::String(i.to_string()))
-            }
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
         }
         DynSolValue::Uint(i, _) => {
-            if let Ok(n) = u64::try_from(i) {
-                // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
-            } else {
-                // Otherwise, fallback to its string representation to preserve precision and ensure
-                // compatibility with alloy's `DynSolType` coercion.
-                Ok(Value::String(i.to_string()))
-            }
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
-        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
-            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?))
-        }
-        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
-            let values =
-                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
-            let map = prop_names.into_iter().zip(values).collect();
+        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => Ok(Value::Array(
+            e.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
+        )),
+        DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            let values = tuple
+                .into_iter()
+                .map(|v| _serialize_value_as_json(v, defs))
+                .collect::<Result<Vec<_>>>()?;
+            let mut map: HashMap<String, Value> = prop_names.into_iter().zip(values).collect();
 
-            Ok(Value::Object(map))
+            // If the struct def is known, manually build a `Map` to preserve the order.
+            if let Some(fields) = defs.get(&name) {
+                let mut ordered_map = Map::with_capacity(fields.len());
+                for (field_name, _) in fields {
+                    if let Some(serialized_value) = map.remove(field_name) {
+                        ordered_map.insert(field_name.clone(), serialized_value);
+                    }
+                }
+                // Explicitly return a `Value::Object` to avoid ambiguity.
+                return Ok(Value::Object(ordered_map));
+            }
+
+            // Otherwise, fall back to alphabetical sorting for deterministic output.
+            Ok(Value::Object(map.into_iter().collect::<Map<String, Value>>()))
         }
         DynSolValue::Tuple(values) => Ok(Value::Array(
-            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
+            values.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
         )),
         DynSolValue::Function(_) => eyre::bail!("cannot serialize function pointer"),
     }
