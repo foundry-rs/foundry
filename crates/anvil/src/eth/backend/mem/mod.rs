@@ -58,7 +58,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
-    map::HashMap, utils::Unit,
+    map::HashMap,
 };
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -119,11 +119,7 @@ use revm::{
     },
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::{
-        PrecompileId, PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
-        u64_to_address,
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -240,7 +236,6 @@ pub struct Backend {
     print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
     call_trace_decoder: Arc<CallTraceDecoder>,
-    odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -272,7 +267,6 @@ impl Backend {
         print_logs: bool,
         print_traces: bool,
         call_trace_decoder: Arc<CallTraceDecoder>,
-        odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -325,43 +319,7 @@ impl Backend {
             (cfg.slots_in_an_epoch, cfg.precompile_factory.clone(), cfg.disable_pool_balance_checks)
         };
 
-        let (capabilities, executor_wallet) = if odyssey {
-            // Insert account that sponsors the delegated txs. And deploy P256 delegation contract.
-            let mut db = db.write().await;
-
-            let _ = db.set_code(
-                P256_DELEGATION_CONTRACT,
-                Bytes::from_static(P256_DELEGATION_RUNTIME_CODE),
-            );
-
-            // Insert EXP ERC20 contract
-            let _ = db.set_code(EXP_ERC20_CONTRACT, Bytes::from_static(EXP_ERC20_RUNTIME_CODE));
-
-            let init_balance = Unit::ETHER.wei().saturating_mul(U256::from(10_000)); // 10K ETH
-
-            // Add ETH
-            let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
-            let _ = db.set_balance(EXECUTOR, init_balance);
-
-            let mut capabilities = HashMap::default();
-
-            let chain_id = env.read().evm_env.cfg_env.chain_id;
-            capabilities.insert(
-                chain_id,
-                Capabilities {
-                    delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-                },
-            );
-
-            let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
-
-            let executor_wallet = EthereumWallet::new(signer);
-
-            (WalletCapabilities(capabilities), Some(executor_wallet))
-        } else {
-            (WalletCapabilities(Default::default()), None)
-        };
-
+        let (capabilities, executor_wallet) = (WalletCapabilities(Default::default()), None);
         let backend = Self {
             db,
             blockchain,
@@ -378,7 +336,6 @@ impl Backend {
             print_logs,
             print_traces,
             call_trace_decoder,
-            odyssey,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -864,13 +821,6 @@ impl Backend {
             precompiles_map.insert(precompile.id().name().to_string(), *address);
         }
 
-        if self.odyssey {
-            precompiles_map.insert(
-                PrecompileId::P256Verify.name().to_string(),
-                u64_to_address(P256VERIFY_ADDRESS),
-            );
-        }
-
         if self.is_celo() {
             precompiles_map.insert(
                 celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
@@ -1240,10 +1190,6 @@ impl Backend {
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
 
-        if self.odyssey {
-            inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
-        }
-
         if self.is_celo() {
             evm.precompiles_mut()
                 .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
@@ -1351,7 +1297,6 @@ impl Backend {
             print_traces: self.print_traces,
             call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
             optimism: self.is_optimism(),
             celo: self.is_celo(),
             blob_params: self.blob_params(),
@@ -1441,7 +1386,6 @@ impl Backend {
                     print_logs: self.print_logs,
                     print_traces: self.print_traces,
                     call_trace_decoder: self.call_trace_decoder.clone(),
-                    odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
                     celo: self.is_celo(),
@@ -2799,7 +2743,6 @@ impl Backend {
             print_traces: self.print_traces,
             call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
             optimism: self.is_optimism(),
             celo: self.is_celo(),
             blob_params: self.blob_params(),

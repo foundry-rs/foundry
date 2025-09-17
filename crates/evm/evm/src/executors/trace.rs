@@ -23,7 +23,6 @@ impl TracingExecutor {
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
-        odyssey: bool,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
@@ -31,10 +30,8 @@ impl TracingExecutor {
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
         let mut executor = ExecutorBuilder::new()
-            .inspectors(|stack| {
-                stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
-            })
-            .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
+            .inspectors(|stack| stack.trace_mode(trace_mode).create2_deployer(create2_deployer))
+            .spec_id(evm_spec_id(version.unwrap_or_default()))
             .build(env, db);
 
         // Apply the state overrides.
@@ -78,7 +75,7 @@ impl TracingExecutor {
     pub async fn get_fork_material(
         config: &Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, bool)> {
+    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
@@ -86,7 +83,7 @@ impl TracingExecutor {
 
         let fork = evm_opts.get_fork(config, env.clone());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.odyssey))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await))
     }
 }
 

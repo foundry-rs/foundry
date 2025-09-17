@@ -193,7 +193,7 @@ pub struct NodeArgs {
     #[command(flatten)]
     pub server_config: ServerConfig,
 
-    /// Path to the cache directory where states are stored.    
+    /// Path to the cache directory where states are stored.
     #[arg(long, value_name = "PATH")]
     pub cache_path: Option<PathBuf>,
 }
@@ -278,7 +278,6 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm.optimism)
-            .with_odyssey(self.evm.odyssey)
             .with_celo(self.evm.celo)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
@@ -608,10 +607,6 @@ pub struct AnvilEvmArgs {
     /// The memory limit per EVM execution in bytes.
     #[arg(long)]
     pub memory_limit: Option<u64>,
-
-    /// Enable Odyssey features
-    #[arg(long, alias = "alphanet")]
-    pub odyssey: bool,
 
     /// Run a Celo chain
     #[arg(long)]

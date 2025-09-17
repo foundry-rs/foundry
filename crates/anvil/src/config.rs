@@ -196,8 +196,6 @@ pub struct NodeConfig {
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Odyssey features.
-    pub odyssey: bool,
     /// Enable Celo features.
     pub celo: bool,
     /// Do not print log messages.
@@ -495,7 +493,6 @@ impl Default for NodeConfig {
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            odyssey: false,
             celo: false,
             silent: false,
             cache_path: None,
@@ -540,9 +537,6 @@ impl NodeConfig {
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::default());
-        }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
@@ -1024,13 +1018,6 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
-    #[must_use]
-    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
-        self.odyssey = odyssey;
-        self
-    }
-
     /// Sets whether to enable Celo support
     #[must_use]
     pub fn with_celo(mut self, celo: bool) -> Self {
@@ -1163,7 +1150,6 @@ impl NodeConfig {
             self.print_logs,
             self.print_traces,
             Arc::new(decoder_builder.build()),
-            self.odyssey,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,

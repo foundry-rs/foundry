@@ -681,12 +681,6 @@ pub enum EthRequest {
     WalletGetCapabilities(()),
 
     /// Wallet send_tx
-    #[serde(
-        rename = "wallet_sendTransaction",
-        alias = "odyssey_sendTransaction",
-        with = "sequence"
-    )]
-    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Add an address to the delegation capability of the wallet
     #[serde(rename = "anvil_addCapability", with = "sequence")]

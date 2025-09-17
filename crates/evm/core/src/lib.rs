@@ -57,11 +57,6 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
         let _ = msg;
     }
 
-    /// Returns `true` if the current network is Odyssey.
-    fn is_odyssey(&self) -> bool {
-        false
-    }
-
     /// Returns the CREATE2 deployer address.
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER

@@ -75,9 +75,6 @@ pub struct EvmOpts {
     /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
-
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
 }
@@ -103,7 +100,6 @@ impl Default for EvmOpts {
             isolate: false,
             disable_block_gas_limit: false,
             enable_tx_gas_limit: false,
-            odyssey: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }

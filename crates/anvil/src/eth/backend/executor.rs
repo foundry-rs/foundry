@@ -45,10 +45,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{
-        PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 use std::{fmt::Debug, sync::Arc};
@@ -126,7 +123,6 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
-    pub odyssey: bool,
     pub optimism: bool,
     pub celo: bool,
     pub print_logs: bool,
@@ -361,10 +357,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
 
-            if self.odyssey {
-                inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
-            }
-
             if self.celo {
                 evm.precompiles_mut()
                     .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
@@ -472,7 +464,7 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
-/// Creates a database with given database and inspector, optionally enabling odyssey features.
+/// Creates a database with given database and inspector.
 pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
