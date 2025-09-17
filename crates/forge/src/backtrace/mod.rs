@@ -87,19 +87,14 @@ impl<'a> BacktraceBuilder<'a> {
                 let stripped_id = output_id.with_stripped_file_prefixes(&self.root);
                 if stripped_id == *artifact_id {
                     // Find the build_id for this specific artifact
-                    let build_id = self
-                        .output
-                        .compiled_artifacts()
-                        .artifact_files()
-                        .chain(self.output.cached_artifacts().artifact_files())
-                        .find_map(|af| {
-                            // Match by checking if this artifact file corresponds to the same
-                            // artifact
-                            if std::ptr::eq(&raw const af.artifact, artifact as *const _) {
-                                return Some(af.build_id.clone());
-                            }
-                            None
-                        });
+                    let build_id = self.output.artifact_ids().find_map(|(id, arti)| {
+                        // Match by checking if this artifact file corresponds to the same
+                        // artifact
+                        if std::ptr::eq(arti, artifact) {
+                            return Some(id.build_id.clone());
+                        }
+                        None
+                    });
 
                     if let Some(build_id) = build_id
                         && let Some(data) =
