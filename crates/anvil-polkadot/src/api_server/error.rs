@@ -1,12 +1,18 @@
-use super::mining_engine::MiningError;
+use crate::substrate_node::mining_engine::MiningError;
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Block mining failed: {0:?}")]
-    Mining(MiningError),
+    #[error("Block mining failed: {0}")]
+    Mining(#[from] MiningError),
+    #[error("Rpc Endpoint not implemented")]
+    RpcUnimplemented,
+    #[error("Invalid params: {0}")]
+    InvalidParams(String),
 }
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
@@ -23,16 +29,12 @@ pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
     }
 }
 
-impl<T: Serialize> ToRpcResponseResult for Result<T, Error> {
+impl<T: Serialize> ToRpcResponseResult for Result<T> {
     fn to_rpc_result(self) -> ResponseResult {
         match self {
             Ok(val) => to_rpc_result(val),
-            Err(err) => match err {
-                Error::Mining(mining_error) => {
-                    RpcError::internal_error_with(format!("Block mining failed: {mining_error:?}"))
-                }
-            }
-            .into(),
+            Err(Error::InvalidParams(msg)) => RpcError::invalid_params(msg).into(),
+            Err(err) => RpcError::internal_error_with(err.to_string()).into(),
         }
     }
 }
