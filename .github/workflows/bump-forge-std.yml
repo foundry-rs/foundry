@@ -2,6 +2,9 @@
 
 name: bump-forge-std
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "0 0 * * *" # Run daily at midnight UTC
@@ -11,6 +14,9 @@ jobs:
   update-tag:
     name: update forge-std tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -18,7 +24,7 @@ jobs:
       - name: Fetch and update forge-std tag
         run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
       - name: Create pull request
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7
         with:
           commit-message: "chore: bump forge-std version used for tests"
           title: "chore(tests): bump forge-std version"
