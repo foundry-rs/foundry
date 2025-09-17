@@ -186,7 +186,7 @@ impl<'ast> State<'_, 'ast> {
             span.hi(),
             |s, arg| s.print_yul_expr(arg),
             get_span!(),
-            ListFormat::consistent().break_single_if(true),
+            ListFormat::consistent().break_single(true),
         );
     }
 

@@ -452,7 +452,7 @@ impl<'ast> State<'_, 'ast> {
             {
                 ListFormat::always_break()
             }
-            _ => ListFormat::consistent().add_cmnt_break(),
+            _ => ListFormat::consistent().break_cmnts(),
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
@@ -700,11 +700,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(
-            parameters,
-            parameters.span,
-            ListFormat::compact().add_cmnt_break(),
-        );
+        self.print_parameter_list(parameters, parameters.span, ListFormat::compact().break_cmnts());
         if *anonymous {
             self.word(" anonymous");
         }
@@ -1163,26 +1159,24 @@ impl<'ast> State<'_, 'ast> {
 
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
             | ast::ExprKind::Binary(lhs, bin_op, rhs) => {
-                let is_parent = matches!(lhs.kind, ast::ExprKind::Binary(..))
-                    || matches!(rhs.kind, ast::ExprKind::Binary(..));
-                let is_child = self.binary_expr;
-                if !is_child && is_parent {
-                    // top-level expression of the chain -> set cache
-                    self.binary_expr = true;
+                let cache = self.binary_expr;
+                let is_chain = cache.map_or(false, |prev| prev == bin_op.kind.group());
+
+                if !is_chain {
+                    // start of a new operator chain --> open a box and set cache
+                    self.binary_expr = Some(bin_op.kind.group());
                     self.s.ibox(self.ind);
-                } else if !is_parent && is_comp_op(bin_op.kind) {
-                    self.s.ibox(self.ind);
-                } else if !is_child || !is_parent {
-                    self.ibox(0);
                 }
 
                 self.print_expr(lhs);
+
                 if let ast::ExprKind::Assign(..) = kind {
                     if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo())) {
                         self.nbsp();
                     }
                     self.word(bin_op.kind.to_str());
-                    self.word("=");
+                    self.word("= ");
+                    self.print_expr(rhs);
                 } else {
                     if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo()))
                         && self
@@ -1200,37 +1194,26 @@ impl<'ast> State<'_, 'ast> {
                         }
                     }
                     self.word(bin_op.kind.to_str());
-                }
 
-                // box expressions with complex successors to accommodate their own indentation
-                if !is_child && is_parent {
-                    if has_complex_successor(&rhs.kind, true) {
-                        if matches!(kind, ast::ExprKind::Assign(..)) {
-                            self.s.ibox(-self.ind);
-                        } else {
-                            self.s.ibox(0);
-                        }
-                    } else if has_complex_successor(&rhs.kind, false) {
-                        self.s.ibox(0);
+                    if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
+                        self.nbsp();
+                    }
+
+                    if self
+                        .peek_comment_before(rhs.span.lo())
+                        .is_some_and(|cmnt| cmnt.style.is_mixed())
+                    {
+                        self.ibox(0);
+                        self.print_expr(rhs);
+                        self.end();
+                    } else {
+                        self.print_expr(rhs);
                     }
                 }
-                if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
-                    self.nbsp();
-                }
-                self.print_expr(rhs);
 
-                if (has_complex_successor(&rhs.kind, false)
-                    || has_complex_successor(&rhs.kind, true))
-                    && (!is_child && is_parent)
-                {
-                    self.end();
-                }
-
-                if !is_child {
+                if !is_chain {
                     // top-level expression of the chain -> clear cache
-                    self.binary_expr = false;
-                    self.end();
-                } else if !is_parent {
+                    self.binary_expr = cache;
                     self.end();
                 }
             }
@@ -1242,23 +1225,13 @@ impl<'ast> State<'_, 'ast> {
                         s.estimate_size(call_args.span),
                     );
                     let all_fits = expr_size + args_size + 2 <= space_left;
-                    let expr_fits = expr_size < space_left;
                     let break_single = !all_fits
                         && call_args.len() == 1
                         && !is_call_chain(&call_args.exprs().next().unwrap().kind, false);
 
-                    let list_format =
-                        ListFormat::compact().add_cmnt_break().break_single_if(break_single);
                     s.print_call_args(
                         call_args,
-                        if break_single
-                            || current_position == MemberPos::Top
-                            || (!expr_fits && current_position == MemberPos::Bottom)
-                        {
-                            list_format
-                        } else {
-                            list_format.rmv_delimiters()
-                        },
+                        ListFormat::compact().break_cmnts().break_single(break_single),
                     );
                 });
             }
@@ -1368,15 +1341,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(
-                    args,
-                    ListFormat::Compact {
-                        break_single: false,
-                        cmnts_break: true,
-                        with_space: false,
-                        with_delimiters: true,
-                    },
-                );
+                self.print_call_args(args, ListFormat::compact().break_cmnts());
             }
             ast::ExprKind::Ternary(cond, then, els) => {
                 self.s.cbox(self.ind);
@@ -1425,7 +1390,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                 },
                 |e| e.as_deref().map(|e| e.span),
-                ListFormat::compact().break_single_if(is_binary_expr(&expr.kind)),
+                ListFormat::compact().break_single(is_binary_expr(&expr.kind)),
             ),
             ast::ExprKind::TypeCall(ty) => {
                 self.word("type");
@@ -1464,7 +1429,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name, false);
         if !arguments.is_empty() || add_parens_if_empty {
-            self.print_call_args(arguments, ListFormat::compact().add_cmnt_break());
+            self.print_call_args(arguments, ListFormat::compact().break_cmnts());
         }
     }
 
@@ -1476,14 +1441,11 @@ impl<'ast> State<'_, 'ast> {
     ) where
         F: FnOnce(&mut Self, MemberPos),
     {
-        let old_state = self.member_expr;
+        let prev_state = self.member_expr;
 
         // Determine the position of the formatted expression.
-        let (is_chain_start, current_pos) = if let Some(current) = self.member_expr {
-            (
-                false,
-                if child_expr.span == current.bottom { MemberPos::Top } else { MemberPos::Middle },
-            )
+        let current_pos = if let Some(current) = self.member_expr {
+            if child_expr.span == current.bottom { MemberPos::Top } else { MemberPos::Middle }
         } else {
             // If this is the start, initialize the cache and the indent box.
             if is_member_link {
@@ -1494,14 +1456,7 @@ impl<'ast> State<'_, 'ast> {
                 self.s.cbox(0);
             }
 
-            (
-                true,
-                if is_call_chain(&child_expr.kind, true) {
-                    MemberPos::Bottom
-                } else {
-                    MemberPos::Top
-                },
-            )
+            if is_call_chain(&child_expr.kind, true) { MemberPos::Bottom } else { MemberPos::Top }
         };
 
         // Before recursing, update the cache for the child expression.
@@ -1523,8 +1478,8 @@ impl<'ast> State<'_, 'ast> {
         print_suffix(self, current_pos);
 
         // If a chain was started, clean up the state and end the box.
-        if is_chain_start {
-            self.member_expr = old_state;
+        if prev_state.is_none() {
+            self.member_expr = None;
             self.end();
         }
     }
@@ -1534,6 +1489,9 @@ impl<'ast> State<'_, 'ast> {
         if self.handle_span(span, true) {
             return;
         }
+
+        // Clear the binary expression cache before the call.
+        let cache = self.binary_expr.take();
 
         match kind {
             ast::CallArgsKind::Unnamed(exprs) => {
@@ -1547,24 +1505,28 @@ impl<'ast> State<'_, 'ast> {
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
-                self.word("(");
+                self.print_word("(");
                 self.print_named_args(named_args, span.hi());
-                self.word(")");
+                self.print_word(")");
             }
         }
+
+        // Restore the cache to continue with the current chain.
+        self.binary_expr = cache;
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let parent_call = self.call_expr;
-        if !parent_call {
+        let cache = self.call_expr;
+        if !cache {
             self.call_expr = true;
-        }
+        };
 
         self.word("{");
         // Use the start position of the first argument's name for comment processing.
         let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
-        let ind = if parent_call { self.ind } else { 0 };
-
+        let ind = if cache { self.ind } else { 0 };
+        let list_format =
+            ListFormat::consistent().break_cmnts().break_single(true).without_ind(cache);
         self.commasep(
             args,
             list_lo,
@@ -1587,15 +1549,11 @@ impl<'ast> State<'_, 'ast> {
                 s.end();
             },
             |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
-            if self.config.bracket_spacing {
-                ListFormat::consistent().add_cmnt_break().break_single_if(true).add_space()
-            } else {
-                ListFormat::consistent().add_cmnt_break().break_single_if(true)
-            },
+            if self.config.bracket_spacing { list_format.with_space() } else { list_format },
         );
         self.word("}");
 
-        if parent_call {
+        if cache {
             self.call_expr = false;
         }
     }
@@ -1777,7 +1735,9 @@ impl<'ast> State<'_, 'ast> {
                     self.hardbreak_if_not_bol();
                 }
                 if let Some(expr) = expr {
-                    if !has_complex_successor(&expr.kind, false) {
+                    let is_lit_or_ident =
+                        matches!(&expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
+                    if is_lit_or_ident {
                         self.s.ibox(self.ind);
                     } else {
                         self.ibox(0);
@@ -1790,7 +1750,7 @@ impl<'ast> State<'_, 'ast> {
                             .mixed_prev_space()
                             .mixed_post_nbsp(),
                     ) {
-                        if cmnt.is_trailing() && has_complex_successor(&expr.kind, true) {
+                        if cmnt.is_trailing() && !is_lit_or_ident {
                             self.s.offset(self.ind);
                         }
                     } else {
@@ -1977,7 +1937,7 @@ impl<'ast> State<'_, 'ast> {
             pos_hi,
             Self::print_expr,
             get_span!(),
-            ListFormat::compact().add_cmnt_break().break_single_if(is_binary_expr(&cond.kind)),
+            ListFormat::compact().break_cmnts().break_single(is_binary_expr(&cond.kind)),
         );
     }
 
@@ -2002,9 +1962,9 @@ impl<'ast> State<'_, 'ast> {
         self.print_call_args(
             args,
             if args.len() == 1 {
-                ListFormat::compact().add_cmnt_break()
+                ListFormat::compact().break_cmnts()
             } else {
-                ListFormat::compact().add_cmnt_break().rmv_delimiters()
+                ListFormat::compact().break_cmnts().no_delimiters()
             },
         );
         self.end();
@@ -2555,4 +2515,42 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
 struct Decision {
     outcome: bool,
     is_cached: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BinOpGroup {
+    Arithmetic,
+    Bitwise,
+    Comparison,
+    Logical,
+}
+
+trait BinOpExt {
+    fn group(&self) -> BinOpGroup;
+}
+
+impl BinOpExt for ast::BinOpKind {
+    fn group(&self) -> BinOpGroup {
+        match self {
+            ast::BinOpKind::Or | ast::BinOpKind::And => BinOpGroup::Logical,
+            ast::BinOpKind::Eq
+            | ast::BinOpKind::Ne
+            | ast::BinOpKind::Lt
+            | ast::BinOpKind::Le
+            | ast::BinOpKind::Gt
+            | ast::BinOpKind::Ge => BinOpGroup::Comparison,
+            ast::BinOpKind::BitOr
+            | ast::BinOpKind::BitXor
+            | ast::BinOpKind::BitAnd
+            | ast::BinOpKind::Shl
+            | ast::BinOpKind::Shr
+            | ast::BinOpKind::Sar => BinOpGroup::Bitwise,
+            ast::BinOpKind::Add
+            | ast::BinOpKind::Sub
+            | ast::BinOpKind::Mul
+            | ast::BinOpKind::Div
+            | ast::BinOpKind::Rem
+            | ast::BinOpKind::Pow => BinOpGroup::Arithmetic,
+        }
+    }
 }

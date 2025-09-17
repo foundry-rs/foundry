@@ -2,6 +2,7 @@
 use crate::{
     FormatterConfig, InlineConfig,
     pp::{self, BreakToken, SIZE_INFINITY, Token},
+    state::sol::BinOpGroup,
 };
 use foundry_common::{
     comments::{Comment, CommentStyle, Comments, line_with_tabs},
@@ -54,7 +55,7 @@ pub(super) struct State<'sess, 'ast> {
     single_line_stmt: Option<bool>,
     call_expr: bool,
     member_expr: Option<MemberCache>,
-    binary_expr: bool,
+    binary_expr: Option<BinOpGroup>,
     var_init: bool,
     fn_body: bool,
 }
@@ -141,7 +142,7 @@ impl<'sess> State<'sess, '_> {
             single_line_stmt: None,
             call_expr: false,
             member_expr: None,
-            binary_expr: false,
+            binary_expr: None,
             var_init: false,
             fn_body: false,
         }

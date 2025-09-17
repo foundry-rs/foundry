@@ -1,17 +1,16 @@
 // config: line_length = 80
 function test() public {
-    oracleInfo = abi.encode(
-        LidoOracleInfo({
-            base: IOracle(oracleAddress).WSTETH(),
-            quote: IOracle(oracleAddress).STETH()
-        })
-    );
+    oracleInfo = abi.encode(LidoOracleInfo({
+        base: IOracle(oracleAddress).WSTETH(),
+        quote: IOracle(oracleAddress).STETH()
+    }));
 
-    SnapshotRegistry(adapterRegistry).add(
-        adapter,
-        LidoFundamentalOracle(adapter).WSTETH(),
-        LidoFundamentalOracle(adapter).WETH()
-    );
+    SnapshotRegistry(adapterRegistry)
+        .add(
+            adapter,
+            LidoFundamentalOracle(adapter).WSTETH(),
+            LidoFundamentalOracle(adapter).WETH()
+        );
 
     (bool success, bytes memory data) = GenericFactory(eVaultFactory)
         .implementation()
@@ -26,8 +25,8 @@ function test() public {
         targetContract: address(eGRT),
         value: 0,
         data: abi.encodeCall(
-                IERC4626.withdraw, (1500e18, address(swapper), user)
-            )
+            IERC4626.withdraw, (1500e18, address(swapper), user)
+        )
     });
     items[1] = IEVC.BatchItem({
         onBehalfOfAccount: user,

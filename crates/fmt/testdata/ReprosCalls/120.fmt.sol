@@ -3,13 +3,11 @@ function test() public {
     oracleInfo =
         abi.encode(LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()}));
 
-    SnapshotRegistry(adapterRegistry).add(
-        adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH()
-    );
+    SnapshotRegistry(adapterRegistry)
+        .add(adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH());
 
-    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation().staticcall(
-        abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0))
-    );
+    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation()
+        .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
@@ -44,7 +42,6 @@ function test() public {
 
     emit IERC712View.Transfer(Create3.predict(_salt, address(_deployer)), address(o), id);
 
-    return _verifyDeploymentRootHash(_getMerkleRoot(proof, hash), originalOwner).ternary(
-        IERC1271.isValidSignature.selector, bytes4(0xffffffff)
-    );
+    return _verifyDeploymentRootHash(_getMerkleRoot(proof, hash), originalOwner)
+        .ternary(IERC1271.isValidSignature.selector, bytes4(0xffffffff));
 }

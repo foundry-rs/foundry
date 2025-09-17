@@ -58,6 +58,6 @@ function test_nested() {
         && coreAddresses.balanceTracker == address(0)
         && coreAddresses.permit2 == address(0);
 
-    return spender == ownerOf(tokenId) || getApproved[tokciwdenId] == spender
+    return spender == ownerOf(tokenId) || getApproved[tokenId] == spender
         || isApprovedForAll[ownerOf(tokenId)][spender];
 }
