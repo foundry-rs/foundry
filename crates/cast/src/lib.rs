@@ -9,7 +9,7 @@ use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, Selector, TxHash, TxKind, U64, U256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, TxKind, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{
@@ -1852,7 +1852,7 @@ impl SimpleCast {
     /// use alloy_primitives::hex;
     /// use cast::SimpleCast as Cast;
     ///
-    /// let (topics, data) = Cast::abi_encode_event(
+    /// let log_data = Cast::abi_encode_event(
     ///     "Transfer(address indexed from, address indexed to, uint256 value)",
     ///     &[
     ///         "0x1234567890123456789012345678901234567890",
@@ -1863,28 +1863,27 @@ impl SimpleCast {
     /// .unwrap();
     ///
     /// // topic0 is the event selector
-    /// assert_eq!(topics.len(), 3);
+    /// assert_eq!(log_data.topics().len(), 3);
     /// assert_eq!(
-    ///     topics[0].to_string(),
+    ///     log_data.topics()[0].to_string(),
     ///     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     /// );
     /// assert_eq!(
-    ///     topics[1].to_string(),
+    ///     log_data.topics()[1].to_string(),
     ///     "0x0000000000000000000000001234567890123456789012345678901234567890"
     /// );
     /// assert_eq!(
-    ///     topics[2].to_string(),
+    ///     log_data.topics()[2].to_string(),
     ///     "0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd"
     /// );
     /// assert_eq!(
-    ///     hex::encode_prefixed(data),
+    ///     hex::encode_prefixed(log_data.data),
     ///     "0x00000000000000000000000000000000000000000000000000000000000003e8"
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<(Vec<B256>, Vec<u8>)> {
+    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<LogData> {
         let event = get_event(sig)?;
-
         let tokens = std::iter::zip(&event.inputs, args)
             .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
             .collect::<Result<Vec<_>>>()?;
@@ -1922,7 +1921,7 @@ impl SimpleCast {
             }
         }
 
-        Ok((topics, data_tokens))
+        Ok(LogData::new_unchecked(topics, data_tokens.into()))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.

@@ -4011,6 +4011,9 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
 ...
   [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
 ...
+"#]]);
+});
+
 // Test cast abi-encode-event with indexed parameters
 casttest!(abi_encode_event_indexed, |_prj, cmd| {
     cmd.args([
