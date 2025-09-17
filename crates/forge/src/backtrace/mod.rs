@@ -69,21 +69,10 @@ impl<'a> BacktraceBuilder<'a> {
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
     pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace {
-        // Resolve addresses to artifacts using trace labels
-        let mut artifacts_by_address = self.resolve_addresses(arena);
+        // Resolve addresses to artifacts using trace labels and linked libraries
+        let artifacts_by_address = self.resolve_addresses(arena);
 
         let mut sources = HashMap::default();
-
-        // Add linked library artifacts and their addresses
-        for lib in &self.linked_libraries {
-            let target_id = format!("{}:{}", lib.path.display(), lib.name);
-            if let Some((artifact_id, _)) = self.output.artifact_ids().find(|(id, _)| {
-                id.identifier() == target_id
-                    || id.clone().with_stripped_file_prefixes(&self.root).identifier() == target_id
-            }) {
-                artifacts_by_address.insert(lib.address, artifact_id.clone());
-            }
-        }
 
         // Collect source data for all needed artifacts
         for artifact_id in artifacts_by_address.values() {
@@ -108,22 +97,46 @@ impl<'a> BacktraceBuilder<'a> {
         backtrace
     }
 
-    /// Resolves contract addresses to [`ArtifactId`]s using trace labels.
+    /// Resolves contract addresses to [`ArtifactId`]s from trace labels and linked libraries.
     fn resolve_addresses(&self, arena: &SparsedTraceArena) -> HashMap<Address, ArtifactId> {
         let mut artifacts_by_address = HashMap::default();
 
-        // Build contracts mapping from decoded traces
-        for node in arena.arena.nodes() {
-            if let Some(decoded) = &node.trace.decoded
-                && let Some(label) = &decoded.label
-            {
-                // Only iterate through artifacts to find matches for labels in the trace
-                for (output_id, _) in self.output.artifact_ids() {
-                    if output_id.name == *label {
-                        artifacts_by_address.insert(node.trace.address, output_id);
-                        break;
-                    }
+        // Collect all labels from traces first
+        let mut label_to_address = arena
+            .nodes()
+            .iter()
+            .filter_map(|node| {
+                if let Some(decoded) = &node.trace.decoded
+                    && let Some(label) = &decoded.label
+                {
+                    return Some((label.as_str(), node.trace.address));
                 }
+                None
+            })
+            .collect::<HashMap<_, _>>();
+
+        // Build linked library target IDs
+        let linked_lib_targets = self
+            .linked_libraries
+            .iter()
+            .map(|lib| (format!("{}:{}", lib.path.display(), lib.name), lib.address))
+            .collect::<HashMap<_, _>>();
+
+        for (artifact_id, _) in self.output.artifact_ids() {
+            // Match and insert artifacts using trace labels
+            if let Some(address) = label_to_address.remove(artifact_id.name.as_str()) {
+                artifacts_by_address.insert(address, artifact_id.clone());
+            }
+
+            // Insert linked libraries
+            let maybe_lib_address =
+                linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
+                    let id =
+                        artifact_id.clone().with_stripped_file_prefixes(&self.root).identifier();
+                    linked_lib_targets.get(&id)
+                });
+            if let Some(&lib_address) = maybe_lib_address {
+                artifacts_by_address.insert(lib_address, artifact_id);
             }
         }
 
