@@ -15,7 +15,6 @@ use std::{
     ops::ControlFlow,
     sync::{Arc, mpsc},
     thread,
-    time::{Duration, Instant},
 };
 
 mod context;
@@ -76,24 +75,10 @@ impl<'a> TUI<'a> {
     }
 
     fn event_listener(tx: mpsc::Sender<Event>) {
-        // This is the recommend tick rate from `ratatui`, based on their examples
-        let tick_rate = Duration::from_millis(200);
-
-        let mut last_tick = Instant::now();
         loop {
-            // Poll events since last tick - if last tick is greater than tick_rate, we
-            // demand immediate availability of the event. This may affect interactivity,
-            // but I'm not sure as it is hard to test.
-            if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-                let event = event::read().unwrap();
-                if tx.send(event).is_err() {
-                    return;
-                }
-            }
-
-            // Force update if time has passed
-            if last_tick.elapsed() > tick_rate {
-                last_tick = Instant::now();
+            let event = event::read().unwrap();
+            if tx.send(event).is_err() {
+                return;
             }
         }
     }
