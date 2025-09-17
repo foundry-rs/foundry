@@ -78,6 +78,9 @@ pub struct EvmOpts {
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
 
+    /// Whether to enable Celo precompiles.
+    pub celo: bool,
+
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
 }
@@ -104,6 +107,7 @@ impl Default for EvmOpts {
             disable_block_gas_limit: false,
             enable_tx_gas_limit: false,
             odyssey: false,
+            celo: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }

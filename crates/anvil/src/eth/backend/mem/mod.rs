@@ -27,8 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    evm::celo_precompile::{self, CELO_TRANSFER_ADDRESS},
-    inject_precompiles,
+    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -104,6 +103,7 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
+use foundry_evm_precompiles::{inject_network_precompiles, map_network_precompiles};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -119,11 +119,7 @@ use revm::{
     },
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::{
-        PrecompileId, PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
-        u64_to_address,
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -864,19 +860,7 @@ impl Backend {
             precompiles_map.insert(precompile.id().name().to_string(), *address);
         }
 
-        if self.odyssey {
-            precompiles_map.insert(
-                PrecompileId::P256Verify.name().to_string(),
-                u64_to_address(P256VERIFY_ADDRESS),
-            );
-        }
-
-        if self.is_celo() {
-            precompiles_map.insert(
-                celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
-                CELO_TRANSFER_ADDRESS,
-            );
-        }
+        map_network_precompiles(&mut precompiles_map, self.odyssey, self.is_celo());
 
         if let Some(factory) = &self.precompile_factory {
             for (precompile, _) in &factory.precompiles() {
@@ -1239,20 +1223,10 @@ impl Backend {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-
-        if self.odyssey {
-            inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
-        }
-
-        if self.is_celo() {
-            evm.precompiles_mut()
-                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
-                    Some(celo_precompile::precompile())
-                });
-        }
+        inject_network_precompiles(evm.precompiles_mut(), self.odyssey, self.is_celo());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
+            inject_custom_precompiles(&mut evm, factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());

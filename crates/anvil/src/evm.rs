@@ -9,8 +9,6 @@ use op_revm::OpContext;
 use revm::{Inspector, precompile::Precompile};
 use std::fmt::Debug;
 
-pub mod celo_precompile;
-
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
@@ -18,8 +16,8 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Precompile, u64)>;
 }
 
-/// Inject precompiles into the EVM dynamically.
-pub fn inject_precompiles<DB, I>(
+/// Inject custom precompiles into the EVM dynamically.
+pub fn inject_custom_precompiles<DB, I>(
     evm: &mut EitherEvm<DB, I, PrecompilesMap>,
     precompiles: Vec<(Precompile, u64)>,
 ) where
@@ -59,7 +57,7 @@ mod tests {
         primitives::hardfork::SpecId,
     };
 
-    use crate::{PrecompileFactory, inject_precompiles};
+    use crate::{PrecompileFactory, inject_custom_precompiles};
 
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
@@ -203,7 +201,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -225,7 +223,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -250,7 +248,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -275,7 +273,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 

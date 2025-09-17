@@ -318,6 +318,7 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .odyssey(evm_opts.odyssey)
+            .celo(evm_opts.celo)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

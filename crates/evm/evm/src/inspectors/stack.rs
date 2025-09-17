@@ -67,6 +67,8 @@ pub struct InspectorStackBuilder {
     pub enable_isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    /// Whether to enable Celo precompiles.
+    pub celo: bool,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -169,6 +171,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable Celo precompiles.
+    #[inline]
+    pub fn celo(mut self, yes: bool) -> Self {
+        self.celo = yes;
+        self
+    }
+
     #[inline]
     pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
@@ -189,6 +198,7 @@ impl InspectorStackBuilder {
             chisel_state,
             enable_isolation,
             odyssey,
+            celo,
             wallets,
             create2_deployer,
         } = self;
@@ -217,6 +227,7 @@ impl InspectorStackBuilder {
 
         stack.enable_isolation(enable_isolation);
         stack.odyssey(odyssey);
+        stack.celo(celo);
         stack.set_create2_deployer(create2_deployer);
 
         // environment, must come after all of the inspectors
@@ -315,6 +326,7 @@ pub struct InspectorStackInner {
     // InspectorExt and other internal data.
     pub enable_isolation: bool,
     pub odyssey: bool,
+    pub celo: bool,
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -434,10 +446,16 @@ impl InspectorStack {
         self.enable_isolation = yes;
     }
 
-    /// Set whether to enable call isolation.
+    /// Set whether to enable Odyssey features.
     #[inline]
     pub fn odyssey(&mut self, yes: bool) {
         self.odyssey = yes;
+    }
+
+    /// Set whether to enable Celo precompiles.
+    #[inline]
+    pub fn celo(&mut self, yes: bool) {
+        self.celo = yes;
     }
 
     /// Set the CREATE2 deployer address.
@@ -1088,6 +1106,10 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         self.inner.odyssey
     }
 
+    fn is_celo(&self) -> bool {
+        self.inner.celo
+    }
+
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
@@ -1177,6 +1199,10 @@ impl InspectorExt for InspectorStack {
 
     fn is_odyssey(&self) -> bool {
         self.odyssey
+    }
+
+    fn is_celo(&self) -> bool {
+        self.celo
     }
 
     fn create2_deployer(&self) -> Address {

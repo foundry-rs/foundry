@@ -11,8 +11,7 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    evm::celo_precompile,
-    inject_precompiles,
+    inject_custom_precompiles,
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
@@ -37,6 +36,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
+use foundry_evm_precompiles::inject_network_precompiles;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -45,10 +45,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{
-        PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 use std::{fmt::Debug, sync::Arc};
@@ -360,20 +357,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-
-            if self.odyssey {
-                inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
-            }
-
-            if self.celo {
-                evm.precompiles_mut()
-                    .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
-                        Some(celo_precompile::precompile())
-                    });
-            }
+            inject_network_precompiles(evm.precompiles_mut(), self.odyssey, self.celo);
 
             if let Some(factory) = &self.precompile_factory {
-                inject_precompiles(&mut evm, factory.precompiles());
+                inject_custom_precompiles(&mut evm, factory.precompiles());
             }
 
             let cheats = Arc::new(self.cheats.clone());
