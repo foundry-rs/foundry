@@ -251,13 +251,10 @@ impl Backtrace {
         if let Some(decoded) = &trace.decoded {
             if let Some(label) = &decoded.label {
                 frame = frame.with_contract_name(label.clone());
-            } else {
-                // Check if this is a linked library by address
-                if let Some(lib) =
-                    self.linked_libraries.iter().find(|l| l.address == contract_address)
-                {
-                    frame = frame.with_contract_name(lib.name.clone());
-                }
+            } else if let Some(lib) =
+                self.linked_libraries.iter().find(|l| l.address == contract_address)
+            {
+                frame = frame.with_contract_name(lib.name.clone());
             }
 
             if let Some(call_data) = &decoded.call_data {
@@ -288,7 +285,7 @@ impl fmt::Display for Backtrace {
         for frame in &self.frames {
             write!(f, "  ")?;
             write!(f, "at ")?;
-            writeln!(f, "{}", frame.format())?;
+            writeln!(f, "{frame}")?;
         }
 
         Ok(())
@@ -353,10 +350,11 @@ impl BacktraceFrame {
         self.byte_offset = Some(offset);
         self
     }
+}
 
-    /// Returns a formatted string for this frame.
-    /// Format: <CONTRACT_NAME>.<FUNCTION_NAME> (FILE:LINE:COL)
-    pub fn format(&self) -> String {
+// Format: <CONTRACT_NAME>.<FUNCTION_NAME> (FILE:LINE:COL)
+impl fmt::Display for BacktraceFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut result = String::new();
 
         // No contract name, show address
@@ -383,12 +381,6 @@ impl BacktraceFrame {
             result.push(')');
         }
 
-        result
-    }
-}
-
-impl fmt::Display for BacktraceFrame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format())
+        write!(f, "{result}")
     }
 }

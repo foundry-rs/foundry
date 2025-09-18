@@ -115,6 +115,8 @@ impl PcSourceMapper {
     }
 
     /// Converts a byte offset to line and column numbers.
+    ///
+    /// Returned lines and column numbers are 1-indexed.
     fn offset_to_line_column(&self, source_idx: usize, offset: usize) -> Option<(usize, usize)> {
         let line_offsets = self.line_offsets.get(source_idx)?;
 
@@ -125,7 +127,7 @@ impl PcSourceMapper {
         let line_start = if line == 0 { 0 } else { line_offsets[line - 1] + 1 };
         let column = offset.saturating_sub(line_start);
 
-        // Lines and columns are 1-indexed in most editors
+        // Lines and columns are 1-indexed
         Some((line + 1, column + 1))
     }
 }
