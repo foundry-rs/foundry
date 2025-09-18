@@ -19,8 +19,11 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
-use revm::{context::TxEnv, interpreter::InstructionResult};
+use op_revm::{OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts};
+use revm::{
+    context::{TxEnv, result::ResultAndState},
+    interpreter::InstructionResult,
+};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
@@ -1088,6 +1091,7 @@ pub struct TransactionInfo {
     pub to: Option<Address>,
     pub contract_address: Option<Address>,
     pub traces: Vec<CallTraceNode>,
+    pub exec_state: ResultAndState<OpHaltReason>,
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
     pub nonce: u64,

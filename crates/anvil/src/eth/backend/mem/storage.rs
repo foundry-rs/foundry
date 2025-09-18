@@ -40,7 +40,7 @@ use foundry_evm::{
     },
 };
 use parking_lot::RwLock;
-use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
+use revm::{DatabaseRef, context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
@@ -559,7 +559,11 @@ impl MinedTransaction {
             .collect()
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
+    pub fn geth_trace<DB: DatabaseRef>(
+        &self,
+        opts: GethDebugTracingOptions,
+        db: DB,
+    ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
         if let Some(tracer) = tracer {
@@ -577,8 +581,25 @@ impl MinedTransaction {
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer
-                    | GethDebugBuiltInTracerType::NoopTracer
+                    GethDebugBuiltInTracerType::PreStateTracer => {
+                        return match tracer_config.into_pre_state_config() {
+                            Ok(pre_state_config) => {
+                                match GethTraceBuilder::new(self.info.traces.clone())
+                                    .geth_prestate_traces(
+                                        &self.info.exec_state,
+                                        &pre_state_config,
+                                        db,
+                                    ) {
+                                    Ok(frame) => Ok(frame.into()),
+                                    Err(e) => {
+                                        Err(RpcError::internal_error_with(e.to_string()).into())
+                                    }
+                                }
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::NoopTracer
                     | GethDebugBuiltInTracerType::MuxTracer
                     | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },

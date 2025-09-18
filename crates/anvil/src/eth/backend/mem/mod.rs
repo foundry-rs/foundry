@@ -2714,7 +2714,7 @@ impl Backend {
                 .await;
         }
 
-        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()).await {
             return trace;
         }
 
@@ -2848,12 +2848,21 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_geth_trace_transaction(
+    async fn mined_geth_trace_transaction(
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
+        let tx = self.blockchain.storage.read().transactions.get(&hash).cloned();
+        if let Some(tx) = tx {
+            self.with_database_at(Some(BlockRequest::Number(tx.block_number - 1)), |db, _| {
+                tx.geth_trace(opts, db)
+            })
+            .await
+            .ok()
+        } else {
+            None
+        }
     }
 
     /// Returns the traces for the given block
