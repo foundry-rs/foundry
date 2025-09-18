@@ -93,29 +93,17 @@ impl BufWriter {
     /// If the content contains markdown lists, it formats them correctly.
     /// Otherwise, it writes the content in italics.
     pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
-        // Check if the content contains markdown list items (lines starting with "- ")
-        let lines: Vec<&str> = text.lines().collect();
-        let has_list_items = lines.iter().any(|line| line.trim().starts_with("- "));
-        
-        if has_list_items {
-            // Process each line individually
-            for (_i, line) in lines.iter().enumerate() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("- ") {
-                    // This is a list item - format it with italic content
-                    let content = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-                    writeln!(self.buf, "- *{}*", content)?;
-                } else if !trimmed.is_empty() {
-                    // This is a regular line - format it in italics
-                    writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
-                } else {
-                    // Empty line - just add a newline
-                    writeln!(self.buf)?;
-                }
+        for line in text.lines.iter() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("- ") {
+                // SAFETY: we already checked that the line starts with the prefix
+                let content = trimmed.strip_prefix("- ").unwrap();
+                writeln!(self.buf, "- *{}*", content)?;
+            } else if !trimmed.is_empty() {
+                writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
+            } else {
+                writeln!(self.buf)?;
             }
-        } else {
-            // No list items found, use regular italic formatting
-            writeln!(self.buf, "{}", Markdown::Italic(text))?;
         }
         
         Ok(())
