@@ -898,7 +898,7 @@ pub(crate) fn handle_expect_emit(
 
             // Try to decode the events if we have a signature identifier
             let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
-                &state.signatures_identifier
+                state.signatures_identifier()
                 && !event_to_fill_or_check.anonymous
             {
                 (

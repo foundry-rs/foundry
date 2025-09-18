@@ -72,7 +72,7 @@ use std::{
     io::BufReader,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 mod utils;
@@ -498,7 +498,7 @@ pub struct Cheatcodes {
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
-    pub signatures_identifier: Option<SignaturesIdentifier>,
+    signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has non-fixed gas limit.
     /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
     /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
@@ -558,7 +558,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
-            signatures_identifier: SignaturesIdentifier::new(true).ok(),
+            signatures_identifier: Default::default(),
             dynamic_gas_limit_sequence: Default::default(),
         }
     }
@@ -583,6 +583,11 @@ impl Cheatcodes {
     /// Adds a delegation to the active delegations list.
     pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
         self.active_delegations.push(authorization);
+    }
+
+    /// Returns the signatures identifier.
+    pub fn signatures_identifier(&self) -> Option<&SignaturesIdentifier> {
+        self.signatures_identifier.get_or_init(|| SignaturesIdentifier::new(true).ok()).as_ref()
     }
 
     /// Decodes the input data and applies the cheatcode.
