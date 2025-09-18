@@ -14,7 +14,7 @@ use foundry_cheatcodes::{
     Broadcast, BroadcastableTransactions, CheatcodeInspectorStrategy,
     CheatcodeInspectorStrategyContext, CheatcodeInspectorStrategyRunner, CheatsConfig, CheatsCtxt,
     CommonCreateInput, Ecx, EvmCheatcodeInspectorStrategyRunner, InnerEcx, Result,
-    Vm::{getNonce_0Call, pvmCall, setNonceCall, setNonceUnsafeCall},
+    Vm::{getNonce_0Call, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall},
 };
 
 use polkadot_sdk::{
@@ -112,6 +112,18 @@ fn set_nonce(address: Address, nonce: u64, ecx: InnerEcx<'_, '_, '_>) {
     account.info.nonce = nonce;
 }
 
+fn set_block_number(new_height: U256, ecx: InnerEcx<'_, '_, '_>) {
+    // Set block number in EVM context.
+    ecx.env.block.number = new_height;
+
+    // Set block number in pallet-revive runtime.
+    execute_with_externalities(|externalities| {
+        externalities.execute_with(|| {
+            System::set_block_number(new_height.try_into().expect("Block number exceeds u64"));
+        })
+    });
+}
+
 /// Implements [CheatcodeInspectorStrategyRunner] for PVM.
 #[derive(Debug, Default, Clone)]
 pub struct PvmCheatcodeInspectorStrategyRunner;
@@ -164,6 +176,13 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
                     })
                 });
                 Ok(u64::from(nonce).abi_encode())
+            }
+            t if using_pvm && is::<rollCall>(t) => {
+                let &rollCall { newHeight } = cheatcode.as_any().downcast_ref().unwrap();
+
+                set_block_number(newHeight, ccx.ecx);
+
+                Ok(Default::default())
             }
             // Not custom, just invoke the default behavior
             _ => cheatcode.dyn_apply(ccx, executor),
