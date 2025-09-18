@@ -535,9 +535,8 @@ impl MultiContractRunnerBuilder {
         }
 
         // Create known contracts from linked contracts and storage layout information (if any).
-        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
-            .with_storage_layouts(output.clone().with_stripped_file_prefixes(root))
-            .build();
+        let known_contracts =
+            ContractsByArtifactBuilder::new(linked_contracts).with_output(output, root).build();
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
