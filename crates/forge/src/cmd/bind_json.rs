@@ -2,17 +2,28 @@ use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::{
-    TYPE_BINDING_PREFIX, compile::ProjectCompiler, errors::convert_solar_errors, fs,
+use foundry_common::{TYPE_BINDING_PREFIX, errors::convert_solar_errors, fs};
+use foundry_compilers::{
+    Graph, Project,
+    artifacts::{Source, Sources},
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
+    project::ProjectCompiler,
+    solc::SolcLanguage,
 };
-use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::Config;
 use itertools::Itertools;
 use path_slash::PathExt;
+use rayon::prelude::*;
+use solar::parse::{
+    ast::{self, FunctionKind, Span, VarMut, visit::Visit},
+    interface::Session,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
+    ops::ControlFlow,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 foundry_config::impl_figment_convert!(BindJsonArgs, build);
@@ -33,18 +44,35 @@ pub struct BindJsonArgs {
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
+        let project = config.solar_project()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
-        // Overwrite existing bindings.
-        if target_path.exists() {
-            fs::write(&target_path, JSON_BINDINGS_PLACEHOLDER)?;
-        }
+        let sources = project.paths.read_input_files()?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
 
-        let project = config.solar_project()?;
-        let mut output = ProjectCompiler::new().compile(&project)?;
+        // We only generate bindings for a single Solidity version to avoid conflicts.
+        let (_, mut sources, _) = graph
+            // resolve graph into mapping language -> version -> sources
+            .into_sources_by_version(&project)?
+            .sources
+            .into_iter()
+            // we are only interested in Solidity sources
+            .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
+            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
+            .1
+            .into_iter()
+            // For now, we are always picking the latest version.
+            .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
+            .unwrap();
+
+        // Preprocess sources to handle potentially invalid bindings.
+        self.preprocess_sources(&mut sources)?;
+
+        // Insert empty bindings file.
+        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
 
         // Find structs and generate bindings.
-        let structs_to_write = self.find_and_resolve_structs(&config, &project, &mut output)?;
+        let structs_to_write = self.find_and_resolve_structs(&config, &project, sources)?;
 
         // Write bindings.
         self.write_bindings(&structs_to_write, &target_path)?;
@@ -52,20 +80,68 @@ impl BindJsonArgs {
         Ok(())
     }
 
+    /// In cases when user moves/renames/deletes structs, compiler will start failing because
+    /// generated bindings will be referencing non-existing structs or importing non-existing
+    /// files.
+    ///
+    /// Because of that, we need a little bit of preprocessing to make sure that bindings will still
+    /// be valid.
+    ///
+    /// The strategy is:
+    /// 1. Replace bindings file with an empty one to get rid of potentially invalid imports.
+    /// 2. Remove all function bodies to get rid of `serialize`/`deserialize` invocations.
+    /// 3. Remove all `immutable` attributes to avoid errors because of erased constructors
+    ///    initializing them.
+    ///
+    /// After that we'll still have enough information for bindings but compilation should succeed
+    /// in most of the cases.
+    fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
+        let mut compiler =
+            solar::sema::Compiler::new(Session::builder().with_stderr_emitter().build());
+        let _ = compiler.enter_mut(|compiler| -> solar::interface::Result<()> {
+            let mut pcx = compiler.parse();
+            for (path, source) in &*sources {
+                if let Ok(source) =
+                    pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                {
+                    pcx.add_file(source);
+                }
+            }
+            pcx.parse();
+
+            let gcx = compiler.gcx();
+            sources.par_iter_mut().try_for_each(|(path, source)| {
+                let mut content = Arc::unwrap_or_clone(std::mem::take(&mut source.content));
+                let mut visitor = PreprocessorVisitor::new();
+                let ast = gcx.get_ast_source(path).unwrap().1.ast.as_ref().unwrap();
+                let _ = visitor.visit_source_unit(ast);
+                visitor.update(gcx.sess, &mut content);
+                source.content = Arc::new(content);
+                Ok(())
+            })
+        });
+        convert_solar_errors(compiler.dcx())
+    }
+
     /// Find structs, resolve conflicts, and prepare them for writing
     fn find_and_resolve_structs(
         &self,
         config: &Config,
         project: &Project,
-        output: &mut ProjectCompileOutput,
+        sources: Sources,
     ) -> Result<Vec<StructToWrite>> {
         let include = &config.bind_json.include;
         let exclude = &config.bind_json.exclude;
         let root = &config.root;
 
+        let mut output = ProjectCompiler::with_sources(project, sources)?.compile()?;
+        if output.has_compiler_errors() {
+            eyre::bail!("{output}");
+        }
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+
         let mut structs_to_write = Vec::new();
 
-        let compiler = output.parser_mut().solc_mut().compiler_mut();
         compiler.enter_mut(|compiler| {
             let exclude = |path: &Path| {
                 if !include.is_empty() {
@@ -292,6 +368,73 @@ library JsonBindings {
         sh_println!("Bindings written to {}", target_path.display())?;
 
         Ok(())
+    }
+}
+
+struct PreprocessorVisitor {
+    updates: Vec<(Span, &'static str)>,
+}
+
+impl PreprocessorVisitor {
+    fn new() -> Self {
+        Self { updates: Vec::new() }
+    }
+
+    fn update(mut self, sess: &Session, content: &mut String) {
+        if self.updates.is_empty() {
+            return;
+        }
+
+        let sf = sess.source_map().lookup_source_file(self.updates[0].0.lo());
+        let base = sf.start_pos.0;
+
+        self.updates.sort_by_key(|(span, _)| span.lo());
+        let mut shift = 0_i64;
+        for (span, new) in self.updates {
+            let lo = span.lo() - base;
+            let hi = span.hi() - base;
+            let start = ((lo.0 as i64) - shift) as usize;
+            let end = ((hi.0 as i64) - shift) as usize;
+
+            content.replace_range(start..end, new);
+            shift += (end - start) as i64;
+            shift -= new.len() as i64;
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for PreprocessorVisitor {
+    type BreakValue = solar::interface::data_structures::Never;
+
+    fn visit_item_function(
+        &mut self,
+        func: &'ast ast::ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        // Replace function bodies with a noop statement.
+        if let Some(block) = &func.body
+            && !block.is_empty()
+        {
+            let span = block.first().unwrap().span.to(block.last().unwrap().span);
+            let new_body = match func.kind {
+                FunctionKind::Modifier => "_;",
+                _ => "revert();",
+            };
+            self.updates.push((span, new_body));
+        }
+
+        self.walk_item_function(func)
+    }
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast ast::VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        // Remove `immutable` attributes.
+        if let Some(VarMut::Immutable) = var.mutability {
+            self.updates.push((var.span, ""));
+        }
+
+        self.walk_variable_definition(var)
     }
 }
 
