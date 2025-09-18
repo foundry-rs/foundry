@@ -47,6 +47,7 @@ impl BindJsonArgs {
         let project = config.solar_project()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
+        // Read and preprocess sources.
         let sources = project.paths.read_input_files()?;
         let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
 
@@ -100,6 +101,7 @@ impl BindJsonArgs {
             solar::sema::Compiler::new(Session::builder().with_stderr_emitter().build());
         let _ = compiler.enter_mut(|compiler| -> solar::interface::Result<()> {
             let mut pcx = compiler.parse();
+            pcx.set_resolve_imports(false);
             for (path, source) in &*sources {
                 if let Ok(source) =
                     pcx.sess.source_map().new_source_file(path.clone(), source.content.as_str())
@@ -403,6 +405,7 @@ impl PreprocessorVisitor {
     }
 }
 
+// TODO(dani): AST mut visitor?
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
     type BreakValue = solar::interface::data_structures::Never;
 
