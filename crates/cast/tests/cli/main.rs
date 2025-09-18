@@ -74,6 +74,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -1787,19 +1790,22 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
-    let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
-    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-    let args = vec![
-        "tx",
-        "--from",
-        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-        "--nonce",
-        "113642",
-        "--rpc-url",
-        rpc,
-    ];
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "reth is currently slightly broken"]
+    tx_using_sender_and_nonce,
+    |_prj, cmd| {
+        let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
+        // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
+        let args = vec![
+            "tx",
+            "--from",
+            "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
+            "--nonce",
+            "113642",
+            "--rpc-url",
+            rpc,
+        ];
+        cmd.args(args).assert_success().stdout_eq(str![[r#"
 
 blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
 blockNumber          22287055
@@ -1823,7 +1829,8 @@ value                0
 yParity              1
 ...
 "#]]);
-});
+    }
+);
 
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {
@@ -1898,6 +1905,40 @@ casttest!(storage, |_prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 0x000000000000000000000000000000000000000000000000000000174876e800
+
+"#]]);
+
+    let decimal_slot_offset_from_total_supply_slot = "0x08";
+    let decimal_slot_offset_from_total_supply_slot_uint = "8";
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
+
+    let rpc = next_http_archive_rpc_url();
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            usdt,
+            total_supply_slot,
+            decimal_slot_offset_from_total_supply_slot_uint,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
 
 "#]]);
 });
@@ -1990,6 +2031,41 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 |-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 ╰-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------╯
+
+
+"#]]);
+});
+
+casttest!(storage_layout_complex_md, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--md",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 
 "#]]);
@@ -3886,4 +3962,102 @@ casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
+});
+
+// tests that cast call properly applies multiple state diff overrides
+// <https://github.com/foundry-rs/foundry/issues/11551>
+casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "call",
+        "--trace",
+        "--from",
+        "0xf6F444fD3B0088c1375671c05A7513661beFa4e6",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0xe75235b8",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::getThreshold()
+...
+
+"#]]);
+
+    cmd.cast_fuse().args([
+        "call",
+        "--trace",
+        "--from",
+        "0x2066901073a33ba2500274704aB04763875cF210",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332",
+        "--rpc-url",
+        rpc.as_str(),
+        "--block",
+        "23290753",
+        "--data",
+        "0x2f54bf6e0000000000000000000000002066901073a33ba2500274704ab04763875cf210",
+        "--override-state-diff",
+        "0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xf0af0268363540b847b4c07f2f9a0401c607c1b11ebca511724a71755dfd4137:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:4:1,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8:0,0x5EA1d9A6dDC3A0329378a327746D71A2019eC332:0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947:0",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+  [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
+...
+"#]]);
+});
+
+// Test cast abi-encode-event with indexed parameters
+casttest!(abi_encode_event_indexed, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        "1000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+[topic1]: 0x0000000000000000000000001234567890123456789012345678901234567890
+[topic2]: 0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd
+[data]: 0x00000000000000000000000000000000000000000000000000000000000003e8
+
+"#]]);
+});
+
+// Test cast abi-encode-event with no indexed parameters
+casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Approval(address owner, address spender, uint256 value)",
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        "2000"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925
+[data]: 0x0000000000000000000000001234567890123456789012345678901234567890000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd00000000000000000000000000000000000000000000000000000000000007d0
+
+"#]]);
+});
+
+// Test cast abi-encode-event with dynamic indexed parameter (string)
+casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xdd970dd9b5bfe707922155b058a407655cb18288b807e2216442bca8ad83d6b5
+[topic1]: 0x984002fcc0ca639f96622add24c2edd2fe72c65e71ca3faa243e091e0bc7cdab
+[data]: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
 });

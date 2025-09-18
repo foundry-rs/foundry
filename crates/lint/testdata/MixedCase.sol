@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.18;
 
 contract MixedCaseTest {
     uint256 variableMixedCase;
@@ -71,5 +71,5 @@ contract MixedCaseTest {
     function HAS_PARAMS(address addr) external view returns (uint256) {} //~NOTE: function names should use mixedCase
     function HAS_NO_RETURN() external view {} //~NOTE: function names should use mixedCase
     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {} //~NOTE: function names should use mixedCase
-    function NOT_ELEMENTARY_RETURN() external view returns (uint256[]) {} //~NOTE: function names should use mixedCase
+    function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memory) {} //~NOTE: function names should use mixedCase
 }

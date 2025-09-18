@@ -241,6 +241,57 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+forgetest!(setup_md, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.arg("coverage").args(["--md"]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+});
+
 forgetest!(no_match, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -361,14 +412,14 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testAssertBranch() external {
-        AContract a = new AContract();
         bool result = a.checkA(10);
         assertTrue(result);
     }
 
     function testAssertRevertBranch() external {
-        AContract a = new AContract();
         vm.expectRevert();
         a.checkA(1);
     }
@@ -432,14 +483,14 @@ interface Vm {
 
 contract AContractTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+    AContract a = new AContract();
+
     function testRequireRevert() external {
-        AContract a = new AContract();
         vm.expectRevert(abi.encodePacked("reverted"));
         a.checkRequire(false);
     }
 
     function testRequireNoRevert() external {
-        AContract a = new AContract();
         a.checkRequire(true);
     }
 }
@@ -512,8 +563,9 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testFoo() public {
-        AContract a = new AContract();
         a.foo();
     }
 }
@@ -851,8 +903,9 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTypeConversionCoverage() external {
-        AContract a = new AContract();
         a.coverMe();
     }
 }
@@ -1122,7 +1175,7 @@ contract B {
 contract C {
     function create() public {
         B b = new B{value: 1}(2);
-        b = (new B{value: 1})(2);
+        b = new B{value: 1}(2);
         b = (new B){value: 1}(2);
     }
 }
@@ -1197,12 +1250,16 @@ contract AContract {
     event IsTrue(bool isTrue);
     event IsFalse(bool isFalse);
 
-    function ifElseStatementIgnored(bool flag) external {
+    function ifElseStatementIgnored(bool flag) external returns (bool) {
         if (flag) emit IsTrue(true);
         else emit IsFalse(false);
 
-        if (flag) flag = true;
-        else flag = false;
+        bool flag2;
+        if (flag) flag2 = true;
+        else flag2 = false;
+
+        if (flag2) return true;
+        else return false;
     }
 }
     "#,
@@ -1215,13 +1272,13 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(true);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         a.ifElseStatementIgnored(false);
     }
 }
@@ -1234,9 +1291,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| src/AContract.sol | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -1251,9 +1308,9 @@ contract AContractTest is DSTest {
 ╭-------------------+--------------+--------------+--------------+---------------╮
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 +================================================================================+
-| src/AContract.sol | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| src/AContract.sol | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 |-------------------+--------------+--------------+--------------+---------------|
-| Total             | 60.00% (3/5) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 62.50% (5/8) | 57.14% (4/7) | 50.00% (3/6) | 100.00% (1/1) |
 ╰-------------------+--------------+--------------+--------------+---------------╯
 
 "#]]);
@@ -1264,10 +1321,96 @@ contract AContractTest is DSTest {
 ╭-------------------+---------------+---------------+---------------+---------------╮
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 +===================================================================================+
-| src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+| src/AContract.sol | 100.00% (8/8) | 100.00% (7/7) | 100.00% (6/6) | 100.00% (1/1) |
 |-------------------+---------------+---------------+---------------+---------------|
-| Total             | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+| Total             | 100.00% (8/8) | 100.00% (7/7) | 100.00% (6/6) | 100.00% (1/1) |
 ╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(single_statement_loop, |prj, cmd| {
+    // TODO(dani): the specific case of `if (x) continue/break` is not properly covered.
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function ifBreakContinueIgnored(bool flag) external returns (uint256 sum) {
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) continue;
+            sum += i;
+        }
+
+        for (uint256 i = 0; i < 5; i++) {
+            if (flag) break;
+            sum += i;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testTrueCoverage() external {
+        a.ifBreakContinueIgnored(true);
+    }
+
+    function testFalseCoverage() external {
+        a.ifBreakContinueIgnored(false);
+    }
+}
+    "#,
+    );
+
+    // Assert 50% coverage for true branches.
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+---------------+---------------+---------------╮
+| File              | % Lines      | % Statements  | % Branches    | % Funcs       |
++==================================================================================+
+| src/AContract.sol | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+---------------+---------------+---------------|
+| Total             | 71.43% (5/7) | 70.00% (7/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+---------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 50% coverage for false branches.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt", "testFalseCoverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
+
+"#]]);
+
+    // Assert 100% coverage (true/false branches properly covered).
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+-----------------+---------------+---------------╮
+| File              | % Lines       | % Statements    | % Branches    | % Funcs       |
++=====================================================================================+
+| src/AContract.sol | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+-----------------+---------------+---------------|
+| Total             | 100.00% (7/7) | 100.00% (10/10) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+-----------------+---------------+---------------╯
 
 "#]]);
 });
@@ -1302,15 +1445,15 @@ import "./test.sol";
 import {AContract} from "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function testTrueCoverage() external {
-        AContract a = new AContract();
         bool[] memory isTrue = new bool[](1);
         isTrue[0] = true;
         a.execute(isTrue);
     }
 
     function testFalseCoverage() external {
-        AContract a = new AContract();
         bool[] memory isFalse = new bool[](1);
         isFalse[0] = false;
         a.execute(isFalse);
@@ -1580,8 +1723,9 @@ import "./test.sol";
 import "./AContract.sol";
 
 contract AContractTest is DSTest {
+    AContract a = new AContract();
+
     function test_constructors() public {
-        AContract a = new AContract();
         address(a).call{value: 5}("");
         require(a.counter() == 5);
     }
@@ -1910,15 +2054,15 @@ DA:7,1
 FN:7,Counter.increment
 FNDA:1,Counter.increment
 DA:8,1
-DA:14,10
 DA:10,10
 DA:11,10
 BRDA:11,0,0,6
 DA:12,6
+DA:14,10
 FNF:1
 FNH:1
-LF:3
-LH:3
+LF:6
+LH:6
 BRF:1
 BRH:1
 end_of_record

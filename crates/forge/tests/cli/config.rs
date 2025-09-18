@@ -118,6 +118,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
+        enable_tx_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
@@ -125,7 +126,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
-        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -1041,6 +1041,7 @@ sparse_mode = false
 build_info = false
 isolate = false
 disable_block_gas_limit = false
+enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
@@ -1082,7 +1083,10 @@ severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
-mixed_case_exceptions = ["ERC"]
+mixed_case_exceptions = [
+    "ERC",
+    "URI",
+]
 
 [doc]
 out = "docs"
@@ -1186,7 +1190,6 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
-  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1310,7 +1313,8 @@ exclude = []
     "ignore": [],
     "lint_on_build": true,
     "mixed_case_exceptions": [
-      "ERC"
+      "ERC",
+      "URI"
     ]
   },
   "doc": {
@@ -1333,6 +1337,7 @@ exclude = []
   ],
   "isolate": false,
   "disable_block_gas_limit": false,
+  "enable_tx_gas_limit": false,
   "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -1866,7 +1871,10 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>
@@ -1898,4 +1906,32 @@ contract AnotherCounterTest is Test {
 "#,
     );
     cmd.args(["test", "--fail-fast"]).assert_failure();
+});
+
+// Test that EVM version configuration works and the incompatibility check is available
+forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
+    // Clear default contracts
+    prj.wipe_contracts();
+
+    // Add a simple contract
+    prj.add_source(
+        "Simple.sol",
+        r#"
+pragma solidity ^0.8.5;
+
+contract Simple {
+    uint public value = 42;
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
+    });
+
+    let result = cmd.args(["build"]).assert_success();
+    let output = result.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
 });

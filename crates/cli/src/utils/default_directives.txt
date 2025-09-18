@@ -1,0 +1,11 @@
+[
+    // Low level networking
+    "hyper=off",
+    "hyper_util=off",
+    "h2=off",
+    "rustls=off",
+    // Tokio
+    "mio=off",
+    // Too verbose
+    "jsonpath_lib=off",
+]

@@ -27,6 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
+    evm::celo_precompile::{self, CELO_TRANSFER_ADDRESS},
     inject_precompiles,
     mem::{
         inspector::AnvilInspector,
@@ -40,7 +41,11 @@ use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
+use alloy_eip5792::{Capabilities, DelegationCapability};
+use alloy_eips::{
+    eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    eip7910::SystemContract,
+};
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
@@ -84,7 +89,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
-    wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -107,14 +112,18 @@ use op_revm::{
 use parking_lot::{Mutex, RwLock};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+    precompile::{
+        PrecompileId, PrecompileSpecId, Precompiles,
+        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
+        u64_to_address,
+    },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -334,7 +343,7 @@ impl Backend {
             let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
             let _ = db.set_balance(EXECUTOR, init_balance);
 
-            let mut capabilities = WalletCapabilities::default();
+            let mut capabilities = HashMap::default();
 
             let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
@@ -348,9 +357,9 @@ impl Backend {
 
             let executor_wallet = EthereumWallet::new(signer);
 
-            (capabilities, Some(executor_wallet))
+            (WalletCapabilities(capabilities), Some(executor_wallet))
         } else {
-            (WalletCapabilities::default(), None)
+            (WalletCapabilities(Default::default()), None)
         };
 
         let backend = Self {
@@ -399,9 +408,9 @@ impl Backend {
 
     /// Get the capabilities of the wallet.
     ///
-    /// Currently the only capability is [`DelegationCapability`].
+    /// Currently the only capability is delegation.
     ///
-    /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
+    /// See `anvil_core::eth::wallet::Capabilities` for construction helpers.
     pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
         self.capabilities.read().clone()
     }
@@ -415,13 +424,16 @@ impl Backend {
         self.executor_wallet.read().clone()
     }
 
-    /// Adds an address to the [`DelegationCapability`] of the wallet.
+    /// Adds an address to the wallet's delegation capability.
     pub(crate) fn add_capability(&self, address: Address) {
         let chain_id = self.env.read().evm_env.cfg_env.chain_id;
         let mut capabilities = self.capabilities.write();
-        let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
+        let mut capability = capabilities
+            .get(chain_id)
+            .cloned()
+            .unwrap_or(Capabilities { delegation: DelegationCapability { addresses: vec![] } });
         capability.delegation.addresses.push(address);
-        capabilities.insert(chain_id, capability);
+        capabilities.0.insert(chain_id, capability);
     }
 
     pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {
@@ -837,6 +849,61 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns true if Celo features are active
+    pub fn is_celo(&self) -> bool {
+        self.env.read().is_celo
+    }
+
+    /// Returns the precompiles for the current spec.
+    pub fn precompiles(&self) -> BTreeMap<String, Address> {
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
+
+        let mut precompiles_map = BTreeMap::<String, Address>::default();
+        for (address, precompile) in precompiles.inner() {
+            precompiles_map.insert(precompile.id().name().to_string(), *address);
+        }
+
+        if self.odyssey {
+            precompiles_map.insert(
+                PrecompileId::P256Verify.name().to_string(),
+                u64_to_address(P256VERIFY_ADDRESS),
+            );
+        }
+
+        if self.is_celo() {
+            precompiles_map.insert(
+                celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
+                CELO_TRANSFER_ADDRESS,
+            );
+        }
+
+        if let Some(factory) = &self.precompile_factory {
+            for (precompile, _) in &factory.precompiles() {
+                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            }
+        }
+
+        precompiles_map
+    }
+
+    /// Returns the system contracts for the current spec.
+    pub fn system_contracts(&self) -> BTreeMap<SystemContract, Address> {
+        let mut system_contracts = BTreeMap::<SystemContract, Address>::default();
+
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+
+        if spec_id >= SpecId::CANCUN {
+            system_contracts.extend(SystemContract::cancun());
+        }
+
+        if spec_id >= SpecId::PRAGUE {
+            system_contracts.extend(SystemContract::prague(None));
+        }
+
+        system_contracts
+    }
+
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
         let spec_id = self.env.read().evm_env.cfg_env.spec;
@@ -1177,6 +1244,13 @@ impl Backend {
             inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
         }
 
+        if self.is_celo() {
+            evm.precompiles_mut()
+                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
+                    Some(celo_precompile::precompile())
+                });
+        }
+
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1185,7 +1259,10 @@ impl Backend {
         if cheats.has_recover_overrides() {
             let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
             evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
-                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+                Some(DynPrecompile::new_stateful(
+                    cheat_ecrecover.precompile_id().clone(),
+                    move |input| cheat_ecrecover.call(input),
+                ))
             });
         }
 
@@ -1276,6 +1353,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -1366,6 +1444,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
                 };
@@ -1516,6 +1595,7 @@ impl Backend {
     ///
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
+    ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
     ///  - `nonce` check is skipped if `request.nonce` is None
     fn build_call_env(
         &self,
@@ -1558,6 +1638,7 @@ impl Backend {
         // we want to disable this in eth_call, since this is common practice used by other node
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
         env.evm_env.cfg_env.disable_block_gas_limit = true;
+        env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
         // The basefee should be ignored for calls against state for
         // - eth_call
@@ -2720,6 +2801,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -3403,7 +3485,7 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::GasTooLow);
             }
 
-            // Check gas limit against block gas limit, if block gas limit is set.
+            // Check tx gas limit against block gas limit, if block gas limit is set.
             if !env.evm_env.cfg_env.disable_block_gas_limit
                 && tx.gas_limit() > env.evm_env.block_env.gas_limit
             {
@@ -3413,7 +3495,17 @@ impl TransactionValidator for Backend {
                 }));
             }
 
-            // EIP-1559 fee validation (London hard fork and later)
+            // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
+            if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
+                && tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
+            {
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
+                return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+                }));
+            }
+
+            // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
                 if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
                     warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);

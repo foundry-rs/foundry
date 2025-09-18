@@ -1,13 +1,9 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt,
-    preprocessor::DynamicTestLinkingPreprocessor,
-    reports::{ReportKind, report_kind},
-    shell,
-    term::SpinnerReporter,
+    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -18,6 +14,7 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
+    multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -40,9 +37,6 @@ use std::{
 pub struct ProjectCompiler {
     /// The root of the project.
     project_root: PathBuf,
-
-    /// Whether we are going to verify the contracts after compilation.
-    verify: Option<bool>,
 
     /// Whether to also print contract names.
     print_names: Option<bool>,
@@ -79,7 +73,6 @@ impl ProjectCompiler {
     pub fn new() -> Self {
         Self {
             project_root: PathBuf::new(),
-            verify: None,
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
@@ -88,13 +81,6 @@ impl ProjectCompiler {
             files: Vec::new(),
             dynamic_test_linking: false,
         }
-    }
-
-    /// Sets whether we are going to verify the contracts after compilation.
-    #[inline]
-    pub fn verify(mut self, yes: bool) -> Self {
-        self.verify = Some(yes);
-        self
     }
 
     /// Sets whether to print contract names.
@@ -277,8 +263,7 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report =
-                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -348,8 +333,6 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
-    /// What kind of report to generate.
-    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -388,15 +371,11 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                writeln!(f, "\n{}", self.format_table_output())?;
-            }
-            ReportKind::JSON => {
-                writeln!(f, "{}", self.format_json_output())?;
-            }
+        if shell::is_json() {
+            writeln!(f, "{}", self.format_json_output())?;
+        } else {
+            writeln!(f, "\n{}", self.format_table_output())?;
         }
-
         Ok(())
     }
 }
@@ -425,7 +404,11 @@ impl SizeReport {
 
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        if shell::is_markdown() {
+            table.load_preset(ASCII_MARKDOWN);
+        } else {
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+        }
 
         table.set_header(vec![
             Cell::new("Contract"),
@@ -511,8 +494,6 @@ pub struct ContractInfo {
 ///
 /// If `quiet` no solc related output will be emitted to stdout.
 ///
-/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
-///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     target_path: &Path,
@@ -526,11 +507,8 @@ where
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(
-    metadata: &Metadata,
-    target_path: impl AsRef<Path>,
-) -> Result<Project<SolcCompiler>> {
-    let target_path = dunce::canonicalize(target_path.as_ref())?;
+pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
+    let target_path = dunce::canonicalize(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
@@ -560,14 +538,18 @@ pub fn etherscan_project(
         .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
+    // TODO: detect vyper
     let v = metadata.compiler_version()?;
     let solc = Solc::find_or_install(&v)?;
 
-    let compiler = SolcCompiler::Specific(solc);
+    let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
-    Ok(ProjectBuilder::<SolcCompiler>::default()
-        .settings(SolcSettings {
-            settings: SolcConfig::builder().settings(settings).build(),
+    Ok(ProjectBuilder::<MultiCompiler>::default()
+        .settings(MultiCompilerSettings {
+            solc: SolcSettings {
+                settings: SolcConfig::builder().settings(settings).build(),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .paths(paths)
