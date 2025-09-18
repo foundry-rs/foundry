@@ -527,10 +527,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Whether to enable Odyssey features.
-    #[serde(alias = "alphanet")]
-    pub odyssey: bool,
-
     /// Whether to enable Celo precompiles.
     #[serde(default)]
     pub celo: bool,
@@ -1145,7 +1141,7 @@ impl Config {
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(self.evm_version, self.odyssey)
+        evm_spec_id(self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2466,7 +2462,6 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            odyssey: false,
             celo: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),

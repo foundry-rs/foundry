@@ -140,11 +140,6 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
-    #[serde(skip)]
-    pub odyssey: bool,
-
     /// Whether to enable Celo precompiles.
     #[arg(long)]
     #[serde(skip)]
@@ -173,10 +168,6 @@ impl Provider for EvmArgs {
 
         if self.isolate {
             dict.insert("isolate".to_string(), self.isolate.into());
-        }
-
-        if self.odyssey {
-            dict.insert("odyssey".to_string(), self.odyssey.into());
         }
 
         if self.celo {

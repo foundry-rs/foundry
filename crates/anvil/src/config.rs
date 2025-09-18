@@ -535,9 +535,6 @@ impl NodeConfig {
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.networks.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::default());
-        }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
@@ -998,13 +995,6 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
-    #[must_use]
-    pub fn with_odyssey(mut self, enable_odyssey: bool) -> Self {
-        self.networks.odyssey = enable_odyssey;
-        self
-    }
-
     /// Sets whether to disable the default create2 deployer
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
@@ -1026,7 +1016,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
+    /// Enable features for provided networks.
     #[must_use]
     pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
@@ -1164,7 +1154,6 @@ impl NodeConfig {
             self.print_logs,
             self.print_traces,
             Arc::new(decoder_builder.build()),
-            self.networks.odyssey,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,

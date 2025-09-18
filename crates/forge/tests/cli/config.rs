@@ -171,7 +171,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        odyssey: false,
         celo: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -1048,7 +1047,6 @@ create2_library_salt = "0x000000000000000000000000000000000000000000000000000000
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
-odyssey = false
 celo = false
 transaction_timeout = 120
 additional_compiler_profiles = []
@@ -1349,7 +1347,6 @@ exclude = []
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
-  "odyssey": false,
   "celo": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],

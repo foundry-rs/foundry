@@ -312,7 +312,6 @@ impl TestRunnerConfig {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        self.networks.odyssey = config.odyssey;
         self.networks.celo = config.celo;
         self.isolation = config.isolate;
 

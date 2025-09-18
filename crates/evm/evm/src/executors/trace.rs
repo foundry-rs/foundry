@@ -35,7 +35,7 @@ impl TracingExecutor {
             .inspectors(|stack| {
                 stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            .spec_id(evm_spec_id(version.unwrap_or_default(), networks.odyssey))
+            .spec_id(evm_spec_id(version.unwrap_or_default()))
             .build(env, db);
 
         // Apply the state overrides.
