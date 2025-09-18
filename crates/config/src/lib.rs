@@ -963,7 +963,9 @@ impl Config {
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
         let mut project = self.create_project(self.cache && !ui_testing, false)?;
         project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection([]);
+            // We have to request something to populate `contracts` in the output and thus
+            // artifacts.
+            *selection = OutputSelection::common_output_selection(["abi".into()]);
         });
         Ok(project)
     }
@@ -2117,19 +2119,44 @@ impl Config {
     /// This normalizes the default `evm_version` if a `solc` was provided in the config.
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
+    #[expect(clippy::disallowed_macros)]
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        // TODO: add a warning if evm_version is provided but incompatible
+        let evm_version = figment.extract_inner::<EvmVersion>("evm_version").ok().or_else(|| {
+            figment
+                .extract_inner::<String>("evm_version")
+                .ok()
+                .and_then(|s| s.parse::<EvmVersion>().ok())
+        });
+
+        let solc_version = figment
+            .extract_inner::<SolcReq>("solc")
+            .ok()
+            .and_then(|solc| solc.try_version().ok())
+            .and_then(|v| self.evm_version.normalize_version_solc(&v));
+
         if figment.contains("evm_version") {
+            // Check compatibility if both evm_version and solc are provided
+            // First try to extract as EvmVersion directly, then fallback to string parsing for
+            // case-insensitive support
+            if let Some(evm_version) = evm_version {
+                figment = figment.merge(("evm_version", evm_version));
+
+                if let Some(solc_version) = solc_version
+                    && solc_version != evm_version
+                {
+                    eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(&format!(
+                            "Warning: evm_version '{evm_version}' may be incompatible with solc version. Consider using '{solc_version}'"
+                        ))
+                    );
+                }
+            }
             return figment;
         }
 
         // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
-        {
+        if let Some(version) = solc_version {
             figment = figment.merge(("evm_version", version));
         }
 
@@ -6190,6 +6217,25 @@ mod tests {
             // Non-array values should be replaced
             assert_eq!(config.optimizer, Some(false));
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_evm_version_solc_compatibility_warning() {
+        figment::Jail::expect_with(|jail| {
+            // Create a config with incompatible evm_version and solc version
+            // Using Cancun with an older solc version (Berlin) that doesn't support it
+            jail.create_file(
+                "foundry.toml",
+                r#"
+            [profile.default]
+            evm_version = "Cancun"
+            solc = "0.8.5"
+        "#,
+            )?;
+
+            let _config = Config::load().unwrap();
             Ok(())
         });
     }
