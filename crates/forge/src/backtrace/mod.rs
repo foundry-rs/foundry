@@ -125,17 +125,19 @@ impl<'a> BacktraceBuilder<'a> {
         for (artifact_id, _) in self.output.artifact_ids() {
             // Match and insert artifacts using trace labels
             if let Some(address) = label_to_address.remove(artifact_id.name.as_str()) {
+                // Match and insert artifacts using trace labels
                 artifacts_by_address.insert(address, artifact_id.clone());
-            }
-
-            // Insert linked libraries
-            let maybe_lib_address =
+            } else if let Some(&lib_address) =
+                // Match and insert the linked library artifacts
                 linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
-                    let id =
-                        artifact_id.clone().with_stripped_file_prefixes(&self.root).identifier();
-                    linked_lib_targets.get(&id)
-                });
-            if let Some(&lib_address) = maybe_lib_address {
+                        let id = artifact_id
+                            .clone()
+                            .with_stripped_file_prefixes(&self.root)
+                            .identifier();
+                        linked_lib_targets.get(&id)
+                    })
+            {
+                // Insert linked libraries
                 artifacts_by_address.insert(lib_address, artifact_id);
             }
         }
