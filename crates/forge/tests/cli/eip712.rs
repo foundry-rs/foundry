@@ -1,4 +1,5 @@
 use foundry_config::fs_permissions::PathPermission;
+use std::path::Path;
 
 forgetest!(test_eip712, |prj, cmd| {
     let path = prj.add_source(
@@ -249,11 +250,11 @@ contract Eip712Test is DSTest {
     cmd.forge_fuse().args(["bind-json"]).assert_success();
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
-    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+    assert_bindings(&bindings);
 
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
-    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vv"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.forge_fuse();
+    cmd.args(["test", "--mc", "Eip712Test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -267,8 +268,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-"#]
-    ]);
+"#]]);
 });
 
 forgetest!(test_eip712_cheatcode_nested, |prj, cmd| {
@@ -371,7 +371,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 
     cmd.forge_fuse().args(["bind-json"]).assert_success();
-    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+    assert_bindings(&bindings);
 
     // with generated bindings, cheatcode by type name works
     cmd.forge_fuse()
@@ -415,7 +415,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 
     cmd.forge_fuse().args(["bind-json", "utils/CustomJsonBindings.sol"]).assert_success();
-    assert!(bindings_2.exists(), "'CustomJsonBindings.sol' was not generated at {bindings_2:?}");
+    assert_bindings(&bindings_2);
 
     // with generated bindings, cheatcode by custom path and type name works
     cmd.forge_fuse()
@@ -848,3 +848,9 @@ contract CounterStrike_Test is DSTest {
 
     cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
 });
+
+#[track_caller]
+fn assert_bindings(bindings: &Path) {
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+    // assert_data_eq!(Data::try_read_from(bindings, None).unwrap(), expected);
+}
