@@ -15,6 +15,7 @@ pub mod celo;
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
     #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
+    // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
     pub optimism: bool,
     /// Enable Celo network features.
