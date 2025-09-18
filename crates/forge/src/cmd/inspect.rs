@@ -109,7 +109,7 @@ impl InspectArgs {
             }
             ContractArtifactField::StorageLayout => {
                 let bucket_rows =
-                    parse_storage_buckets_value(artifact.raw_metadata.as_ref()).unwrap_or_default();
+                    parse_storage_locations(artifact.raw_metadata.as_ref()).unwrap_or_default();
                 print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, wrap)?;
             }
             ContractArtifactField::DevDoc => {
@@ -621,54 +621,113 @@ fn missing_error(field: &str) -> eyre::Error {
     )
 }
 
-static BUCKET_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
+static STORAGE_LOC_HEAD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)erc[0-9]+\s*:").unwrap());
+
+static STORAGE_LOC_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?ix)
-        (?P<name>[A-Za-z_][A-Za-z0-9_:\.\-]*)
-        \s+
-        (?:0x)?(?P<hex>[0-9a-f]{1,64})
-    ",
+        r"(?ix) ^
+        (?P<formula>erc[0-9]+)   # erc ID
+        \s*:\s*
+        (?P<ns>[A-Za-z0-9_.\-]+) # namespace (no colon)
+        $",
     )
     .unwrap()
 });
 
-fn parse_storage_buckets_value(raw_metadata: Option<&String>) -> Option<Vec<(String, String)>> {
-    let parse_bucket_pairs = |s: &str| {
-        BUCKET_PAIR_RE
-            .captures_iter(s)
-            .filter_map(|caps| {
-                let name = caps.get(1)?.as_str();
-                let hex_str = caps.get(2)?.as_str();
+fn split_erc_formulas(s: &str) -> Vec<(String, String)> {
+    let mut starts: Vec<usize> = STORAGE_LOC_HEAD_RE.find_iter(s).map(|m| m.start()).collect();
 
-                hex::decode(hex_str.trim_start_matches("0x"))
-                    .ok()
-                    .filter(|bytes| bytes.len() == 32)
-                    .map(|_| (name.to_owned(), hex_str.to_owned()))
-            })
-            .collect::<Vec<_>>()
-    };
-    let raw = raw_metadata?;
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    v.get("output")
-        .and_then(|o| o.get("devdoc"))
-        .and_then(|d| d.get("methods"))
+    if starts.is_empty() {
+        return Vec::new();
+    }
+    starts.push(s.len());
+    let mut out = Vec::new();
+    for w in starts.windows(2) {
+        let (beg, end) = (w[0], w[1]);
+        let slice = s[beg..end].trim();
+        if let Some(caps) = STORAGE_LOC_PAIR_RE.captures(slice) {
+            let formula = caps.name("formula").unwrap().as_str().to_string();
+            let ns = caps.name("ns").unwrap().as_str().to_string();
+            out.push((formula, ns));
+        }
+    }
+    out
+}
+
+#[inline]
+fn compute_erc7201_slot_hex(ns: &str) -> String {
+    // Step 1: keccak256(bytes(id))
+    let ns_hash = keccak256(ns.as_bytes()); // 32 bytes
+
+    // Step 2: (uint256(keccak256(id)) - 1) as 32-byte big-endian
+    let mut u = U256::from_be_slice(ns_hash.as_slice());
+    u = u.wrapping_sub(U256::from(1u8));
+    let enc = u.to_be_bytes::<32>();
+
+    // Step 3: keccak256(abi.encode(uint256(...)))
+    let slot_hash = keccak256(enc);
+
+    // Step 4: & ~0xff (zero out the lowest byte)
+    let mut slot_u = U256::from_be_slice(slot_hash.as_slice());
+    slot_u &= !U256::from(0xffu8);
+
+    // 0x-prefixed 32-byte hex, optionally shorten with your helper
+    let full = hex::encode_prefixed(slot_u.to_be_bytes::<32>());
+    short_hex(&full)
+}
+
+// Simple “formula registry” so future EIPs can be added without touching the parser.
+fn derive_slot_hex(formula: &str, ns: &str) -> Option<String> {
+    match formula.to_ascii_lowercase().as_str() {
+        "erc7201" => Some(compute_erc7201_slot_hex(ns)),
+        // For future EIPs: add "erc1234" => Some(compute_erc1234_slot_hex(ns))
+        _ => None,
+    }
+}
+
+fn strings_from_json(val: &serde_json::Value) -> Vec<String> {
+    match val {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(arr) => {
+            arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()
+        }
+        _ => vec![],
+    }
+}
+
+fn get_custom_tag_lines(devdoc: &serde_json::Value, key: &str) -> Vec<String> {
+    if let Some(v) = devdoc.get(key) {
+        let xs = strings_from_json(v);
+        if !xs.is_empty() {
+            return xs;
+        }
+    }
+    devdoc
+        .get("methods")
         .and_then(|m| m.get("constructor"))
         .and_then(|c| c.as_object())
-        .and_then(|obj| obj.get("custom:storage-bucket"))
-        .map(|val| {
-            val.as_str()
-                .into_iter() // Option<&str> → Iterator<Item=&str>
-                .flat_map(parse_bucket_pairs)
-                .filter_map(|(name, hex): (String, String)| {
-                    let hex_str = hex.strip_prefix("0x").unwrap_or(&hex);
-                    let slot = U256::from_str_radix(hex_str, 16).ok()?;
-                    let slot_hex = short_hex(&alloy_primitives::hex::encode_prefixed(
-                        slot.to_be_bytes::<32>(),
-                    ));
-                    Some((name, slot_hex))
-                })
-                .collect()
-        })
+        .and_then(|obj| obj.get(key))
+        .map(strings_from_json)
+        .unwrap_or_default()
+}
+
+pub fn parse_storage_locations(raw_metadata: Option<&String>) -> Option<Vec<(String, String)>> {
+    let raw = raw_metadata?;
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let devdoc = v.get("output")?.get("devdoc")?;
+
+    let loc_lines = get_custom_tag_lines(devdoc, "custom:storage-location");
+    let out: Vec<(String, String)> = loc_lines
+        .iter()
+        .flat_map(|s| split_erc_formulas(s))
+        .filter_map(|(formula, ns)| derive_slot_hex(&formula, &ns).map(|slot_hex| (ns, slot_hex)))
+        .collect();
+
+    if !out.is_empty() {
+        return Some(out);
+    }
+    if !out.is_empty() { Some(out) } else { None }
 }
 
 fn short_hex(h: &str) -> String {
@@ -718,7 +777,7 @@ mod tests {
                         "kind": "dev",
                         "methods": {
                             "constructor": {
-                                "custom:storage-bucket": "EIP712Storage 0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100NoncesStorage 0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00"
+                                "custom:storage-location": "erc7201:openzeppelin.storage.ERC20erc7201:openzeppelin.storage.AccessControlDefaultAdminRules"
                             }
                         },
                         "version": 1
@@ -734,12 +793,11 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(raw_wrapped).unwrap();
         let inner_meta_str = v.get("metadata").unwrap().to_string();
 
-        let rows =
-            parse_storage_buckets_value(Some(&inner_meta_str)).expect("parser returned None");
+        let rows = parse_storage_locations(Some(&inner_meta_str)).expect("parser returned None");
         assert_eq!(rows.len(), 2, "expected two EIP-7201 buckets");
 
-        assert_eq!(rows[0].0, "EIP712Storage");
-        assert_eq!(rows[1].0, "NoncesStorage");
+        assert_eq!(rows[0].0, "openzeppelin.storage.ERC20");
+        assert_eq!(rows[1].0, "openzeppelin.storage.AccessControlDefaultAdminRules");
 
         let expect_short = |h: &str| {
             let hex_str = h.trim_start_matches("0x");
@@ -749,9 +807,9 @@ mod tests {
         };
 
         let eip712_slot_hex =
-            expect_short("0xa16a46d94261c7517cc8ff89f61c0ce93598e3c849801011dee649a6a557d100");
+            expect_short("0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00");
         let nonces_slot_hex =
-            expect_short("0x5ab42ced628888259c08ac98db1eb0cf702fc1501344311d8b100cd1bfe4bb00");
+            expect_short("0xeef3dac4538c82c8ace4063ab0acd2d15cdb5883aa1dff7c2673abb3d8698400");
 
         assert_eq!(rows[0].1, eip712_slot_hex);
         assert_eq!(rows[1].1, nonces_slot_hex);
