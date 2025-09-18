@@ -140,10 +140,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
+    /// Whether to enable Celo precompiles.
+    #[arg(long)]
     #[serde(skip)]
-    pub odyssey: bool,
+    pub celo: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -170,8 +170,8 @@ impl Provider for EvmArgs {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
-        if self.odyssey {
-            dict.insert("odyssey".to_string(), self.odyssey.into());
+        if self.celo {
+            dict.insert("celo".to_string(), self.celo.into());
         }
 
         if self.always_use_create_2_factory {

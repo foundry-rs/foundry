@@ -527,9 +527,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Whether to enable Odyssey features.
-    #[serde(alias = "alphanet")]
-    pub odyssey: bool,
+    /// Whether to enable Celo precompiles.
+    #[serde(default)]
+    pub celo: bool,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -963,7 +963,9 @@ impl Config {
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
         let mut project = self.create_project(self.cache && !ui_testing, false)?;
         project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection([]);
+            // We have to request something to populate `contracts` in the output and thus
+            // artifacts.
+            *selection = OutputSelection::common_output_selection(["abi".into()]);
         });
         Ok(project)
     }
@@ -1139,7 +1141,7 @@ impl Config {
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(self.evm_version, self.odyssey)
+        evm_spec_id(self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2460,7 +2462,7 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            odyssey: false,
+            celo: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
