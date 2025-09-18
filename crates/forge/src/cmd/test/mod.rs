@@ -316,9 +316,8 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
+            .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
-            .odyssey(evm_opts.odyssey)
-            .celo(evm_opts.celo)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

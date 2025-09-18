@@ -4690,6 +4690,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-coverage",
  "foundry-evm-fuzz",
+ "foundry-evm-precompiles",
  "foundry-evm-traces",
  "indicatif 0.18.0",
  "parking_lot",
@@ -4803,6 +4804,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "revm",
+ "serde",
 ]
 
 [[package]]

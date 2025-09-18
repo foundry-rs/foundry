@@ -23,6 +23,8 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
+use foundry_evm_precompiles::NetworkPrecompiles;
+
 pub mod backend;
 pub mod buffer;
 pub mod constants;
@@ -57,14 +59,9 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
         let _ = msg;
     }
 
-    /// Returns `true` if the current network is Odyssey.
-    fn is_odyssey(&self) -> bool {
-        false
-    }
-
-    /// Returns `true` if the current network is Celo.
-    fn is_celo(&self) -> bool {
-        false
+    /// Returns configured networks.
+    fn get_networks(&self) -> NetworkPrecompiles {
+        NetworkPrecompiles::default()
     }
 
     /// Returns the CREATE2 deployer address.

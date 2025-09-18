@@ -11,14 +11,16 @@ use revm::precompile::{
     secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
     u64_to_address,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod celo;
 
-#[derive(Clone, Debug, Default, Parser, Copy)]
+#[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize)]
 pub struct NetworkPrecompiles {
     /// Enable Optimism network features.
     #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
+    #[serde(skip)]
     pub optimism: bool,
     /// Enable Odyssey network features.
     #[arg(help_heading = "Networks", long, alias = "alphanet")]

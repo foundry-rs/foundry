@@ -14,6 +14,7 @@ use foundry_evm_core::{
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
+use foundry_evm_precompiles::NetworkPrecompiles;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
@@ -65,10 +66,8 @@ pub struct InspectorStackBuilder {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
-    /// Whether to enable Celo precompiles.
-    pub celo: bool,
+    /// Networks with enabled features.
+    pub networks: NetworkPrecompiles,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -163,18 +162,10 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to enable Odyssey features.
-    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
+    /// Set networks with enabled features.
     #[inline]
-    pub fn odyssey(mut self, yes: bool) -> Self {
-        self.odyssey = yes;
-        self
-    }
-
-    /// Set whether to enable Celo precompiles.
-    #[inline]
-    pub fn celo(mut self, yes: bool) -> Self {
-        self.celo = yes;
+    pub fn networks(mut self, networks: NetworkPrecompiles) -> Self {
+        self.networks = networks;
         self
     }
 
@@ -197,8 +188,7 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
-            odyssey,
-            celo,
+            networks,
             wallets,
             create2_deployer,
         } = self;
@@ -226,8 +216,7 @@ impl InspectorStackBuilder {
         stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
-        stack.odyssey(odyssey);
-        stack.celo(celo);
+        stack.networks(networks);
         stack.set_create2_deployer(create2_deployer);
 
         // environment, must come after all of the inspectors
@@ -325,8 +314,7 @@ pub struct InspectorStackInner {
 
     // InspectorExt and other internal data.
     pub enable_isolation: bool,
-    pub odyssey: bool,
-    pub celo: bool,
+    pub networks: NetworkPrecompiles,
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -446,16 +434,10 @@ impl InspectorStack {
         self.enable_isolation = yes;
     }
 
-    /// Set whether to enable Odyssey features.
+    /// Set networks with enabled features.
     #[inline]
-    pub fn odyssey(&mut self, yes: bool) {
-        self.odyssey = yes;
-    }
-
-    /// Set whether to enable Celo precompiles.
-    #[inline]
-    pub fn celo(&mut self, yes: bool) {
-        self.celo = yes;
+    pub fn networks(&mut self, networks: NetworkPrecompiles) {
+        self.networks = networks;
     }
 
     /// Set the CREATE2 deployer address.
@@ -1102,12 +1084,8 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ));
     }
 
-    fn is_odyssey(&self) -> bool {
-        self.inner.odyssey
-    }
-
-    fn is_celo(&self) -> bool {
-        self.inner.celo
+    fn get_networks(&self) -> NetworkPrecompiles {
+        self.inner.networks
     }
 
     fn create2_deployer(&self) -> Address {
@@ -1197,12 +1175,8 @@ impl InspectorExt for InspectorStack {
         self.as_mut().should_use_create2_factory(ecx, inputs)
     }
 
-    fn is_odyssey(&self) -> bool {
-        self.odyssey
-    }
-
-    fn is_celo(&self) -> bool {
-        self.celo
+    fn get_networks(&self) -> NetworkPrecompiles {
+        self.networks
     }
 
     fn create2_deployer(&self) -> Address {

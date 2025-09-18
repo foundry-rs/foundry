@@ -27,6 +27,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_evm_precompiles::NetworkPrecompiles;
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
 use revm::primitives::hardfork::SpecId;
@@ -38,7 +39,6 @@ use std::{
     sync::{Arc, mpsc},
     time::Instant,
 };
-use foundry_evm_precompiles::NetworkPrecompiles;
 
 #[derive(Debug, Clone)]
 pub struct TestContract {
@@ -339,8 +339,7 @@ impl TestRunnerConfig {
         inspector.tracing(self.trace_mode());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.odyssey(self.networks.odyssey);
-        inspector.celo(self.networks.celo);
+        inspector.networks(self.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -369,8 +368,7 @@ impl TestRunnerConfig {
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .odyssey(self.networks.odyssey)
-                    .celo(self.networks.celo)
+                    .networks(self.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.spec_id)
@@ -479,13 +477,8 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn odyssey(mut self, enable: bool) -> Self {
-        self.networks.odyssey = enable;
-        self
-    }
-
-    pub fn celo(mut self, enable: bool) -> Self {
-        self.networks.celo = enable;
+    pub fn networks(mut self, networks: NetworkPrecompiles) -> Self {
+        self.networks = networks;
         self
     }
 
