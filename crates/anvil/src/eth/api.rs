@@ -82,7 +82,7 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::decode::RevertDecoder;
 use futures::{
-    StreamExt,
+    StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
 use parking_lot::RwLock;
@@ -774,8 +774,8 @@ impl EthApi {
             {
                 // if this predates the fork we need to fetch balance, nonce, code individually
                 // because the provider might not support this endpoint
-                let balance = self.balance(address, Some(number.into()));
-                let code = self.get_code(address, Some(number.into()));
+                let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
+                let code = fork.get_code(address, number).map_err(BlockchainError::from);
                 let nonce = self.get_transaction_count(address, Some(number.into()));
                 let (balance, code, nonce) = try_join!(balance, code, nonce)?;
 
