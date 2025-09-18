@@ -37,10 +37,12 @@ pub fn inject_custom_precompiles<DB, I>(
 mod tests {
     use std::{borrow::Cow, convert::Infallible};
 
+    use crate::{PrecompileFactory, inject_custom_precompiles};
     use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm_core::either_evm::EitherEvm;
+    use foundry_evm_precompiles::NetworkPrecompiles;
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
@@ -56,8 +58,6 @@ mod tests {
         },
         primitives::hardfork::SpecId,
     };
-
-    use crate::{PrecompileFactory, inject_custom_precompiles};
 
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
@@ -151,8 +151,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            is_optimism: true,
-            is_celo: false,
+            networks: NetworkPrecompiles::default().optimism(true),
         };
 
         let mut chain = L1BlockInfo::default();

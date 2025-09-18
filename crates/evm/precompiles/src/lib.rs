@@ -5,6 +5,7 @@
 use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, PRECOMPILE_ID_CELO_TRANSFER};
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
 use alloy_primitives::Address;
+use clap::Parser;
 use revm::precompile::{
     PrecompileId,
     secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
@@ -14,12 +15,17 @@ use std::collections::BTreeMap;
 
 pub mod celo;
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Parser, Copy)]
 pub struct NetworkPrecompiles {
-    /// Whether to inject Odyssey precompiles.
-    odyssey: bool,
-    /// Whether to inject Celo precompiles.
-    celo: bool,
+    /// Enable Optimism network features.
+    #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
+    pub optimism: bool,
+    /// Enable Odyssey network features.
+    #[arg(help_heading = "Networks", long, alias = "alphanet")]
+    pub odyssey: bool,
+    /// Enable Celo network features.
+    #[arg(help_heading = "Networks", long)]
+    pub celo: bool,
 }
 
 impl NetworkPrecompiles {
@@ -30,6 +36,11 @@ impl NetworkPrecompiles {
 
     pub fn celo(mut self, celo: bool) -> Self {
         self.celo = celo;
+        self
+    }
+
+    pub fn optimism(mut self, optimism: bool) -> Self {
+        self.optimism = optimism;
         self
     }
 

@@ -842,12 +842,12 @@ impl Backend {
 
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        self.env.read().is_optimism
+        self.env.read().networks.optimism
     }
 
     /// Returns true if Celo features are active
     pub fn is_celo(&self) -> bool {
-        self.env.read().is_celo
+        self.env.read().networks.celo
     }
 
     /// Returns the precompiles for the current spec.
@@ -1259,7 +1259,7 @@ impl Backend {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
 
-        if env.is_optimism {
+        if env.networks.optimism {
             env.tx.enveloped_tx =
                 Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
         }
@@ -1330,9 +1330,7 @@ impl Backend {
             print_traces: self.print_traces,
             call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            celo: self.is_celo(),
+            networks: self.env.read().networks,
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -1420,10 +1418,8 @@ impl Backend {
                     print_logs: self.print_logs,
                     print_traces: self.print_traces,
                     call_trace_decoder: self.call_trace_decoder.clone(),
-                    odyssey: self.odyssey,
+                    networks: self.env.read().networks,
                     precompile_factory: self.precompile_factory.clone(),
-                    optimism: self.is_optimism(),
-                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
                 };

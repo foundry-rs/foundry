@@ -123,9 +123,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
-    pub odyssey: bool,
-    pub optimism: bool,
-    pub celo: bool,
+    pub networks: NetworkPrecompiles,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
@@ -271,11 +269,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
 
-        if self.optimism {
+        if self.networks.optimism {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism, self.celo)
+        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.networks)
     }
 }
 
@@ -357,10 +355,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-            NetworkPrecompiles::default()
-                .odyssey(self.odyssey)
-                .celo(self.celo)
-                .inject(evm.precompiles_mut());
+            self.networks.inject(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
                 inject_custom_precompiles(&mut evm, factory.precompiles());
@@ -472,7 +467,7 @@ where
     DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if env.is_optimism {
+    if env.networks.optimism {
         let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
         let op_context = OpContext {
             journaled_state: {

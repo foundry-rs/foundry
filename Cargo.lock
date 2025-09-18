@@ -4800,6 +4800,7 @@ version = "1.3.6"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
+ "clap",
  "revm",
 ]
 
