@@ -266,3 +266,64 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest!(deal, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+    prj.add_source(
+        "Balance.t.sol",
+        r#"
+import "./test.sol";
+import "./Vm.sol";
+import {console} from "./console.sol";
+
+contract Balance is DSTest {
+Vm constant vm = Vm(HEVM_ADDRESS);
+
+function test_Balance() public {
+  vm.deal(address(this), 64 ether);
+  uint256 newValue = address(this).balance;
+  assertEq(newValue, 64 ether);
+  vm.deal(address(this), 65 ether);
+  uint256 newValue2 = address(this).balance;
+  assertEq(newValue2, 65 ether);
+}
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.env("RUST_LOG", "revive_strategy");
+    let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert_success();
+    res.stderr_eq(str![""]).stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+[COMPILING_FILES] with [RESOLC_VERSION]
+[RESOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
+usually needed in the following cases:
+  1. To detect whether an address belongs to a smart contract.
+  2. To detect whether the deploy code execution has finished.
+Polkadot comes with native account abstraction support (so smart contracts are just accounts
+coverned by code), and you should avoid differentiating between contracts and non-contract
+addresses.
+[FILE]
+[..] INFO revive_strategy::cheatcodes: startup PVM migration initiated
+[..] INFO revive_strategy::cheatcodes: switching to PVM
+[..] INFO revive_strategy::cheatcodes: startup PVM migration completed
+[..] INFO revive_strategy::cheatcodes: cheatcode=dealCall { account: 0x7fa9385be102ac3eac297483dd6233d62b3e1496, newBalance: 64000000000000000000 } using_pvm=true
+[..] INFO revive_strategy::cheatcodes: operation="get_balance" using_pvm=true target=0x7fa9385be102ac3eac297483dd6233d62b3e1496 balance=64000000000000000000
+[..] INFO revive_strategy::cheatcodes: cheatcode=dealCall { account: 0x7fa9385be102ac3eac297483dd6233d62b3e1496, newBalance: 65000000000000000000 } using_pvm=true
+[..] INFO revive_strategy::cheatcodes: operation="get_balance" using_pvm=true target=0x7fa9385be102ac3eac297483dd6233d62b3e1496 balance=65000000000000000000
+
+Ran 1 test for src/Balance.t.sol:Balance
+[PASS] test_Balance() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
