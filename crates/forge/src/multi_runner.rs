@@ -38,6 +38,7 @@ use std::{
     sync::{Arc, mpsc},
     time::Instant,
 };
+use foundry_evm_precompiles::NetworkPrecompiles;
 
 #[derive(Debug, Clone)]
 pub struct TestContract {
@@ -297,10 +298,8 @@ pub struct TestRunnerConfig {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation.
     pub isolation: bool,
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
-    /// Whether to enable Celo precompiles.
-    pub celo: bool,
+    /// Networks with enabled features.
+    pub networks: NetworkPrecompiles,
     /// Whether to exit early on test failure.
     pub fail_fast: FailFast,
 }
@@ -313,8 +312,8 @@ impl TestRunnerConfig {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        self.odyssey = config.odyssey;
-        self.celo = config.celo;
+        self.networks.odyssey = config.odyssey;
+        self.networks.celo = config.celo;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -340,8 +339,8 @@ impl TestRunnerConfig {
         inspector.tracing(self.trace_mode());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.odyssey(self.odyssey);
-        inspector.celo(self.celo);
+        inspector.odyssey(self.networks.odyssey);
+        inspector.celo(self.networks.celo);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -370,8 +369,8 @@ impl TestRunnerConfig {
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .odyssey(self.odyssey)
-                    .celo(self.celo)
+                    .odyssey(self.networks.odyssey)
+                    .celo(self.networks.celo)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.spec_id)
@@ -412,10 +411,8 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
-    /// Whether to enable Celo precompiles.
-    pub celo: bool,
+    /// Networks with enabled features.
+    pub networks: NetworkPrecompiles,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
 }
@@ -432,8 +429,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
-            odyssey: Default::default(),
-            celo: Default::default(),
+            networks: Default::default(),
             fail_fast: false,
         }
     }
@@ -484,12 +480,12 @@ impl MultiContractRunnerBuilder {
     }
 
     pub fn odyssey(mut self, enable: bool) -> Self {
-        self.odyssey = enable;
+        self.networks.odyssey = enable;
         self
     }
 
     pub fn celo(mut self, enable: bool) -> Self {
-        self.celo = enable;
+        self.networks.celo = enable;
         self
     }
 
@@ -571,8 +567,7 @@ impl MultiContractRunnerBuilder {
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
-                odyssey: self.odyssey,
-                celo: self.celo,
+                networks: self.networks,
                 config: self.config,
                 fail_fast: FailFast::new(self.fail_fast),
             },

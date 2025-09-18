@@ -4073,6 +4073,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-evm-core",
+ "foundry-evm-precompiles",
  "foundry-linking",
  "foundry-solang-parser",
  "foundry-test-utils",
