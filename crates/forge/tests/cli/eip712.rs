@@ -1,8 +1,8 @@
 use foundry_config::fs_permissions::PathPermission;
 
 forgetest!(test_eip712, |prj, cmd| {
-    let path = prj.add_source(
-        "Structs",
+    let path = prj.add_test(
+        "Structs.sol",
         r#"
 library Structs {
     struct Foo {
@@ -50,6 +50,12 @@ library Structs2 {
         Structs.Rec rec;
     }
 }
+
+contract DummyTest {
+    function testDummy() public pure {
+        revert("test");
+    }
+}
 "#,
     );
 
@@ -57,7 +63,7 @@ library Structs2 {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-No files changed, compilation skipped
+Compiler run successful!
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
  - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
@@ -150,6 +156,26 @@ Structs.sol > Structs2 > FooBar:
 
 "#]],
     );
+
+    // Testing `solar_project` doesn't mess up cache.
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Structs.sol:DummyTest
+[FAIL: test] testDummy() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Structs.sol:DummyTest
+[FAIL: test] testDummy() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
 });
 
 forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
@@ -180,7 +206,7 @@ library InsideLibrary {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-No files changed, compilation skipped
+Compiler run successful!
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
  - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
