@@ -1122,15 +1122,13 @@ impl<'ast> State<'_, 'ast> {
                 let overflows = rhs_size + lhs_size + 4 >= space_left;
                 let fits_alone = rhs_size + self.config.tab_width < space_left;
 
-                self.s.ibox(
-                    if has_complex_successor(&rhs.kind, false)
-                        && !(matches!(rhs.kind, ast::ExprKind::Call(..)) && overflows && fits_alone)
-                    {
-                        0
-                    } else {
-                        self.ind
-                    },
-                );
+                if (is_call_chain(&rhs.kind, false) && overflows && fits_alone)
+                    || matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
+                {
+                    self.s.ibox(self.ind);
+                } else {
+                    self.s.ibox(0);
+                };
                 self.print_expr(lhs);
                 self.word(" =");
 
@@ -1218,7 +1216,8 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Call(call_expr, call_args) => {
-                self.print_member_or_call_chain(call_expr, false, |s, current_position| {
+                let without_ind = self.named_call_expr;
+                self.print_member_or_call_chain(call_expr, None, |s, _current_position| {
                     let (space_left, expr_size, args_size) = (
                         s.space_left(),
                         s.estimate_size(call_expr.span),
@@ -1231,7 +1230,10 @@ impl<'ast> State<'_, 'ast> {
 
                     s.print_call_args(
                         call_args,
-                        ListFormat::compact().break_cmnts().break_single(break_single),
+                        ListFormat::compact()
+                            .break_cmnts()
+                            .break_single(break_single)
+                            .without_ind(without_ind), // not used in commasep
                     );
                 });
             }
@@ -1325,7 +1327,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Member(member_expr, ident) => {
-                self.print_member_or_call_chain(member_expr, true, |s, _| {
+                self.print_member_or_call_chain(member_expr, Some(ident), |s, _| {
                     s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
                     if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_))
                     {
@@ -1436,7 +1438,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_member_or_call_chain<F>(
         &mut self,
         child_expr: &'ast ast::Expr<'ast>,
-        is_member_link: bool,
+        member_ident: Option<&ast::Ident>, // only members have `Ident`, calls don't
         print_suffix: F,
     ) where
         F: FnOnce(&mut Self, MemberPos),
@@ -1448,19 +1450,22 @@ impl<'ast> State<'_, 'ast> {
             if child_expr.span == current.bottom { MemberPos::Top } else { MemberPos::Middle }
         } else {
             // If this is the start, initialize the cache and the indent box.
-            if is_member_link {
-                let bottom = get_chain_bottom(child_expr).span;
-                self.member_expr = Some(MemberCache { bottom, position: MemberPos::Bottom });
-                self.s.ibox(self.ind);
+            let size = self.estimate_size(child_expr.span)
+                + member_ident.map_or(2, |i| self.estimate_size(i.span) + 2);
+            if !is_call_chain(&child_expr.kind, false) && self.space_left() > size {
+                self.s.ibox(0);
             } else {
-                self.s.cbox(0);
+                self.s.ibox(self.ind);
             }
+
+            let bottom = get_chain_bottom(child_expr).span;
+            self.member_expr = Some(MemberCache { bottom, position: MemberPos::Bottom });
 
             if is_call_chain(&child_expr.kind, true) { MemberPos::Bottom } else { MemberPos::Top }
         };
 
         // Before recursing, update the cache for the child expression.
-        if is_member_link && let Some(current) = self.member_expr {
+        if let (Some(current), Some(_)) = (self.member_expr, member_ident) {
             self.member_expr = Some(MemberCache {
                 bottom: current.bottom,
                 position: if child_expr.span == current.bottom {
@@ -1516,17 +1521,16 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let cache = self.call_expr;
+        let cache = self.named_call_expr;
         if !cache {
-            self.call_expr = true;
+            self.named_call_expr = true;
         };
 
         self.word("{");
         // Use the start position of the first argument's name for comment processing.
         let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
         let ind = if cache { self.ind } else { 0 };
-        let list_format =
-            ListFormat::consistent().break_cmnts().break_single(true).without_ind(cache);
+        let list_format = ListFormat::consistent().break_cmnts().break_single(true);
         self.commasep(
             args,
             list_lo,
@@ -1553,8 +1557,8 @@ impl<'ast> State<'_, 'ast> {
         );
         self.word("}");
 
-        if cache {
-            self.call_expr = false;
+        if !cache {
+            self.named_call_expr = false;
         }
     }
 
