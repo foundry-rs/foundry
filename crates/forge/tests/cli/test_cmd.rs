@@ -863,8 +863,30 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 
 "#]]);
 
-    // Test failure filter should be persisted.
-    assert!(prj.root().join("cache/test-failures").exists());
+    // Test failure filter should be persisted (JSON format).
+    let failures_path = prj.root().join("cache/test-failures");
+    assert!(failures_path.exists());
+    let failures_content = std::fs::read_to_string(&failures_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&failures_content).unwrap();
+    let arr = parsed.as_array().expect("failures json should be an array");
+    assert!(!arr.is_empty(), "failures json must not be empty");
+    // Find the entry for ReplayFailuresTest and ensure both failures are listed
+    let mut found = false;
+    for entry in arr {
+        let suite = entry.get("test_suite").and_then(|v| v.as_str()).unwrap_or_default();
+        if suite == "ReplayFailuresTest" {
+            found = true;
+            let fails = entry
+                .get("failures")
+                .and_then(|v| v.as_array())
+                .expect("failures field must be an array");
+            let names: Vec<String> =
+                fails.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            assert!(names.contains(&"testB".to_string()));
+            assert!(names.contains(&"testD".to_string()));
+        }
+    }
+    assert!(found, "expected entry for ReplayFailuresTest in failures json");
 
     // Perform only the 2 failing tests from last run.
     cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
@@ -885,6 +907,70 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10693>
+forgetest_init!(should_replay_failures_only_correct_contract, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // Create two contracts with tests that have the same name
+    prj.add_test(
+        "Contract1.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Contract1Test is Test {
+    function testSameName() public pure {
+        require(2 > 1); // This should pass
+    }
+}
+     "#,
+    );
+
+    prj.add_test(
+        "Contract2.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Contract2Test is Test {
+    function testSameName() public pure {
+        require(1 > 2, "testSameName failed"); // This should fail
+    }
+}
+     "#,
+    );
+
+    // Run initial test - should have 1 failure and 1 pass
+    cmd.args(["test"]).assert_failure();
+
+    // Test failure filter should be persisted.
+    assert!(prj.root().join("cache/test-failures").exists());
+
+    // This is the key test: --rerun should NOT run both contracts with same test name
+    // Before the fix, this would run 2 tests (both testSameName functions)
+    // After the fix, this should run only 1 test (only the specific failing one)
+    let output = cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
+
+    // Verify that only 1 test is executed (not 2)
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("0 tests passed, 1 failed, 0 skipped (1 total tests)"),
+        "Expected exactly 1 test to be executed (the failing one), but got different count in stdout: {stdout}"
+    );
+
+    // Additional verification: Parse JSON rerun cache and ensure only Contract2Test is recorded
+    let failures_content = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&failures_content).unwrap();
+    let arr = parsed.as_array().expect("failures json should be an array");
+    assert_eq!(arr.len(), 1, "expected exactly one suite with failures recorded");
+    let suite =
+        arr[0].get("test_suite").and_then(|v| v.as_str()).expect("test_suite must be a string");
+    assert_eq!(suite, "Contract2Test");
+    let fails =
+        arr[0].get("failures").and_then(|v| v.as_array()).expect("failures field must be an array");
+    let names: Vec<String> =
+        fails.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+    assert_eq!(names, vec!["testSameName".to_string()]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9285>

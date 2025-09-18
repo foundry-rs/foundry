@@ -12,7 +12,9 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
-use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
+use foundry_common::{
+    TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress, get_contract_name,
+};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
@@ -366,11 +368,15 @@ impl<'a> ContractRunner<'a> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
+        let contract_name = get_contract_name(self.name);
         let functions = self
             .contract
             .abi
             .functions()
-            .filter(|func| filter.matches_test_function(func))
+            .filter(|func| {
+                func.is_any_test()
+                    && filter.matches_qualified_test(contract_name, func.name.as_str())
+            })
             .collect::<Vec<_>>();
         debug!(
             "Found {} test functions out of {} in {:?}",
