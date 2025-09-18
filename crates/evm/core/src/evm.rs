@@ -61,7 +61,7 @@ pub fn new_evm_with_inspector<'db, I: InspectorExt>(
         ),
     };
 
-    evm.inspector().get_networks().inject(evm.precompiles_mut());
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 
@@ -80,7 +80,7 @@ pub fn new_evm_with_existing_context<'a>(
         ),
     };
 
-    evm.inspector().get_networks().inject(evm.precompiles_mut());
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 

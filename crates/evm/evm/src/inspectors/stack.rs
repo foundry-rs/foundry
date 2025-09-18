@@ -14,7 +14,7 @@ use foundry_evm_core::{
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
@@ -67,7 +67,7 @@ pub struct InspectorStackBuilder {
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
     /// Networks with enabled features.
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -164,7 +164,7 @@ impl InspectorStackBuilder {
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(mut self, networks: NetworkPrecompiles) -> Self {
+    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }
@@ -314,7 +314,7 @@ pub struct InspectorStackInner {
 
     // InspectorExt and other internal data.
     pub enable_isolation: bool,
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -436,7 +436,7 @@ impl InspectorStack {
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(&mut self, networks: NetworkPrecompiles) {
+    pub fn networks(&mut self, networks: NetworkConfigs) {
         self.networks = networks;
     }
 
@@ -1084,7 +1084,7 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ));
     }
 
-    fn get_networks(&self) -> NetworkPrecompiles {
+    fn get_networks(&self) -> NetworkConfigs {
         self.inner.networks
     }
 
@@ -1175,7 +1175,7 @@ impl InspectorExt for InspectorStack {
         self.as_mut().should_use_create2_factory(ecx, inputs)
     }
 
-    fn get_networks(&self) -> NetworkPrecompiles {
+    fn get_networks(&self) -> NetworkConfigs {
         self.networks
     }
 

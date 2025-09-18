@@ -1,7 +1,7 @@
 use alloy_evm::EvmEnv;
 use foundry_evm::EnvMut;
 use foundry_evm_core::AsEnvMut;
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use op_revm::OpTransaction;
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
 
@@ -10,7 +10,7 @@ use revm::context::{BlockEnv, CfgEnv, TxEnv};
 pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: OpTransaction<TxEnv>,
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
 }
 
 /// Helper container type for [`EvmEnv`] and [`OpTransaction<TxEnv>`].
@@ -19,7 +19,7 @@ impl Env {
         cfg: CfgEnv,
         block: BlockEnv,
         tx: OpTransaction<TxEnv>,
-        networks: NetworkPrecompiles,
+        networks: NetworkConfigs,
     ) -> Self {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, networks }
     }

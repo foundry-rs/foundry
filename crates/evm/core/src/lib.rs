@@ -23,7 +23,7 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 
 pub mod backend;
 pub mod buffer;
@@ -60,8 +60,8 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
     }
 
     /// Returns configured networks.
-    fn get_networks(&self) -> NetworkPrecompiles {
-        NetworkPrecompiles::default()
+    fn get_networks(&self) -> NetworkConfigs {
+        NetworkConfigs::default()
     }
 
     /// Returns the CREATE2 deployer address.

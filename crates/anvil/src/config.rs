@@ -66,7 +66,7 @@ use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -196,7 +196,7 @@ pub struct NodeConfig {
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Networks to enable features for.
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -1028,7 +1028,7 @@ impl NodeConfig {
 
     /// Sets whether to enable Odyssey support
     #[must_use]
-    pub fn with_networks(mut self, networks: NetworkPrecompiles) -> Self {
+    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }

@@ -1,6 +1,6 @@
 [package]
-name = "foundry-evm-precompiles"
-description = "Custom precompiles definitions"
+name = "foundry-evm-networks"
+description = "Custom network features, like precompiles and custom tx types"
 
 version.workspace = true
 edition.workspace = true

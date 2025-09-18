@@ -842,11 +842,6 @@ impl Backend {
         self.env.read().networks.optimism
     }
 
-    /// Returns true if Celo features are active
-    pub fn is_celo(&self) -> bool {
-        self.env.read().networks.celo
-    }
-
     /// Returns the precompiles for the current spec.
     pub fn precompiles(&self) -> BTreeMap<String, Address> {
         let spec_id = self.env.read().evm_env.cfg_env.spec;
@@ -858,7 +853,7 @@ impl Backend {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map.extend(self.env.read().networks.get());
+        precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
             for (precompile, _) in &factory.precompiles() {
@@ -1221,7 +1216,7 @@ impl Backend {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        self.env.read().networks.inject(evm.precompiles_mut());
+        self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
             inject_custom_precompiles(&mut evm, factory.precompiles());

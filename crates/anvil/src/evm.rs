@@ -42,7 +42,7 @@ mod tests {
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm_core::either_evm::EitherEvm;
-    use foundry_evm_precompiles::NetworkPrecompiles;
+    use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
@@ -151,7 +151,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            networks: NetworkPrecompiles::default().optimism(true),
+            networks: NetworkConfigs::with_optimism(),
         };
 
         let mut chain = L1BlockInfo::default();

@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 pub mod celo;
 
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize)]
-pub struct NetworkPrecompiles {
+pub struct NetworkConfigs {
     /// Enable Optimism network features.
     #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
     #[serde(skip)]
@@ -30,7 +30,7 @@ pub struct NetworkPrecompiles {
     pub celo: bool,
 }
 
-impl NetworkPrecompiles {
+impl NetworkConfigs {
     pub fn odyssey(mut self, odyssey: bool) -> Self {
         self.odyssey = odyssey;
         self
@@ -41,13 +41,12 @@ impl NetworkPrecompiles {
         self
     }
 
-    pub fn optimism(mut self, optimism: bool) -> Self {
-        self.optimism = optimism;
-        self
+    pub fn with_optimism() -> Self {
+        Self { optimism: true, ..Default::default() }
     }
 
     /// Inject precompiles for configured networks.
-    pub fn inject(self, precompiles: &mut PrecompilesMap) {
+    pub fn inject_precompiles(self, precompiles: &mut PrecompilesMap) {
         if self.odyssey {
             precompiles.apply_precompile(P256VERIFY.address(), move |_| {
                 Some(DynPrecompile::from(move |input: PrecompileInput<'_>| {
@@ -64,7 +63,7 @@ impl NetworkPrecompiles {
     }
 
     /// Returns precompiles for configured networks.
-    pub fn get(self) -> BTreeMap<String, Address> {
+    pub fn precompiles(self) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.odyssey {
             precompiles.insert(

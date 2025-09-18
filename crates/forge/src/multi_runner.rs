@@ -27,7 +27,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
 use revm::primitives::hardfork::SpecId;
@@ -299,7 +299,7 @@ pub struct TestRunnerConfig {
     /// Whether to enable call isolation.
     pub isolation: bool,
     /// Networks with enabled features.
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure.
     pub fail_fast: FailFast,
 }
@@ -410,7 +410,7 @@ pub struct MultiContractRunnerBuilder {
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Networks with enabled features.
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
 }
@@ -477,7 +477,7 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn networks(mut self, networks: NetworkPrecompiles) -> Self {
+    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }

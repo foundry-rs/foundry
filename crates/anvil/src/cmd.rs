@@ -12,7 +12,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
@@ -605,7 +605,7 @@ pub struct AnvilEvmArgs {
     pub memory_limit: Option<u64>,
 
     #[command(flatten)]
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

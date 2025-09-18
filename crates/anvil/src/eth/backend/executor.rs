@@ -36,7 +36,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
@@ -123,7 +123,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
-    pub networks: NetworkPrecompiles,
+    pub networks: NetworkConfigs,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
@@ -355,7 +355,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-            self.networks.inject(evm.precompiles_mut());
+            self.networks.inject_precompiles(evm.precompiles_mut());
 
             if let Some(factory) = &self.precompile_factory {
                 inject_custom_precompiles(&mut evm, factory.precompiles());

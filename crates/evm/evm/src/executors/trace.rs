@@ -8,7 +8,7 @@ use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, utils::evm_spec_id};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-use foundry_evm_precompiles::NetworkPrecompiles;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
 use revm::{primitives::hardfork::SpecId, state::Bytecode};
 use std::ops::{Deref, DerefMut};
@@ -24,7 +24,7 @@ impl TracingExecutor {
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
-        networks: NetworkPrecompiles,
+        networks: NetworkConfigs,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
@@ -79,7 +79,7 @@ impl TracingExecutor {
     pub async fn get_fork_material(
         config: &Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, NetworkPrecompiles)> {
+    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, NetworkConfigs)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
