@@ -38,9 +38,6 @@ pub struct ProjectCompiler {
     /// The root of the project.
     project_root: PathBuf,
 
-    /// Whether we are going to verify the contracts after compilation.
-    verify: Option<bool>,
-
     /// Whether to also print contract names.
     print_names: Option<bool>,
 
@@ -76,7 +73,6 @@ impl ProjectCompiler {
     pub fn new() -> Self {
         Self {
             project_root: PathBuf::new(),
-            verify: None,
             print_names: None,
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
@@ -85,13 +81,6 @@ impl ProjectCompiler {
             files: Vec::new(),
             dynamic_test_linking: false,
         }
-    }
-
-    /// Sets whether we are going to verify the contracts after compilation.
-    #[inline]
-    pub fn verify(mut self, yes: bool) -> Self {
-        self.verify = Some(yes);
-        self
     }
 
     /// Sets whether to print contract names.
@@ -504,8 +493,6 @@ pub struct ContractInfo {
 /// Compiles target file path.
 ///
 /// If `quiet` no solc related output will be emitted to stdout.
-///
-/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler<CompilerContract = Contract>>(

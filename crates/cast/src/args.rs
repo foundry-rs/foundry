@@ -191,6 +191,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
+        CastSubcommand::AbiEncodeEvent { sig, args } => {
+            let log_data = SimpleCast::abi_encode_event(&sig, &args)?;
+            for (i, topic) in log_data.topics().iter().enumerate() {
+                sh_println!("[topic{}]: {}", i, topic)?;
+            }
+            if !log_data.data.is_empty() {
+                sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
+            }
+        }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
             let raw_hex = if let Some(file_path) = file {
                 let contents = fs::read_to_string(&file_path)?;
@@ -739,7 +748,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::RecoverAuthority { auth } => {
-            let auth: SignedAuthorization = serde_json::from_str(&auth).unwrap();
+            let auth: SignedAuthorization = serde_json::from_str(&auth)?;
             sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,

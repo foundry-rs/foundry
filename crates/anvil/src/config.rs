@@ -458,7 +458,6 @@ impl Default for NodeConfig {
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
-            // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             eth_rpc_url: None,
             fork_choice: None,
