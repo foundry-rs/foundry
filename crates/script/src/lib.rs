@@ -648,7 +648,7 @@ impl ScriptConfig {
             .inspectors(|stack| {
                 stack
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
-                    .odyssey(self.evm_opts.odyssey)
+                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.config.evm_spec_id())

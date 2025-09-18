@@ -305,7 +305,7 @@ impl<'a> Linker<'a> {
     ) -> Result<ArtifactContracts<CompactContractBytecodeCow<'a>>, LinkerError> {
         self.contracts
             .par_iter()
-            .map(|(id, _)| Ok((id.clone(), self.link(id, libraries)?.into())))
+            .map(|(id, _)| Ok((id.clone(), self.link(id, libraries)?)))
             .collect::<Result<_, _>>()
             .map(ArtifactContracts)
     }
