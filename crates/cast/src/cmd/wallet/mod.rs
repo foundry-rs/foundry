@@ -147,6 +147,15 @@ pub enum WalletSubcommands {
         ///
         /// Treats 0x-prefixed strings as hex encoded bytes.
         /// Non 0x-prefixed strings are treated as raw input message.
+        ///
+        /// The message will be prefixed with the Ethereum Signed Message header and hashed before
+        /// signing, unless `--no-hash` is provided.
+        ///
+        /// Typed data can be provided as a json string or a file name.
+        /// Use --data flag to denote the message is a string of typed data.
+        /// Use --data --from-file to denote the message is a file name containing typed data.
+        /// The data will be combined and hashed using the EIP712 specification before signing.
+        /// The data should be formatted as JSON.
         message: String,
 
         /// The signature to verify.
@@ -155,6 +164,18 @@ pub enum WalletSubcommands {
         /// The address of the message signer.
         #[arg(long, short)]
         address: Address,
+
+        /// Treat the message as JSON typed data.
+        #[arg(long)]
+        data: bool,
+
+        /// Treat the message as a file containing JSON typed data. Requires `--data`.
+        #[arg(long, requires = "data")]
+        from_file: bool,
+
+        /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
+        #[arg(long, conflicts_with = "data")]
+        no_hash: bool,
     },
 
     /// Import a private key into an encrypted keystore.
@@ -563,8 +584,25 @@ impl WalletSubcommands {
                     sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
                 }
             }
-            Self::Verify { message, signature, address } => {
-                let recovered_address = Self::recover_address_from_message(&message, &signature)?;
+            Self::Verify { message, signature, address, data, from_file, no_hash } => {
+                let recovered_address = if data {
+                    let typed_data: TypedData = if from_file {
+                        // data is a file name, read json from file
+                        foundry_common::fs::read_json_file(message.as_ref())?
+                    } else {
+                        // data is a json string
+                        serde_json::from_str(&message)?
+                    };
+                    Self::recover_address_from_typed_data(&typed_data, &signature)?
+                } else if no_hash {
+                    Self::recover_address_from_message_no_hash(
+                        &hex::decode(&message)?[..].try_into()?,
+                        &signature,
+                    )?
+                } else {
+                    Self::recover_address_from_message(&message, &signature)?
+                };
+
                 if address == recovered_address {
                     sh_println!("Validation succeeded. Address {address} signed this message.")?;
                 } else {
@@ -810,6 +848,22 @@ flag to set your key via:
         Ok(signature.recover_address_from_msg(message)?)
     }
 
+    /// Recovers an address from the specified message and signature.
+    fn recover_address_from_message_no_hash(
+        prehash: &B256,
+        signature: &Signature,
+    ) -> Result<Address> {
+        Ok(signature.recover_address_from_prehash(prehash)?)
+    }
+
+    /// Recovers an address from the specified EIP-712 typed data and signature.
+    fn recover_address_from_typed_data(
+        typed_data: &TypedData,
+        signature: &Signature,
+    ) -> Result<Address> {
+        Ok(signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?)
+    }
+
     /// Strips the 0x prefix from a hex string and decodes it to bytes.
     ///
     /// Treats the string as raw bytes if it doesn't start with 0x.
@@ -824,7 +878,7 @@ flag to set your key via:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy_primitives::{address, keccak256};
     use std::str::FromStr;
 
     #[test]
@@ -860,6 +914,28 @@ mod tests {
         let address = address!("0x28A4F420a619974a2393365BCe5a7b560078Cc13");
         let recovered_address =
             WalletSubcommands::recover_address_from_message(message, &signature);
+        assert!(recovered_address.is_ok());
+        assert_eq!(address, recovered_address.unwrap());
+    }
+
+    #[test]
+    fn can_verify_signed_hex_message_no_hash() {
+        let prehash = keccak256("hello");
+        let signature = Signature::from_str("433ec3d37e4f1253df15e2dea412fed8e915737730f74b3dfb1353268f932ef5557c9158e0b34bce39de28d11797b42e9b1acb2749230885fe075aedc3e491a41b").unwrap();
+        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
+        let recovered_address =
+            WalletSubcommands::recover_address_from_message_no_hash(&prehash, &signature);
+        assert!(recovered_address.is_ok());
+        assert_eq!(address, recovered_address.unwrap());
+    }
+
+    #[test]
+    fn can_verify_signed_typed_data() {
+        let typed_data: TypedData = serde_json::from_str(r#"{"domain":{"name":"Test","version":"1","chainId":1,"verifyingContract":"0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"},"message":{"value":123},"primaryType":"Data","types":{"Data":[{"name":"value","type":"uint256"}]}}"#).unwrap();
+        let signature = Signature::from_str("0285ff83b93bd01c14e201943af7454fe2bc6c98be707a73888c397d6ae3b0b92f73ca559f81cbb19fe4e0f1dc4105bd7b647c6a84b033057977cf2ec982daf71b").unwrap();
+        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
+        let recovered_address =
+            WalletSubcommands::recover_address_from_typed_data(&typed_data, &signature);
         assert!(recovered_address.is_ok());
         assert_eq!(address, recovered_address.unwrap());
     }
