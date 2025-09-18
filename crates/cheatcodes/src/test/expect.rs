@@ -822,7 +822,7 @@ pub(crate) fn handle_expect_emit(
             // Fail immediately
             interpreter.bytecode.set_action(InterpreterAction::new_return(
                 InstructionResult::Revert,
-                Error::encode("log emitted 1 times, expected 0"),
+                Error::encode("log emitted 1 time, expected 0"),
                 interpreter.gas,
             ));
             return;
