@@ -103,7 +103,6 @@ use foundry_evm::{
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
-use foundry_evm_precompiles::NetworkPrecompiles;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -236,7 +235,6 @@ pub struct Backend {
     print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
     call_trace_decoder: Arc<CallTraceDecoder>,
-    odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -374,7 +372,6 @@ impl Backend {
             print_logs,
             print_traces,
             call_trace_decoder,
-            odyssey,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -861,8 +858,7 @@ impl Backend {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map
-            .extend(NetworkPrecompiles::default().odyssey(self.odyssey).celo(self.is_celo()).get());
+        precompiles_map.extend(self.env.read().networks.get());
 
         if let Some(factory) = &self.precompile_factory {
             for (precompile, _) in &factory.precompiles() {
@@ -1225,10 +1221,7 @@ impl Backend {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        NetworkPrecompiles::default()
-            .odyssey(self.odyssey)
-            .celo(self.is_celo())
-            .inject(evm.precompiles_mut());
+        self.env.read().networks.inject(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
             inject_custom_precompiles(&mut evm, factory.precompiles());
@@ -2774,9 +2767,7 @@ impl Backend {
             print_traces: self.print_traces,
             call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            celo: self.is_celo(),
+            networks: self.env.read().networks,
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
