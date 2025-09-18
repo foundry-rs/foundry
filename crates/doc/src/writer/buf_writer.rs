@@ -93,7 +93,7 @@ impl BufWriter {
     /// If the content contains markdown lists, it formats them correctly.
     /// Otherwise, it writes the content in italics.
     pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
-        for line in text.lines.iter() {
+        for line in text.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("- ") {
                 // SAFETY: we already checked that the line starts with the prefix
