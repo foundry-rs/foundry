@@ -66,6 +66,7 @@ use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -188,18 +189,14 @@ pub struct NodeConfig {
     pub disable_default_create2_deployer: bool,
     /// Disable pool balance checks
     pub disable_pool_balance_checks: bool,
-    /// Enable Optimism deposit transaction
-    pub enable_optimism: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Odyssey features.
-    pub odyssey: bool,
-    /// Enable Celo features.
-    pub celo: bool,
+    /// Networks to enable features for.
+    pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -491,12 +488,10 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
-            enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            odyssey: false,
-            celo: false,
+            networks: Default::default(),
             silent: false,
             cache_path: None,
         }
@@ -540,13 +535,10 @@ impl NodeConfig {
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::default());
-        }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.enable_optimism {
+        if self.networks.optimism {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
@@ -999,7 +991,7 @@ impl NodeConfig {
     /// Sets whether to enable optimism support
     #[must_use]
     pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.enable_optimism = enable_optimism;
+        self.networks.optimism = enable_optimism;
         self
     }
 
@@ -1024,20 +1016,20 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
+    /// Enable features for provided networks.
     #[must_use]
-    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
-        self.odyssey = odyssey;
+    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+        self.networks = networks;
         self
     }
 
     /// Sets whether to enable Celo support
     #[must_use]
     pub fn with_celo(mut self, celo: bool) -> Self {
-        self.celo = celo;
+        self.networks.celo = celo;
         if celo {
             // Celo requires Optimism support
-            self.enable_optimism = true;
+            self.networks.optimism = true;
         }
         self
     }
@@ -1099,8 +1091,7 @@ impl NodeConfig {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()
             },
-            self.enable_optimism,
-            self.celo,
+            self.networks,
         );
 
         let fees = FeeManager::new(
@@ -1163,7 +1154,6 @@ impl NodeConfig {
             self.print_logs,
             self.print_traces,
             Arc::new(decoder_builder.build()),
-            self.odyssey,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,

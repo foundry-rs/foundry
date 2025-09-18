@@ -40,16 +40,12 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
-    TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, Signature, TxHash, TxKind, U64, U256,
     map::{HashMap, HashSet},
-};
-use alloy_provider::utils::{
-    EIP1559_FEE_ESTIMATION_PAST_BLOCKS, EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
-    eip1559_default_estimator,
 };
 use alloy_rpc_types::{
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -78,7 +74,7 @@ use anvil_core::{
             PendingTransaction, ReceiptResponse, TypedTransaction, TypedTransactionRequest,
             transaction_request_to_typed,
         },
-        wallet::{WalletCapabilities, WalletError},
+        wallet::WalletCapabilities,
     },
     types::{ReorgOptions, TransactionData},
 };
@@ -91,7 +87,6 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::{
-    bytecode::Bytecode,
     context::BlockEnv,
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
@@ -509,9 +504,6 @@ impl EthApi {
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
             EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
-            EthRequest::WalletSendTransaction(tx) => {
-                self.wallet_send_transaction(*tx).await.to_rpc_result()
-            }
             EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
             EthRequest::AnvilSetExecutor(executor_pk) => {
                 self.anvil_set_executor(executor_pk).to_rpc_result()
@@ -2819,111 +2811,6 @@ impl EthApi {
     pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
         node_info!("wallet_getCapabilities");
         Ok(self.backend.get_capabilities())
-    }
-
-    pub async fn wallet_send_transaction(
-        &self,
-        mut request: WithOtherFields<TransactionRequest>,
-    ) -> Result<TxHash> {
-        node_info!("wallet_sendTransaction");
-
-        // Validate the request
-        // reject transactions that have a non-zero value to prevent draining the executor.
-        if request.value.is_some_and(|val| val > U256::ZERO) {
-            return Err(WalletError::ValueNotZero.into());
-        }
-
-        // reject transactions that have from set, as this will be the executor.
-        if request.from.is_some() {
-            return Err(WalletError::FromSet.into());
-        }
-
-        // reject transaction requests that have nonce set, as this is managed by the executor.
-        if request.nonce.is_some() {
-            return Err(WalletError::NonceSet.into());
-        }
-
-        let capabilities = self.backend.get_capabilities();
-        let valid_delegations: &[Address] = capabilities
-            .get(self.chain_id())
-            .map(|caps| caps.delegation.addresses.as_ref())
-            .unwrap_or_default();
-
-        if let Some(authorizations) = &request.authorization_list
-            && authorizations.iter().any(|auth| !valid_delegations.contains(&auth.address))
-        {
-            return Err(WalletError::InvalidAuthorization.into());
-        }
-
-        // validate the destination address
-        match (request.authorization_list.is_some(), request.to) {
-            // if this is an eip-1559 tx, ensure that it is an account that delegates to a
-            // whitelisted address
-            (false, Some(TxKind::Call(addr))) => {
-                let acc = self.backend.get_account(addr).await?;
-
-                let delegated_address = acc
-                    .code
-                    .map(|code| match code {
-                        Bytecode::Eip7702(c) => c.address(),
-                        _ => Address::ZERO,
-                    })
-                    .unwrap_or_default();
-
-                // not a whitelisted address, or not an eip-7702 bytecode
-                if delegated_address == Address::ZERO
-                    || !valid_delegations.contains(&delegated_address)
-                {
-                    return Err(WalletError::IllegalDestination.into());
-                }
-            }
-            // if it's an eip-7702 tx, let it through
-            (true, _) => (),
-            // create tx's disallowed
-            _ => return Err(WalletError::IllegalDestination.into()),
-        }
-
-        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
-
-        let from = NetworkWallet::<Ethereum>::default_signer_address(&wallet);
-
-        let nonce = self.get_transaction_count(from, Some(BlockId::latest())).await?;
-
-        request.nonce = Some(nonce);
-
-        let chain_id = self.chain_id();
-
-        request.chain_id = Some(chain_id);
-
-        request.from = Some(from);
-
-        let gas_limit_fut =
-            self.estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default());
-
-        let fees_fut = self.fee_history(
-            U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
-            BlockNumber::Latest,
-            vec![EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
-        );
-
-        let (gas_limit, fees) = tokio::join!(gas_limit_fut, fees_fut);
-
-        let gas_limit = gas_limit?;
-        let fees = fees?;
-
-        request.gas = Some(gas_limit.to());
-
-        let base_fee = fees.latest_block_base_fee().unwrap_or_default();
-
-        let estimation = eip1559_default_estimator(base_fee, &fees.reward.unwrap_or_default());
-
-        request.max_fee_per_gas = Some(estimation.max_fee_per_gas);
-        request.max_priority_fee_per_gas = Some(estimation.max_priority_fee_per_gas);
-        request.gas_price = None;
-
-        let envelope = request.build(&wallet).await.map_err(|_| WalletError::InternalError)?;
-
-        self.send_raw_transaction(envelope.encoded_2718().into()).await
     }
 
     /// Add an address to the delegation capability of wallet.

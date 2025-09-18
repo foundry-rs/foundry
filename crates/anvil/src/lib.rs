@@ -55,7 +55,7 @@ pub use alloy_hardforks::EthereumHardfork;
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{PrecompileFactory, inject_precompiles};
+pub use evm::{PrecompileFactory, inject_custom_precompiles};
 
 /// support for polling filters
 pub mod filter;
