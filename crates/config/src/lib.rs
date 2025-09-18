@@ -963,7 +963,9 @@ impl Config {
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
         let mut project = self.create_project(self.cache && !ui_testing, false)?;
         project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection([]);
+            // We have to request something to populate `contracts` in the output and thus
+            // artifacts.
+            *selection = OutputSelection::common_output_selection(["abi".into()]);
         });
         Ok(project)
     }
