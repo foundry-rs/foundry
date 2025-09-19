@@ -469,7 +469,7 @@ mod tests {
                 [profile.default]
 
                 [etherscan]
-                mumbai = { key = "dummykey", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+                amoy = { key = "dummykey", chain = 80002, url = "https://amoy.polygonscan.com/" }
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -480,7 +480,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--chain",
-            "mumbai",
+            "amoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
@@ -489,7 +489,7 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://amoy.polygonscan.com/api");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -498,7 +498,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--chain",
-            "mumbai",
+            "amoy",
             "--verifier-url",
             "https://verifier-url.com/",
             "--root",
@@ -522,7 +522,7 @@ mod tests {
                 [profile.default]
 
                 [etherscan]
-                mumbai = { key = "dummykey", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+                amoy = { key = "dummykey", chain = 80002, url = "https://amoy.polygonscan.com/" }
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -535,7 +535,7 @@ mod tests {
             "--verifier",
             "etherscan",
             "--chain",
-            "mumbai",
+            "amoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
@@ -556,7 +556,7 @@ mod tests {
             "--verifier",
             "etherscan",
             "--chain",
-            "mumbai",
+            "amoy",
             "--verifier-url",
             "https://verifier-url.com/",
             "--root",
