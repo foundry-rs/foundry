@@ -42,6 +42,9 @@ tracing.workspace = true
 yansi.workspace = true
 chrono.workspace = true
 
+# case conversion
+heck = "0.4"
+
 # bin
 forge-doc.workspace = true
 forge-fmt.workspace = true
