@@ -1932,6 +1932,12 @@ impl Backend {
                             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
+
+                            inspector.print_logs();
+                            if self.print_traces {
+                                inspector.print_traces(self.call_trace_decoder.clone());
+                            }
+
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
 
                             Ok(tracing_inspector
