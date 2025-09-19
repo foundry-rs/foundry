@@ -146,11 +146,7 @@ pub struct SourceLocation {
 /// Computes line offset positions in source content.
 fn compute_line_offsets(content: &str) -> Vec<usize> {
     let mut offsets = vec![0];
-    for (idx, ch) in content.char_indices() {
-        if ch == '\n' {
-            offsets.push(idx);
-        }
-    }
+    offsets.extend(memchr::memchr_iter(b'\n', content.as_bytes()));
     offsets
 }
 
