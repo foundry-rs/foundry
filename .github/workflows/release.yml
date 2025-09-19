@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       pull-requests: read
     outputs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
@@ -329,7 +329,7 @@ jobs:
     needs: [prepare, release-docker, release, cleanup]
     if: failure()
     permissions:
-      contents: write
+      contents: read
       issues: write
     steps:
       - uses: actions/checkout@v5
