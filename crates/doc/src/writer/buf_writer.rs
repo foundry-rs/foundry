@@ -95,9 +95,7 @@ impl BufWriter {
     pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
         for line in text.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("- ") {
-                // SAFETY: we already checked that the line starts with the prefix
-                let content = trimmed.strip_prefix("- ").unwrap();
+            if let Some(content) = trimmed.strip_prefix("- ") {
                 writeln!(self.buf, "- *{}*", content)?;
             } else if !trimmed.is_empty() {
                 writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
