@@ -862,23 +862,26 @@ impl TestCommand {
     }
 
     /// Set the environment variable `k` to value `v` for the command.
-    pub fn env(&mut self, k: impl AsRef<OsStr>, v: impl AsRef<OsStr>) {
+    pub fn env(&mut self, k: impl AsRef<OsStr>, v: impl AsRef<OsStr>) -> &mut Self {
         self.cmd.env(k, v);
+        self
     }
 
     /// Set the environment variable `k` to value `v` for the command.
-    pub fn envs<I, K, V>(&mut self, envs: I)
+    pub fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
         self.cmd.envs(envs);
+        self
     }
 
     /// Unsets the environment variable `k` for the command.
-    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
+    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) -> &mut Self {
         self.cmd.env_remove(k);
+        self
     }
 
     /// Set the working directory for this command.

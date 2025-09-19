@@ -1,38 +1,24 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{
-    opts::{BuildOpts, configure_pcx_from_solc},
-    utils::LoadConfig,
-};
-use foundry_common::{TYPE_BINDING_PREFIX, fs};
-use foundry_compilers::{
-    CompilerInput, Graph, Project,
-    artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParser},
-    solc::{SolcLanguage, SolcVersionedInput},
-};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_common::{TYPE_BINDING_PREFIX, errors::convert_solar_errors, fs};
+use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::Config;
 use itertools::Itertools;
 use path_slash::PathExt;
-use rayon::prelude::*;
-use semver::Version;
-use solar::parse::{
-    Parser as SolarParser,
-    ast::{self, Arena, FunctionKind, Span, VarMut, interface::source_map::FileName, visit::Visit},
-    interface::Session,
+use solar::{
+    ast::VisitMut,
+    parse::ast::{self, FunctionKind, VarMut},
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     ops::ControlFlow,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 foundry_config::impl_figment_convert!(BindJsonArgs, build);
-
-const JSON_BINDINGS_PLACEHOLDER: &str = "library JsonBindings {}";
 
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
@@ -48,83 +34,19 @@ pub struct BindJsonArgs {
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let project = config.ephemeral_project()?;
-        let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
-        // Step 1: Read and preprocess sources
-        let sources = project.paths.read_input_files()?;
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+        // We want to avoid analyzing the project with solc. See `PreprocessorVisitor`.
+        let mut project = config.solar_project()?;
+        project.settings.solc.stop_after = Some("parsing".into());
 
-        // We only generate bindings for a single Solidity version to avoid conflicts.
-        let (version, mut sources, _) = graph
-            // resolve graph into mapping language -> version -> sources
-            .into_sources_by_version(&project)?
-            .sources
-            .into_iter()
-            // we are only interested in Solidity sources
-            .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
-            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
-            .1
-            .into_iter()
-            // For now, we are always picking the latest version.
-            .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap();
+        let mut output = project.compile()?;
 
-        // Step 2: Preprocess sources to handle potentially invalid bindings
-        self.preprocess_sources(&mut sources)?;
+        // Find structs and generate bindings.
+        let structs_to_write = self.find_and_resolve_structs(&config, &project, &mut output)?;
 
-        // Insert empty bindings file.
-        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
+        // Write bindings.
+        self.write_bindings(&config, &structs_to_write)?;
 
-        // Step 3: Find structs and generate bindings
-        let structs_to_write =
-            self.find_and_resolve_structs(&config, &project, version, sources, &target_path)?;
-
-        // Step 4: Write bindings
-        self.write_bindings(&structs_to_write, &target_path)?;
-
-        Ok(())
-    }
-
-    /// In cases when user moves/renames/deletes structs, compiler will start failing because
-    /// generated bindings will be referencing non-existing structs or importing non-existing
-    /// files.
-    ///
-    /// Because of that, we need a little bit of preprocessing to make sure that bindings will still
-    /// be valid.
-    ///
-    /// The strategy is:
-    /// 1. Replace bindings file with an empty one to get rid of potentially invalid imports.
-    /// 2. Remove all function bodies to get rid of `serialize`/`deserialize` invocations.
-    /// 3. Remove all `immutable` attributes to avoid errors because of erased constructors
-    ///    initializing them.
-    ///
-    /// After that we'll still have enough information for bindings but compilation should succeed
-    /// in most of the cases.
-    fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
-        let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar::interface::Result<()> {
-            sources.0.par_iter_mut().try_for_each(|(path, source)| {
-                let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
-
-                let arena = Arena::new();
-                let mut parser = SolarParser::from_source_code(
-                    &sess,
-                    &arena,
-                    FileName::Real(path.clone()),
-                    content.to_string(),
-                )?;
-                let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-                let mut visitor = PreprocessorVisitor::new();
-                let _ = visitor.visit_source_unit(&ast);
-                visitor.update(&sess, &mut content);
-
-                source.content = Arc::new(content);
-                Ok(())
-            })
-        });
-        eyre::ensure!(result.is_ok(), "failed parsing");
         Ok(())
     }
 
@@ -133,91 +55,80 @@ impl BindJsonArgs {
         &self,
         config: &Config,
         project: &Project,
-        version: Version,
-        sources: Sources,
-        _target_path: &Path,
+        output: &mut ProjectCompileOutput,
     ) -> Result<Vec<StructToWrite>> {
-        let settings = config.solc_settings()?;
         let include = &config.bind_json.include;
         let exclude = &config.bind_json.exclude;
         let root = &config.root;
 
-        let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
-
-        let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx.set_flags_mut(|flags| flags.track_diagnostics = false);
-        let mut compiler = solar::sema::Compiler::new(sess);
+        if output.has_compiler_errors() {
+            eyre::bail!("{output}");
+        }
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
 
         let mut structs_to_write = Vec::new();
 
-        compiler.enter_mut(|compiler| -> Result<()> {
-            // Set up the parsing context with the project paths, without adding the source files
-            let mut pcx = compiler.parse();
-            configure_pcx_from_solc(&mut pcx, project, &input, false);
-
-            let mut target_files = HashSet::new();
-            for (path, source) in &input.input.sources {
+        compiler.enter_mut(|compiler| {
+            let exclude = |path: &Path| {
                 if !include.is_empty() {
                     if !include.iter().any(|matcher| matcher.is_match(path)) {
-                        continue;
+                        return true;
                     }
                 } else {
                     // Exclude library files by default
                     if project.paths.has_library_ancestor(path) {
-                        continue;
+                        return true;
                     }
                 }
 
                 if exclude.iter().any(|matcher| matcher.is_match(path)) {
-                    continue;
+                    return true;
                 }
 
-                if let Ok(src_file) = compiler
-                    .sess()
-                    .source_map()
-                    .new_source_file(path.clone(), source.content.as_str())
-                {
-                    target_files.insert(src_file.clone());
-                    pcx.add_file(src_file);
-                }
+                false
+            };
+
+            // Preprocess.
+            // SAFETY: we have mutable access to `gcx`. Yes this is UB regardless, no I don't care.
+            let sources = unsafe { &mut *(&raw const compiler.gcx().sources).cast_mut() };
+            for source in sources.iter_mut() {
+                let Some(ast) = &mut source.ast else {
+                    continue;
+                };
+                let mut visitor = PreprocessorVisitor::new();
+                let _ = visitor.visit_source_unit_mut(ast);
             }
 
-            // Parse and resolve
-            pcx.parse();
-            let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+            // Resolve.
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
+                let _ = compiler.lower_asts();
+            }
             let gcx = compiler.gcx();
             let hir = &gcx.hir;
             let resolver = Resolver::new(gcx);
             for id in resolver.struct_ids() {
-                if let Some(schema) = resolver.resolve_struct_eip712(id) {
-                    let def = hir.strukt(id);
-                    let source = hir.source(def.source);
-
-                    if !target_files.contains(&source.file) {
-                        continue;
-                    }
-
-                    if let FileName::Real(path) = &source.file.name {
-                        structs_to_write.push(StructToWrite {
-                            name: def.name.as_str().into(),
-                            contract_name: def
-                                .contract
-                                .map(|id| hir.contract(id).name.as_str().into()),
-                            path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
-                            schema,
-                            // will be filled later
-                            import_alias: None,
-                            name_in_fns: String::new(),
-                        });
-                    }
+                if let Some(schema) = resolver.resolve_struct_eip712(id)
+                    && let def = hir.strukt(id)
+                    && let source = hir.source(def.source)
+                    && let solar::interface::source_map::FileName::Real(path) = &source.file.name
+                    && !exclude(path)
+                {
+                    structs_to_write.push(StructToWrite {
+                        name: def.name.as_str().into(),
+                        contract_name: def.contract.map(|id| hir.contract(id).name.as_str().into()),
+                        path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
+                        schema,
+                        // will be filled later
+                        import_alias: None,
+                        name_in_fns: String::new(),
+                    });
                 }
             }
-            Ok(())
-        })?;
+        });
 
-        eyre::ensure!(compiler.sess().dcx.has_errors().is_ok(), "errors occurred");
+        convert_solar_errors(compiler.dcx())?;
 
-        // Resolve import aliases and function names
+        // Resolve import aliases and function names.
         self.resolve_conflicts(&mut structs_to_write);
 
         Ok(structs_to_write)
@@ -291,11 +202,9 @@ impl BindJsonArgs {
     }
 
     /// Write the final bindings file
-    fn write_bindings(
-        &self,
-        structs_to_write: &[StructToWrite],
-        target_path: &PathBuf,
-    ) -> Result<()> {
+    fn write_bindings(&self, config: &Config, structs_to_write: &[StructToWrite]) -> Result<()> {
+        let target_path = &*config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
+
         let mut result = String::new();
 
         // Write imports
@@ -308,11 +217,19 @@ impl BindJsonArgs {
                 .insert(item);
         }
 
-        result.push_str("// Automatically generated by forge bind-json.\n\npragma solidity >=0.6.2 <0.9.0;\npragma experimental ABIEncoderV2;\n\n");
+        result.push_str(
+            "\
+// Automatically @generated by `forge bind-json`.
+
+pragma solidity >=0.6.2 <0.9.0;
+pragma experimental ABIEncoderV2;
+
+",
+        );
 
         for (path, names) in grouped_imports {
             writeln!(
-                &mut result,
+                result,
                 "import {{{}}} from \"{}\";",
                 names.iter().join(", "),
                 path.to_slash_lossy()
@@ -343,7 +260,7 @@ library JsonBindings {
         // write schema constants
         for struct_to_write in structs_to_write {
             writeln!(
-                &mut result,
+                result,
                 "    {}{} = \"{}\";",
                 TYPE_BINDING_PREFIX, struct_to_write.name_in_fns, struct_to_write.schema
             )?;
@@ -352,7 +269,7 @@ library JsonBindings {
         // write serialization functions
         for struct_to_write in structs_to_write {
             write!(
-                &mut result,
+                result,
                 r#"
     function serialize({path} memory value) internal pure returns (string memory) {{
         return vm.serializeJsonType(schema_{name_in_fns}, abi.encode(value));
@@ -393,70 +310,71 @@ library JsonBindings {
     }
 }
 
-struct PreprocessorVisitor {
-    updates: Vec<(Span, &'static str)>,
-}
+/// In cases when user moves/renames/deletes structs, compiler will start failing because
+/// generated bindings will be referencing non-existing structs or importing non-existing
+/// files.
+///
+/// Because of that, we need a little bit of preprocessing to make sure that bindings will still
+/// be valid.
+///
+/// The strategy is:
+/// 1. Replace bindings file with an empty one to get rid of potentially invalid imports.
+/// 2. Remove all function bodies to get rid of `serialize`/`deserialize` invocations.
+/// 3. Remove all `immutable` attributes to avoid errors because of erased constructors initializing
+///    them.
+///
+/// After that we'll still have enough information for bindings but compilation should succeed
+/// in most of the cases.
+struct PreprocessorVisitor(());
 
 impl PreprocessorVisitor {
     fn new() -> Self {
-        Self { updates: Vec::new() }
-    }
-
-    fn update(mut self, sess: &Session, content: &mut String) {
-        if self.updates.is_empty() {
-            return;
-        }
-
-        let sf = sess.source_map().lookup_source_file(self.updates[0].0.lo());
-        let base = sf.start_pos.0;
-
-        self.updates.sort_by_key(|(span, _)| span.lo());
-        let mut shift = 0_i64;
-        for (span, new) in self.updates {
-            let lo = span.lo() - base;
-            let hi = span.hi() - base;
-            let start = ((lo.0 as i64) - shift) as usize;
-            let end = ((hi.0 as i64) - shift) as usize;
-
-            content.replace_range(start..end, new);
-            shift += (end - start) as i64;
-            shift -= new.len() as i64;
-        }
+        Self(())
     }
 }
 
-impl<'ast> Visit<'ast> for PreprocessorVisitor {
+impl<'ast> VisitMut<'ast> for PreprocessorVisitor {
     type BreakValue = solar::interface::data_structures::Never;
 
-    fn visit_item_function(
+    fn visit_item_function_mut(
         &mut self,
-        func: &'ast ast::ItemFunction<'ast>,
+        func: &'ast mut ast::ItemFunction<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Replace function bodies with a noop statement.
-        if let Some(block) = &func.body
+        if let Some(block) = &mut func.body
             && !block.is_empty()
         {
-            let span = block.first().unwrap().span.to(block.last().unwrap().span);
-            let new_body = match func.kind {
-                FunctionKind::Modifier => "_;",
-                _ => "revert();",
+            block.stmts = &mut block.stmts[..1];
+            let span = block.stmts[0].span;
+            let expr = |kind| ast::Expr { span, kind };
+            let alloc = |x| Box::leak(Box::new(x));
+            block.stmts[0].kind = match func.kind {
+                // _;
+                FunctionKind::Modifier => ast::StmtKind::Placeholder,
+                // revert();
+                _ => ast::StmtKind::Expr(alloc(expr(ast::ExprKind::Call(
+                    alloc(expr(ast::ExprKind::Ident(ast::Ident::new(
+                        solar::interface::kw::Revert,
+                        span,
+                    )))),
+                    ast::CallArgs::empty(span),
+                )))),
             };
-            self.updates.push((span, new_body));
         }
 
-        self.walk_item_function(func)
+        ControlFlow::Continue(())
     }
 
-    fn visit_variable_definition(
+    fn visit_variable_definition_mut(
         &mut self,
-        var: &'ast ast::VariableDefinition<'ast>,
+        var: &'ast mut ast::VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Remove `immutable` attributes.
         if let Some(VarMut::Immutable) = var.mutability {
-            self.updates.push((var.span, ""));
+            var.mutability = None;
         }
 
-        self.walk_variable_definition(var)
+        ControlFlow::Continue(())
     }
 }
 
