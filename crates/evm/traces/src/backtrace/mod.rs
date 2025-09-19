@@ -182,6 +182,7 @@ impl<'a> BacktraceBuilder<'a> {
 /// call.
 ///
 /// Each step/call in the backtrace is classified as a BacktraceFrame
+#[non_exhaustive]
 pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
