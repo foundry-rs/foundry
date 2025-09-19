@@ -547,6 +547,7 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
+        let mut backtrace_builder = None;
         for (contract_name, mut suite_result) in rx {
             let tests = &mut suite_result.test_results;
 
@@ -572,20 +573,6 @@ impl TestArgs {
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }
             }
-
-            let backtrace_builder = if !silent && verbosity >= 3 {
-                tests
-                    .values()
-                    .any(|res| res.status.is_failure() && !res.traces.is_empty())
-                    .then_some(BacktraceBuilder::new(
-                        output,
-                        config.root.clone(),
-                        config.parsed_libraries().ok(),
-                        config.via_ir,
-                    ))
-            } else {
-                None
-            };
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
@@ -659,11 +646,23 @@ impl TestArgs {
                 }
 
                 // Extract and display backtrace for failed tests when verbosity >= 3
-                if !result.traces.is_empty()
+                if !silent
+                    && result.status.is_failure()
+                    && verbosity >= 3
+                    && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
-                    && let Some(builder) = &backtrace_builder
                 {
+                    // Lazily initialize the backtrace builder on first failure
+                    let builder = backtrace_builder.get_or_insert_with(|| {
+                        BacktraceBuilder::new(
+                            output,
+                            config.root.clone(),
+                            config.parsed_libraries().ok(),
+                            config.via_ir,
+                        )
+                    });
+
                     let backtrace = builder.from_traces(arena);
 
                     if !backtrace.is_empty() {

@@ -150,7 +150,7 @@ impl<'a> BacktraceBuilder<'a> {
 /// It uses the program counter (PC) from the traces to map to a specific source location for the
 /// call.
 ///
-/// Each step/call in the backtrace is classified as a [`BacktraceFrame`].
+/// Each step/call in the backtrace is classified as a BacktraceFrame
 pub struct Backtrace {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
