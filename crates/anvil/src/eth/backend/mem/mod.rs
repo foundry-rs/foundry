@@ -8,7 +8,7 @@ use crate::{
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
-            db::{Db, MaybeFullDatabase, SerializableState},
+            db::{Db, MaybeFullDatabase, SerializableState, StateDb},
             env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
@@ -72,8 +72,8 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{
-            GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
         },
         parity::LocalizedTransactionTrace,
     },
@@ -100,7 +100,10 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
-    traces::{CallTraceDecoder, TracingInspectorConfig},
+    traces::{
+        CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
+        TracingInspectorConfig,
+    },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
@@ -2025,9 +2028,31 @@ impl Backend {
                                 .geth_call_traces(call_config, result.gas_used())
                                 .into())
                         }
+                        GethDebugBuiltInTracerType::PreStateTracer => {
+                            let pre_state_config = tracer_config
+                                .into_pre_state_config()
+                                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+
+                            let mut inspector = TracingInspector::new(
+                                TracingInspectorConfig::from_geth_prestate_config(
+                                    &pre_state_config,
+                                ),
+                            );
+
+                            let env = self.build_call_env(request, fee_details, block);
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+                            let result = evm.transact(env.tx)?;
+
+                            drop(evm);
+
+                            Ok(inspector
+                                .into_geth_builder()
+                                .geth_prestate_traces(&result, &pre_state_config, cache_db)?
+                                .into())
+                        }
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer
-                        | GethDebugBuiltInTracerType::PreStateTracer
                         | GethDebugBuiltInTracerType::MuxTracer
                         | GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
@@ -2725,16 +2750,19 @@ impl Backend {
         Ok(GethTrace::Default(Default::default()))
     }
 
-    /// Traces the transaction with the js tracer
-    #[cfg(feature = "js-tracer")]
-    pub async fn trace_tx_with_js_tracer(
+    fn replay_tx_with_inspector<I, F, T>(
         &self,
         hash: B256,
-        code: String,
-        opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { tracer_config, .. } = opts;
-
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<OpHaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, Env) -> T,
+    {
         let block = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { block_hash, .. } = storage
@@ -2812,23 +2840,41 @@ impl Backend {
         let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
         let tx_env = target_tx.to_revm_tx_env();
 
-        let config = tracer_config.into_json();
-        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
         let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
 
         let result = evm
             .transact(tx_env.clone())
             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
-        let trace = inspector
-            .json_result(
-                result,
-                &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                &env.evm_env.block_env,
-                &cache_db,
-            )
-            .map_err(|e| BlockchainError::Message(e.to_string()))?;
+        Ok(f(result, cache_db, inspector, tx_env.base, env))
+    }
+
+    /// Traces the transaction with the js tracer
+    #[cfg(feature = "js-tracer")]
+    pub async fn trace_tx_with_js_tracer(
+        &self,
+        hash: B256,
+        code: String,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { tracer_config, .. } = opts;
+        let config = tracer_config.into_json();
+        let inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
+            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+        let trace = self.replay_tx_with_inspector(
+            hash,
+            inspector,
+            |result, cache_db, mut inspector, tx_env, env| {
+                inspector
+                    .json_result(
+                        result,
+                        &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
+                        &env.evm_env.block_env,
+                        &cache_db,
+                    )
+                    .map_err(|e| BlockchainError::Message(e.to_string()))
+            },
+        )??;
         Ok(GethTrace::JS(trace))
     }
 
@@ -2848,18 +2894,100 @@ impl Backend {
         Ok(None)
     }
 
+    fn geth_trace(
+        &self,
+        tx: &MinedTransaction,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        let res = self.replay_tx_with_inspector(
+                            tx.info.transaction_hash,
+                            inspector,
+                            |_, _, inspector, _, _| FourByteFrame::from(inspector).into(),
+                        )?;
+                        return Ok(res);
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        return match tracer_config.into_call_config() {
+                            Ok(call_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_call_config(&call_config),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |_, _, inspector, _, _| {
+                                        inspector
+                                            .geth_builder()
+                                            .geth_call_traces(
+                                                call_config,
+                                                tx.receipt.cumulative_gas_used(),
+                                            )
+                                            .into()
+                                    },
+                                )?;
+                                Ok(frame)
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer => {
+                        return match tracer_config.into_pre_state_config() {
+                            Ok(pre_state_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_prestate_config(
+                                        &pre_state_config,
+                                    ),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |state, db, inspector, _, _| {
+                                        inspector.geth_builder().geth_prestate_traces(
+                                            &state,
+                                            &pre_state_config,
+                                            db,
+                                        )
+                                    },
+                                )??;
+                                Ok(frame.into())
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                },
+                GethDebugTracerType::JsTracer(_code) => {}
+            }
+
+            return Ok(NoopFrame::default().into());
+        }
+
+        // default structlog tracer
+        Ok(GethTraceBuilder::new(tx.info.traces.clone())
+            .geth_traces(
+                tx.receipt.cumulative_gas_used(),
+                tx.info.out.clone().unwrap_or_default(),
+                config,
+            )
+            .into())
+    }
+
     async fn mined_geth_trace_transaction(
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        let tx = self.blockchain.storage.read().transactions.get(&hash).cloned();
-        if let Some(tx) = tx {
-            self.with_database_at(Some(BlockRequest::Number(tx.block_number - 1)), |db, _| {
-                tx.geth_trace(opts, db)
-            })
-            .await
-            .ok()
+        if let Some(tx) = self.blockchain.storage.read().transactions.get(&hash) {
+            Some(self.geth_trace(tx, opts))
         } else {
             None
         }

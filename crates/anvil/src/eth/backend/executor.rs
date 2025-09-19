@@ -37,13 +37,10 @@ use foundry_evm::{
     traces::{CallTraceDecoder, CallTraceNode},
 };
 use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
-use op_revm::{L1BlockInfo, OpContext, OpHaltReason, precompiles::OpPrecompiles};
+use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{
-        Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext,
-        result::ResultAndState,
-    },
+    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -65,7 +62,6 @@ pub struct ExecutedTransaction {
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
-    exec_state: ResultAndState<OpHaltReason>,
     nonce: u64,
 }
 
@@ -215,15 +211,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             }
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
 
-            let ExecutedTransaction {
-                transaction,
-                logs,
-                out,
-                traces,
-                exec_state,
-                exit_reason: exit,
-                ..
-            } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             build_logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = out.as_ref().and_then(|out| {
@@ -243,7 +231,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                 to: transaction.pending_transaction.transaction.to(),
                 contract_address,
                 traces,
-                exec_state,
                 exit,
                 out: out.map(Output::into_data),
                 nonce: tx.nonce,
@@ -371,7 +358,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             inspector = inspector.with_trace_printer();
         }
 
-        let (exec_state, exec_result) = {
+        let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
 
             if self.odyssey {
@@ -402,11 +389,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
-            match evm.transact(env.tx) {
-                Ok(exec_result) => {
-                    evm.db_mut().commit(exec_result.state.clone());
-                    (exec_result.clone(), exec_result.result)
-                }
+            match evm.transact_commit(env.tx) {
+                Ok(exec_result) => exec_result,
                 Err(err) => {
                     warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
                     match err {
@@ -471,7 +455,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             gas_used,
             logs: logs.unwrap_or_default(),
             traces: inspector.tracer.map(|t| t.into_traces().into_nodes()).unwrap_or_default(),
-            exec_state,
             nonce,
         };
 
