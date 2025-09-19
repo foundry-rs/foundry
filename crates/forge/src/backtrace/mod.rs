@@ -85,16 +85,13 @@ impl<'a> BacktraceBuilder<'a> {
             }
         }
 
-        let mut backtrace = Backtrace::new(
+        Backtrace::new(
             artifacts_by_address,
             sources,
             self.linked_libraries.clone(),
             self.disable_source_locs,
-        );
-
-        backtrace.extract_frames(arena);
-
-        backtrace
+            arena,
+        )
     }
 
     /// Resolves contract addresses to [`ArtifactId`]s from trace labels and linked libraries.
@@ -174,6 +171,7 @@ impl Backtrace {
         mut sources: HashMap<ArtifactId, SourceData>,
         linked_libraries: Vec<LinkedLib>,
         disable_source_locs: bool,
+        arena: &SparsedTraceArena,
     ) -> Self {
         let mut backtrace = Self {
             frames: Vec::new(),
@@ -190,6 +188,8 @@ impl Backtrace {
                 }
             }
         }
+
+        backtrace.extract_frames(arena);
 
         backtrace
     }
@@ -296,7 +296,7 @@ impl fmt::Display for Backtrace {
 
 /// A single frame in a backtrace.
 #[derive(Debug, Clone)]
-pub struct BacktraceFrame {
+struct BacktraceFrame {
     /// The contract address where this frame is executing.
     pub contract_address: Address,
     /// The contract name, if known.
@@ -315,7 +315,7 @@ pub struct BacktraceFrame {
 
 impl BacktraceFrame {
     /// Creates a new backtrace frame.
-    pub fn new(contract_address: Address) -> Self {
+    fn new(contract_address: Address) -> Self {
         Self {
             contract_address,
             contract_name: None,
@@ -328,19 +328,19 @@ impl BacktraceFrame {
     }
 
     /// Sets the contract name.
-    pub fn with_contract_name(mut self, name: String) -> Self {
+    fn with_contract_name(mut self, name: String) -> Self {
         self.contract_name = Some(name);
         self
     }
 
     /// Sets the function name.
-    pub fn with_function_name(mut self, name: String) -> Self {
+    fn with_function_name(mut self, name: String) -> Self {
         self.function_name = Some(name);
         self
     }
 
     /// Sets the source location.
-    pub fn with_source_location(mut self, file: PathBuf, line: usize, column: usize) -> Self {
+    fn with_source_location(mut self, file: PathBuf, line: usize, column: usize) -> Self {
         self.file = Some(file);
         self.line = Some(line);
         self.column = Some(column);
@@ -348,7 +348,7 @@ impl BacktraceFrame {
     }
 
     /// Sets the byte offset.
-    pub fn with_byte_offset(mut self, offset: usize) -> Self {
+    fn with_byte_offset(mut self, offset: usize) -> Self {
         self.byte_offset = Some(offset);
         self
     }
