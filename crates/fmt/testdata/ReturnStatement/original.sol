@@ -23,7 +23,7 @@ contract ReturnStatement {
         0x00;
         }
 
-        if (val == 1) { return 
+        if (val == 1) { return
         1; }
 
         if (val == 2) {
@@ -45,14 +45,14 @@ contract ReturnStatement {
     function returnMultipleValues(uint256 val) external returns (uint256, uint256, bool) {
         if (val == 0) { return /* return mul 1 */ (0, 1,/* return mul 2 */ false); }
 
-        if (val == 1) { 
+        if (val == 1) {
     // return mul 3
             return /* return mul 4 */
             (
                 987654321, 1234567890,/* return mul 5 */ false); }
 
         if (val == 2) {
-            return /* return mul 6 */ ( 1234567890 + 987654321  + 87654123536, 987654321 + 1234567890  + 124245235235, true);  
+            return /* return mul 6 */ ( 1234567890 + 987654321  + 87654123536, 987654321 + 1234567890  + 124245235235, true);
         }
 
         return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();

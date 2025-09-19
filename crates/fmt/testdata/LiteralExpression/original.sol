@@ -10,7 +10,7 @@ contract LiteralExpressions {
         // number literals
         1;
         123_000;
-        1_2e345_678;
+        // 1_2e345_678;
         -1;
         2e-10;
         // comment5
@@ -20,6 +20,8 @@ contract LiteralExpressions {
         0x00;
         0x123_456;
         0x2eff_abde;
+        address(0xCAFE);
+        address(0xBEEF);
 
         // rational number literals
         .1;

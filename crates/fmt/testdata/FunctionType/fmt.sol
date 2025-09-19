@@ -1,6 +1,6 @@
-// config: line_length = 90
+// config: line_length = 100
 library ArrayUtils {
-    function map(uint256[] memory self, function (uint) pure returns (uint) f)
+    function map(uint256[] memory self, function(uint256) pure returns (uint256) f)
         internal
         pure
         returns (uint256[] memory r)
@@ -11,7 +11,7 @@ library ArrayUtils {
         }
     }
 
-    function reduce(uint256[] memory self, function (uint, uint) pure returns (uint) f)
+    function reduce(uint256[] memory self, function(uint256, uint256) pure returns (uint256) f)
         internal
         pure
         returns (uint256 r)

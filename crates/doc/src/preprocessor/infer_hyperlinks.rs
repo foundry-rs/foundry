@@ -1,6 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Comments, Document, ParseItem, ParseSource};
-use forge_fmt::solang_ext::SafeUnwrap;
+use crate::{Comments, Document, ParseItem, ParseSource, solang_ext::SafeUnwrap};
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,

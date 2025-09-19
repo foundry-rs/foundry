@@ -31,3 +31,6 @@ mod writer;
 pub use writer::{AsDoc, AsDocResult, BufWriter, Markdown};
 
 pub use mdbook;
+
+// old formatter dependencies
+pub mod solang_ext;

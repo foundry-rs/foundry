@@ -1,18 +1,19 @@
 use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::fs;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
+use solar::sema::Compiler;
 use std::{
     fmt::{self, Write},
     io,
     io::{Read, Write as _},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use yansi::{Color, Paint, Style};
 
@@ -98,96 +99,108 @@ impl FmtArgs {
             }
         };
 
-        let format = |source: String, path: Option<&Path>| -> Result<_> {
-            let name = match path {
-                Some(path) => path.strip_prefix(&config.root).unwrap_or(path).display().to_string(),
-                None => "stdin".to_string(),
-            };
+        // Handle stdin on its own
+        if let Input::Stdin(original) = input {
+            let formatted = forge_fmt::format(&original, config.fmt)
+                .into_result()
+                .map_err(|_| eyre::eyre!("failed to format stdin"))?;
 
-            let parsed = parse(&source).wrap_err_with(|| {
-                format!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
-            })?;
-
-            if !parsed.invalid_inline_config_items.is_empty() {
-                for (loc, warning) in &parsed.invalid_inline_config_items {
-                    let mut lines = source[..loc.start().min(source.len())].split('\n');
-                    let col = lines.next_back().unwrap().len() + 1;
-                    let row = lines.count() + 1;
-                    sh_warn!("[{}:{}:{}] {}", name, row, col, warning)?;
-                }
-            }
-
-            let mut output = String::new();
-            format_to(&mut output, parsed, config.fmt.clone()).unwrap();
-
-            solang_parser::parse(&output, 0).map_err(|diags| {
-                eyre::eyre!(
-                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged.\n\
-                     Debug info: {diags:?}\n\
-                     Formatted output:\n\n{output}"
-                )
-            })?;
-
-            let diff = TextDiff::from_lines(&source, &output);
-            let new_format = diff.ratio() < 1.0;
-            if self.check || path.is_none() {
+            let diff = TextDiff::from_lines(&original, &formatted);
+            if diff.ratio() < 1.0 {
                 if self.raw {
-                    sh_print!("{output}")?;
+                    sh_print!("{formatted}")?;
+                } else {
+                    sh_print!("{}", format_diff_summary("stdin", &diff))?;
                 }
-
-                // If new format then compute diff summary.
-                if new_format {
-                    return Ok(Some(format_diff_summary(&name, &diff)));
-                }
-            } else if let Some(path) = path {
-                // If new format then write it on disk.
-                if new_format {
-                    fs::write(path, output)?;
+                if self.check {
+                    std::process::exit(1);
                 }
             }
-            Ok(None)
-        };
+            return Ok(());
+        }
 
-        let diffs = match input {
-            Input::Stdin(source) => format(source, None).map(|diff| vec![diff]),
+        // Unwrap and check input paths
+        let paths_to_fmt = match input {
             Input::Paths(paths) => {
                 if paths.is_empty() {
                     sh_warn!(
                         "Nothing to format.\n\
-                         HINT: If you are working outside of the project, \
-                         try providing paths to your source files: `forge fmt <paths>`"
+                    HINT: If you are working outside of the project, \
+                    try providing paths to your source files: `forge fmt <paths>`"
                     )?;
                     return Ok(());
                 }
                 paths
-                    .par_iter()
-                    .map(|path| {
-                        let source = fs::read_to_string(path)?;
-                        format(source, Some(path))
-                    })
-                    .collect()
             }
-        }?;
+            Input::Stdin(_) => unreachable!(),
+        };
 
-        let mut diffs = diffs.iter().flatten();
-        if let Some(first) = diffs.next() {
-            // This branch is only reachable with stdin or --check
+        let mut compiler = Compiler::new(
+            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+        );
 
-            if !self.raw {
+        // Parse, format, and check the diffs.
+        let res = compiler.enter_mut(|c| -> Result<()> {
+            let mut pcx = c.parse();
+            pcx.set_resolve_imports(false);
+            let _ = pcx.par_load_files(paths_to_fmt);
+            pcx.parse();
+
+            let gcx = c.gcx();
+            let fmt_config = Arc::new(config.fmt);
+            let diffs: Vec<String> = gcx
+                .sources
+                .raw
+                .par_iter()
+                .filter_map(|source_unit| {
+                    let path = source_unit.file.name.as_real()?;
+                    let original = &source_unit.file.src;
+                    let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
+
+                    if original.as_str() == formatted {
+                        return None;
+                    }
+
+                    if self.check {
+                        let name =
+                            path.strip_prefix(&config.root).unwrap_or(path).display().to_string();
+                        let summary = format_diff_summary(
+                            &name,
+                            &TextDiff::from_lines(original.as_str(), &formatted),
+                        );
+                        Some(Ok(summary))
+                    } else {
+                        match fs::write(path, formatted) {
+                            Ok(_) => {
+                                let _ = sh_println!("Formatted {}", path.display());
+                                None
+                            }
+                            Err(e) => Some(Err(eyre::eyre!(
+                                "Failed to write to {}: {}",
+                                path.display(),
+                                e
+                            ))),
+                        }
+                    }
+                })
+                .collect::<Result<_>>()?;
+
+            if !diffs.is_empty() {
+                // This block is only reached in --check mode when files need formatting.
                 let mut stdout = io::stdout().lock();
-                let first = std::iter::once(first);
-                for (i, diff) in first.chain(diffs).enumerate() {
+                for (i, diff) in diffs.iter().enumerate() {
                     if i > 0 {
                         let _ = stdout.write_all(b"\n");
                     }
                     let _ = stdout.write_all(diff.as_bytes());
                 }
-            }
-
-            if self.check {
                 std::process::exit(1);
             }
-        }
+            Ok(())
+        });
+        res?;
+
+        // TODO(dani): convert solar errors
 
         Ok(())
     }

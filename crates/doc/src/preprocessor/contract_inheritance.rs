@@ -1,7 +1,8 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Document, ParseSource, PreprocessorOutput, document::DocumentContent};
+use crate::{
+    Document, ParseSource, PreprocessorOutput, document::DocumentContent, solang_ext::SafeUnwrap,
+};
 use alloy_primitives::map::HashMap;
-use forge_fmt::solang_ext::SafeUnwrap;
 use std::path::PathBuf;
 
 /// [ContractInheritance] preprocessor id.

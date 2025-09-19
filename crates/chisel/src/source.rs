@@ -5,7 +5,7 @@
 //! execution helpers.
 
 use eyre::Result;
-use forge_fmt::solang_ext::{CodeLocationExt, SafeUnwrap};
+use forge_doc::solang_ext::{CodeLocationExt, SafeUnwrap};
 use foundry_common::fs;
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,

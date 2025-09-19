@@ -88,14 +88,16 @@ contract RecordDebugTraceTest is DSTest {
         for (uint256 i = 0; i < steps.length; i++) {
             Vm.DebugStep memory step = steps[i];
             if (
-                step.opcode == 0x52 /*MSTORE*/ && step.stack[0] == testContract.memPtr() // MSTORE offset
+                step.opcode == 0x52 /*MSTORE*/
+                    && step.stack[0] == testContract.memPtr() // MSTORE offset
                     && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
             ) {
                 mstoreCalled = true;
             }
 
             if (
-                step.opcode == 0x51 /*MLOAD*/ && step.stack[0] == testContract.memPtr() // MLOAD offset
+                step.opcode == 0x51 /*MLOAD*/
+                    && step.stack[0] == testContract.memPtr() // MLOAD offset
                     && step.memoryInput.length == 32 // MLOAD should always load 32 bytes
                     && uint256(bytes32(step.memoryInput)) == testContract.expectedValueInMemory() // MLOAD value
             ) {

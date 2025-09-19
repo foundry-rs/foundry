@@ -15,7 +15,7 @@ interface FunctionInterfaces {
         uint256 x1, // x1 postfix
         // x2 prefix
         uint256 x2, // x2 postfix
-            // x2 postfix2
+        // x2 postfix2
         /*
             multi-line x3 prefix
         */
@@ -39,9 +39,8 @@ interface FunctionInterfaces {
             // y2 prefix
             uint256 y2, // y2 postfix
             // y3 prefix
-            uint256 y3
-        ); // y3 postfix
-        // function postfix
+            uint256 y3 // y3 postfix
+        ); // function postfix
 
     /*//////////////////////////////////////////////////////////////////////////
                                     TEST
@@ -324,10 +323,10 @@ interface FunctionInterfaces {
 }
 
 contract FunctionDefinitions {
-    function() external {}
+    function f() external {}
     fallback() external {}
 
-    function() external payable {}
+    function f() external payable {}
     fallback() external payable {}
     receive() external payable {}
 
@@ -704,6 +703,12 @@ contract FunctionOverrides is
             SomeOtherFunctionContract,
             SomeImport.AndAnotherFunctionContract
         )
+    {
+        a = 1;
+    }
+
+    function simple(address _target, bytes memory _payload)
+        internal
     {
         a = 1;
     }
