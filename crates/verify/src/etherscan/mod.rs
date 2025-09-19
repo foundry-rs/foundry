@@ -489,7 +489,10 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://amoy.polygonscan.com/api");
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=80002"
+        );
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -546,7 +549,10 @@ mod tests {
 
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
 
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/api");
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=80002"
+        );
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([
