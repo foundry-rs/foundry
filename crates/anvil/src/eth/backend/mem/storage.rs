@@ -8,7 +8,6 @@ use crate::eth::{
         env::Env,
         mem::cache::DiskStateCache,
     },
-    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
@@ -20,10 +19,6 @@ use alloy_primitives::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
-        geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
-        },
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
@@ -32,12 +27,9 @@ use anvil_core::eth::{
     block::{Block, PartialHeader},
     transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
-use anvil_rpc::error::RpcError;
 use foundry_evm::{
     backend::MemDb,
-    traces::{
-        CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
-    },
+    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
@@ -557,45 +549,6 @@ impl MinedTransaction {
                 Some(InternalOperation { r#type, from, to, value })
             })
             .collect()
-    }
-
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
-
-        if let Some(tracer) = tracer {
-            match tracer {
-                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                    GethDebugBuiltInTracerType::FourByteTracer => {
-                        let inspector = FourByteInspector::default();
-                        return Ok(FourByteFrame::from(inspector).into());
-                    }
-                    GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
-                            Ok(call_config) => Ok(GethTraceBuilder::new(self.info.traces.clone())
-                                .geth_call_traces(call_config, self.receipt.cumulative_gas_used())
-                                .into()),
-                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        };
-                    }
-                    GethDebugBuiltInTracerType::PreStateTracer
-                    | GethDebugBuiltInTracerType::NoopTracer
-                    | GethDebugBuiltInTracerType::MuxTracer
-                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
-                },
-                GethDebugTracerType::JsTracer(_code) => {}
-            }
-
-            return Ok(NoopFrame::default().into());
-        }
-
-        // default structlog tracer
-        Ok(GethTraceBuilder::new(self.info.traces.clone())
-            .geth_traces(
-                self.receipt.cumulative_gas_used(),
-                self.info.out.clone().unwrap_or_default(),
-                config,
-            )
-            .into())
     }
 }
 
