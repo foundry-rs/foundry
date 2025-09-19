@@ -4800,6 +4800,7 @@ dependencies = [
 name = "foundry-evm-networks"
 version = "1.3.6"
 dependencies = [
+ "alloy-chains",
  "alloy-evm",
  "alloy-primitives",
  "clap",
