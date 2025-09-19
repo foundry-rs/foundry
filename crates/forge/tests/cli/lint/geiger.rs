@@ -35,9 +35,10 @@ forgetest_init!(assignment, |prj, cmd| {
         import {Test} from "forge-std/Test.sol";
 
         contract A is Test {
-            function do_ffi() public {
+            function do_ffi() public returns (bytes memory) {
                 string[] memory inputs = new string[](1);
-                bytes stuff = vm.ffi(inputs);
+                bytes memory stuff = vm.ffi(inputs);
+                return stuff;
             }
         }
     "#,
@@ -46,10 +47,10 @@ forgetest_init!(assignment, |prj, cmd| {
     cmd.arg("geiger").assert_failure().stderr_eq(str![[r#"
 ...
 note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
- [FILE]:9:34
+ [FILE]:9:41
   |
-9 |                 bytes stuff = vm.ffi(inputs);
-  |                                  ^^^
+9 |                 bytes memory stuff = vm.ffi(inputs);
+  |                                         ^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-cheatcode
 

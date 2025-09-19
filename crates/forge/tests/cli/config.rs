@@ -104,7 +104,7 @@ create2_library_salt = "0x000000000000000000000000000000000000000000000000000000
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
-odyssey = false
+celo = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -290,6 +290,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
+        enable_tx_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
@@ -343,7 +344,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        odyssey: false,
+        celo: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -1336,6 +1337,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   ],
   "isolate": false,
   "disable_block_gas_limit": false,
+  "enable_tx_gas_limit": false,
   "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -1345,7 +1347,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
-  "odyssey": false,
+  "celo": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
@@ -1869,7 +1871,10 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![""]);
+    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>
@@ -1913,4 +1918,32 @@ forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
 Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
 
 "#]]);
+});
+
+// Test that EVM version configuration works and the incompatibility check is available
+forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
+    // Clear default contracts
+    prj.wipe_contracts();
+
+    // Add a simple contract
+    prj.add_source(
+        "Simple.sol",
+        r#"
+pragma solidity ^0.8.5;
+
+contract Simple {
+    uint public value = 42;
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
+    });
+
+    let result = cmd.args(["build"]).assert_success();
+    let output = result.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
 });

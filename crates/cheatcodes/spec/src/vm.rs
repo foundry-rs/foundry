@@ -432,6 +432,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStateDiffJson() external view returns (string memory diff);
 
+    /// Returns an array of storage slots occupied by the specified variable.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
+
     /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -2693,6 +2697,11 @@ interface Vm {
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     #[cheatcode(group = Crypto)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs `digest` with `privateKey` on the secp256k1 curve, using the given `nonce`
+    /// as the raw ephemeral k value in ECDSA (instead of deriving it deterministically).
+    #[cheatcode(group = Crypto)]
+    function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///

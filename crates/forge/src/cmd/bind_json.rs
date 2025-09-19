@@ -145,7 +145,7 @@ impl BindJsonArgs {
         let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
         let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+        sess.dcx.set_flags_mut(|flags| flags.track_diagnostics = false);
         let mut compiler = solar::sema::Compiler::new(sess);
 
         let mut structs_to_write = Vec::new();

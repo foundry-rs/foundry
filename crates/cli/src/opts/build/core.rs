@@ -50,12 +50,12 @@ pub struct BuildOpts {
 
     /// A compiler error will be triggered at the specified diagnostic level.
     ///
-    /// Replaces the depracated `--deny_warnings` flag.
+    /// Replaces the deprecated `--deny-warnings` flag.
     /// Accepts boolean values for backwards compatibility.
     ///
     /// Possible values:
-    ///  - `never` (`false`): Do not treat any diagnostics as errors.
-    ///  - `warnings` (`true`): Treat warnings as errors.
+    ///  - `never`: Do not treat any diagnostics as errors.
+    ///  - `warnings`: Treat warnings as errors.
     ///  - `notes`: Treat both, warnings and notes, as errors.
     #[arg(
         long,
@@ -211,12 +211,6 @@ impl<'a> From<&'a BuildOpts> for Figment {
             figment = figment.merge(("skip", skip));
         };
 
-        if args.deny_warnings {
-            warn!(
-                "`--deny-warnings` is deprecated and will be removed in a future release. Use `--deny=warnings` instead."
-            );
-        }
-
         figment
     }
 }
@@ -244,7 +238,8 @@ impl Provider for BuildOpts {
         }
 
         if self.deny_warnings {
-            dict.insert("deny_warnings".to_string(), figment::value::Value::from(true));
+            dict.insert("deny".to_string(), figment::value::Value::serialize(DenyLevel::Warnings)?);
+            _ = sh_warn!("`--deny-warnings` is being deprecated in favor of `--deny warnings`.");
         } else if let Some(deny) = self.deny {
             dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
