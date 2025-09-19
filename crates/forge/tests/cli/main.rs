@@ -4,6 +4,7 @@ extern crate foundry_test_utils;
 pub mod constants;
 pub mod utils;
 
+mod backtrace;
 mod bind;
 mod bind_json;
 mod build;

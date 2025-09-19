@@ -377,11 +377,18 @@ impl TestRunnerConfig {
     }
 
     fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+        let mut mode = TraceMode::default()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
-            .with_state_changes(verbosity() > 4)
+            .with_state_changes(verbosity() > 4);
+
+        // Enable step recording for backtraces when verbosity >= 3
+        // We need to ensure we're recording JUMP AND JUMPDEST steps:
+        if self.evm_opts.verbosity >= 3 && mode < TraceMode::JumpSimple {
+            mode = TraceMode::JumpSimple;
+        }
+        mode
     }
 }
 

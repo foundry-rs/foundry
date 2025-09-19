@@ -52,6 +52,8 @@ pub use debug::DebugTraceIdentifier;
 
 pub mod folded_stack_trace;
 
+pub mod backtrace;
+
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
 /// Trace arena keeping track of ignored trace items.

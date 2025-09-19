@@ -27,7 +27,7 @@ use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::StackSnapshotType;
+use foundry_evm_traces::TraceMode;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -1055,13 +1055,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
             original_tracer_config: *tracer.config(),
         };
 
-        // turn on tracer configuration for recording
-        tracer.update_config(|config| {
-            config
-                .set_steps(true)
-                .set_memory_snapshots(true)
-                .set_stack_snapshots(StackSnapshotType::Full)
-        });
+        // turn on tracer debug configuration for recording
+        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
