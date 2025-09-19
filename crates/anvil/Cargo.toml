@@ -106,7 +106,6 @@ clap_complete = { workspace = true, optional = true}
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
-clap_complete_fig = "4"
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
