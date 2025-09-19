@@ -1079,8 +1079,8 @@ pub enum CastSubcommand {
         shell: foundry_common::clap::Shell,
     },
 
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
+    /// Generate Fig autocompletion spec. Deprecated: use `cast completions fig` instead.
+    #[command(visible_alias = "fig", hide = true)]
     GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.
