@@ -4863,6 +4863,7 @@ version = "1.3.6"
 dependencies = [
  "alloy-primitives",
  "foundry-compilers",
+ "rayon",
  "semver 1.0.26",
  "thiserror 2.0.16",
 ]
