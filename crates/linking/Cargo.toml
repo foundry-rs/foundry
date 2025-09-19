@@ -15,6 +15,9 @@ workspace = true
 
 [dependencies]
 foundry-compilers = { workspace = true, features = ["full"] }
-semver.workspace = true
+
 alloy-primitives = { workspace = true, features = ["rlp"] }
+
+rayon.workspace = true
+semver.workspace = true
 thiserror.workspace = true
