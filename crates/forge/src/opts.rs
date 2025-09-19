@@ -160,6 +160,7 @@ pub enum ForgeSubcommand {
     },
 
     /// Generate scaffold files.
+    #[command(hide = true)]
     Generate(generate::GenerateArgs),
 
     /// Compiler utilities.
