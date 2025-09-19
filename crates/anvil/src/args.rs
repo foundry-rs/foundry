@@ -34,15 +34,15 @@ pub fn run_command(args: Anvil) -> Result<()> {
                 );
             }
             AnvilSubcommand::GenerateFigSpec => {
-                eprintln!(
-                    "[deprecated] `anvil generate-fig-spec` is deprecated; use `anvil completions fig`"
-                );
                 clap_complete::generate(
                     foundry_common::clap::Shell::Fig,
                     &mut Anvil::command(),
                     "anvil",
                     &mut std::io::stdout(),
                 );
+                sh_eprintln!(
+                    "[deprecated] `anvil generate-fig-spec` is deprecated; use `anvil completions fig`"
+                )?;
             }
         }
         return Ok(());

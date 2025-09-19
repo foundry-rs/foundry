@@ -730,15 +730,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::GenerateFigSpec => {
-            eprintln!(
-                "[deprecated] `cast generate-fig-spec` is deprecated; use `cast completions fig`"
-            );
             generate(
                 foundry_common::clap::Shell::Fig,
                 &mut CastArgs::command(),
                 "cast",
                 &mut std::io::stdout(),
-            )
+            );
+            sh_eprintln!(
+                "[deprecated] `cast generate-fig-spec` is deprecated; use `cast completions fig`"
+            )?;
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {
