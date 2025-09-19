@@ -36,6 +36,8 @@ pub struct BacktraceBuilder<'a> {
     ///
     /// Source locations will be inaccurately reported if the files have been compiled with via-ir
     disable_source_locs: bool,
+    /// Cache of source data per artifact to avoid reloading for multiple test failures
+    source_cache: HashMap<ArtifactId, SourceData>,
 }
 
 impl<'a> BacktraceBuilder<'a> {
@@ -64,30 +66,42 @@ impl<'a> BacktraceBuilder<'a> {
             })
             .unwrap_or_default();
 
-        Self { linked_libraries: linked_libs, output, root, disable_source_locs }
+        Self {
+            linked_libraries: linked_libs,
+            output,
+            root,
+            disable_source_locs,
+            source_cache: HashMap::default(),
+        }
     }
 
     /// Generates a backtrace from a [`SparsedTraceArena`].
-    pub fn from_traces(&self, arena: &SparsedTraceArena) -> Backtrace {
+    pub fn from_traces(&mut self, arena: &SparsedTraceArena) -> Backtrace<'_> {
         // Resolve addresses to artifacts using trace labels and linked libraries
         let artifacts_by_address = self.resolve_addresses(arena);
 
-        let mut sources = HashMap::default();
-
         // Collect source data for all needed artifacts
         for artifact_id in artifacts_by_address.values() {
-            if let Some((_, artifact)) =
-                self.output.artifact_ids().find(|(id, _)| id == artifact_id)
-                && let Some(data) =
-                    collect_source_data(artifact, self.output, &self.root, &artifact_id.build_id)
-            {
-                sources.insert(artifact_id.clone(), data);
+            // Check if already in cache
+            if !self.source_cache.contains_key(artifact_id) {
+                // Not in cache, need to collect
+                if let Some((_, artifact)) =
+                    self.output.artifact_ids().find(|(id, _)| id == artifact_id)
+                    && let Some(data) = collect_source_data(
+                        artifact,
+                        &artifact_id.build_id,
+                        self.output,
+                        &self.root,
+                    )
+                {
+                    self.source_cache.insert(artifact_id.clone(), data);
+                }
             }
         }
 
         Backtrace::new(
             artifacts_by_address,
-            sources,
+            &self.source_cache,
             self.linked_libraries.clone(),
             self.disable_source_locs,
             arena,
@@ -151,11 +165,11 @@ impl<'a> BacktraceBuilder<'a> {
 /// call.
 ///
 /// Each step/call in the backtrace is classified as a BacktraceFrame
-pub struct Backtrace {
+pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
     /// PC to source mappers for each contract
-    pc_mappers: HashMap<Address, PcSourceMapper>,
+    pc_mappers: HashMap<Address, PcSourceMapper<'a>>,
     /// Linked libraries from configuration
     linked_libraries: Vec<LinkedLib>,
     /// Disable pinpointing source locations in files
@@ -164,30 +178,28 @@ pub struct Backtrace {
     disable_source_locs: bool,
 }
 
-impl Backtrace {
+impl<'a> Backtrace<'a> {
     /// Sets source data from pre-collected artifacts.
     fn new(
         artifacts_by_address: HashMap<Address, ArtifactId>,
-        mut sources: HashMap<ArtifactId, SourceData>,
+        sources: &'a HashMap<ArtifactId, SourceData>,
         linked_libraries: Vec<LinkedLib>,
         disable_source_locs: bool,
         arena: &SparsedTraceArena,
     ) -> Self {
-        let mut backtrace = Self {
-            frames: Vec::new(),
-            pc_mappers: HashMap::default(),
-            linked_libraries,
-            disable_source_locs,
-        };
+        let mut pc_mappers = HashMap::default();
 
         // Build PC source mappers for each contract
         if !disable_source_locs {
-            for (addr, artifact_id) in artifacts_by_address {
-                if let Some(data) = sources.remove(&artifact_id) {
-                    backtrace.pc_mappers.insert(addr, PcSourceMapper::new(data));
+            for (addr, artifact_id) in &artifacts_by_address {
+                if let Some(source_data) = sources.get(artifact_id) {
+                    pc_mappers.insert(*addr, PcSourceMapper::new(source_data));
                 }
             }
         }
+
+        let mut backtrace =
+            Self { frames: Vec::new(), pc_mappers, linked_libraries, disable_source_locs };
 
         backtrace.extract_frames(arena);
 
@@ -276,7 +288,7 @@ impl Backtrace {
     }
 }
 
-impl fmt::Display for Backtrace {
+impl fmt::Display for Backtrace<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.frames.is_empty() {
             return Ok(());

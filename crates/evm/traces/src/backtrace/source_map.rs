@@ -21,20 +21,18 @@ pub struct SourceData {
 }
 
 /// Maps program counters to source locations.
-pub struct PcSourceMapper {
+pub struct PcSourceMapper<'a> {
     /// Mapping from instruction counter to program counter.
     ic_pc_map: IcPcMap,
-    /// The source map from Solidity compiler.
-    source_map: SourceMap,
-    /// Source files indexed by source ID.
-    sources: Vec<(PathBuf, String)>, // (file_path, content)
+    /// Source data
+    source_data: &'a SourceData,
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
 }
 
-impl PcSourceMapper {
+impl<'a> PcSourceMapper<'a> {
     /// Creates a new PC to source mapper.
-    pub fn new(source_data: SourceData) -> Self {
+    pub fn new(source_data: &'a SourceData) -> Self {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
@@ -42,12 +40,7 @@ impl PcSourceMapper {
         let line_offsets =
             source_data.sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
 
-        Self {
-            ic_pc_map,
-            source_map: source_data.source_map,
-            sources: source_data.sources,
-            line_offsets,
-        }
+        Self { ic_pc_map, source_data, line_offsets }
     }
 
     /// Maps a program counter to source location.
@@ -56,18 +49,18 @@ impl PcSourceMapper {
         let ic = self.find_instruction_counter(pc)?;
 
         // Get the source element for this instruction
-        let element = self.source_map.get(ic)?;
+        let element = self.source_data.source_map.get(ic)?;
 
         // Get the source file index - returns None if index is -1
         let source_idx_opt = element.index();
 
         let source_idx = source_idx_opt? as usize;
-        if source_idx >= self.sources.len() {
+        if source_idx >= self.source_data.sources.len() {
             return None;
         }
 
         // Get the source file info
-        let (file_path, content) = &self.sources[source_idx];
+        let (file_path, content) = &self.source_data.sources[source_idx];
 
         // Convert byte offset to line and column
         let offset = element.offset() as usize;
@@ -153,9 +146,9 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
 /// Collects source data for a single artifact.
 pub fn collect_source_data(
     artifact: &ConfigurableContractArtifact,
+    build_id: &str,
     output: &ProjectCompileOutput,
     root: &Path,
-    build_id: &str,
 ) -> Option<SourceData> {
     // Get source map and bytecode
     let source_map = artifact.get_source_map_deployed()?.ok()?;
@@ -172,7 +165,8 @@ pub fn collect_source_data(
     let max_source_id = build_ctx.source_id_to_path.keys().max().map_or(0, |id| *id) as usize;
 
     let mut sources = vec![(PathBuf::new(), String::new()); max_source_id + 1];
-    // Populate sources at their correct indices i.e by their source IDs
+
+    // Populate sources at their correct indices
     for (source_id, source_path) in &build_ctx.source_id_to_path {
         let idx = *source_id as usize;
 
