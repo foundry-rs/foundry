@@ -4818,6 +4818,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "yansi",
 ]
 
 [[package]]

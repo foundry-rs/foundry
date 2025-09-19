@@ -26,8 +26,6 @@ pub use runner::ContractRunner;
 mod progress;
 pub mod result;
 
-pub mod backtrace;
-
 // TODO: remove
 pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;

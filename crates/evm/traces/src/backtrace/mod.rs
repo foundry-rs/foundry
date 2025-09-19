@@ -1,8 +1,8 @@
 //! Solidity stack trace support for test failures.
 
+use crate::{CallTrace, SparsedTraceArena};
 use alloy_primitives::{Address, map::HashMap};
 use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
-use foundry_evm::traces::{CallTrace, SparsedTraceArena};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
 

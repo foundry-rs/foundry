@@ -1,7 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
-    backtrace::BacktraceBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_artifact,
@@ -42,7 +41,7 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
-use foundry_evm::traces::identifier::TraceIdentifiers;
+use foundry_evm::traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers};
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
