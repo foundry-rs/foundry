@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.3.5"
+version = "1.3.6"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.89"
@@ -199,6 +199,7 @@ foundry-evm = { path = "crates/evm/evm" }
 foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-networks = { path = "crates/evm/networks" }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }

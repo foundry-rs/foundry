@@ -222,8 +222,8 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
 [FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
-[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmit() ([GAS])
-[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
+[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmit() ([GAS])
+[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,

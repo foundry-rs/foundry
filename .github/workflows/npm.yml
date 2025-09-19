@@ -1,5 +1,7 @@
 name: npm
 
+permissions: {}
+
 on:
   workflow_dispatch:
     inputs:
@@ -27,8 +29,8 @@ env:
 jobs:
   publish-arch:
     permissions:
-      actions: read
       contents: read
+      actions: read
       id-token: write
     name: ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -58,13 +60,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set Isolated Artifact Directory
-        id: set-artifact-dir
-        # Use RUNNER_TEMP env var to persist ARTIFACT_DIR across steps
-        run: echo "ARTIFACT_DIR=$RUNNER_TEMP/foundry_artifacts" >> "$GITHUB_ENV"
+        id: paths
+        run: |
+          set -euo pipefail
+          printf 'artifact_dir=%s\n' "$RUNNER_TEMP/foundry_artifacts" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Isolated Artifact Directory
+        env:
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
           mkdir -p "$ARTIFACT_DIR"
           ls -la "$ARTIFACT_DIR" || true
@@ -76,17 +83,17 @@ jobs:
           # Download all foundry artifacts from the triggering release run
           pattern: "foundry_*"
           # Extract artifacts into an isolated temp directory, not the workspace
-          path: ${{ runner.temp }}/foundry_artifacts
+          path: ${{ steps.paths.outputs.artifact_dir }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -107,6 +114,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
           set -euo pipefail
 
@@ -125,12 +133,13 @@ jobs:
           export RELEASE_VERSION=${version_part%%_*}
           echo "Detected RELEASE_VERSION=$RELEASE_VERSION"
 
-          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'RELEASE_VERSION=%s\n' "$RELEASE_VERSION" >>"$GITHUB_OUTPUT"
 
       - name: Stage Binary Into Package
         working-directory: ./npm
         env:
           RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
+          ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
           set -euo pipefail
           mkdir -p "$ARTIFACT_DIR/tmp"
@@ -194,8 +203,8 @@ jobs:
 
   publish-meta:
     permissions:
-      actions: read
       contents: read
+      actions: read
       id-token: write
     needs: publish-arch
     name: Publish Meta Package
@@ -207,14 +216,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"

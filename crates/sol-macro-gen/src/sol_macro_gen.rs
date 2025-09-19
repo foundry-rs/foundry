@@ -283,7 +283,7 @@ edition = "2021"
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
     ) -> Result<()> {
-        if check_cargo_toml {
+        if check_cargo_toml && !is_mod {
             self.check_cargo_toml(name, version, crate_path, alloy_version, alloy_rev)?;
         }
 

@@ -171,7 +171,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        odyssey: false,
+        celo: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -1047,7 +1047,7 @@ create2_library_salt = "0x000000000000000000000000000000000000000000000000000000
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
-odyssey = false
+celo = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -1349,7 +1349,7 @@ exclude = []
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
-  "odyssey": false,
+  "celo": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
@@ -1908,4 +1908,32 @@ contract AnotherCounterTest is Test {
 "#,
     );
     cmd.args(["test", "--fail-fast"]).assert_failure();
+});
+
+// Test that EVM version configuration works and the incompatibility check is available
+forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
+    // Clear default contracts
+    prj.wipe_contracts();
+
+    // Add a simple contract
+    prj.add_source(
+        "Simple.sol",
+        r#"
+pragma solidity ^0.8.5;
+
+contract Simple {
+    uint public value = 42;
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
+    });
+
+    let result = cmd.args(["build"]).assert_success();
+    let output = result.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
 });

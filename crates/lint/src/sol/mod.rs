@@ -223,6 +223,8 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Lint = SolLint;
 
     fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+        convert_solar_errors(compiler.dcx())?;
+
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
         let sm = compiler.sess().clone_source_map();
@@ -241,9 +243,8 @@ impl<'a> Linter for SolidityLinter<'a> {
         }
 
         compiler.enter_mut(|compiler| -> eyre::Result<()> {
-            if compiler.gcx().stage() == Some(solar::config::CompilerStage::Parsing) {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
-                convert_solar_errors(compiler.dcx())?;
             }
 
             let gcx = compiler.gcx();
@@ -272,7 +273,7 @@ impl<'a> Linter for SolidityLinter<'a> {
                 let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
             });
 
-            Ok(())
+            convert_solar_errors(compiler.dcx())
         })?;
 
         let sess = compiler.sess_mut();
@@ -282,7 +283,7 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
-        convert_solar_errors(compiler.dcx())
+        Ok(())
     }
 }
 

@@ -54,7 +54,7 @@ impl AsDoc for CommentsRef<'_> {
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
         for d in devs.iter() {
-            writer.write_italic(&d.value)?;
+            writer.write_dev_content(&d.value)?;
             writer.writeln()?;
         }
 
