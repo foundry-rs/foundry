@@ -96,7 +96,7 @@ impl BufWriter {
         for line in text.lines() {
             let trimmed = line.trim();
             if let Some(content) = trimmed.strip_prefix("- ") {
-                writeln!(self.buf, "- *{}*", content)?;
+                writeln!(self.buf, "- *{content}*")?;
             } else if !trimmed.is_empty() {
                 writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
             } else {
@@ -324,7 +324,7 @@ mod tests {
         let mut writer = BufWriter::default();
         let content = "This function will revert if:\n- Any of the Coolers are not owned by the caller.\n- Any of the Coolers have not been created by the CoolerFactory.\n- A duplicate Cooler is provided.";
         
-        writer.write_dev_content(content).unwrap();
+        writer.write_dev_content(content).expect("Failed to write dev content with list");
         let result = writer.finish();
         
         // Check that the first line is italicized
@@ -340,7 +340,7 @@ mod tests {
         let mut writer = BufWriter::default();
         let content = "This is a simple dev comment without any lists.";
         
-        writer.write_dev_content(content).unwrap();
+        writer.write_dev_content(content).expect("Failed to write dev content without list");
         let result = writer.finish();
         
         // Check that the entire content is italicized
@@ -352,7 +352,7 @@ mod tests {
         let mut writer = BufWriter::default();
         let content = "This function will revert if:\n\n- First item.\n\n- Second item.";
         
-        writer.write_dev_content(content).unwrap();
+        writer.write_dev_content(content).expect("Failed to write dev content with empty lines");
         let result = writer.finish();
         
         // Check that empty lines are preserved
