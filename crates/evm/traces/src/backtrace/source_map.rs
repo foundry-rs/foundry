@@ -1,21 +1,15 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::Bytes;
-use foundry_compilers::{
-    Artifact, ProjectCompileOutput,
-    artifacts::{ConfigurableContractArtifact, sourcemap::SourceMap},
-};
+use foundry_compilers::{ProjectCompileOutput, artifacts::sourcemap::SourceMap};
 use foundry_evm_core::ic::IcPcMap;
 use std::path::{Path, PathBuf};
 
-/// Source data for a single artifact/contract.
-/// Contains all the data needed to generate backtraces for a contract.
+/// Source data for a single contract.
 #[derive(Debug, Clone)]
 pub struct SourceData {
     /// Runtime source map for the contract
     pub source_map: SourceMap,
-    /// Source files (path, content) indexed by source ID
-    pub sources: Vec<(PathBuf, String)>,
     /// Deployed bytecode for accurate PC mapping
     pub bytecode: Bytes,
 }
@@ -24,23 +18,25 @@ pub struct SourceData {
 pub struct PcSourceMapper<'a> {
     /// Mapping from instruction counter to program counter.
     ic_pc_map: IcPcMap,
-    /// Source data
-    source_data: &'a SourceData,
+    /// Source data consists of the source_map and the deployed bytecode
+    source_data: SourceData,
+    /// Source files i.e source path and content (indexed by source_id)
+    sources: &'a [(PathBuf, String)],
     /// Cached line offset mappings for each source file.
     line_offsets: Vec<Vec<usize>>,
 }
 
 impl<'a> PcSourceMapper<'a> {
     /// Creates a new PC to source mapper.
-    pub fn new(source_data: &'a SourceData) -> Self {
+    pub fn new(source_data: SourceData, sources: &'a [(PathBuf, String)]) -> Self {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
         // Pre-calculate line offsets for each source file
         let line_offsets =
-            source_data.sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
+            sources.iter().map(|(_, content)| compute_line_offsets(content)).collect();
 
-        Self { ic_pc_map, source_data, line_offsets }
+        Self { ic_pc_map, source_data, sources, line_offsets }
     }
 
     /// Maps a program counter to source location.
@@ -55,12 +51,12 @@ impl<'a> PcSourceMapper<'a> {
         let source_idx_opt = element.index();
 
         let source_idx = source_idx_opt? as usize;
-        if source_idx >= self.source_data.sources.len() {
+        if source_idx >= self.sources.len() {
             return None;
         }
 
         // Get the source file info
-        let (file_path, content) = &self.source_data.sources[source_idx];
+        let (file_path, content) = &self.sources[source_idx];
 
         // Convert byte offset to line and column
         let offset = element.offset() as usize;
@@ -143,27 +139,19 @@ fn compute_line_offsets(content: &str) -> Vec<usize> {
     offsets
 }
 
-/// Collects source data for a single artifact.
-pub fn collect_source_data(
-    artifact: &ConfigurableContractArtifact,
+/// Loads sources for a specific ArtifactId.build_id
+pub fn load_build_sources(
     build_id: &str,
     output: &ProjectCompileOutput,
     root: &Path,
-) -> Option<SourceData> {
-    // Get source map and bytecode
-    let source_map = artifact.get_source_map_deployed()?.ok()?;
-    let bytecode = artifact.get_deployed_bytecode_bytes()?.into_owned();
-
-    if bytecode.is_empty() {
-        return None;
-    }
-
+) -> Option<Vec<(PathBuf, String)>> {
     let build_ctx = output.builds().find(|(bid, _)| *bid == build_id).map(|(_, ctx)| ctx)?;
 
     // Determine the size needed for sources vector
     // Highest source_id
     let max_source_id = build_ctx.source_id_to_path.keys().max().map_or(0, |id| *id) as usize;
 
+    // Vec of source path and it's content
     let mut sources = vec![(PathBuf::new(), String::new()); max_source_id + 1];
 
     // Populate sources at their correct indices
@@ -185,5 +173,5 @@ pub fn collect_source_data(
         sources[idx] = (path_buf, source_content);
     }
 
-    Some(SourceData { source_map, sources, bytecode })
+    Some(sources)
 }

@@ -1,13 +1,16 @@
 //! Solidity stack trace support for test failures.
 
 use crate::{CallTrace, SparsedTraceArena};
-use alloy_primitives::{Address, map::HashMap};
-use foundry_compilers::{ArtifactId, ProjectCompileOutput, artifacts::Libraries};
+use alloy_primitives::{Address, Bytes, map::HashMap};
+use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
+    artifacts::{ConfigurableContractArtifact, Libraries, sourcemap::SourceMap},
+};
 use std::{fmt, path::PathBuf};
 use yansi::Paint;
 
 mod source_map;
-use source_map::collect_source_data;
+use source_map::load_build_sources;
 pub use source_map::{PcSourceMapper, SourceData};
 
 /// Linked library information for backtrace resolution.
@@ -24,7 +27,8 @@ struct LinkedLib {
     address: Address,
 }
 
-/// Holds references to [`ProjectCompileOutput`] and config for backtrace generation.
+/// Holds a reference to [`ProjectCompileOutput`] to fetch artifacts and sources for backtrace
+/// generation.
 pub struct BacktraceBuilder<'a> {
     /// Linked libraries from configuration
     linked_libraries: Vec<LinkedLib>,
@@ -36,8 +40,12 @@ pub struct BacktraceBuilder<'a> {
     ///
     /// Source locations will be inaccurately reported if the files have been compiled with via-ir
     disable_source_locs: bool,
-    /// Cache of source data per artifact to avoid reloading for multiple test failures
-    source_cache: HashMap<ArtifactId, SourceData>,
+    /// Sources grouped by [`ArtifactId::build_id`] to avoid re-reading files for artifacts from
+    /// the same build
+    ///
+    /// The source [`Vec`] is indexed by the compiler source ID, and contains the source path and
+    /// source content.
+    build_sources_cache: HashMap<String, Vec<(PathBuf, String)>>,
 }
 
 impl<'a> BacktraceBuilder<'a> {
@@ -71,7 +79,7 @@ impl<'a> BacktraceBuilder<'a> {
             output,
             root,
             disable_source_locs,
-            source_cache: HashMap::default(),
+            build_sources_cache: HashMap::default(),
         }
     }
 
@@ -79,37 +87,30 @@ impl<'a> BacktraceBuilder<'a> {
     pub fn from_traces(&mut self, arena: &SparsedTraceArena) -> Backtrace<'_> {
         // Resolve addresses to artifacts using trace labels and linked libraries
         let artifacts_by_address = self.resolve_addresses(arena);
-
-        // Collect source data for all needed artifacts
-        for artifact_id in artifacts_by_address.values() {
-            // Check if already in cache
-            if !self.source_cache.contains_key(artifact_id) {
-                // Not in cache, need to collect
-                if let Some((_, artifact)) =
-                    self.output.artifact_ids().find(|(id, _)| id == artifact_id)
-                    && let Some(data) = collect_source_data(
-                        artifact,
-                        &artifact_id.build_id,
-                        self.output,
-                        &self.root,
-                    )
-                {
-                    self.source_cache.insert(artifact_id.clone(), data);
-                }
+        for (artifact_id, _) in artifacts_by_address.values() {
+            let build_id = &artifact_id.build_id;
+            if !self.build_sources_cache.contains_key(build_id)
+                && let Some(sources) = load_build_sources(build_id, self.output, &self.root)
+            {
+                self.build_sources_cache.insert(build_id.clone(), sources);
             }
         }
 
         Backtrace::new(
             artifacts_by_address,
-            &self.source_cache,
+            &self.build_sources_cache,
             self.linked_libraries.clone(),
             self.disable_source_locs,
             arena,
         )
     }
 
-    /// Resolves contract addresses to [`ArtifactId`]s from trace labels and linked libraries.
-    fn resolve_addresses(&self, arena: &SparsedTraceArena) -> HashMap<Address, ArtifactId> {
+    /// Resolves contract addresses to [`ArtifactId`] and their [`SourceData`] from trace labels and
+    /// linked libraries.
+    fn resolve_addresses(
+        &self,
+        arena: &SparsedTraceArena,
+    ) -> HashMap<Address, (ArtifactId, SourceData)> {
         let mut artifacts_by_address = HashMap::default();
 
         // Collect all labels from traces first
@@ -133,11 +134,25 @@ impl<'a> BacktraceBuilder<'a> {
             .map(|lib| (format!("{}:{}", lib.path.display(), lib.name), lib.address))
             .collect::<HashMap<_, _>>();
 
-        for (artifact_id, _) in self.output.artifact_ids() {
+        let get_source = |artifact: &ConfigurableContractArtifact| -> Option<(SourceMap, Bytes)> {
+            let source_map = artifact.get_source_map_deployed()?.ok()?;
+            let deployed_bytecode = artifact.get_deployed_bytecode_bytes()?.into_owned();
+
+            if deployed_bytecode.is_empty() {
+                return None;
+            }
+
+            Some((source_map, deployed_bytecode))
+        };
+
+        for (artifact_id, artifact) in self.output.artifact_ids() {
             // Match and insert artifacts using trace labels
-            if let Some(address) = label_to_address.remove(artifact_id.name.as_str()) {
+            if let Some(address) = label_to_address.remove(artifact_id.name.as_str())
+                && let Some((source_map, bytecode)) = get_source(artifact)
+            {
                 // Match and insert artifacts using trace labels
-                artifacts_by_address.insert(address, artifact_id.clone());
+                artifacts_by_address
+                    .insert(address, (artifact_id.clone(), SourceData { source_map, bytecode }));
             } else if let Some(&lib_address) =
                 // Match and insert the linked library artifacts
                 linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
@@ -147,9 +162,11 @@ impl<'a> BacktraceBuilder<'a> {
                             .identifier();
                         linked_lib_targets.get(&id)
                     })
+                && let Some((source_map, bytecode)) = get_source(artifact)
             {
                 // Insert linked libraries
-                artifacts_by_address.insert(lib_address, artifact_id);
+                artifacts_by_address
+                    .insert(lib_address, (artifact_id, SourceData { source_map, bytecode }));
             }
         }
 
@@ -159,7 +176,7 @@ impl<'a> BacktraceBuilder<'a> {
 
 /// A Solidity stack trace for a test failure.
 ///
-/// Generates a backtrace from a [`SparsedTraceArena`] by leveraging [`SourceData`].
+/// Generates a backtrace from a [`SparsedTraceArena`] by leveraging source maps and bytecode.
 ///
 /// It uses the program counter (PC) from the traces to map to a specific source location for the
 /// call.
@@ -168,7 +185,7 @@ impl<'a> BacktraceBuilder<'a> {
 pub struct Backtrace<'a> {
     /// The frames of the backtrace, from innermost (where the revert happened) to outermost.
     frames: Vec<BacktraceFrame>,
-    /// PC to source mappers for each contract
+    /// Map from address to PcSourceMapper
     pc_mappers: HashMap<Address, PcSourceMapper<'a>>,
     /// Linked libraries from configuration
     linked_libraries: Vec<LinkedLib>,
@@ -179,10 +196,10 @@ pub struct Backtrace<'a> {
 }
 
 impl<'a> Backtrace<'a> {
-    /// Sets source data from pre-collected artifacts.
+    /// Creates a backtrace from collected artifacts and sources.
     fn new(
-        artifacts_by_address: HashMap<Address, ArtifactId>,
-        sources: &'a HashMap<ArtifactId, SourceData>,
+        artifacts_by_address: HashMap<Address, (ArtifactId, SourceData)>,
+        build_sources: &'a HashMap<String, Vec<(PathBuf, String)>>,
         linked_libraries: Vec<LinkedLib>,
         disable_source_locs: bool,
         arena: &SparsedTraceArena,
@@ -191,9 +208,10 @@ impl<'a> Backtrace<'a> {
 
         // Build PC source mappers for each contract
         if !disable_source_locs {
-            for (addr, artifact_id) in &artifacts_by_address {
-                if let Some(source_data) = sources.get(artifact_id) {
-                    pc_mappers.insert(*addr, PcSourceMapper::new(source_data));
+            for (addr, (artifact_id, source_data)) in artifacts_by_address {
+                if let Some(sources) = build_sources.get(&artifact_id.build_id) {
+                    let mapper = PcSourceMapper::new(source_data, sources);
+                    pc_mappers.insert(addr, mapper);
                 }
             }
         }
