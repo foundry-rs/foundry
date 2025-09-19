@@ -42,7 +42,7 @@ use foundry_compilers::{
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
 use semver::Version;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -306,7 +306,10 @@ pub struct Config {
     /// list of file paths to ignore
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
-    /// When true, compiler warnings are treated as errors
+    /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+    pub deny: DenyLevel,
+    /// DEPRECATED: use `deny` instead.
+    #[serde(default, skip_serializing)]
     pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
@@ -562,13 +565,109 @@ pub struct Config {
     pub _non_exhaustive: (),
 }
 
+/// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DenyLevel {
+    /// Always exit with zero code.
+    #[default]
+    Never,
+    /// Exit with a non-zero code if any warnings are found.
+    Warnings,
+    /// Exit with a non-zero code if any notes or warnings are found.
+    Notes,
+}
+
+// Custom deserialization to make `DenyLevel` parsing case-insensitive and backwards compatible with
+// booleans.
+impl<'de> Deserialize<'de> for DenyLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct DenyLevelVisitor;
+
+        impl<'de> de::Visitor<'de> for DenyLevelVisitor {
+            type Value = DenyLevel;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("one of the following strings: `never`, `warnings`, `notes`")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(DenyLevel::from(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                DenyLevel::from_str(value).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_any(DenyLevelVisitor)
+    }
+}
+
+impl FromStr for DenyLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "warnings" | "warning" | "w" => Ok(Self::Warnings),
+            "notes" | "note" | "n" => Ok(Self::Notes),
+            "never" | "false" | "f" => Ok(Self::Never),
+            _ => Err(format!(
+                "unknown variant: found `{s}`, expected one of `never`, `warnings`, `notes`"
+            )),
+        }
+    }
+}
+
+impl From<bool> for DenyLevel {
+    fn from(deny: bool) -> Self {
+        if deny { Self::Warnings } else { Self::Never }
+    }
+}
+
+impl DenyLevel {
+    /// Returns `true` if the deny level includes warnings.
+    pub fn warnings(&self) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Warnings | Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level includes notes.
+    pub fn notes(&self) -> bool {
+        match self {
+            Self::Never | Self::Warnings => false,
+            Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level is set to never (only errors).
+    pub fn never(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Warnings | Self::Notes => false,
+        }
+    }
+}
+
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
 pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz")];
 
 /// Deprecated keys and their replacements.
 ///
 /// See [Warning::DeprecatedKey]
-pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
+pub const DEPRECATIONS: &[(&str, &str)] =
+    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
 
 impl Config {
     /// The default profile: "default"
@@ -1051,7 +1150,7 @@ impl Config {
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
-            .set_compiler_severity_filter(if self.deny_warnings {
+            .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
                 Severity::Error
@@ -2160,6 +2259,13 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
+        // Normalize `deny` based on the provided `deny_warnings` version.
+        if self.deny_warnings
+            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+        {
+            figment = figment.merge(("deny", DenyLevel::Warnings));
+        }
+
         figment
     }
 }
@@ -2432,6 +2538,7 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
             ],
             ignored_file_paths: vec![],
+            deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
             ast: false,
@@ -3780,7 +3887,7 @@ mod tests {
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
                 ignored_warnings_from = ["something"]
-                deny_warnings = false
+                deny = "never"
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
@@ -6217,6 +6324,24 @@ mod tests {
             // Non-array values should be replaced
             assert_eq!(config.optimizer, Some(false));
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_deny_warnings_is_handled() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                deny_warnings = true
+                "#,
+            )?;
+            let config = Config::load().unwrap();
+
+            // Assert that the deprecated flag is correctly interpreted
+            assert_eq!(config.deny, DenyLevel::Warnings);
             Ok(())
         });
     }
