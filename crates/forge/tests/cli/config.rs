@@ -99,6 +99,7 @@ sparse_mode = false
 build_info = false
 isolate = false
 disable_block_gas_limit = false
+enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
