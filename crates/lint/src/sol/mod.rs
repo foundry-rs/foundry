@@ -4,23 +4,23 @@ use crate::linter::{
 };
 use foundry_common::{
     comments::{
-        inline_config::{InlineConfig, InlineConfigItem},
         Comments,
+        inline_config::{InlineConfig, InlineConfigItem},
     },
     errors::convert_solar_errors,
 };
-use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
-use foundry_config::{lint::Severity, DenyLevel};
+use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
+use foundry_config::{DenyLevel, lint::Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
     interface::{
-        diagnostics::{self, HumanEmitter, JsonEmitter},
         Session,
+        diagnostics::{self, HumanEmitter, JsonEmitter},
     },
     sema::{
-        hir::{self, Visit as _},
         Compiler, Gcx,
+        hir::{self, Visit as _},
     },
 };
 use std::{
