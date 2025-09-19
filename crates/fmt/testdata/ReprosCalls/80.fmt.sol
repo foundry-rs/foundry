@@ -5,6 +5,9 @@ function test() public {
         quote: IOracle(oracleAddress).STETH()
     }));
 
+    return someFunction().getValue().modifyValue().negate()
+        .scaleBySomeFactor(1000).transformToTuple();
+
     SnapshotRegistry(adapterRegistry)
         .add(
             adapter,
@@ -54,6 +57,8 @@ function test() public {
     vm._expectCheatcodeRevert(
         "failed parsing as `uint256`: missing hex prefix for hex string"
     );
+    vm.thisIsJustAReallyLongMemberWithoutAcall.LetsSeeHowItBreaks
+        .willItBreakAsIntendedOrNot;
 
     bytes4[] memory targets = new bytes4[](0);
     targets[0] =

@@ -14,7 +14,7 @@ use solar::parse::{
     interface::{BytePos, SourceMap},
     token,
 };
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops::Deref, sync::Arc};
 
 mod common;
 mod sol;
@@ -41,6 +41,89 @@ pub(super) struct MemberCache {
     pub position: MemberPos,
 }
 
+/// Specifies the nature of a complex call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CallContextKind {
+    /// A chained method call, `a().b()`.
+    Chained,
+
+    /// A nested function call, `a(b())`.
+    Nested,
+}
+
+/// Formatting context for a call expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CallContext {
+    /// The kind call.
+    pub(super) kind: CallContextKind,
+
+    /// The size of the callee's "head," excluding its arguments.
+    pub(super) size: usize,
+}
+
+impl CallContext {
+    pub(super) fn nested(size: usize) -> Self {
+        Self { kind: CallContextKind::Nested, size }
+    }
+
+    pub(super) fn chained(size: usize) -> Self {
+        Self { kind: CallContextKind::Chained, size }
+    }
+
+    pub(super) fn is_nested(&self) -> bool {
+        matches!(self.kind, CallContextKind::Nested)
+    }
+
+    pub(super) fn is_chained(&self) -> bool {
+        matches!(self.kind, CallContextKind::Chained)
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct CallStack(Vec<CallContext>);
+
+impl Deref for CallStack {
+    type Target = [CallContext];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl CallStack {
+    pub(crate) fn push(&mut self, call: CallContext) {
+        self.0.push(call);
+    }
+    pub(crate) fn pop(&mut self) -> Option<CallContext> {
+        self.0.pop()
+    }
+
+    pub(crate) fn is_nested(&self) -> bool {
+        self.last().is_some_and(|call| call.is_nested())
+    }
+
+    pub(crate) fn is_chain(&self) -> bool {
+        self.last().is_some_and(|call| call.is_chained())
+    }
+
+    /// Calculates the total size of the call sequence so far.
+    pub(crate) fn size(&self) -> usize {
+        let Some((first, rest)) = self.split_first() else {
+            return 0;
+        };
+
+        // The first call only adds its name and an opening parenthesis.
+        let first_size = first.size + 1;
+
+        // For all subsequent chainned calls, add the `.` separator.
+        let rest_size: usize = rest.iter().fold(0, |acc, call| {
+            let separator = if matches!(call.kind, CallContextKind::Chained) { 1 } else { 0 };
+            acc + separator + call.size + 1
+        });
+
+        first_size + rest_size
+    }
+}
+
 pub(super) struct State<'sess, 'ast> {
     pub(super) s: pp::Printer,
     ind: isize,
@@ -58,6 +141,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: Option<BinOpGroup>,
     var_init: bool,
     fn_body: bool,
+    call_stack: CallStack,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -145,6 +229,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: None,
             var_init: false,
             fn_body: false,
+            call_stack: CallStack(vec![]),
         }
     }
 

@@ -1,3 +1,4 @@
+// config: call_compact_args = false
 contract NamedFunctionCallExpression {
     struct SimpleStruct {
         uint256 val;

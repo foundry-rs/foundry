@@ -185,9 +185,9 @@ contract NestedCallsTest is Test {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_nestedCalls() public {
-        vm._expectCheatcodeRevert(
-            bytes(string.concat(errMsg, ": ", left, " != ", right))
-        );
+        vm._expectCheatcodeRevert(bytes(string.concat(
+            errMsg, ": ", left, " != ", right
+        )));
     }
 
     function test_assemblyFnComments() public {

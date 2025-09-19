@@ -4,7 +4,7 @@
 #![allow(dead_code)] // TODO(dani)
 
 const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
-const DEBUG_INDENT: bool = false;
+const DEBUG_INDENT: bool = false || option_env!("FMT_DEBUG").is_some();
 
 use foundry_common::comments::{
     Comment, Comments,

@@ -37,6 +37,8 @@ pub struct FormatterConfig {
     pub sort_imports: bool,
     /// Whether to suppress spaces around the power operator (`**`).
     pub pow_no_space: bool,
+    /// Whether to compact call args in a single line when possible
+    pub call_compact_args: bool,
 }
 
 /// Style of integer types.
@@ -196,6 +198,7 @@ impl Default for FormatterConfig {
             contract_new_lines: false,
             sort_imports: false,
             pow_no_space: false,
+            call_compact_args: true,
         }
     }
 }

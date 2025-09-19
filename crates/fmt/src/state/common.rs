@@ -372,11 +372,18 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        let is_single_without_cmnts =
-            values.len() == 1 && !format.break_single && self.peek_comment_before(pos_hi).is_none();
+        let is_single_without_cmnts = if values.len() == 1 && !format.break_single {
+            let span = get_span(&values[0]);
+            // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
+            // comments in the child expression, and those don't matter.
+            self.peek_comment_before(span.map_or(pos_hi, |s| s.lo())).is_none()
+                && self.peek_comment_between(span.map_or(pos_hi, |s| s.hi()), pos_hi).is_none()
+        } else {
+            false
+        };
 
-        let skip_first_break = if format.with_delimiters {
-            self.s.cbox(self.ind);
+        let skip_first_break = if format.with_delimiters || format.is_inline() {
+            self.s.cbox(if format.no_ind { 0 } else { self.ind });
             if is_single_without_cmnts {
                 true
             } else {
@@ -384,7 +391,7 @@ impl<'ast> State<'_, 'ast> {
             }
         } else {
             let res = self.commasep_opening_logic(values, &mut get_span, format);
-            self.s.cbox(self.ind);
+            self.s.cbox(if format.no_ind { 0 } else { self.ind });
             res
         };
 
@@ -392,14 +399,15 @@ impl<'ast> State<'_, 'ast> {
             self.word_space(sym);
         } else if is_single_without_cmnts && format.with_space {
             self.nbsp();
-        } else if !skip_first_break {
+        } else if !skip_first_break && !format.is_inline() {
             format.print_break(true, values.len(), &mut self.s);
         }
         if format.is_compact() {
             self.s.cbox(0);
         }
 
-        let mut skip_last_break = is_single_without_cmnts || !format.with_delimiters;
+        let mut skip_last_break =
+            is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
             let (is_last, span) = (i == values.len() - 1, get_span(value));
             if let Some(span) = span
@@ -741,6 +749,10 @@ impl ListFormat {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
+    pub(crate) fn has_indentation(&self) -> bool {
+        !self.no_ind
+    }
+
     // -- BUILDER METHODS ------------------------------------------------------
     pub(crate) fn inline() -> Self {
         Self { kind: ListFormatKind::Inline, ..Default::default() }
@@ -811,7 +823,7 @@ impl ListFormat {
     // -- PRINTER METHODS ------------------------------------------------------
     pub(crate) fn print_break(&self, soft: bool, elems: usize, p: &mut Printer) {
         match self.kind {
-            ListFormatKind::Inline => (),
+            ListFormatKind::Inline => p.nbsp(), // CAREFUL: we can't use `pp.offset()` afterwards
             ListFormatKind::AlwaysBreak if elems > 1 || (self.break_single && elems == 1) => {
                 p.hardbreak()
             }

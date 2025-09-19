@@ -3,6 +3,8 @@ function test() public {
     oracleInfo =
         abi.encode(LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()}));
 
+    return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
+
     SnapshotRegistry(adapterRegistry)
         .add(adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH());
 
@@ -36,6 +38,7 @@ function test() public {
 
     vm._expectCheatcodeRevert("short msg doesn't break");
     vm._expectCheatcodeRevert("failed parsing as `uint256`: missing hex prefix for hex string");
+    vm.thisIsJustAReallyLongMemberWithoutAcall.LetsSeeHowItBreaks.willItBreakAsIntendedOrNot;
 
     bytes4[] memory targets = new bytes4[](0);
     targets[0] = FuzzArtifactSelector("TargetArtifactSelectors.t.sol:Hi", selectors);

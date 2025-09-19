@@ -1,3 +1,4 @@
+// config: call_compact_args = false
 contract RevertNamedArgsStatement {
     error EmptyError();
     error SimpleError(uint256 val);
