@@ -3,6 +3,7 @@ use eyre::Result;
 use foundry_common::fs;
 use std::path::Path;
 use yansi::Paint;
+use heck::{AsLowerCamelCase, AsPascalCase};
 
 /// CLI arguments for `forge generate`.
 #[derive(Debug, Parser)]
@@ -49,22 +50,11 @@ impl GenerateTestArgs {
     }
 }
 
-/// Utility function to convert an identifier to pascal or camel case.
+/// Utility function to convert an identifier to PascalCase or lowerCamelCase.
 fn format_identifier(input: &str, is_pascal_case: bool) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = is_pascal_case;
-
-    for word in input.split_whitespace() {
-        if !word.is_empty() {
-            let (first, rest) = word.split_at(1);
-            let formatted_word = if capitalize_next {
-                format!("{}{}", first.to_uppercase(), rest)
-            } else {
-                format!("{}{}", first.to_lowercase(), rest)
-            };
-            capitalize_next = true;
-            result.push_str(&formatted_word);
-        }
+    if is_pascal_case {
+        AsPascalCase(input).to_string()
+    } else {
+        AsLowerCamelCase(input).to_string()
     }
-    result
 }
