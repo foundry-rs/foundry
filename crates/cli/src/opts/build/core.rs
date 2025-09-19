@@ -51,7 +51,6 @@ pub struct BuildOpts {
     /// A compiler error will be triggered at the specified diagnostic level.
     ///
     /// Replaces the deprecated `--deny-warnings` flag.
-    /// Accepts boolean values for backwards compatibility.
     ///
     /// Possible values:
     ///  - `never`: Do not treat any diagnostics as errors.
