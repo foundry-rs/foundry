@@ -3169,3 +3169,29 @@ Traces:
 Error: script failed: call to non-contract address [..]
 "#]]);
 });
+
+// Test that --verify without --broadcast fails with a clear error message
+forgetest!(verify_without_broadcast_fails, |prj, cmd| {
+    let script = prj.add_source(
+        "Counter",
+        r#"
+import "forge-std/Script.sol";
+
+contract CounterScript is Script {
+    function run() external {
+        // Simple script that does nothing
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "script",
+        script.to_str().unwrap(),
+        "--verify",
+        "--rpc-url",
+        "https://sepolia.infura.io/v3/test",
+    ])
+    .assert_failure()
+    .stderr_matches("The --verify flag requires --broadcast to be specified. Verification without broadcasting is not meaningful.");
+});
