@@ -248,10 +248,16 @@ impl ScriptArgs {
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
+        // Validate that --verify is only used with --broadcast
+        if compiled.args.verify && !compiled.args.should_broadcast() {
+            eyre::bail!(
+                "The --verify flag requires --broadcast to be specified. Verification without broadcasting is not meaningful."
+            );
+        }
+
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
-        {
+        let bundled = if compiled.args.resume {
             compiled.resume().await?
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
