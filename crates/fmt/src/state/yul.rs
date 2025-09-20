@@ -32,6 +32,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_yul_expr(expr);
             }
             yul::StmtKind::AssignMulti(paths, expr_call) => {
+                self.ibox(0);
                 self.commasep(
                     paths,
                     stmt.span.lo(),
@@ -45,6 +46,7 @@ impl<'ast> State<'_, 'ast> {
                 self.s.offset(self.ind);
                 self.ibox(0);
                 self.print_yul_expr_call(expr_call, span);
+                self.end();
                 self.end();
             }
             yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call, span),
@@ -80,10 +82,18 @@ impl<'ast> State<'_, 'ast> {
                 for yul::StmtSwitchCase { constant, body, span } in cases.iter() {
                     self.hardbreak_if_not_bol();
                     if let Some(constant) = constant {
+                        self.print_comments(
+                            constant.span.lo(),
+                            CommentConfig::default().mixed_prev_space(),
+                        );
                         self.word("case ");
                         self.print_lit(constant);
                         self.nbsp();
                     } else {
+                        self.print_comments(
+                            body.span.lo(),
+                            CommentConfig::default().mixed_prev_space(),
+                        );
                         self.word("default ");
                     }
                     self.print_yul_block(body, *span, self.can_yul_block_be_inlined(body), false);
@@ -98,7 +108,9 @@ impl<'ast> State<'_, 'ast> {
                 let yul::Function { name, parameters, returns, body } = func;
                 let params_hi = parameters
                     .last()
-                    .map_or(returns.first().map_or(span.hi(), |r| r.span.lo()), |p| p.span.hi());
+                    .map_or(returns.first().map_or(body.span.lo(), |r| r.span.lo()), |p| {
+                        p.span.hi()
+                    });
 
                 self.cbox(0);
                 self.s.ibox(0);
@@ -122,7 +134,7 @@ impl<'ast> State<'_, 'ast> {
                     self.commasep(
                         returns,
                         returns.first().map_or(params_hi, |ret| ret.span.lo()),
-                        returns.last().map_or(span.hi(), |ret| ret.span.hi()),
+                        returns.last().map_or(body.span.lo(), |ret| ret.span.hi()),
                         Self::print_ident,
                         get_span!(),
                         ListFormat::yul(Some("->"), Some("{")),

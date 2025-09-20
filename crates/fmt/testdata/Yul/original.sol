@@ -153,6 +153,26 @@ contract Yul {
             for {} 1 {} {
                 if iszero(not(mload(i))) { break } // Break if all limbs are zero.
             }
+
+            switch mode
+            // Get value.
+            case 0 { result := getStr(input, _BITPOS_VALUE, _BITPOS_VALUE_LENGTH, _VALUE_INITED) }
+            // Get children.
+            case 3 { result := children(input) }
+            // Parse.
+            default {
+                let p := add(input, 0x20)
+                let e := add(p, mload(input))
+                if iszero(eq(p, e)) {
+                    let c := chr(e)
+                    mstore8(e, 34) // Place a '"' at the end to speed up parsing.
+                    // The `34 << 248` makes `mallocItem` preserve '"' at the end.
+                    mstore(0x00, setP(shl(248, 34), _BITPOS_STRING, input))
+                    result, p := parseValue(input, 0, p, e)
+                    mstore8(e, c) // Restore the original char at the end.
+                }
+                if or(lt(p, e), iszero(result)) { fail() }
+            }
         }
     }
 }
