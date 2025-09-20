@@ -82,7 +82,8 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields, transaction_request_to_typed,
+        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
+        transaction_request_to_typed,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };

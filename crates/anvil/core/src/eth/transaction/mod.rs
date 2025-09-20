@@ -1189,9 +1189,11 @@ impl TypedReceipt {
 
 /// Convert internal receipt to RPC receipt
 fn convert_receipt_to_rpc(
-    receipt: ReceiptWithBloom<Receipt<alloy_primitives::Log>>
+    receipt: ReceiptWithBloom<Receipt<alloy_primitives::Log>>,
 ) -> ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-    let rpc_logs: Vec<alloy_rpc_types::Log> = receipt.receipt.logs
+    let rpc_logs: Vec<alloy_rpc_types::Log> = receipt
+        .receipt
+        .logs
         .into_iter()
         .map(|log| alloy_rpc_types::Log {
             inner: log,
@@ -1255,9 +1257,7 @@ impl TypedReceiptRpc {
 }
 
 // Intentionally only provide a concrete conversion used by RPC response/Otterscan path.
-impl From<TypedReceiptRpc>
-    for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>>
-{
+impl From<TypedReceiptRpc> for ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
     fn from(value: TypedReceiptRpc) -> Self {
         match value {
             TypedReceiptRpc::Legacy(r)
@@ -1274,8 +1274,7 @@ impl From<TypedReceiptRpc>
                         .receipt
                         .inner
                         .logs
-                        .iter()
-                        .cloned()
+                        .into_iter()
                         .map(|l| alloy_rpc_types::Log {
                             inner: l,
                             block_hash: None,
@@ -1531,8 +1530,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                         logs: receipt_with_bloom
                             .receipt
                             .logs
-                            .iter()
-                            .cloned()
+                            .into_iter()
                             .map(|l| l.inner)
                             .collect(),
                     },
