@@ -27,9 +27,7 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
-    transaction::{
-        DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
-    },
+    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -85,11 +83,16 @@ impl ExecutedTransaction {
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: Some(0),
-                deposit_receipt_version: Some(1),
-            }),
+            TypedTransaction::Deposit(_tx) => {
+                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: receipt_with_bloom.receipt,
+                        deposit_nonce: Some(0),
+                        deposit_receipt_version: Some(1),
+                    },
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                })
+            }
         }
     }
 }

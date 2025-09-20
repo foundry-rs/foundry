@@ -84,8 +84,8 @@ use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
     wallet::WalletCapabilities,
@@ -2928,12 +2928,30 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        let receipt = tx_receipt.as_receipt_with_bloom().receipt.clone();
-        let receipt = Receipt {
-            status: receipt.status,
-            cumulative_gas_used: receipt.cumulative_gas_used,
-            logs: receipt
-                .logs
+        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
+        // specially
+        let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
+            TypedReceipt::Deposit(r) => (
+                r.receipt.inner.status,
+                r.receipt.inner.cumulative_gas_used,
+                r.receipt.inner.logs.to_vec(),
+                r.logs_bloom,
+            ),
+            _ => {
+                let receipt_ref = tx_receipt.as_receipt_with_bloom();
+                (
+                    receipt_ref.receipt.status,
+                    receipt_ref.receipt.cumulative_gas_used,
+                    receipt_ref.receipt.logs.to_vec(),
+                    receipt_ref.logs_bloom,
+                )
+            }
+        };
+
+        let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
+            status,
+            cumulative_gas_used,
+            logs: logs_source
                 .into_iter()
                 .enumerate()
                 .map(|(index, log)| alloy_rpc_types::Log {
@@ -2948,20 +2966,33 @@ impl Backend {
                 })
                 .collect(),
         };
-        let receipt_with_bloom =
-            ReceiptWithBloom { receipt, logs_bloom: tx_receipt.as_receipt_with_bloom().logs_bloom };
+        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
 
         let inner = match tx_receipt {
-            TypedReceipt::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            TypedReceipt::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            TypedReceipt::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            TypedReceipt::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            TypedReceipt::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: r.deposit_nonce,
-                deposit_receipt_version: r.deposit_receipt_version,
-            }),
+            TypedReceipt::EIP1559(_) => TypedReceiptRpc::EIP1559(receipt_with_bloom),
+            TypedReceipt::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
+            TypedReceipt::EIP2930(_) => TypedReceiptRpc::EIP2930(receipt_with_bloom),
+            TypedReceipt::EIP4844(_) => TypedReceiptRpc::EIP4844(receipt_with_bloom),
+            TypedReceipt::EIP7702(_) => TypedReceiptRpc::EIP7702(receipt_with_bloom),
+            TypedReceipt::Deposit(r) => {
+                TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: Receipt {
+                            status: receipt_with_bloom.receipt.status,
+                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
+                            logs: receipt_with_bloom
+                                .receipt
+                                .logs
+                                .into_iter()
+                                .map(|l| l.inner)
+                                .collect(),
+                        },
+                        deposit_nonce: r.receipt.deposit_nonce,
+                        deposit_receipt_version: r.receipt.deposit_receipt_version,
+                    },
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                })
+            }
         };
 
         let inner = TransactionReceipt {
