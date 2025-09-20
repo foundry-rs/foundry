@@ -3767,6 +3767,41 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 "#]]);
 });
 
+forgetest_init!(can_inspect_libraries, |prj, cmd| {
+    prj.add_source(
+        "Source.sol",
+        r#"
+    import "./Lib.sol";
+
+    library Lib2 {
+        function foo() public {}
+    }
+
+    contract Source {
+        function foo() public {
+            Lib.foo();
+            Lib2.foo();
+        }
+    }"#,
+    );
+
+    prj.add_source(
+        "Lib.sol",
+        r#"
+    library Lib {
+        function foo() public {}
+    }
+    "#,
+    );
+
+    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+Dynamically linked libraries:
+  src/Lib.sol:Lib
+  src/Source.sol:Lib2
+
+"#]]);
+});
+
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
     prj.update_config(|config| {
