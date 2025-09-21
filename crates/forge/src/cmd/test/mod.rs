@@ -21,7 +21,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell,
+    EmptyTestFilter, compile::ProjectCompiler, evm::EvmArgs, fs, get_contract_name, shell,
 };
 use foundry_compilers::{
     Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
@@ -37,9 +37,8 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
-use regex::Regex;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::PathBuf,
     sync::{Arc, mpsc::channel},
@@ -809,8 +808,10 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        if self.rerun {
-            filter.test_pattern = last_run_failures(config);
+        if self.rerun
+            && let Some(pairs) = last_run_failures_qualified(config)
+        {
+            filter.qualified_failures = Some(pairs);
         }
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
@@ -891,37 +892,69 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
     Ok(TestOutcome::empty(false))
 }
 
-/// Load persisted filter (with last test run failures) from file.
-fn last_run_failures(config: &Config) -> Option<regex::Regex> {
-    match fs::read_to_string(&config.test_failures_file) {
-        Ok(filter) => Regex::new(&filter)
-            .inspect_err(|e| {
-                _ = sh_warn!(
-                    "failed to parse test filter from {:?}: {e}",
-                    config.test_failures_file
-                )
-            })
-            .ok(),
-        Err(_) => None,
-    }
+/// Structure of persisted test failures used by `--rerun`.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TestSuiteFailures {
+    test_suite: String,
+    failures: Vec<String>,
 }
+
+/// Load persisted failures as qualified (contract, test) pairs from JSON.
+fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, String)>> {
+    let content = fs::read_to_string(&config.test_failures_file).ok()?;
+    let entries: Vec<TestSuiteFailures> = serde_json::from_str(&content).ok()?;
+    // Normalize to bare names and deduplicate while preserving order.
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for e in entries.into_iter() {
+        for t in e.failures.into_iter() {
+            let bare = t.split('(').next().unwrap_or(&t).to_string();
+            let key = (e.test_suite.clone(), bare.clone());
+            if seen.insert(key.clone()) {
+                out.push(key);
+            }
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+// Legacy regex-based rerun cache reader removed; rerun now uses JSON-qualified pairs.
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.failures().peekable();
-        while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+    if outcome.failed() == 0 || fs::create_file(&config.test_failures_file).is_err() {
+        return;
+    }
+    // Group failing tests by suite (contract name)
+    let mut by_suite: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (suite_name, suite) in &outcome.results {
+        let mut names = Vec::new();
+        for (sig, result) in &suite.test_results {
+            if result.status.is_failure()
+                && let Some(name) = sig.split('(').next()
             {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
-                }
+                names.push(name.to_string());
             }
         }
-        let _ = fs::write(&config.test_failures_file, filter);
+        if !names.is_empty() {
+            names.sort_unstable();
+            names.dedup();
+            let suite_key = get_contract_name(suite_name).to_string();
+            let entry = by_suite.entry(suite_key).or_default();
+            entry.extend(names);
+            entry.sort_unstable();
+            entry.dedup();
+        }
+    }
+    if by_suite.is_empty() {
+        return;
+    }
+    let entries: Vec<TestSuiteFailures> = by_suite
+        .into_iter()
+        .map(|(test_suite, failures)| TestSuiteFailures { test_suite, failures })
+        .collect();
+    if let Ok(json) = serde_json::to_string(&entries) {
+        let _ = fs::write(&config.test_failures_file, json);
     }
 }
 

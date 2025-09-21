@@ -98,9 +98,11 @@ impl MultiContractRunner {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
+        // Use contract-aware matching to support qualified reruns
         self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| filter.matches_test_function(func))
+            .flat_map(|(id, c)| c.abi.functions().map(move |func| (id, func)))
+            .filter(|(id, func)| is_matching_test_in_context(func, id, filter))
+            .map(|(_, func)| func)
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -124,7 +126,7 @@ impl MultiContractRunner {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function(func))
+                    .filter(|func| is_matching_test_in_context(func, id, filter))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -578,4 +580,19 @@ pub(crate) fn matches_contract(
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+}
+
+/// Returns `true` if the function is a test function that matches the given filter in the context
+/// of a specific contract (needed for exact rerun filtering).
+pub(crate) fn is_matching_test_in_context(
+    func: &Function,
+    artifact_id: &ArtifactId,
+    filter: &dyn TestFilter,
+) -> bool {
+    if !func.is_any_test() {
+        return false;
+    }
+    let test_name = func.name.as_str();
+    let contract_name = artifact_id.name.as_str();
+    filter.matches_qualified_test(contract_name, test_name)
 }
