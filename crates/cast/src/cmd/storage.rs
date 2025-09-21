@@ -176,8 +176,14 @@ impl StorageArgs {
         // Decide on compiler to use (user override -> metadata -> autodetect)
         let meta_version = metadata.compiler_version()?;
         let mut auto_detect = false;
-        let desired = if let Some(user_ver) = self.solc_version {
-            SolcCompiler::Specific(Solc::find_or_install(&user_ver)?)
+        let desired = if let Some(user_version) = self.solc_version {
+            if user_version < MIN_SOLC {
+                sh_warn!(
+                    "The provided --solc-version is {user_version} while the minimum version for \
+                     storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                )?;
+            }
+            SolcCompiler::Specific(Solc::find_or_install(&user_version)?)
         } else if meta_version < MIN_SOLC {
             auto_detect = true;
             SolcCompiler::AutoDetect
