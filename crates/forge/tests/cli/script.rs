@@ -3193,5 +3193,5 @@ contract CounterScript is Script {
         "https://sepolia.infura.io/v3/test",
     ])
     .assert_failure()
-    .stderr_matches("The --verify flag requires --broadcast to be specified. Verification without broadcasting is not meaningful.");
+    .stderr_matches("error: the following required arguments were not provided:\n  --broadcast\n\nUsage: forge script [OPTIONS] <PATH> [ARGS]...\n\nFor more information, try '--help'.");
 });
