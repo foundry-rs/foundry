@@ -54,7 +54,7 @@ impl AsDoc for CommentsRef<'_> {
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
         for d in devs.iter() {
-            writer.write_italic(&d.value)?;
+            writer.write_dev_content(&d.value)?;
             writer.writeln()?;
         }
 
@@ -229,7 +229,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Enums")?;
                             enums.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_variant_table(item, comments)
                             })?;
                         }
                     }

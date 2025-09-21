@@ -6,7 +6,7 @@ use crate::{
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::is_host_only,
 };
-use alloy_primitives::{Address, map::HashSet};
+use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
@@ -68,7 +68,7 @@ pub struct VerifyArgs {
     /// The contract identifier in the form `<path>:<contractname>`.
     pub contract: Option<ContractInfo>,
 
-    /// The ABI-encoded constructor arguments.
+    /// The ABI-encoded constructor arguments. Only for Etherscan.
     #[arg(
         long,
         conflicts_with = "constructor_args_path",
@@ -84,6 +84,10 @@ pub struct VerifyArgs {
     /// Try to extract constructor arguments from on-chain creation code.
     #[arg(long)]
     pub guess_constructor_args: bool,
+
+    /// The hash of the transaction which created the contract. Optional for Sourcify.
+    #[arg(long)]
+    pub creation_transaction_hash: Option<TxHash>,
 
     /// The `solc` version to use to build the smart contract.
     #[arg(long, value_name = "VERSION")]
@@ -249,7 +253,7 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
+        self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -273,7 +277,11 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(self.etherscan.key().as_deref())
+        self.verifier.verifier.client(
+            self.etherscan.key().as_deref(),
+            self.etherscan.chain,
+            self.verifier.verifier_url.is_some(),
+        )
     }
 
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
@@ -450,7 +458,7 @@ pub struct VerifyCheckArgs {
     ///
     /// For Etherscan - Submission GUID.
     ///
-    /// For Sourcify - Contract Address.
+    /// For Sourcify - Verification Job ID.
     pub id: String,
 
     #[command(flatten)]
@@ -472,7 +480,15 @@ impl VerifyCheckArgs {
             "Checking verification status on {}",
             self.etherscan.chain.unwrap_or_default()
         )?;
-        self.verifier.verifier.client(self.etherscan.key().as_deref())?.check(self).await
+        self.verifier
+            .verifier
+            .client(
+                self.etherscan.key().as_deref(),
+                self.etherscan.chain,
+                self.verifier.verifier_url.is_some(),
+            )?
+            .check(self)
+            .await
     }
 }
 

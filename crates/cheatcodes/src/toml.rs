@@ -180,7 +180,7 @@ impl Cheatcode for writeToml_1Call {
 
         // Read and parse the TOML file
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let toml_data = fs::read_to_string(&data_path)?;
+        let toml_data = fs::locked_read_to_string(&data_path)?;
 
         // Convert to JSON and update the object
         let mut json_data: JsonValue =
@@ -234,7 +234,10 @@ pub(super) fn toml_to_json_value(toml: TomlValue) -> JsonValue {
             _ => JsonValue::String(s),
         },
         TomlValue::Integer(i) => JsonValue::Number(i.into()),
-        TomlValue::Float(f) => JsonValue::Number(serde_json::Number::from_f64(f).unwrap()),
+        TomlValue::Float(f) => match serde_json::Number::from_f64(f) {
+            Some(n) => JsonValue::Number(n),
+            None => JsonValue::String(f.to_string()),
+        },
         TomlValue::Boolean(b) => JsonValue::Bool(b),
         TomlValue::Array(a) => JsonValue::Array(a.into_iter().map(toml_to_json_value).collect()),
         TomlValue::Table(t) => {

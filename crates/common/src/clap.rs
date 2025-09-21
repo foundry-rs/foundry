@@ -1,10 +1,12 @@
 use clap_complete::{Shell as ClapCompleteShell, aot::Generator};
+use clap_complete_fig::Fig as ClapFig;
 use clap_complete_nushell::Nushell;
 
 #[derive(Clone, Copy)]
 pub enum Shell {
     ClapCompleteShell(ClapCompleteShell),
     Nushell,
+    Fig,
 }
 
 impl clap::ValueEnum for Shell {
@@ -16,6 +18,7 @@ impl clap::ValueEnum for Shell {
             Self::ClapCompleteShell(ClapCompleteShell::PowerShell),
             Self::ClapCompleteShell(ClapCompleteShell::Elvish),
             Self::Nushell,
+            Self::Fig,
         ]
     }
 
@@ -23,6 +26,7 @@ impl clap::ValueEnum for Shell {
         match self {
             Self::ClapCompleteShell(shell) => shell.to_possible_value(),
             Self::Nushell => Some(clap::builder::PossibleValue::new("nushell")),
+            Self::Fig => Some(clap::builder::PossibleValue::new("fig")),
         }
     }
 }
@@ -32,6 +36,7 @@ impl Generator for Shell {
         match self {
             Self::ClapCompleteShell(shell) => shell.file_name(name),
             Self::Nushell => Nushell.file_name(name),
+            Self::Fig => ClapFig.file_name(name),
         }
     }
 
@@ -39,6 +44,7 @@ impl Generator for Shell {
         match self {
             Self::ClapCompleteShell(shell) => shell.generate(cmd, buf),
             Self::Nushell => Nushell.generate(cmd, buf),
+            Self::Fig => ClapFig.generate(cmd, buf),
         }
     }
 }

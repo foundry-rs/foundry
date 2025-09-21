@@ -3,27 +3,23 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
-import { colors } from '../src/const'
+
+import { colors } from '#const.ts'
 
 const PRESERVED_FILES = ['package.json', 'README.md']
 const PLATFORM_MAP = {
   linux: 'linux',
-  alpine: 'linux',
   darwin: 'darwin',
   win32: 'win32'
 } as const
 
 const TARGET_MAP = {
   'amd64-linux': 'x86_64-unknown-linux-gnu',
-  'amd64-alpine': 'x86_64-unknown-linux-musl',
   'arm64-linux': 'aarch64-unknown-linux-gnu',
-  'arm64-alpine': 'aarch64-unknown-linux-musl',
   'amd64-darwin': 'x86_64-apple-darwin',
   'arm64-darwin': 'aarch64-apple-darwin',
   'amd64-win32': 'x86_64-pc-windows-msvc'
 } as const
-
-const ARCH_MAP = { amd64: 'x64', arm64: 'arm64', aarch64: 'arm64' } as const
 
 main().catch(error => {
   console.error(colors.red, error)
@@ -35,6 +31,10 @@ async function main() {
   const distribution = `${platform}-${arch}`
   const packagePath = NodePath.join(process.cwd(), '@foundry-rs', `forge-${distribution}`)
 
+  // ensure the directory exists
+  await NodeFS.promises.mkdir(packagePath, { recursive: true, mode: 0o755 })
+  console.info(colors.green, `Ensured package directory at ${packagePath}`, colors.reset)
+
   await cleanPackageDirectory(packagePath)
   await buildScripts()
   await copyBinary(forgeBinPath, packagePath, platform)
@@ -43,17 +43,18 @@ async function main() {
 }
 
 function getPlatformInfo() {
-  const platform = Bun.env.PLATFORM_NAME as keyof typeof PLATFORM_MAP
-  const arch = Bun.env.ARCH as keyof typeof ARCH_MAP
+  const platformEnv = Bun.env.PLATFORM_NAME as keyof typeof PLATFORM_MAP
+  const archEnv = (Bun.env.ARCH || '') as 'amd64' | 'arm64' | 'aarch64'
 
-  if (!platform || !arch)
+  if (!platformEnv || !archEnv)
     throw new Error('PLATFORM_NAME and ARCH environment variables are required')
 
-  const npmPlatform = PLATFORM_MAP[platform]
-  const npmArch = ARCH_MAP[arch]
+  const platform = PLATFORM_MAP[platformEnv]
+  // Normalize arch for package names and target mapping
+  const arch = archEnv === 'aarch64' ? 'arm64' : archEnv
 
-  if (!npmPlatform || !npmArch)
-    throw new Error('Invalid platform or architecture')
+  if (!platform || (arch !== 'amd64' && arch !== 'arm64'))
+    throw new Error(`Invalid platform or architecture: platform=${platformEnv}, arch=${archEnv}`)
 
   const { values } = NodeUtil.parseArgs({
     args: Bun.argv,
@@ -67,10 +68,10 @@ function getPlatformInfo() {
   const profile = Bun.env.NODE_ENV === 'production' ? 'release' : Bun.env.PROFILE || 'release'
   const forgeBinPath = values['forge-bin-path'] || findForgeBinary(arch, platform, profile)
 
-  return { platform: npmPlatform, arch: npmArch, forgeBinPath }
+  return { platform, arch, forgeBinPath }
 }
 
-function findForgeBinary(arch: string, platform: string, profile: string): string {
+function findForgeBinary(arch: string, platform: string, profile: string) {
   const targetDir = TARGET_MAP[`${arch}-${platform}` as keyof typeof TARGET_MAP]
   const targetPath = NodePath.join(process.cwd(), '..', 'target', targetDir, profile, 'forge')
 
@@ -81,19 +82,18 @@ function findForgeBinary(arch: string, platform: string, profile: string): strin
 }
 
 async function cleanPackageDirectory(packagePath: string) {
-  const items = await NodeFS.promises.readdir(packagePath, {
-    withFileTypes: true,
-    recursive: true
-  })
+  const items = await NodeFS.promises
+    .readdir(packagePath, { withFileTypes: true, recursive: true })
+    .catch(() => [])
 
   items
     .filter(item => !PRESERVED_FILES.includes(item.name))
-    .forEach(item =>
+    .forEach(item => {
       NodeFS.rmSync(NodePath.join(packagePath, item.name), {
         recursive: true,
         force: true
       })
-    )
+    })
 
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 }

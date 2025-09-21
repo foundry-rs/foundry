@@ -1,10 +1,11 @@
+use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -34,8 +35,6 @@ use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
-
-use super::run::fetch_contracts_bytecode_from_trace;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -116,10 +115,6 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
-    pub odyssey: bool,
-
     #[command(subcommand)]
     command: Option<CallSubcommands>,
 
@@ -133,29 +128,29 @@ pub struct CallArgs {
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
 
-    /// Override the balance of an account.
-    /// Format: address:balance
-    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
+    /// Override the accounts balance.
+    /// Format: "address:balance,address:balance"
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE", value_delimiter = ',')]
     pub balance_overrides: Option<Vec<String>>,
 
-    /// Override the nonce of an account.
-    /// Format: address:nonce
-    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
+    /// Override the accounts nonce.
+    /// Format: "address:nonce,address:nonce"
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE", value_delimiter = ',')]
     pub nonce_overrides: Option<Vec<String>>,
 
-    /// Override the code of an account.
-    /// Format: address:code
-    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
+    /// Override the accounts code.
+    /// Format: "address:code,address:code"
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE", value_delimiter = ',')]
     pub code_overrides: Option<Vec<String>>,
 
-    /// Override the state of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the accounts state and replace the current state entirely with the new one.
+    /// Format: "address:slot:value,address:slot:value"
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
     pub state_overrides: Option<Vec<String>>,
 
-    /// Override the state diff of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the accounts state specific slots and preserve the rest of the state.
+    /// Format: "address:slot:value,address:slot:value"
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
     pub state_diff_overrides: Option<Vec<String>>,
 
     /// Override the block timestamp.
@@ -260,11 +255,12 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, odyssey) =
-                TracingExecutor::get_fork_material(&config, evm_opts).await?;
+            let (mut env, fork, chain, networks) =
+                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
             env.evm_env.cfg_env.disable_block_gas_limit = true;
+            env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
             env.evm_env.block_env.gas_limit = u64::MAX;
 
             // Apply the block overrides.
@@ -290,7 +286,7 @@ impl CallArgs {
                 fork,
                 evm_version,
                 trace_mode,
-                odyssey,
+                networks,
                 create2_deployer,
                 state_overrides,
             )?;
@@ -402,18 +398,29 @@ impl CallArgs {
                 state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
         }
 
-        // Parse state overrides
-        for override_str in self.state_overrides.iter().flatten() {
-            let (addr, slot, value) = address_slot_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_state(addr, [(slot.into(), value.into())]);
+        type StateOverrides = HashMap<Address, HashMap<B256, B256>>;
+        let parse_state_overrides =
+            |overrides: &Option<Vec<String>>| -> Result<StateOverrides, eyre::Report> {
+                let mut state_overrides: StateOverrides = StateOverrides::default();
+
+                overrides.iter().flatten().try_for_each(|s| -> Result<(), eyre::Report> {
+                    let (addr, slot, value) = address_slot_value_override(s)?;
+                    state_overrides.entry(addr).or_default().insert(slot.into(), value.into());
+                    Ok(())
+                })?;
+
+                Ok(state_overrides)
+            };
+
+        // Parse and apply state overrides
+        for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
+            state_overrides_builder = state_overrides_builder.with_state(addr, entries.into_iter());
         }
 
-        // Parse state diff overrides
-        for override_str in self.state_diff_overrides.iter().flatten() {
-            let (addr, slot, value) = address_slot_value_override(override_str)?;
+        // Parse and apply state diff overrides
+        for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
             state_overrides_builder =
-                state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
+                state_overrides_builder.with_state_diff(addr, entries.into_iter())
         }
 
         Ok(Some(state_overrides_builder.build()))
@@ -439,10 +446,6 @@ impl figment::Provider for CallArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
-
-        if self.odyssey {
-            map.insert("odyssey".into(), self.odyssey.into());
-        }
 
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
