@@ -45,8 +45,9 @@ impl FlattenArgs {
 
         let target_path = dunce::canonicalize(target_path)?;
 
-        let flattener =
-            with_compilation_reporter(true, || Flattener::new(project.clone(), &target_path));
+        let flattener = with_compilation_reporter(true, Some(project.root().to_path_buf()), || {
+            Flattener::new(project.clone(), &target_path)
+        });
 
         let flattened = match flattener {
             Ok(flattener) => Ok(flattener.flatten()),
