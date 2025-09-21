@@ -1,20 +1,22 @@
-use crate::{
-    inline_config::{InlineConfig, InlineConfigItem},
-    linter::{
-        EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
-        LinterConfig,
-    },
+use crate::linter::{
+    EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
+    LinterConfig,
 };
-use foundry_common::{comments::Comments, errors::convert_solar_errors};
+use foundry_common::{
+    comments::{
+        Comments,
+        inline_config::{InlineConfig, InlineConfigItem},
+    },
+    errors::convert_solar_errors,
+};
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::lint::Severity;
+use foundry_config::{DenyLevel, lint::Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
     interface::{
         Session,
         diagnostics::{self, HumanEmitter, JsonEmitter},
-        source_map::{FileName, SourceFile},
     },
     sema::{
         Compiler, Gcx,
@@ -56,6 +58,7 @@ pub struct SolidityLinter<'a> {
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
+    // lint-specific configuration
     mixed_case_exceptions: &'a [String],
 }
 
@@ -102,7 +105,7 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    fn config(&self, inline: InlineConfig) -> LinterConfig<'_> {
+    fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
         LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
     }
 
@@ -116,8 +119,8 @@ impl<'a> SolidityLinter<'a> {
         &self,
         sess: &'gcx Session,
         ast: &'gcx ast::SourceUnit<'gcx>,
-        file: &SourceFile,
         path: &Path,
+        inline_config: &InlineConfig<Vec<String>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -148,10 +151,6 @@ impl<'a> SolidityLinter<'a> {
                 (passes, ids)
             });
 
-        // Process the inline-config
-        let comments = Comments::new(file);
-        let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
-
         // Initialize and run the early lint visitor
         let ctx = LintContext::new(
             sess,
@@ -171,7 +170,8 @@ impl<'a> SolidityLinter<'a> {
         &self,
         gcx: Gcx<'gcx>,
         source_id: hir::SourceId,
-        file: &'gcx SourceFile,
+        path: &Path,
+        inline_config: &InlineConfig<Vec<String>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -180,9 +180,7 @@ impl<'a> SolidityLinter<'a> {
         passes_and_lints.extend(info::create_late_lint_passes());
 
         // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
-        if let FileName::Real(path) = &file.name
-            && !self.path_config.is_test_or_script(path)
-        {
+        if !self.path_config.is_test_or_script(path) {
             passes_and_lints.extend(gas::create_late_lint_passes());
             passes_and_lints.extend(codesize::create_late_lint_passes());
         }
@@ -203,14 +201,6 @@ impl<'a> SolidityLinter<'a> {
 
                 (passes, ids)
             });
-
-        // Process the inline-config
-        let comments = Comments::new(file);
-        let inline_config = parse_inline_config(
-            gcx.sess,
-            &comments,
-            InlineConfigSource::Hir((&gcx.hir, source_id)),
-        );
 
         // Run late lint visitor
         let ctx = LintContext::new(
@@ -233,7 +223,14 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+    fn lint(
+        &self,
+        input: &[PathBuf],
+        deny: DenyLevel,
+        compiler: &mut Compiler,
+    ) -> eyre::Result<()> {
+        convert_solar_errors(compiler.dcx())?;
+
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
         let sm = compiler.sess().clone_source_map();
@@ -252,9 +249,8 @@ impl<'a> Linter for SolidityLinter<'a> {
         }
 
         compiler.enter_mut(|compiler| -> eyre::Result<()> {
-            if compiler.gcx().stage() == Some(solar::config::CompilerStage::Parsing) {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
-                convert_solar_errors(compiler.dcx())?;
             }
 
             let gcx = compiler.gcx();
@@ -267,15 +263,23 @@ impl<'a> Linter for SolidityLinter<'a> {
                 let Some(ast) = &ast_source.ast else {
                     panic!("AST missing for {}", path.display());
                 };
-                let _ = self.process_source_ast(gcx.sess, ast, &ast_source.file, path);
 
-                let Some((hir_source_id, hir_source)) = gcx.get_hir_source(path) else {
+                // Parse inline config.
+                let file = &ast_source.file;
+                let comments = Comments::new(file, gcx.sess.source_map(), false, false, None);
+                let inline_config = parse_inline_config(gcx.sess, &comments, ast);
+
+                // Early lints.
+                let _ = self.process_source_ast(gcx.sess, ast, path, &inline_config);
+
+                // Late lints.
+                let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
                     panic!("HIR source not found for {}", path.display());
                 };
-                let _ = self.process_source_hir(gcx, hir_source_id, &hir_source.file);
+                let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
             });
 
-            Ok(())
+            convert_solar_errors(compiler.dcx())
         })?;
 
         let sess = compiler.sess_mut();
@@ -285,20 +289,39 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
-        convert_solar_errors(compiler.dcx())
+        // Handle diagnostics and fail if necessary.
+        const MSG: &str = "aborting due to ";
+        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+            // Deny warnings.
+            (DenyLevel::Warnings, w, n) if w > 0 => {
+                if n > 0 {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
+                } else {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s)\n"))
+                }
+            }
+
+            // Deny any diagnostic.
+            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
+                (w, n) if w > 0 && n > 0 => {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
+                }
+                (w, 0) => Err(eyre::eyre!("{MSG}{w} linter warning(s)\n")),
+                (0, n) => Err(eyre::eyre!("{MSG}{n} linter note(s)\n")),
+                _ => unreachable!(),
+            },
+
+            // Otherwise, succeed.
+            _ => Ok(()),
+        }
     }
 }
 
-enum InlineConfigSource<'ast, 'hir> {
-    Ast(&'ast ast::SourceUnit<'ast>),
-    Hir((&'hir hir::Hir<'hir>, hir::SourceId)),
-}
-
-fn parse_inline_config<'ast, 'hir>(
+fn parse_inline_config<'ast>(
     sess: &Session,
     comments: &Comments,
-    source: InlineConfigSource<'ast, 'hir>,
-) -> InlineConfig {
+    ast: &'ast ast::SourceUnit<'ast>,
+) -> InlineConfig<Vec<String>> {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
         if let Some(prefix) = comment.prefix() {
@@ -318,12 +341,7 @@ fn parse_inline_config<'ast, 'hir>(
         }
     });
 
-    match source {
-        InlineConfigSource::Ast(ast) => InlineConfig::from_ast(items, ast, sess.source_map()),
-        InlineConfigSource::Hir((hir, id)) => {
-            InlineConfig::from_hir(items, hir, id, sess.source_map())
-        }
-    }
+    InlineConfig::from_ast(items, ast, sess.source_map())
 }
 
 #[derive(Error, Debug)]
