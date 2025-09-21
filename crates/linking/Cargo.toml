@@ -14,7 +14,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
