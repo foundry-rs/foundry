@@ -190,7 +190,7 @@ pub struct ScriptArgs {
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[arg(long)]
+    #[arg(long, requires = "broadcast")]
     pub verify: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
@@ -248,12 +248,6 @@ impl ScriptArgs {
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
-        // Validate that --verify is only used with --broadcast
-        if compiled.args.verify && !compiled.args.should_broadcast() {
-            eyre::bail!(
-                "The --verify flag requires --broadcast to be specified. Verification without broadcasting is not meaningful."
-            );
-        }
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
