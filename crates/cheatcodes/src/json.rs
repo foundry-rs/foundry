@@ -349,7 +349,7 @@ impl Cheatcode for writeJson_1Call {
 
         // Read, parse, and update the JSON object
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let data_string = fs::read_to_string(&data_path)?;
+        let data_string = fs::locked_read_to_string(&data_path)?;
         let mut data =
             serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string));
         upsert_json_value(&mut data, value, valueKey)?;

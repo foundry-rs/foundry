@@ -2,7 +2,9 @@
 
 use foundry_config::{
     NamedChain,
-    NamedChain::{Arbitrum, Base, BinanceSmartChainTestnet, Mainnet, Optimism, Polygon, Sepolia},
+    NamedChain::{
+        Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+    },
 };
 use rand::seq::SliceRandom;
 use std::sync::{
@@ -25,14 +27,14 @@ shuffled_list!(
     HTTP_ARCHIVE_DOMAINS,
     vec![
         //
-        "eu-central-mainnet.rpc.ithaca.xyz/rpc",
+        "reth-ethereum.ithaca.xyz/rpc",
     ],
 );
 shuffled_list!(
     HTTP_DOMAINS,
     vec![
         //
-        "eu-central-mainnet.rpc.ithaca.xyz/rpc",
+        "reth-ethereum.ithaca.xyz/rpc",
         "reth-ethereum-full.ithaca.xyz/rpc",
     ],
 );
@@ -40,14 +42,14 @@ shuffled_list!(
     WS_ARCHIVE_DOMAINS,
     vec![
         //
-        "eu-central-mainnet.ws.ithaca.xyz/ws",
+        "reth-ethereum.ithaca.xyz/ws",
     ],
 );
 shuffled_list!(
     WS_DOMAINS,
     vec![
         //
-        "eu-central-mainnet.ws.ithaca.xyz/ws",
+        "reth-ethereum.ithaca.xyz/ws",
         "reth-ethereum-full.ithaca.xyz/ws",
     ],
 );
@@ -148,6 +150,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 
     if matches!(chain, BinanceSmartChainTestnet) {
         return "https://bsc-testnet-rpc.publicnode.com".to_string();
+    }
+
+    if matches!(chain, Celo) {
+        return "https://celo.drpc.org".to_string();
     }
 
     let reth_works = true;

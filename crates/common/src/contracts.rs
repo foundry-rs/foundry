@@ -119,12 +119,22 @@ impl<'a> ContractsByArtifactBuilder<'a> {
         Self { artifacts: artifacts.into_iter().collect(), storage_layouts: BTreeMap::new() }
     }
 
-    /// Adds storage layouts from `ProjectCompileOutput` to known artifacts.
-    pub fn with_storage_layouts(mut self, output: ProjectCompileOutput) -> Self {
-        self.storage_layouts = output
-            .into_artifacts()
-            .filter_map(|(id, artifact)| artifact.storage_layout.map(|layout| (id, layout)))
-            .collect();
+    /// Add storage layouts from the given `ProjectCompileOutput` to known artifacts.
+    pub fn with_output(self, output: &ProjectCompileOutput, base: &Path) -> Self {
+        self.with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
+            artifact
+                .storage_layout
+                .as_ref()
+                .map(|layout| (id.with_stripped_file_prefixes(base), layout.clone()))
+        }))
+    }
+
+    /// Add storage layouts.
+    pub fn with_storage_layouts(
+        mut self,
+        layouts: impl IntoIterator<Item = (ArtifactId, StorageLayout)>,
+    ) -> Self {
+        self.storage_layouts.extend(layouts);
         self
     }
 
