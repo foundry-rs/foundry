@@ -26,7 +26,7 @@ harness = false
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-core.workspace = true
@@ -67,7 +67,6 @@ revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
-clap_complete_fig = "4"
 dunce.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }

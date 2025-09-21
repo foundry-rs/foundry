@@ -74,21 +74,27 @@ async fn parse_constructor_args(
     }
 
     let args_size = constructor.inputs.len() * 32;
+    if bytecode.len() < args_size {
+        return Err(eyre!(
+            "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
+            bytecode.len(),
+            args_size,
+            constructor.inputs.len()
+        ));
+    }
     let args_bytes = Bytes::from(bytecode[bytecode.len() - args_size..].to_vec());
 
     let display_args: Vec<String> = args_bytes
         .chunks(32)
         .enumerate()
-        .map(|(i, arg)| {
-            format_arg(&constructor.inputs[i].ty, arg).expect("Failed to format argument.")
-        })
-        .collect();
+        .map(|(i, arg)| format_arg(&constructor.inputs[i].ty, arg))
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(display_args)
 }
 
 fn format_arg(ty: &str, arg: &[u8]) -> Result<String> {
-    let arg_type: DynSolType = ty.parse().expect("Invalid ABI type.");
+    let arg_type: DynSolType = ty.parse()?;
     let decoded = arg_type.abi_decode(arg)?;
     let bytes = Bytes::from(arg.to_vec());
 

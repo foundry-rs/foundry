@@ -3,7 +3,8 @@
 use crate::constants::*;
 use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
 use foundry_config::{
-    BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
+    BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    parse_with_profile,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -1250,7 +1251,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = false;
+        config.deny = DenyLevel::Never;
     });
     prj.add_raw_source(
         "A",
@@ -1277,7 +1278,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // warning fails to compile
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = true;
+        config.deny = DenyLevel::Warnings;
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
@@ -1291,7 +1292,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // ignores error code and compiles
     prj.update_config(|config| {
         config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
-        config.deny_warnings = true;
+        config.deny = DenyLevel::Warnings;
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
@@ -3620,7 +3621,7 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
         r#"
     contract Source {
         function foo() public {}
-    }   
+    }
     "#,
     );
 
@@ -3762,6 +3763,41 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     "libraries": {}
   }
 }
+
+"#]]);
+});
+
+forgetest_init!(can_inspect_libraries, |prj, cmd| {
+    prj.add_source(
+        "Source.sol",
+        r#"
+    import "./Lib.sol";
+
+    library Lib2 {
+        function foo() public {}
+    }
+
+    contract Source {
+        function foo() public {
+            Lib.foo();
+            Lib2.foo();
+        }
+    }"#,
+    );
+
+    prj.add_source(
+        "Lib.sol",
+        r#"
+    library Lib {
+        function foo() public {}
+    }
+    "#,
+    );
+
+    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+Dynamically linked libraries:
+  src/Lib.sol:Lib
+  src/Source.sol:Lib2
 
 "#]]);
 });

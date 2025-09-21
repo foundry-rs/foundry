@@ -27,7 +27,7 @@ pub enum AnvilSubcommand {
         shell: foundry_common::clap::Shell,
     },
 
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
+    /// Generate Fig autocompletion spec. Deprecated: use `anvil completions fig` instead.
+    #[command(visible_alias = "fig", hide = true)]
     GenerateFigSpec,
 }
