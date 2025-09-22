@@ -436,6 +436,11 @@ pub fn line_with_tabs(
     output.push_str(rest_of_line);
 }
 
+/// Estimates the display width of a string, accounting for tabs.
+pub fn estimate_line_width(line: &str, tab_width: usize) -> usize {
+    line.chars().fold(0, |width, c| width + if c == '\t' { tab_width } else { 1 })
+}
+
 /// Returns the `BytePos` of the beginning of the current line.
 fn line_begin_pos(sf: &SourceFile, pos: BytePos) -> BytePos {
     let pos = sf.relative_position(pos);

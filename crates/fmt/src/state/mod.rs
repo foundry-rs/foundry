@@ -5,7 +5,7 @@ use crate::{
     state::sol::BinOpGroup,
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments, line_with_tabs},
+    comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
 use foundry_config::fmt::IndentStyle;
@@ -561,6 +561,56 @@ impl<'sess> State<'sess, '_> {
         self.end();
     }
 
+    /// Merges consecutive line comments to avoid orphan words.
+    fn merge_comment_lines(&self, lines: &[String], prefix: &str) -> Vec<String> {
+        // Do not apply smart merging to block comments
+        if lines.is_empty() || lines.len() < 2 || !prefix.starts_with("//") {
+            return lines.to_vec();
+        }
+
+        let mut result = Vec::new();
+        let mut i = 0;
+
+        while i < lines.len() {
+            let current_line = &lines[i];
+
+            // Keep empty lines, and non-prefixed lines, untouched
+            if current_line.trim().is_empty() || !current_line.starts_with(prefix) {
+                result.push(current_line.clone());
+                i += 1;
+                continue;
+            }
+
+            if i + 1 < lines.len() {
+                let next_line = &lines[i + 1];
+
+                // Check if next line is has the same prefix and is not empty
+                if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
+                    // Only merge if the current line doesn't fit within available width
+                    if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
+                    {
+                        // Merge the lines and let the wrapper handle breaking if needed
+                        let merged_line = format!(
+                            "{current_line} {next_content}",
+                            next_content = &next_line[prefix.len()..].trim_start()
+                        );
+                        result.push(merged_line);
+
+                        // Skip both lines since they are merged
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+
+            // No merge possible, keep the line as-is
+            result.push(current_line.clone());
+            i += 1;
+        }
+
+        result
+    }
+
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
         match cmnt.style {
@@ -575,14 +625,22 @@ impl<'sess> State<'sess, '_> {
                         (true, false) => (),
                     };
                 }
-                for (pos, line) in cmnt.lines.into_iter().delimited() {
-                    if self.config.wrap_comments {
+                if self.config.wrap_comments {
+                    // Merge and wrap comments
+                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
+                    for (pos, line) in merged_lines.into_iter().delimited() {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
-                    } else {
-                        self.word(line);
+                        if !pos.is_last {
+                            self.hardbreak();
+                        }
                     }
-                    if !pos.is_last {
-                        self.hardbreak();
+                } else {
+                    // No wrapping, print as-is
+                    for (pos, line) in cmnt.lines.into_iter().delimited() {
+                        self.word(line);
+                        if !pos.is_last {
+                            self.hardbreak();
+                        }
                     }
                 }
                 if config.mixed_post_nbsp {
@@ -596,39 +654,75 @@ impl<'sess> State<'sess, '_> {
             CommentStyle::Isolated => {
                 let Some(mut prefix) = cmnt.prefix() else { return };
                 config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
-                for (pos, line) in cmnt.lines.into_iter().delimited() {
-                    let hb = |this: &mut Self| {
-                        this.hardbreak();
-                        if pos.is_last {
-                            this.cursor.advance(1);
-                        }
-                    };
-                    if line.is_empty() {
-                        hb(self);
-                        continue;
-                    }
-                    if pos.is_first {
-                        self.ibox(config.offset);
-                        if self.config.wrap_comments && cmnt.is_doc && matches!(prefix, "/**") {
-                            self.word(prefix);
+
+                if self.config.wrap_comments {
+                    // Merge and wrap comments
+                    let merged_lines = self.merge_comment_lines(&cmnt.lines, prefix);
+                    for (pos, line) in merged_lines.into_iter().delimited() {
+                        let hb = |this: &mut Self| {
+                            this.hardbreak();
+                            if pos.is_last {
+                                this.cursor.advance(1);
+                            }
+                        };
+                        if line.is_empty() {
                             hb(self);
-                            prefix = " * ";
                             continue;
                         }
-                    }
+                        if pos.is_first {
+                            self.ibox(config.offset);
+                            if cmnt.is_doc && matches!(prefix, "/**") {
+                                self.word(prefix);
+                                hb(self);
+                                prefix = " * ";
+                                continue;
+                            }
+                        }
 
-                    if self.config.wrap_comments {
                         self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
-                    } else {
-                        self.word(line);
-                    }
-                    if pos.is_last {
-                        self.end();
-                        if !config.iso_no_break {
+
+                        if pos.is_last {
+                            self.end();
+                            if !config.iso_no_break {
+                                hb(self);
+                            }
+                        } else {
                             hb(self);
                         }
-                    } else {
-                        hb(self);
+                    }
+                } else {
+                    // No wrapping, print as-is
+                    for (pos, line) in cmnt.lines.into_iter().delimited() {
+                        let hb = |this: &mut Self| {
+                            this.hardbreak();
+                            if pos.is_last {
+                                this.cursor.advance(1);
+                            }
+                        };
+                        if line.is_empty() {
+                            hb(self);
+                            continue;
+                        }
+                        if pos.is_first {
+                            self.ibox(config.offset);
+                            if cmnt.is_doc && matches!(prefix, "/**") {
+                                self.word(prefix);
+                                hb(self);
+                                prefix = " * ";
+                                continue;
+                            }
+                        }
+
+                        self.word(line);
+
+                        if pos.is_last {
+                            self.end();
+                            if !config.iso_no_break {
+                                hb(self);
+                            }
+                        } else {
+                            hb(self);
+                        }
                     }
                 }
             }

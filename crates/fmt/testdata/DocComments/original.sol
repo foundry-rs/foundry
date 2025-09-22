@@ -14,10 +14,9 @@ contract HelloWorld {
     */
     Person public theDude;
 
-    /// Will this long comment be wrapped leaving an
-    /// orphan word?
+    /// Will this long comment be wrapped leaving
+    /// orphan words?
     Person public anotherDude;
-
 
     /// Constructs the dude
         /// @param age The dude's age
