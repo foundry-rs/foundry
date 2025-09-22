@@ -20,27 +20,6 @@ mod common;
 mod sol;
 mod yul;
 
-/// Represents the position of a specific expression within a call/member chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum MemberPos {
-    // The outermost expression in the chain
-    Top,
-    /// An intermediate expression in the chain
-    Middle,
-    /// The very first expression that starts the chain
-    Bottom,
-}
-
-/// Holds the complete state for formatting a single, continuous member access/call chain.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct MemberCache {
-    /// A pointer to the expression that is the "bottom" of the entire chain.
-    pub bottom: Span,
-
-    /// The position of the expr being formatted within the chain.
-    pub position: MemberPos,
-}
-
 /// Specifies the nature of a complex call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CallContextKind {
@@ -57,7 +36,7 @@ pub(super) struct CallContext {
     /// The kind call.
     pub(super) kind: CallContextKind,
 
-    /// The size of the callee's "head," excluding its arguments.
+    /// The size of the callee's head, excluding its arguments.
     pub(super) size: usize,
 }
 
@@ -79,22 +58,34 @@ impl CallContext {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct CallStack(Vec<CallContext>);
+#[derive(Debug, Default)]
+pub(super) struct CallStack {
+    stack: Vec<CallContext>,
+    precall_size: usize,
+}
 
 impl Deref for CallStack {
     type Target = [CallContext];
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.stack
     }
 }
 
 impl CallStack {
     pub(crate) fn push(&mut self, call: CallContext) {
-        self.0.push(call);
+        self.stack.push(call);
     }
+
     pub(crate) fn pop(&mut self) -> Option<CallContext> {
-        self.0.pop()
+        self.stack.pop()
+    }
+
+    pub(crate) fn add_precall(&mut self, size: usize) {
+        self.precall_size += size;
+    }
+
+    pub(crate) fn reset_precall(&mut self) {
+        self.precall_size = 0;
     }
 
     pub(crate) fn is_nested(&self) -> bool {
@@ -122,6 +113,10 @@ impl CallStack {
 
         first_size + rest_size
     }
+
+    pub(crate) fn precall_size(&self) -> usize {
+        self.precall_size
+    }
 }
 
 pub(super) struct State<'sess, 'ast> {
@@ -137,7 +132,6 @@ pub(super) struct State<'sess, 'ast> {
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
     named_call_expr: bool,
-    member_expr: Option<MemberCache>,
     binary_expr: Option<BinOpGroup>,
     var_init: bool,
     fn_body: bool,
@@ -225,11 +219,10 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             named_call_expr: false,
-            member_expr: None,
             binary_expr: None,
             var_init: false,
             fn_body: false,
-            call_stack: CallStack(vec![]),
+            call_stack: CallStack::default(),
         }
     }
 

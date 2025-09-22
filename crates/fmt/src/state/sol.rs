@@ -2,7 +2,7 @@
 
 use crate::{
     pp::SIZE_INFINITY,
-    state::{CallContext, MemberCache, MemberPos, common::LitExt},
+    state::{CallContext, common::LitExt},
 };
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
@@ -787,14 +787,21 @@ impl<'ast> State<'_, 'ast> {
         if let Some(init) = initializer {
             let cache = self.var_init;
             self.var_init = true;
+
+            pre_init_size += 2;
             self.print_word(" =");
             if override_.is_some() {
                 self.end();
             }
             self.end();
-            if pre_init_size + 2 <= init_space_left {
+            if pre_init_size <= init_space_left {
                 self.neverbreak();
+                pre_init_size += 1;
+                self.call_stack.add_precall(pre_init_size);
+            } else {
+                self.call_stack.add_precall(init_space_left + self.config.tab_width);
             }
+
             if let Some(cmnt) = self.peek_comment_before(init.span.lo())
                 && self.inline_config.is_disabled(cmnt.span)
             {
@@ -827,7 +834,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_expr(init);
             } else {
-                if pre_init_size + 4 >= init_space_left && !is_call_chain(&init.kind, false) {
+                if pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false) {
                     self.s.ibox(self.ind);
                 } else {
                     self.s.ibox(0);
@@ -839,7 +846,7 @@ impl<'ast> State<'_, 'ast> {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
-                        if init_size + pre_init_size + 4 >= init_space_left
+                        if init_size + pre_init_size + 1 >= init_space_left
                             && init_size + self.config.tab_width < init_space_left
                             && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {
@@ -862,6 +869,7 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             self.var_init = cache;
+            self.call_stack.reset_precall();
         } else {
             self.end();
         }
@@ -1112,6 +1120,11 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
+        println!(
+            "\n{}\n\nEXPR: {expr:?}\n----------------",
+            self.sm.span_to_snippet(span).unwrap()
+        );
+
         match kind {
             ast::ExprKind::Array(exprs) => {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
@@ -1126,6 +1139,8 @@ impl<'ast> State<'_, 'ast> {
                 // 'lhs' + ' = ' + 'rhs' + ';'
                 let overflows = rhs_size + lhs_size + 4 >= space_left;
                 let fits_alone = rhs_size + self.config.tab_width < space_left;
+
+                self.call_stack.add_precall(lhs_size);
 
                 if (is_call_chain(&rhs.kind, false) && overflows && fits_alone)
                     || matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..))
@@ -1158,6 +1173,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.end();
                 self.var_init = cache;
+                self.call_stack.reset_precall();
             }
 
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
@@ -1170,6 +1186,11 @@ impl<'ast> State<'_, 'ast> {
                     self.binary_expr = Some(bin_op.kind.group());
                     if let ast::ExprKind::Assign(..) = kind
                         && has_complex_successor(&rhs.kind, true)
+                    {
+                        self.s.ibox(0);
+                    } else if self.call_stack.is_nested()
+                        && is_call_chain(&lhs.kind, false)
+                        && self.estimate_size(lhs.span) >= self.space_left()
                     {
                         self.s.ibox(0);
                     } else {
@@ -1228,38 +1249,36 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Call(call_expr, call_args) => {
                 let callee_size = get_callee_head_size(&call_expr);
-                let with_single_call_chain_child = call_args.len() == 1
-                    && is_call_chain(&call_args.exprs().next().unwrap().kind, false);
+                let with_single_call_chain_child = if call_args.len() == 1
+                    && let Some(child) = &call_args.exprs().next()
+                    && is_call_chain(&child.kind, false)
+                {
+                    true
+                } else {
+                    false
+                };
 
-                self.print_member_or_call_chain(call_expr, None, |s, _current_position| {
-                    let (space_left, expr_size, args_size) = (
-                        s.space_left(),
-                        s.estimate_size(call_expr.span),
+                self.print_member_or_call_chain(call_expr, None, |s| {
+                    let (space_left, args_size) = (
+                        s.space_left() - s.call_stack.precall_size(),
                         s.estimate_size(call_args.span),
                     );
-                    let all_fits = s.call_stack.size() + expr_size + args_size + 2 <= space_left;
-                    let break_single =
-                        !all_fits && call_args.len() == 1 && !with_single_call_chain_child;
-                    let callee_fits = callee_size + s.call_stack.size() < space_left;
+                    let callee_fits = s.call_stack.size() + callee_size + 1 < space_left;
+                    let all_fits = s.call_stack.size() + callee_size + args_size + 2 <= space_left;
+                    let break_single = !all_fits
+                        && call_args.len() == 1
+                        && !with_single_call_chain_child
+                        && callee_fits;
                     let without_ind = !all_fits && callee_fits && with_single_call_chain_child;
-
-                    //                         println!("-----------------\nEXPR: {}\nARGS: {}",
-                    //                             self.sm.span_to_snippet(call_expr.span).unwrap(),
-                    //                             self.sm.span_to_snippet(call_args.span).unwrap()
-                    //                         );
-                    //                         println!(
-                    //                             "\n [BREAK SINGLE: {}, WITHOUT IND: {}, ALL FITS:
-                    // {all_fits}, CALLEE FITS: {callee_fits}, WITH_SINGLE_CALL_CHAIN_CHILD:
-                    // {with_single_call_chain_child}]'\n HEAD SIZE: {}, CALL SIZE: {}
-                    // EXPR SIZE: {expr_size}, ARGS SIZE: {args_size}, SPACE LEFT: {space_left}, IS
-                    // CALL CHAIN: {}, WITH CALLCHAIN CHILD: {}",
-                    // break_single,                             without_ind,
-                    //                             callee_size,
-                    //                             s.call_stack.size(),
-                    //                             is_call_chain(&call_expr.kind, false),
-                    //                             if call_args.is_empty() {false} else
-                    // {is_call_chain(&call_args.exprs().next().unwrap().kind, false)}
-                    //                         );
+                    println!(
+                        "\nCALLEE FITS: {callee_fits}, ALL FITS: {all_fits}, SINGLE CALL
+                    CHAIN CHILD: {with_single_call_chain_child}"
+                    );
+                    println!(
+                        "SPACE LEFT: {space_left}, ARGS SIZE: {args_size}, CALLEE SIZE:
+                    {callee_size}, STACK SIZE: {}\n\n---------------------",
+                        s.call_stack.size()
+                    );
 
                     s.print_call_args(
                         call_args,
@@ -1361,7 +1380,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Member(member_expr, ident) => {
-                self.print_member_or_call_chain(member_expr, Some(ident), |s, _| {
+                self.print_member_or_call_chain(member_expr, Some(ident), |s| {
                     s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
                     if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_))
                     {
@@ -1479,66 +1498,66 @@ impl<'ast> State<'_, 'ast> {
         member_ident: Option<&ast::Ident>, // only members have `Ident`, calls don't
         print_suffix: F,
     ) where
-        F: FnOnce(&mut Self, MemberPos),
+        F: FnOnce(&mut Self),
     {
-        let prev_state = self.member_expr;
         let parent_call = self.call_stack.last().cloned();
 
         // Determine the position of the formatted expression.
-        let current_pos = if let Some(current) = self.member_expr {
-            if parent_call.is_some_and(|call| call.is_nested()) {
-                self.s.ibox(0);
-            }
-            if child_expr.span == current.bottom { MemberPos::Top } else { MemberPos::Middle }
-        } else {
-            if is_call_chain(&child_expr.kind, false)
-                || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..))
-            {
-                self.call_stack.push(CallContext::chained(0));
-            }
-            // If this is the start, initialize the cache and the indent box.
-            let size = self.estimate_size(child_expr.span)
-                + member_ident.map_or(2, |i| self.estimate_size(i.span) + 2);
-            if !is_call_chain(&child_expr.kind, true) && self.space_left() > size {
-                self.s.ibox(0);
-            } else {
-                self.s.ibox(self.ind);
-            }
-
-            let bottom = get_chain_bottom(child_expr).span;
-            self.member_expr = Some(MemberCache { bottom, position: MemberPos::Bottom });
-
-            if is_call_chain(&child_expr.kind, true) { MemberPos::Bottom } else { MemberPos::Top }
-        };
-
-        // Before recursing, update the cache for the child expression.
-        if let (Some(current), Some(_)) = (self.member_expr, member_ident) {
-            self.member_expr = Some(MemberCache {
-                bottom: current.bottom,
-                position: if child_expr.span == current.bottom {
-                    MemberPos::Top
+        let is_boxed = match parent_call {
+            Some(call) => {
+                if call.is_nested() {
+                    self.s.ibox(0);
+                    true
                 } else {
-                    MemberPos::Middle
-                },
-            });
-        }
+                    false
+                }
+            }
+            None => {
+                let member_ident_size = member_ident.map_or(0, |i| self.estimate_size(i.span));
+                let callee_size = get_callee_head_size(child_expr);
+                if is_call_chain(&child_expr.kind, false)
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..))
+                {
+                    self.call_stack.push(CallContext::chained(callee_size + member_ident_size));
+                }
+
+                // If this is the start, initialize the cache and the indent box.
+                let size = callee_size + member_ident_size + 2;
+                // println!(
+                //     " > CALLE SIZE: {callee_size}, MEMBER IDENT: {member_ident_size}, SPACE LEFT:
+                // {}, IS CALL CHAIN: {}",
+                //     self.space_left(),
+                //     is_call_chain(&child_expr.kind, true)
+                // );
+                // println!("{child_expr:?}");
+                if !is_call_chain(&child_expr.kind, true)
+                    && self.space_left() > size
+                    && self
+                        .peek_comment_before(child_expr.span.hi())
+                        .is_none_or(|cmnt| cmnt.style.is_mixed())
+                {
+                    self.s.ibox(0);
+                } else {
+                    self.s.ibox(self.ind);
+                }
+                true
+            }
+        };
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
 
         // Call the closure to print the suffix for the current link, with the calculated position.
-        print_suffix(self, current_pos);
+        print_suffix(self);
 
         // If a chain was started, clean up the state and end the box.
-        if prev_state.is_none() {
-            self.member_expr = None;
-            self.end();
-            if is_call_chain(&child_expr.kind, false)
-                || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..))
+        if is_boxed {
+            if parent_call.is_none()
+                && (is_call_chain(&child_expr.kind, false)
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
             {
                 self.call_stack.pop();
             }
-        } else if parent_call.is_some_and(|call| call.is_nested()) {
             self.end();
         }
     }
@@ -1636,6 +1655,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
+        // println!(
+        //     "\n{}\n\nSTMT: {stmt:?}\n----------------",
+        //     self.sm.span_to_snippet(stmt.span).unwrap()
+        // );
+
         // Handle disabled statements.
         if self.handle_span(span, false) {
             self.print_trailing_comment_no_break(stmt.span.hi(), None);
@@ -1671,7 +1695,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_yul_block(block, block.span, false, false);
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
-            ast::StmtKind::DeclMulti(vars, expr) => {
+            ast::StmtKind::DeclMulti(vars, init_expr) => {
                 let space_left = self.space_left();
 
                 self.s.ibox(self.ind);
@@ -1679,7 +1703,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_tuple(
                     vars,
                     span.lo(),
-                    span.hi(),
+                    init_expr.span.lo(),
                     |this, var| {
                         if let Some(var) = var {
                             this.print_var(var, true);
@@ -1690,7 +1714,14 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.end();
                 self.word(" =");
-                if self.estimate_size(expr.span) + self.config.tab_width
+
+                // '(' + var + ', ' + var + ')' + ' ='
+                let vars_size = vars.iter().fold(0, |acc, v| {
+                    acc + v.as_ref().map_or(0, |v| self.estimate_size(v.span)) + 2
+                }) + 2;
+                self.call_stack.add_precall(vars_size);
+
+                if self.estimate_size(init_expr.span) + self.config.tab_width
                     <= std::cmp::max(space_left, self.space_left())
                 {
                     self.print_sep(Separator::Space);
@@ -1700,7 +1731,7 @@ impl<'ast> State<'_, 'ast> {
                     self.neverbreak();
                     self.s.ibox(-self.ind);
                 }
-                self.print_expr(expr);
+                self.print_expr(init_expr);
                 self.end();
                 self.end();
             }
@@ -2577,6 +2608,13 @@ fn get_chain_bottom<'a>(mut expr: &'a ast::Expr<'a>) -> &'a ast::Expr<'a> {
 }
 
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+    match expr_kind {
+        ast::ExprKind::Call(..) => true,
+        _ => false,
+    }
+}
+
+fn is_call_or_type(expr_kind: &ast::ExprKind<'_>) -> bool {
     match expr_kind {
         ast::ExprKind::Call(..) | ast::ExprKind::Type(..) => true,
         _ => false,
