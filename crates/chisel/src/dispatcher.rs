@@ -10,6 +10,7 @@ use crate::{
 use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
+use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -466,12 +467,9 @@ impl ChiselDispatcher {
 
     /// Fetches an interface from Etherscan
     pub(crate) async fn fetch_interface(&mut self, address: Address, name: String) -> Result<()> {
-        let abis = foundry_common::abi::fetch_abi_from_etherscan(
-            address,
-            &self.source().config.foundry_config,
-        )
-        .await
-        .wrap_err("Failed to fetch ABI from Etherscan")?;
+        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config)
+            .await
+            .wrap_err("Failed to fetch ABI from Etherscan")?;
         let (abi, _) = abis
             .into_iter()
             .next()

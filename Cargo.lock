@@ -4405,6 +4405,7 @@ dependencies = [
  "dunce",
  "eyre",
  "forge-fmt",
+ "foundry-block-explorers",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
@@ -4436,6 +4437,7 @@ dependencies = [
 name = "foundry-common"
 version = "1.3.6"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
@@ -4466,7 +4468,6 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-common-fmt",
  "foundry-compilers",
- "foundry-config",
  "itertools 0.14.0",
  "jiff",
  "num-format",
