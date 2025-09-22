@@ -33,3 +33,6 @@ thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 regex.workspace = true
+
+# Pinned dependencies. See root Cargo.toml.
+ammonia.workspace = true

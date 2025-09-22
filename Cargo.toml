@@ -362,6 +362,9 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
 idna_adapter = "=1.1.0"
 
+# Used by mdbook but has an advisory for 4.1.1.
+ammonia = "=4.1.2"
+
 [patch.crates-io]
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
