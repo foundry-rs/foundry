@@ -114,7 +114,7 @@ impl<'a> BacktraceBuilder<'a> {
         let mut artifacts_by_address = HashMap::default();
 
         // Collect all labels from traces first
-        let mut label_to_address = arena
+        let label_to_address = arena
             .nodes()
             .iter()
             .filter_map(|node| {
@@ -147,12 +147,12 @@ impl<'a> BacktraceBuilder<'a> {
 
         for (artifact_id, artifact) in self.output.artifact_ids() {
             // Match and insert artifacts using trace labels
-            if let Some(address) = label_to_address.remove(artifact_id.name.as_str())
+            if let Some(address) = label_to_address.get(artifact_id.name.as_str())
                 && let Some((source_map, bytecode)) = get_source(artifact)
             {
                 // Match and insert artifacts using trace labels
                 artifacts_by_address
-                    .insert(address, (artifact_id.clone(), SourceData { source_map, bytecode }));
+                    .insert(*address, (artifact_id.clone(), SourceData { source_map, bytecode }));
             } else if let Some(&lib_address) =
                 // Match and insert the linked library artifacts
                 linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {

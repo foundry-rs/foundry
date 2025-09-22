@@ -114,8 +114,8 @@ impl ExtTester {
     }
 
     /// Sets the verbosity
-    pub fn verbosity(mut self, verbosity: impl Into<String>) -> Self {
-        self.verbosity = verbosity.into();
+    pub fn verbosity(mut self, verbosity: usize) -> Self {
+        self.verbosity = format!("-{}", "v".repeat(verbosity));
         self
     }
 
