@@ -1,7 +1,4 @@
-use crate::{
-    macros::node_info,
-    substrate_node::{error::Error, service::TransactionPoolHandle},
-};
+use crate::substrate_node::service::TransactionPoolHandle;
 use alloy_rpc_types::anvil::MineOptions;
 use anvil::eth::backend::time::TimeManager;
 use futures::{
@@ -26,20 +23,14 @@ use tokio::{
 // Errors that can happen during the block production.
 #[derive(Debug, thiserror::Error)]
 pub enum MiningError {
-    #[error("Block production failed: {0:?}")]
-    BlockProducing(BlockProducingError),
+    #[error("Block production failed: {0}")]
+    BlockProducing(#[from] BlockProducingError),
     #[error("Current mining mode can not answer this query.")]
     MiningModeMismatch,
     #[error("Current timestamp is newer.")]
     Timestamp,
     #[error("Closed channel")]
     ClosedChannel,
-}
-
-impl From<polkadot_sdk::sc_consensus_manual_seal::Error> for MiningError {
-    fn from(err: polkadot_sdk::sc_consensus_manual_seal::Error) -> Self {
-        Self::BlockProducing(err)
-    }
 }
 
 /// Mining modes supported by the MiningEngine.
@@ -144,13 +135,12 @@ impl MiningEngine {
     ///
     /// # Returns
     /// * `Ok(())` - All blocks were mined successfully
-    /// * `Err(Error)` - Block production failed
+    /// * `Err(MiningError)` - Block production failed
     pub async fn mine(
         &self,
         num_blocks: Option<u64>,
         interval: Option<Duration>,
-    ) -> Result<(), Error> {
-        info!("anvil_mine");
+    ) -> Result<(), MiningError> {
         let blocks = num_blocks.unwrap_or(1);
         for _ in 0..blocks {
             if let Some(interval) = interval {
@@ -171,12 +161,10 @@ impl MiningEngine {
     /// * `opts` - Optional mining parameters including timestamp and block count
     ///
     /// # Returns
-    /// * `Ok("0x0")` - Standard Ethereum success response
-    /// * `Err(Error)` - Mining operation failed
-    pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<String, Error> {
-        info!("evm_mine");
-        self.do_evm_mine(opts).await?;
-        Ok("0x0".to_string())
+    /// * `Ok(())` - Success response
+    /// * `Err(MiningError)` - Mining operation failed
+    pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<(), MiningError> {
+        self.do_evm_mine(opts).await.map(|_| ())
     }
 
     /// Configure interval-based mining mode.
@@ -187,12 +175,7 @@ impl MiningEngine {
     ///
     /// # Arguments
     /// * `interval` - Block production interval in seconds (0 to disable)
-    ///
-    /// # Returns
-    /// * `Ok(())` - Mining mode updated successfully
-    /// * `Err(Error)` - Configuration failed
-    pub fn set_interval_mining(&self, interval: Duration) -> Result<(), Error> {
-        node_info!("evm_setIntervalMining");
+    pub fn set_interval_mining(&self, interval: Duration) {
         let new_mode = if interval.as_secs() == 0 {
             MiningMode::None
         } else {
@@ -200,7 +183,6 @@ impl MiningEngine {
         };
         *self.mining_mode.write() = new_mode;
         self.wake();
-        Ok(())
     }
 
     /// Get the current interval mining configuration.
@@ -209,17 +191,15 @@ impl MiningEngine {
     /// mining is active, or None if interval mining is disabled.
     ///
     /// # Returns
-    /// * `Ok(Some(seconds))` - Interval mining active with specified interval
-    /// * `Ok(None)` - Interval mining is disabled
-    /// * `Err(Error)` - Failed to read configuration
-    pub fn get_interval_mining(&self) -> Result<Option<u64>, Error> {
-        node_info!("anvil_getIntervalMining");
+    /// * `Some(seconds)` - Interval mining active with specified interval
+    /// * `None` - Interval mining is disabled
+    pub fn get_interval_mining(&self) -> Option<u64> {
         let mode = *self.mining_mode.read();
         match mode {
             MiningMode::Interval { tick } | MiningMode::MixedMining { tick } => {
-                Ok(Some(tick.as_secs()))
+                Some(tick.as_secs())
             }
-            _ => Ok(None),
+            _ => None,
         }
     }
 
@@ -227,13 +207,8 @@ impl MiningEngine {
     ///
     /// Returns true if the mining engine will automatically produce blocks
     /// when new transactions are added to the transaction pool.
-    ///
-    /// # Returns
-    /// * `Ok(true)` - Auto-mining is enabled
-    /// * `Ok(false)` - Auto-mining is disabled
-    pub fn get_auto_mine(&self) -> Result<bool, Error> {
-        node_info!("anvil_getAutomine");
-        Ok(self.is_automine())
+    pub fn is_automine(&self) -> bool {
+        matches!(*self.mining_mode.read(), MiningMode::AutoMining)
     }
 
     /// Enable or disable automatic mining mode.
@@ -244,23 +219,16 @@ impl MiningEngine {
     ///
     /// # Arguments
     /// * `enabled` - True to enable auto-mining, false to disable
-    ///
-    /// # Returns
-    /// * `Ok(())` - Auto-mining setting updated successfully
-    /// * `Err(Error)` - Configuration failed
-    pub fn set_auto_mine(&self, enabled: bool) -> Result<(), Error> {
-        node_info!("evm_setAutomine");
+    pub fn set_auto_mine(&self, enabled: bool) {
         let mining_mode = match (self.is_automine(), enabled) {
-            (true, true) => None,
             (true, false) => Some(MiningMode::None),
             (false, true) => Some(MiningMode::AutoMining),
-            (false, false) => None,
+            _ => None,
         };
         if let Some(mining_mode) = mining_mode {
             *self.mining_mode.write() = mining_mode;
             self.wake();
         }
-        Ok(())
     }
 
     /// Set the timestamp for the next block to be mined.
@@ -273,14 +241,13 @@ impl MiningEngine {
     ///
     /// # Returns
     /// * `Ok(())` - Timestamp set successfully
-    /// * `Err(Error::Mining(MiningError::Timestamp))` - Invalid timestamp
-    pub fn set_next_block_timestamp(&self, time: Duration) -> Result<(), Error> {
-        node_info!("anvil_setBlockTimestampInterval");
+    /// * `Err(MiningError::Timestamp)` - Invalid timestamp
+    pub fn set_next_block_timestamp(&self, time: Duration) -> Result<(), MiningError> {
         self.time_manager
             // this will convert the time_in_seconds in milliseconds. It is transparent
             // to the user
             .set_next_block_timestamp(time.as_secs())
-            .map_err(|_| Error::Mining(MiningError::Timestamp))
+            .map_err(|_| MiningError::Timestamp)
     }
 
     /// Advance the blockchain time by a specified duration.
@@ -291,11 +258,9 @@ impl MiningEngine {
     /// * `time_in_seconds` - Duration to advance in seconds
     ///
     /// # Returns
-    /// * `Ok(new_timestamp)` - The new current timestamp as i64
-    /// * `Err(Error)` - Time advancement failed
-    pub fn increase_time(&self, time: Duration) -> Result<i64, Error> {
-        node_info!("evm_increaseTime");
-        Ok(self.time_manager.increase_time(time.as_secs()).saturating_div(1000) as i64)
+    /// * `new_timestamp` - The new current timestamp as i64
+    pub fn increase_time(&self, time: Duration) -> i64 {
+        self.time_manager.increase_time(time.as_secs()).saturating_div(1000) as i64
     }
 
     /// Set the blockchain time to a specific timestamp.
@@ -307,14 +272,12 @@ impl MiningEngine {
     /// * `timestamp` - Target timestamp in seconds since Unix epoch
     ///
     /// # Returns
-    /// * `Ok(offset_seconds)` - Time difference from previous timestamp
-    /// * `Err(Error)` - Time setting failed
-    pub fn set_time(&self, timestamp: Duration) -> Result<u64, Error> {
-        node_info!("evm_setTime");
+    /// * `offset_seconds` - Time difference from previous timestamp
+    pub fn set_time(&self, timestamp: Duration) -> u64 {
         let now = self.time_manager.current_call_timestamp();
         self.time_manager.reset(timestamp.as_secs());
         let offset = (timestamp.as_millis() as u64).saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Duration::from_millis(offset).as_secs()
     }
 
     /// Configure automatic timestamp intervals between blocks.
@@ -325,13 +288,8 @@ impl MiningEngine {
     ///
     /// # Arguments
     /// * `interval_in_seconds` - Time interval to add between block timestamps
-    ///
-    /// # Returns
-    /// * `Ok(())` - Timestamp interval configured successfully
-    /// * `Err(Error)` - Configuration failed
-    pub fn set_block_timestamp_interval(&self, interval_in_seconds: Duration) -> Result<(), Error> {
-        self.time_manager.set_block_timestamp_interval(interval_in_seconds.as_secs());
-        Ok(())
+    pub fn set_block_timestamp_interval(&self, interval_in_seconds: Duration) {
+        self.time_manager.set_block_timestamp_interval(interval_in_seconds.as_secs())
     }
 
     /// Remove automatic timestamp intervals between blocks.
@@ -341,12 +299,10 @@ impl MiningEngine {
     /// fixed intervals.
     ///
     /// # Returns
-    /// * `Ok(true)` - Timestamp interval was removed
-    /// * `Ok(false)` - No timestamp interval was configured
-    /// * `Err(Error)` - Operation failed
-    pub fn remove_block_timestamp_interval(&self) -> Result<bool, Error> {
-        node_info!("anvil_removeBlockTimestampInterval");
-        Ok(self.time_manager.remove_block_timestamp_interval())
+    /// * `true` - Timestamp interval was removed
+    /// * `false` - No timestamp interval was configured
+    pub fn remove_block_timestamp_interval(&self) -> bool {
+        self.time_manager.remove_block_timestamp_interval()
     }
 
     //---------- Helpers ---------------
@@ -355,11 +311,7 @@ impl MiningEngine {
         self.waker.wake();
     }
 
-    fn is_automine(&self) -> bool {
-        matches!(*self.mining_mode.read(), MiningMode::AutoMining)
-    }
-
-    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64, Error> {
+    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64, MiningError> {
         let mut blocks_to_mine = 1u64;
 
         if let Some(opts) = opts {
@@ -376,7 +328,7 @@ impl MiningEngine {
                 // timestamp was explicitly provided to be the next timestamp
                 self.time_manager
                     .set_next_block_timestamp(timestamp)
-                    .map_err(|_| Error::Mining(MiningError::Timestamp))?;
+                    .map_err(|_| MiningError::Timestamp)?;
             }
         }
 
@@ -390,7 +342,7 @@ impl MiningEngine {
 
 async fn seal_now(
     seal_command_sender: &Sender<EngineCommand<sp_core::H256>>,
-) -> Result<CreatedBlock<Hash>, Error> {
+) -> Result<CreatedBlock<Hash>, MiningError> {
     let (sender, receiver) = oneshot::channel();
     let seal_command = EngineCommand::SealNewBlock {
         create_empty: true,
@@ -398,14 +350,11 @@ async fn seal_now(
         parent_hash: None,
         sender: Some(sender),
     };
-    seal_command_sender
-        .send(seal_command)
-        .await
-        .map_err(|_| Error::Mining(MiningError::ClosedChannel))?;
+    seal_command_sender.send(seal_command).await.map_err(|_| MiningError::ClosedChannel)?;
     match receiver.await {
         Ok(Ok(rx)) => Ok(rx),
-        Ok(Err(e)) => Err(Error::Mining(MiningError::BlockProducing(e))),
-        Err(_e) => Err(Error::Mining(MiningError::ClosedChannel)),
+        Ok(Err(e)) => Err(MiningError::BlockProducing(e)),
+        Err(_e) => Err(MiningError::ClosedChannel),
     }
 }
 
@@ -504,7 +453,7 @@ pub async fn run_mining_engine(engine: Arc<MiningEngine>) {
                     Ok(block) => {
                         debug!(hash=?block.hash, "sealed");
                     }
-                    Err(Error::Mining(MiningError::ClosedChannel)) => {
+                    Err(MiningError::ClosedChannel) => {
                         break; // fatal: break outer loop
                     }
                     Err(e) => {

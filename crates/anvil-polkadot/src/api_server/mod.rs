@@ -4,6 +4,7 @@ use anvil_rpc::response::ResponseResult;
 use futures::channel::{mpsc, oneshot};
 use server::ApiServer;
 
+mod error;
 mod server;
 
 pub type ApiHandle = mpsc::Sender<ApiRequest>;

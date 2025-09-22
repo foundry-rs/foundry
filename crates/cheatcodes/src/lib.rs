@@ -69,6 +69,8 @@ mod toml;
 
 mod utils;
 
+pub use evm::DealRecord;
+
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     /// Applies this cheatcode to the given state.
