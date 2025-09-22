@@ -16,8 +16,9 @@ contract HelloWorld {
      */
     Person public theDude;
 
-    // Will this long comment be wrapped
-    // leaving an orphan word?
+    /// Will this long comment be wrapped
+    /// leaving an
+    /// orphan word?
     Person public anotherDude;
 
     /// Constructs the dude
