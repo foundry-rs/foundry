@@ -105,14 +105,27 @@ impl<'a> Linker<'a> {
     ) -> Result<(), LinkerError> {
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
+        // Deep-merge link references from creation and deployed bytecode.
+        // This ensures we don't lose libraries when both bytecode objects reference
+        // libraries under the same source file key but with different library names.
         let mut references = BTreeMap::new();
         if let Some(bytecode) = &contract.bytecode {
-            references.extend(bytecode.link_references.clone());
+            for (file, libs) in &bytecode.link_references {
+                let entry = references.entry(file.clone()).or_insert_with(BTreeMap::new);
+                for (name, offsets) in libs {
+                    entry.entry(name.clone()).or_insert_with(Vec::new).extend(offsets.clone());
+                }
+            }
         }
         if let Some(deployed_bytecode) = &contract.deployed_bytecode
             && let Some(bytecode) = &deployed_bytecode.bytecode
         {
-            references.extend(bytecode.link_references.clone());
+            for (file, libs) in &bytecode.link_references {
+                let entry = references.entry(file.clone()).or_insert_with(BTreeMap::new);
+                for (name, offsets) in libs {
+                    entry.entry(name.clone()).or_insert_with(Vec::new).extend(offsets.clone());
+                }
+            }
         }
 
         for (file, libs) in &references {
