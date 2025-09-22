@@ -623,7 +623,7 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceeding comments.
+                // Print preceding comments.
                 for cmnt in pre_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;

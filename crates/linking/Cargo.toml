@@ -14,7 +14,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-compilers = { workspace = true, features = ["full"] }
-semver.workspace = true
+foundry-compilers.workspace = true
+
 alloy-primitives = { workspace = true, features = ["rlp"] }
+
+rayon.workspace = true
+semver.workspace = true
 thiserror.workspace = true

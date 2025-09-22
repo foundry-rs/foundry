@@ -2,7 +2,9 @@
 
 use foundry_config::{
     NamedChain,
-    NamedChain::{Arbitrum, Base, BinanceSmartChainTestnet, Mainnet, Optimism, Polygon, Sepolia},
+    NamedChain::{
+        Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+    },
 };
 use rand::seq::SliceRandom;
 use std::sync::{
@@ -148,6 +150,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 
     if matches!(chain, BinanceSmartChainTestnet) {
         return "https://bsc-testnet-rpc.publicnode.com".to_string();
+    }
+
+    if matches!(chain, Celo) {
+        return "https://celo.drpc.org".to_string();
     }
 
     let reth_works = true;
