@@ -1,5 +1,26 @@
 // config: line_length = 120
 function test() public {
+    require(
+        keccak256(abi.encodePacked("this is a long string")) == keccak256(abi.encodePacked("some other long string")),
+        "string mismatch"
+    );
+
+    (oracleRouter, eVault) =
+        execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
+
+    if (eVault == address(0)) {
+        eVault = address(GenericFactory(eVaultFactory)
+            .createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0))));
+    }
+
+    content = string.concat(
+        "{\"description\": \"",
+        description,
+        "\", \"name\": \"0x Settler feature ",
+        ItoA.itoa(Feature.unwrap(feature)),
+        "\"}\n"
+    );
+
     oracleInfo =
         abi.encode(LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()}));
 
@@ -47,4 +68,9 @@ function test() public {
 
     return _verifyDeploymentRootHash(_getMerkleRoot(proof, hash), originalOwner)
         .ternary(IERC1271.isValidSignature.selector, bytes4(0xffffffff));
+}
+
+function returnLongBinaryOp() returns (bytes32) {
+    return
+        bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }

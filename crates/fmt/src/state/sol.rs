@@ -1120,10 +1120,10 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        println!(
-            "\n{}\n\nEXPR: {expr:?}\n----------------",
-            self.sm.span_to_snippet(span).unwrap()
-        );
+        // println!(
+        //     "\n{}\n\nEXPR: {expr:?}\n----------------",
+        //     self.sm.span_to_snippet(span).unwrap()
+        // );
 
         match kind {
             ast::ExprKind::Array(exprs) => {
@@ -1260,7 +1260,11 @@ impl<'ast> State<'_, 'ast> {
 
                 self.print_member_or_call_chain(call_expr, None, |s| {
                     let (space_left, args_size) = (
-                        s.space_left() - s.call_stack.precall_size(),
+                        if s.space_left() <= s.call_stack.precall_size() {
+                            s.space_left()
+                        } else {
+                            s.space_left() - s.call_stack.precall_size()
+                        },
                         s.estimate_size(call_args.span),
                     );
                     let callee_fits = s.call_stack.size() + callee_size + 1 < space_left;
@@ -1269,16 +1273,9 @@ impl<'ast> State<'_, 'ast> {
                         && call_args.len() == 1
                         && !with_single_call_chain_child
                         && callee_fits;
-                    let without_ind = !all_fits && callee_fits && with_single_call_chain_child;
-                    println!(
-                        "\nCALLEE FITS: {callee_fits}, ALL FITS: {all_fits}, SINGLE CALL
-                    CHAIN CHILD: {with_single_call_chain_child}"
-                    );
-                    println!(
-                        "SPACE LEFT: {space_left}, ARGS SIZE: {args_size}, CALLEE SIZE:
-                    {callee_size}, STACK SIZE: {}\n\n---------------------",
-                        s.call_stack.size()
-                    );
+                    let without_ind = !all_fits
+                        && (callee_fits || s.call_stack.first().is_some_and(|c| c.is_chained()))
+                        && with_single_call_chain_child;
 
                     s.print_call_args(
                         call_args,
@@ -1503,45 +1500,29 @@ impl<'ast> State<'_, 'ast> {
         let parent_call = self.call_stack.last().cloned();
 
         // Determine the position of the formatted expression.
-        let is_boxed = match parent_call {
-            Some(call) => {
-                if call.is_nested() {
-                    self.s.ibox(0);
-                    true
-                } else {
-                    false
-                }
+        // When NOT in a chain, start a new one.
+        let parent_is_chain = if parent_call.is_some_and(|call| call.is_chained()) {
+            true
+        } else {
+            // Initialize the cache and the indent box.
+            let member_ident_size = member_ident.map_or(0, |i| self.estimate_size(i.span));
+            let callee_size = get_callee_head_size(child_expr);
+            if is_call_chain(&child_expr.kind, false) {
+                self.call_stack.push(CallContext::chained(callee_size + member_ident_size));
             }
-            None => {
-                let member_ident_size = member_ident.map_or(0, |i| self.estimate_size(i.span));
-                let callee_size = get_callee_head_size(child_expr);
-                if is_call_chain(&child_expr.kind, false)
-                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..))
-                {
-                    self.call_stack.push(CallContext::chained(callee_size + member_ident_size));
-                }
 
-                // If this is the start, initialize the cache and the indent box.
-                let size = callee_size + member_ident_size + 2;
-                // println!(
-                //     " > CALLE SIZE: {callee_size}, MEMBER IDENT: {member_ident_size}, SPACE LEFT:
-                // {}, IS CALL CHAIN: {}",
-                //     self.space_left(),
-                //     is_call_chain(&child_expr.kind, true)
-                // );
-                // println!("{child_expr:?}");
-                if !is_call_chain(&child_expr.kind, true)
-                    && self.space_left() > size
-                    && self
-                        .peek_comment_before(child_expr.span.hi())
-                        .is_none_or(|cmnt| cmnt.style.is_mixed())
-                {
-                    self.s.ibox(0);
-                } else {
-                    self.s.ibox(self.ind);
-                }
-                true
+            let size = callee_size + member_ident_size + 2;
+            if !is_call_chain(&child_expr.kind, true)
+                && self.space_left() > size
+                && self
+                    .peek_comment_before(child_expr.span.hi())
+                    .is_none_or(|cmnt| cmnt.style.is_mixed())
+            {
+                self.s.ibox(0);
+            } else {
+                self.s.ibox(self.ind);
             }
+            false
         };
 
         // Recursively print the child/prefix expression.
@@ -1551,11 +1532,8 @@ impl<'ast> State<'_, 'ast> {
         print_suffix(self);
 
         // If a chain was started, clean up the state and end the box.
-        if is_boxed {
-            if parent_call.is_none()
-                && (is_call_chain(&child_expr.kind, false)
-                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-            {
+        if !parent_is_chain {
+            if is_call_chain(&child_expr.kind, false) {
                 self.call_stack.pop();
             }
             self.end();
@@ -1837,10 +1815,18 @@ impl<'ast> State<'_, 'ast> {
                 if force_break {
                     self.hardbreak_if_not_bol();
                 }
+
+                let space_left = self.space_left();
+                let expr_size = expr.as_ref().map_or(0, |expr| self.estimate_size(expr.span));
+
+                // `return ' + expr + ';'
+                let overflows = space_left < 8 + expr_size;
+                let fits_alone = space_left >= expr_size + 1;
+
                 if let Some(expr) = expr {
                     let is_lit_or_ident =
                         matches!(&expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-                    if is_lit_or_ident {
+                    if is_lit_or_ident || (overflows && fits_alone) {
                         self.s.ibox(self.ind);
                     } else {
                         self.ibox(0);
@@ -1857,7 +1843,8 @@ impl<'ast> State<'_, 'ast> {
                             self.s.offset(self.ind);
                         }
                     } else {
-                        self.nbsp();
+                        // If overflows and fits alone, allow break
+                        self.print_sep(Separator::SpaceOrNbsp(overflows && fits_alone));
                     }
                     self.print_expr(expr);
                     self.end();
