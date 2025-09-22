@@ -115,10 +115,6 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
-    pub odyssey: bool,
-
     #[command(subcommand)]
     command: Option<CallSubcommands>,
 
@@ -259,8 +255,8 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, odyssey) =
-                TracingExecutor::get_fork_material(&config, evm_opts).await?;
+            let (mut env, fork, chain, networks) =
+                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
             env.evm_env.cfg_env.disable_block_gas_limit = true;
@@ -290,7 +286,7 @@ impl CallArgs {
                 fork,
                 evm_version,
                 trace_mode,
-                odyssey,
+                networks,
                 create2_deployer,
                 state_overrides,
             )?;
@@ -450,10 +446,6 @@ impl figment::Provider for CallArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
-
-        if self.odyssey {
-            map.insert("odyssey".into(), self.odyssey.into());
-        }
 
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);

@@ -110,7 +110,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an error signature string, it tries to parse it as a `Error`
 pub fn get_error(sig: &str) -> Result<Error> {
-    Error::parse(sig).wrap_err("could not parse event signature")
+    Error::parse(sig).wrap_err("could not parse error signature")
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the

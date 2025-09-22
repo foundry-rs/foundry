@@ -166,11 +166,8 @@ impl CoverageReporter for LcovReporter {
                         }
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
-                        writeln!(
-                            out,
-                            "BRDA:{line},{branch_id},{path_id},{}",
-                            if hits == 0 { "-" } else { &hits.to_string() }
-                        )?;
+                        let hits = if hits == 0 { "-" } else { &hits.to_string() };
+                        writeln!(out, "BRDA:{line},{branch_id},{path_id},{hits}")?;
                     }
                 }
             }
@@ -207,14 +204,10 @@ impl CoverageReporter for DebugReporter {
 
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_file() {
-            let uncovered = items.iter().copied().filter(|item| item.hits == 0);
-            if uncovered.clone().count() == 0 {
-                continue;
-            }
-
-            sh_println!("Uncovered for {}:", path.display())?;
-            for item in uncovered {
-                sh_println!("- {item}")?;
+            let src = fs::read_to_string(path)?;
+            sh_println!("{}:", path.display())?;
+            for item in items {
+                sh_println!("- {}", item.fmt_with_source(Some(&src)))?;
             }
             sh_println!()?;
         }

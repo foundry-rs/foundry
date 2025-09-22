@@ -29,10 +29,10 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.3.5"
+version = "1.3.6"
 edition = "2024"
 # Remember to update clippy.toml as well
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://getfoundry.sh"
@@ -198,6 +198,7 @@ foundry-evm = { path = "crates/evm/evm" }
 foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-networks = { path = "crates/evm/networks" }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
@@ -216,6 +217,7 @@ solar = { package = "solar-compiler", version = "=0.1.7", default-features = fal
 alloy-consensus = { version = "1.0.23", default-features = false }
 alloy-contract = { version = "1.0.23", default-features = false }
 alloy-eips = { version = "1.0.23", default-features = false }
+alloy-eip5792 = { version = "1.0.23", default-features = false }
 alloy-ens = { version = "1.0.23", default-features = false }
 alloy-genesis = { version = "1.0.23", default-features = false }
 alloy-json-rpc = { version = "1.0.23", default-features = false }
@@ -235,8 +237,8 @@ alloy-transport = { version = "1.0.23", default-features = false }
 alloy-transport-http = { version = "1.0.23", default-features = false }
 alloy-transport-ipc = { version = "1.0.23", default-features = false }
 alloy-transport-ws = { version = "1.0.23", default-features = false }
-alloy-hardforks = { version = "0.3.0", default-features = false }
-alloy-op-hardforks = { version = "0.3.0", default-features = false }
+alloy-hardforks = { version = "0.3.2", default-features = false }
+alloy-op-hardforks = { version = "0.3.2", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "1.3.1"
@@ -416,5 +418,8 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "dani/bump-solar" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
-## solar
+# solar
 # solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
