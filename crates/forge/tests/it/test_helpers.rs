@@ -295,7 +295,6 @@ pub fn get_vyper() -> Vyper {
     })
 }
 
-#[tracing::instrument]
 pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     let lock_file_path = project.sources_path().join(".lock");
     // Compile only once per test run.
@@ -313,6 +312,9 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
         test_debug!("cache miss for {}", lock_file_path.display());
     } else {
         test_debug!("cache hit for {}", lock_file_path.display());
+        assert!(project.cache_path().exists());
+        assert!(project.artifacts_path().exists());
+        assert!(project.artifacts_path().read_dir().unwrap().count() > 0);
     }
 
     if project.compiler.vyper.is_none() {
