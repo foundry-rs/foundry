@@ -1273,9 +1273,11 @@ impl<'ast> State<'_, 'ast> {
                         && call_args.len() == 1
                         && !with_single_call_chain_child
                         && callee_fits;
-                    let without_ind = !all_fits
+                    let without_ind = (!all_fits
                         && (callee_fits || s.call_stack.first().is_some_and(|c| c.is_chained()))
-                        && with_single_call_chain_child;
+                        && with_single_call_chain_child)
+                        // exception for when returning a binary expr that has a call in one of its members
+                        || s.return_bin_expr;
 
                     s.print_call_args(
                         call_args,
@@ -1824,6 +1826,7 @@ impl<'ast> State<'_, 'ast> {
                 let fits_alone = space_left >= expr_size + 1;
 
                 if let Some(expr) = expr {
+                    self.return_bin_expr = matches!(&expr.kind, ast::ExprKind::Binary(..));
                     let is_lit_or_ident =
                         matches!(&expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
                     if is_lit_or_ident || (overflows && fits_alone) {
@@ -1848,6 +1851,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                     self.print_expr(expr);
                     self.end();
+                    self.return_bin_expr = false;
                 } else {
                     self.print_word("return");
                 }
@@ -2613,6 +2617,17 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
         is_call_chain(&child.kind, false)
     } else {
         !must_have_child && is_call(expr_kind)
+    }
+}
+
+fn is_call_chain_traverse_bin_ops(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
+    match expr_kind {
+        ast::ExprKind::Binary(lhs, _, rhs) => {
+            is_call_chain_traverse_bin_ops(&lhs.kind, false)
+                || is_call_chain_traverse_bin_ops(&rhs.kind, false)
+        }
+        ast::ExprKind::Member(child, ..) => is_call_chain_traverse_bin_ops(&child.kind, false),
+        _ => !must_have_child && is_call(expr_kind),
     }
 }
 

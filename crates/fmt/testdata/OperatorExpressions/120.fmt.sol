@@ -58,3 +58,11 @@ function test_nested() {
 
     return spender == ownerOf(tokenId) || getApproved[tokenId] == spender || isApprovedForAll[ownerOf(tokenId)][spender];
 }
+
+function new_y(uint256 x, uint256 dx, uint256 x_basis, uint256 y, uint256 y_basis) external pure returns (uint256) {
+    return _get_y(
+        x * _VELODROME_TOKEN_BASIS / x_basis,
+        dx * _VELODROME_TOKEN_BASIS / x_basis,
+        y * _VELODROME_TOKEN_BASIS / y_basis
+    ) * y_basis / _VELODROME_TOKEN_BASIS * aReallyLongIdentifierThatMakesTheOperatorExpressionBreak;
+}
