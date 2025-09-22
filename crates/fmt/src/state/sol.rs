@@ -618,7 +618,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_fn_attribute(
         &mut self,
         span: Span,
-        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>,
+        map: &mut AttributeCommentMap,
         print_fn: &mut dyn FnMut(&mut Self),
     ) {
         match map.remove(&span.lo()) {
@@ -1179,7 +1179,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
             | ast::ExprKind::Binary(lhs, bin_op, rhs) => {
                 let cache = self.binary_expr;
-                let is_chain = cache.map_or(false, |prev| prev == bin_op.kind.group());
+                let is_chain = cache.is_some_and(|prev| prev == bin_op.kind.group());
 
                 if !is_chain {
                     // start of a new operator chain --> open a box and set cache
@@ -1248,7 +1248,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Call(call_expr, call_args) => {
-                let callee_size = get_callee_head_size(&call_expr);
+                let callee_size = get_callee_head_size(call_expr);
                 let with_single_call_chain_child = if call_args.len() == 1
                     && let Some(child) = &call_args.exprs().next()
                     && is_call_chain(&child.kind, false)
@@ -1499,7 +1499,7 @@ impl<'ast> State<'_, 'ast> {
     ) where
         F: FnOnce(&mut Self),
     {
-        let parent_call = self.call_stack.last().cloned();
+        let parent_call = self.call_stack.last().copied();
 
         // Determine the position of the formatted expression.
         // When NOT in a chain, start a new one.
@@ -1823,7 +1823,7 @@ impl<'ast> State<'_, 'ast> {
 
                 // `return ' + expr + ';'
                 let overflows = space_left < 8 + expr_size;
-                let fits_alone = space_left >= expr_size + 1;
+                let fits_alone = space_left > expr_size;
 
                 if let Some(expr) = expr {
                     self.return_bin_expr = matches!(&expr.kind, ast::ExprKind::Binary(..));
@@ -2338,6 +2338,8 @@ enum AttributeKind<'ast> {
     Modifier(&'ast ast::Modifier<'ast>),
 }
 
+type AttributeCommentMap = HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>;
+
 impl<'ast> AttributeKind<'ast> {
     fn is_visibility(&self) -> bool {
         matches!(self, Self::Visibility(_))
@@ -2393,17 +2395,13 @@ impl<'ast> AttributeCommentMapper<'ast> {
         mut self,
         state: &mut State<'_, 'ast>,
         header: &'ast ast::FunctionHeader<'ast>,
-    ) -> (
-        HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>,
-        Vec<AttributeInfo<'ast>>,
-        BytePos,
-    ) {
+    ) -> (AttributeCommentMap, Vec<AttributeInfo<'ast>>, BytePos) {
         let first_attr = self.collect_attributes(header);
         self.cache_comments(state);
         (self.map(), self.attributes, first_attr)
     }
 
-    fn map(&mut self) -> HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)> {
+    fn map(&mut self) -> AttributeCommentMap {
         let mut map = HashMap::new();
         for a in 0..self.attributes.len() {
             let is_last = a == self.attributes.len() - 1;
@@ -2599,17 +2597,11 @@ fn get_chain_bottom<'a>(mut expr: &'a ast::Expr<'a>) -> &'a ast::Expr<'a> {
 }
 
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
-    match expr_kind {
-        ast::ExprKind::Call(..) => true,
-        _ => false,
-    }
+    matches!(expr_kind, ast::ExprKind::Call(..))
 }
 
 fn is_call_or_type(expr_kind: &ast::ExprKind<'_>) -> bool {
-    match expr_kind {
-        ast::ExprKind::Call(..) | ast::ExprKind::Type(..) => true,
-        _ => false,
-    }
+    matches!(expr_kind, ast::ExprKind::Call(..) | ast::ExprKind::Type(..))
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
@@ -2652,25 +2644,16 @@ trait BinOpExt {
 impl BinOpExt for ast::BinOpKind {
     fn group(&self) -> BinOpGroup {
         match self {
-            ast::BinOpKind::Or | ast::BinOpKind::And => BinOpGroup::Logical,
-            ast::BinOpKind::Eq
-            | ast::BinOpKind::Ne
-            | ast::BinOpKind::Lt
-            | ast::BinOpKind::Le
-            | ast::BinOpKind::Gt
-            | ast::BinOpKind::Ge => BinOpGroup::Comparison,
-            ast::BinOpKind::BitOr
-            | ast::BinOpKind::BitXor
-            | ast::BinOpKind::BitAnd
-            | ast::BinOpKind::Shl
-            | ast::BinOpKind::Shr
-            | ast::BinOpKind::Sar => BinOpGroup::Bitwise,
-            ast::BinOpKind::Add
-            | ast::BinOpKind::Sub
-            | ast::BinOpKind::Mul
-            | ast::BinOpKind::Div
-            | ast::BinOpKind::Rem
-            | ast::BinOpKind::Pow => BinOpGroup::Arithmetic,
+            Self::Or | Self::And => BinOpGroup::Logical,
+            Self::Eq | Self::Ne | Self::Lt | Self::Le | Self::Gt | Self::Ge => {
+                BinOpGroup::Comparison
+            }
+            Self::BitOr | Self::BitXor | Self::BitAnd | Self::Shl | Self::Shr | Self::Sar => {
+                BinOpGroup::Bitwise
+            }
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Rem | Self::Pow => {
+                BinOpGroup::Arithmetic
+            }
         }
     }
 }
