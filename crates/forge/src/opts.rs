@@ -99,8 +99,8 @@ pub enum ForgeSubcommand {
         shell: foundry_common::clap::Shell,
     },
 
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
+    /// Generate Fig autocompletion spec. Deprecated: use `forge completions fig` instead.
+    #[command(visible_alias = "fig", hide = true)]
     GenerateFigSpec,
 
     /// Remove the build artifacts and cache directories.
@@ -160,6 +160,7 @@ pub enum ForgeSubcommand {
     },
 
     /// Generate scaffold files.
+    #[command(hide = true)]
     Generate(generate::GenerateArgs),
 
     /// Compiler utilities.

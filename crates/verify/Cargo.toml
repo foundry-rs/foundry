@@ -28,7 +28,7 @@ serde.workspace = true
 eyre.workspace = true
 alloy-provider = { workspace = true, features = ["trace-api"] }
 tracing.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 revm.workspace = true
 

@@ -29,7 +29,7 @@ serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 tracing.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
