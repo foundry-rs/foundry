@@ -27,14 +27,14 @@ use solar::{
 };
 use std::{
     borrow::Cow,
+    io::Write,
     ops::ControlFlow,
     path::{Path, PathBuf},
     process::Command,
-    io::Write,
 };
+use tempfile::Builder;
 use tracing::debug;
 use yansi::Paint;
-use tempfile::Builder;
 
 /// Prompt arrow character.
 pub const PROMPT_ARROW: char = '➜';
