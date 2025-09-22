@@ -96,7 +96,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::GenerateFigSpec => {
             generate(
-                foundry_common::clap::Shell::Fig,
+                foundry_cli::clap::Shell::Fig,
                 &mut Forge::command(),
                 "forge",
                 &mut std::io::stdout(),
