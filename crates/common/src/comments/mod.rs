@@ -58,7 +58,7 @@ impl Comments {
     /// Should only be used when comments are gathered scattered, and must be manually sorted.
     ///
     /// **WARNING:** This struct works under the assumption that comments are always sorted by
-    /// ascending span position. It is the caller's responsability to ensure that this premise
+    /// ascending span position. It is the caller's responsibility to ensure that this premise
     /// always holds true.
     pub fn push_front(&mut self, cmnt: Comment) {
         self.comments.push_front(cmnt)

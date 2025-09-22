@@ -4137,7 +4137,6 @@ dependencies = [
  "similar-asserts",
  "snapbox",
  "solar-compiler",
- "thiserror 2.0.16",
  "toml 0.9.7",
  "tracing",
  "tracing-subscriber 0.3.20",

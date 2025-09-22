@@ -135,6 +135,8 @@ wrap_comments = false
 ignore = []
 contract_new_lines = false
 sort_imports = false
+pow_no_space = false
+call_compact_args = true
 
 [lint]
 severity = []
@@ -1307,7 +1309,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,
-    "pow_no_space": false
+    "pow_no_space": false,
+    "call_compact_args": true
   },
   "lint": {
     "severity": [],
