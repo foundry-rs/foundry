@@ -6,9 +6,8 @@ use clap::{Parser, command};
 use eyre::{OptionExt, Result, eyre};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::abi::fetch_abi_from_etherscan;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(ConstructorArgsArgs, etherscan, rpc);
