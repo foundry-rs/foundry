@@ -194,7 +194,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter(quiet, || {
+        let output = with_compilation_reporter(quiet, Some(self.project_root.clone()), || {
             tracing::debug!("compiling project");
 
             let timer = Instant::now();
@@ -559,13 +559,17 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 }
 
 /// Configures the reporter and runs the given closure.
-pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
+pub fn with_compilation_reporter<O>(
+    quiet: bool,
+    project_root: Option<PathBuf>,
+    f: impl FnOnce() -> O,
+) -> O {
     #[expect(clippy::collapsible_else_if)]
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
         if std::io::stdout().is_terminal() {
-            Report::new(SpinnerReporter::spawn())
+            Report::new(SpinnerReporter::spawn(project_root))
         } else {
             Report::new(BasicStdoutReporter::default())
         }
