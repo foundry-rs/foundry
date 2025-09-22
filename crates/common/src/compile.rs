@@ -175,15 +175,6 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project with the given closure
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use foundry_common::compile::ProjectCompiler;
-    /// let config = foundry_config::Config::load().unwrap();
-    /// let prj = config.project().unwrap();
-    /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
-    /// ```
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
         self,
         f: F,
