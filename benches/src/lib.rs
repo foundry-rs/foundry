@@ -11,7 +11,6 @@ use std::{
     process::Command,
     str::FromStr,
 };
-use tempfile; // Use secure temporary directories for benchmark output
 
 pub mod results;
 
