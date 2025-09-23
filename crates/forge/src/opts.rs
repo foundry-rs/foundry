@@ -96,7 +96,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: foundry_common::clap::Shell,
+        shell: foundry_cli::clap::Shell,
     },
 
     /// Generate Fig autocompletion spec. Deprecated: use `forge completions fig` instead.

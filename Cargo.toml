@@ -209,7 +209,10 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.1", default-features = false }
+foundry-compilers = { version = "0.19.1", default-features = false, features = [
+    "rustls",
+    "svm-solc",
+] }
 foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.7", default-features = false }
