@@ -2073,9 +2073,6 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         inline: bool,
     ) {
-        // NOTE(rusowsky): unless we add bracket spans to solar,
-        // using `then.span.lo()` consumes "cmnt12" of the IfStatement test inside the preceding
-        // clause: `self.print_if_cond("if", cond, cond.span.hi());`
         if !self.handle_span(cond.span.until(then.span), true) {
             self.print_if_cond("if", cond, then.span.lo());
             // if empty block without comments, ensure braces are inlined
