@@ -1,5 +1,8 @@
 use crate::{
-    executors::{Executor, RawCallResult},
+    executors::{
+        Executor, RawCallResult,
+        shared_corpus::{CorpusWorker, SharedCorpus},
+    },
     inspectors::Fuzzer,
 };
 use alloy_primitives::{
@@ -51,9 +54,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 mod shrink;
-use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EvmError, FailFast, FuzzTestTimer, corpus::CorpusManager,
-};
+use crate::executors::{DURATION_BETWEEN_METRICS_REPORT, EvmError, FailFast, FuzzTestTimer};
 pub use shrink::check_sequence;
 
 sol! {
@@ -337,7 +338,7 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"));
         }
 
-        let (mut invariant_test, mut corpus_manager) =
+        let (mut invariant_test, shared_corpus, mut corpus_manager) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
         // Start timer for this invariant test.
@@ -510,12 +511,13 @@ impl<'a> InvariantExecutor<'a> {
 
             // End current invariant test run.
             invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
+            let metrics_read = shared_corpus.metrics.read();
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
                 // Display metrics in progress bar.
                 if edge_coverage_enabled {
-                    progress.set_message(format!("{}", &corpus_manager.metrics));
+                    progress.set_message(format!("{}", &metrics_read));
                 }
             } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
@@ -526,7 +528,7 @@ impl<'a> InvariantExecutor<'a> {
                         .duration_since(UNIX_EPOCH)?
                         .as_secs(),
                     "invariant": invariant_contract.invariant_function.name,
-                    "metrics": &corpus_manager.metrics,
+                    "metrics": &*metrics_read,
                 });
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                 last_metrics_report = Instant::now();
@@ -547,7 +549,7 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: shared_corpus.failed_replays(),
         })
     }
 
@@ -559,7 +561,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
-    ) -> Result<(InvariantTest, CorpusManager)> {
+    ) -> Result<(InvariantTest, SharedCorpus, CorpusWorker)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -633,13 +635,14 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
-        let corpus_manager = CorpusManager::new(
+        let shared_corpus = SharedCorpus::new(
             self.config.corpus.clone(),
-            strategy.boxed(),
             &self.executor,
             None,
             Some(&targeted_contracts),
         )?;
+
+        let corpus_worker = shared_corpus.new_worker(strategy.boxed());
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
@@ -648,7 +651,7 @@ impl<'a> InvariantExecutor<'a> {
             self.runner.clone(),
         );
 
-        Ok((invariant_test, corpus_manager))
+        Ok((invariant_test, shared_corpus, corpus_worker))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
