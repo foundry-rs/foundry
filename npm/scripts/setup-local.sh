@@ -12,6 +12,22 @@ export NPM_REGISTRY_URL="$REGISTRY_URL"
 # Parse host:port for npm config lookups
 REGISTRY_HOSTPORT=$(echo "$REGISTRY_URL" | sed -E 's#^https?://##; s#/$##')
 
+require_local_registry() {
+  # Safety guard: prevent accidental publish/unpublish to a non-local registry.
+  # Allows localhost/127.0.0.1 and custom dev hosts via NPM_ALLOW_NONLOCAL=1.
+  local hostport="$REGISTRY_HOSTPORT"
+  if [[ "${NPM_ALLOW_NONLOCAL:-}" == "1" ]]; then
+    return 0
+  fi
+  case "$hostport" in
+    localhost:*|127.0.0.1:* ) return 0 ;;
+    * )
+      echo "Refusing to operate on non-local registry: $REGISTRY_URL (set NPM_ALLOW_NONLOCAL=1 to override)" >&2
+      exit 1
+      ;;
+  esac
+}
+
 echo "Using registry: $REGISTRY_URL"
 
 ensure_verdaccio() {
@@ -124,12 +140,14 @@ stage_binary_for_package() {
 }
 
 unpublish_if_present() {
+  require_local_registry
   echo "Unpublishing from $REGISTRY_URL (if present)" >&2
   npm unpublish @foundry-rs/forge --registry "$REGISTRY_URL" --force || true
   npm unpublish "$FORGE_PACKAGE_NAME" --registry "$REGISTRY_URL" --force || true
 }
 
 publish_packages() {
+  require_local_registry
   # npm config set max_body_size 300mb --registry "$REGISTRY_URL"
 
   echo "Publishing to $REGISTRY_URL" >&2
