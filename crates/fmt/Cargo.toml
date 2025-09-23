@@ -18,7 +18,6 @@ foundry-common.workspace = true
 
 solar.workspace = true
 
-# alloy-primitives.workspace = true
 itertools.workspace = true
 similar = { version = "2", features = ["inline"] }
 tracing.workspace = true

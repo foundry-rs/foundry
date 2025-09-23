@@ -125,15 +125,6 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         if !exp.is_empty() {
-            // TODO: preserve the `E`?
-            /*
-            out.push(if source.contains('e') {
-                'e'
-            } else {
-                debug_assert!(source.contains('E'));
-                'E'
-            });
-            */
             out.push('e');
             out.push_str(exp_sign);
             add_underscores(&mut out, config, exp, false);
@@ -195,18 +186,19 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        self.print_word("(");
-        self.s.cbox(self.ind);
-        if let Some(cmnt) = self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space())
-        {
-            if cmnt.is_mixed() {
-                self.s.offset(-self.ind);
-            } else {
-                self.break_offset_if_not_bol(0, -self.ind, false);
+        self.print_inside_parens(|state| {
+            state.s.cbox(state.ind);
+            if let Some(cmnt) =
+                state.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space())
+            {
+                if cmnt.is_mixed() {
+                    state.s.offset(-state.ind);
+                } else {
+                    state.break_offset_if_not_bol(0, -state.ind, false);
+                }
             }
-        }
-        self.end();
-        self.print_word(")");
+            state.end();
+        });
     }
 
     pub(super) fn print_tuple<'a, T, P, S>(
@@ -230,36 +222,36 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        // Format single-item inline lists directly without boxes
-        if values.len() == 1 && format.is_inline() {
-            self.print_word("(");
-            if let Some(span) = get_span(&values[0]) {
-                self.s.cbox(self.ind);
-                let mut skip_break = true;
-                if self.peek_comment_before(span.hi()).is_some() {
-                    self.hardbreak();
-                    skip_break = false;
-                }
-                self.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
-                print(self, &values[0]);
-                if !self.print_trailing_comment(span.hi(), None) && skip_break {
-                    self.neverbreak();
-                } else {
-                    self.break_offset_if_not_bol(0, -self.ind, false);
-                }
-                self.end();
-            } else {
-                print(self, &values[0]);
-            }
-
-            self.print_word(")");
+        if !(values.len() == 1 && format.is_inline()) {
+            // Use commasep
+            self.print_inside_parens(|state| {
+                state.commasep(values, pos_lo, pos_hi, print, get_span, format)
+            });
             return;
         }
 
-        // Otherwise, use commasep
-        self.print_word("(");
-        self.commasep(values, pos_lo, pos_hi, print, get_span, format);
-        self.print_word(")");
+        // Format single-item inline lists directly without boxes
+        self.print_inside_parens(|state| match get_span(&values[0]) {
+            Some(span) => {
+                state.s.cbox(state.ind);
+                let mut skip_break = true;
+                if state.peek_comment_before(span.hi()).is_some() {
+                    state.hardbreak();
+                    skip_break = false;
+                }
+
+                state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
+                print(state, &values[0]);
+
+                if !state.print_trailing_comment(span.hi(), None) && skip_break {
+                    state.neverbreak();
+                } else {
+                    state.break_offset_if_not_bol(0, -state.ind, false);
+                }
+                state.end();
+            }
+            None => print(state, &values[0]),
+        });
     }
 
     pub(super) fn print_array<'a, T, P, S>(
@@ -290,18 +282,15 @@ impl<'ast> State<'_, 'ast> {
     where
         S: FnMut(&T) -> Option<Span>,
     {
-        let pos = if let Some(span) = values.first().and_then(&mut get_span) {
-            span.lo()
-        } else {
+        let Some(span) = values.first().and_then(&mut get_span) else {
             return false;
         };
 
         // Check for comments before the first item.
         if let Some((cmnt_span, cmnt_style)) =
-            self.peek_comment_before(pos).map(|c| (c.span, c.style))
+            self.peek_comment_before(span.lo()).map(|c| (c.span, c.style))
         {
             let cmnt_disabled = self.inline_config.is_disabled(cmnt_span);
-
             // Handle special formatting for disabled code with isolated comments.
             if self.cursor.enabled && cmnt_disabled && cmnt_style.is_isolated() {
                 self.print_sep(Separator::Hardbreak);
@@ -310,41 +299,42 @@ impl<'ast> State<'_, 'ast> {
                 }
             };
 
+            let cmnt_config = if format.with_delimiters {
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+            } else {
+                CommentConfig::skip_ws().no_breaks().mixed_prev_space().offset(self.ind)
+            };
             // Apply spacing based on comment styles.
-            if let Some(last_style) = self.print_comments(
-                pos,
-                if format.with_delimiters {
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
-                } else {
-                    CommentConfig::skip_ws().no_breaks().mixed_prev_space().offset(self.ind)
-                },
-            ) {
-                if cmnt_style.is_mixed() && last_style.is_mixed() {
-                    if format.breaks_cmnts {
-                        self.hardbreak();
-                    } else {
-                        self.space();
+            if let Some(last_style) = self.print_comments(span.lo(), cmnt_config) {
+                match (cmnt_style.is_mixed(), last_style.is_mixed()) {
+                    (true, true) => {
+                        if format.breaks_cmnts {
+                            self.hardbreak();
+                        } else {
+                            self.space();
+                        }
+                        if !format.with_delimiters && !cmnt_disabled {
+                            self.s.offset(self.ind);
+                        }
                     }
-                    if !format.with_delimiters && !cmnt_disabled {
+                    (false, true) => {
+                        self.nbsp();
+                    }
+                    (false, false) if !format.with_delimiters && !cmnt_disabled => {
+                        self.hardbreak();
                         self.s.offset(self.ind);
                     }
-                } else if !cmnt_style.is_mixed() && last_style.is_mixed() {
-                    self.nbsp();
-                } else if !last_style.is_mixed() && !format.with_delimiters && !cmnt_disabled {
-                    self.hardbreak();
-                    self.s.offset(self.ind);
+                    _ => {}
                 }
             }
-
             if self.cursor.enabled {
-                self.cursor.advance_to(pos, true);
+                self.cursor.advance_to(span.lo(), true);
             }
-
             return true;
         }
 
         if self.cursor.enabled {
-            self.cursor.advance_to(pos, true);
+            self.cursor.advance_to(span.lo(), true);
         }
 
         if !values.is_empty() && !format.with_delimiters {
@@ -402,6 +392,7 @@ impl<'ast> State<'_, 'ast> {
         } else if !skip_first_break && !format.is_inline() {
             format.print_break(true, values.len(), &mut self.s);
         }
+
         if format.is_compact() {
             self.s.cbox(0);
         }
@@ -409,8 +400,8 @@ impl<'ast> State<'_, 'ast> {
         let mut skip_last_break =
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
-            let (is_last, span) = (i == values.len() - 1, get_span(value));
-            if let Some(span) = span
+            let is_last = i == values.len() - 1;
+            if let Some(span) = get_span(value)
                 && self
                     .print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
                     .is_some_and(|cmnt| cmnt.is_mixed())
@@ -420,11 +411,14 @@ impl<'ast> State<'_, 'ast> {
             }
 
             print(self, value);
+
             if !is_last {
                 self.print_word(",");
             }
+
             let next_span = if is_last { None } else { get_span(&values[i + 1]) };
             let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
+
             if !is_last
                 && format.breaks_cmnts
                 && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
@@ -434,14 +428,14 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
-            self.print_comments(
-                next_pos,
-                if !is_last || format.with_delimiters {
-                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
-                } else {
-                    CommentConfig::skip_ws().no_breaks().mixed_prev_space()
-                },
-            );
+
+            // Print trailing comments.
+            let comment_config = if !is_last || format.with_delimiters {
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
+            } else {
+                CommentConfig::skip_ws().no_breaks().mixed_prev_space()
+            };
+            self.print_comments(next_pos, comment_config);
 
             if is_last && self.is_bol_or_only_ind() {
                 // if a trailing comment is printed at the very end, we have to manually adjust
@@ -449,6 +443,8 @@ impl<'ast> State<'_, 'ast> {
                 self.break_offset_if_not_bol(0, -self.ind, false);
                 skip_last_break = true;
             }
+
+            // Final break if needed before the next value.
             if let Some(next_span) = next_span
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
@@ -475,6 +471,7 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.word(sym);
         }
+
         self.end();
         self.cursor.advance_to(pos_hi, true);
 
@@ -507,76 +504,20 @@ impl<'ast> State<'_, 'ast> {
         mut get_block_span: impl FnMut(&'ast T) -> Span,
         pos_hi: BytePos,
     ) {
-        // Attempt to print in a single line
+        // Attempt to print in a single line.
         if block_format.attempt_single_line() && block.len() == 1 {
-            self.s.cbox(self.ind);
-            if matches!(block_format, BlockFormat::Compact(true)) {
-                self.scan_break(BreakToken { pre_break: Some("{"), ..Default::default() });
-            } else {
-                self.word("{");
-                self.space();
-            }
-            print(self, &block[0]);
-            self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
-            if matches!(block_format, BlockFormat::Compact(true)) {
-                self.s.scan_break(BreakToken { post_break: Some("}"), ..Default::default() });
-                self.s.offset(-self.ind);
-            } else {
-                self.space_if_not_bol();
-                self.s.offset(-self.ind);
-                self.word("}");
-            }
-            self.end();
+            self.print_single_line_block(block, block_format, print, get_block_span);
             return;
         }
 
-        // Empty blocks with comments require special attention
+        // Empty blocks with comments require special attention.
         if block.is_empty() {
-            // Trailing comments are printed after the block
-            let cmnt = self.peek_comment_before(pos_hi);
-            if cmnt.is_none_or(|cmnt| cmnt.style.is_trailing()) {
-                if self.config.bracket_spacing {
-                    if block_format.with_braces() {
-                        self.word("{ }");
-                    } else {
-                        self.nbsp();
-                    }
-                } else if block_format.with_braces() {
-                    self.word("{}");
-                }
-                self.print_comments(pos_hi, CommentConfig::skip_ws());
-            }
-            // Other comments are printed inside the block
-            else {
-                if block_format.with_braces() {
-                    self.word("{");
-                }
-                let offset =
-                    if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
-                self.print_comments(
-                    pos_hi,
-                    self.cmnt_config()
-                        .offset(offset)
-                        .mixed_no_break()
-                        .mixed_prev_space()
-                        .mixed_post_nbsp(),
-                );
-                self.print_comments(
-                    pos_hi,
-                    CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
-                );
-
-                if block_format.with_braces() {
-                    self.word("}");
-                }
-            }
+            self.print_empty_block(block_format, pos_hi);
             return;
         }
 
-        let first_stmt = get_block_span(&block[0]);
-        let block_lo = first_stmt.lo();
-        let is_block_lo_disabled =
-            self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)));
+        // Print multiline block comments.
+        let block_lo = get_block_span(&block[0]).lo();
         match block_format {
             BlockFormat::NoBraces(None) => {
                 if !self.handle_span(self.cursor.span(block_lo), false) {
@@ -585,34 +526,38 @@ impl<'ast> State<'_, 'ast> {
                 self.s.cbox(0);
             }
             BlockFormat::NoBraces(Some(offset)) => {
-                let prev_cmnt =
-                    self.peek_comment_before(block_lo).map(|cmnt| (cmnt.span, cmnt.style));
-                if is_block_lo_disabled {
-                    // We don't use `print_sep()` because we want to introduce the breakpoint
-                    if prev_cmnt.is_none() && self.cursor.enabled {
-                        Separator::Space.print(&mut self.s, &mut self.cursor);
-                        self.s.offset(offset);
-                        self.cursor.advance_to(block_lo, true);
-                    } else if prev_cmnt.is_some_and(|(_, style)| style.is_isolated()) {
-                        Separator::Space.print(&mut self.s, &mut self.cursor);
-                        self.s.offset(offset);
-                    }
-                } else if !self.handle_span(self.cursor.span(block_lo), false) {
-                    if let Some((span, style)) = prev_cmnt {
-                        if !self.inline_config.is_disabled(span) || style.is_isolated() {
-                            self.cursor.advance_to(span.lo(), true);
-                            self.break_offset(SIZE_INFINITY as usize, offset);
-                        }
-                        if let Some(cmnt) =
-                            self.print_comments(block_lo, CommentConfig::default().offset(offset))
-                            && !cmnt.is_mixed()
-                            && !cmnt.is_blank()
-                        {
+                let enabled =
+                    !self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)))
+                        && !self.handle_span(self.cursor.span(block_lo), false);
+                match self.peek_comment_before(block_lo).map(|cmnt| (cmnt.span, cmnt.style)) {
+                    Some((span, style)) => {
+                        if enabled {
+                            // Inline config is not disabled and span not handled
+                            if !self.inline_config.is_disabled(span) || style.is_isolated() {
+                                self.cursor.advance_to(span.lo(), true);
+                                self.break_offset(SIZE_INFINITY as usize, offset);
+                            }
+                            if let Some(cmnt) = self
+                                .print_comments(block_lo, CommentConfig::default().offset(offset))
+                                && !cmnt.is_mixed()
+                                && !cmnt.is_blank()
+                            {
+                                self.s.offset(offset);
+                            }
+                        } else if style.is_isolated() {
+                            Separator::Space.print(&mut self.s, &mut self.cursor);
                             self.s.offset(offset);
                         }
-                    } else {
-                        self.zerobreak();
-                        self.s.offset(offset);
+                    }
+                    None => {
+                        if enabled {
+                            self.zerobreak();
+                            self.s.offset(offset);
+                        } else if self.cursor.enabled {
+                            Separator::Space.print(&mut self.s, &mut self.cursor);
+                            self.s.offset(offset);
+                            self.cursor.advance_to(block_lo, true);
+                        }
                     }
                 }
                 self.s.cbox(self.ind);
@@ -630,45 +575,50 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
+        // Print multiline block statements.
         for (i, stmt) in block.iter().enumerate() {
             let is_last = i == block.len() - 1;
             print(self, stmt);
 
             let is_disabled = self.inline_config.is_disabled(get_block_span(stmt));
-            let (next_enabled, next_lo) = if !is_last {
+            let mut next_enabled = false;
+            let mut next_lo = None;
+            if !is_last {
                 let next_span = get_block_span(&block[i + 1]);
-                let next_lo = if self.peek_comment_before(next_span.lo()).is_none() {
-                    Some(next_span.lo())
-                } else {
-                    None
-                };
+                next_enabled = !self.inline_config.is_disabled(next_span);
+                next_lo =
+                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
+            }
 
-                (!self.inline_config.is_disabled(next_span), next_lo)
-            } else {
-                (false, None)
-            };
-
-            // when this stmt and the next one are enabled, break normally (except if last stmt)
-            if !is_disabled
+            // Both current and next statements are enabled.
+            let should_break_between_enabled = !is_disabled
                 && next_enabled
-                && (!is_last
-                    || self.peek_comment_before(pos_hi).is_some_and(|cmnt| cmnt.style.is_mixed()))
-            {
+                && (
+                    // Break unless this is the last statement without a mixed comment.
+                    !is_last
+                        || self
+                            .peek_comment_before(pos_hi)
+                            .is_some_and(|cmnt| cmnt.style.is_mixed())
+                );
+            if should_break_between_enabled {
                 self.hardbreak_if_not_bol();
                 continue;
             }
-            // when this stmt is disabled and the next one is enabled, break if there is no
-            // enabled preceding comment. Otherwise the breakpoint is handled by the comment.
-            if is_disabled
+
+            // Current is disabled, next is enabled, and no enabled comment precedes.
+            let should_break_after_disabled = is_disabled
                 && next_enabled
-                && let Some(next_lo) = next_lo
-                && self
-                    .peek_comment_before(next_lo)
-                    .is_none_or(|cmnt| self.inline_config.is_disabled(cmnt.span))
-            {
-                self.hardbreak_if_not_bol()
+                && next_lo
+                    .filter(|&lo| {
+                        self.peek_comment_before(lo)
+                            .is_none_or(|cmnt| self.inline_config.is_disabled(cmnt.span))
+                    })
+                    .is_some();
+            if should_break_after_disabled {
+                self.hardbreak_if_not_bol();
             }
         }
+
         self.print_comments(
             pos_hi,
             CommentConfig::skip_trailing_ws().mixed_no_break().mixed_prev_space(),
@@ -682,6 +632,76 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         if block_format.with_braces() {
             self.print_word("}");
+        }
+    }
+
+    fn print_single_line_block<T: Debug>(
+        &mut self,
+        block: &'ast [T],
+        block_format: BlockFormat,
+        mut print: impl FnMut(&mut Self, &'ast T),
+        mut get_block_span: impl FnMut(&'ast T) -> Span,
+    ) {
+        self.s.cbox(self.ind);
+
+        match block_format {
+            BlockFormat::Compact(true) => {
+                self.scan_break(BreakToken { pre_break: Some("{"), ..Default::default() });
+                print(self, &block[0]);
+                self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
+                self.s.scan_break(BreakToken { post_break: Some("}"), ..Default::default() });
+                self.s.offset(-self.ind);
+            }
+            _ => {
+                self.word("{");
+                self.space();
+                print(self, &block[0]);
+                self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
+                self.space_if_not_bol();
+                self.s.offset(-self.ind);
+                self.word("}");
+            }
+        }
+
+        self.end();
+    }
+
+    fn print_empty_block(&mut self, block_format: BlockFormat, pos_hi: BytePos) {
+        let has_braces = block_format.with_braces();
+
+        // Trailing comments are printed after the block
+        if self.peek_comment_before(pos_hi).is_none_or(|c| c.style.is_trailing()) {
+            if self.config.bracket_spacing {
+                if has_braces {
+                    self.word("{ }");
+                } else {
+                    self.nbsp();
+                }
+            } else if has_braces {
+                self.word("{}");
+            }
+            self.print_comments(pos_hi, CommentConfig::skip_ws());
+            return;
+        }
+
+        // Non-trailing or mixed comments - print inside block
+        if has_braces {
+            self.word("{");
+        }
+        let mut offset = 0;
+        if let BlockFormat::NoBraces(Some(off)) = block_format {
+            offset = off;
+        }
+        self.print_comments(
+            pos_hi,
+            self.cmnt_config().offset(offset).mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+        );
+        self.print_comments(
+            pos_hi,
+            CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+        );
+        if has_braces {
+            self.word("}");
         }
     }
 }
