@@ -335,18 +335,14 @@ impl Wallets {
     }
 
     /// Number of signers in the [MultiWallet].
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> Result<usize> {
         let mut inner = self.inner.lock();
-        let signers = inner.multi_wallet.signers();
-        if signers.is_err() {
-            return 0;
-        }
-        signers.unwrap().len()
+        Ok(inner.multi_wallet.signers()?.len())
     }
 
     /// Whether the [MultiWallet] is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub fn is_empty(&self) -> Result<bool> {
+        Ok(self.len()? == 0)
     }
 }
 
