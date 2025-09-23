@@ -26,7 +26,7 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0384 `instant` is unmaintained
     "RUSTSEC-2024-0384",
     # https://rustsec.org/advisories/RUSTSEC-2025-0057 `fxhash` is unmaintained
-    "RUSTSEC-2025-0057"
+    "RUSTSEC-2025-0057",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -81,72 +81,196 @@ exceptions = [
     # CC0 is a permissive license but somewhat unclear status for source code
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
-    { allow = ["CC0-1.0"], name = "tiny-keccak" },
-    { allow = ["CC0-1.0"], name = "trezor-client" },
-    { allow = ["CC0-1.0"], name = "notify" },
-    { allow = ["CC0-1.0"], name = "dunce" },
-    { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-    { allow = ["CC0-1.0"], name = "bip39" },
-    { allow = ["CC0-1.0"], name = "bitcoin-internals" },
-    { allow = ["CC0-1.0"], name = "bitcoin_hashes" },
-    { allow = ["CC0-1.0"], name = "hex-conservative" },
-    { allow = ["CC0-1.0"], name = "parity-bip39" },
-    { allow = ["CC0-1.0"], name = "secp256k1" },
-    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "tiny-keccak" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "trezor-client" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "notify" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "dunce" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "aurora-engine-modexp" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "bip39" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "bitcoin-internals" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "bitcoin_hashes" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "hex-conservative" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "parity-bip39" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "secp256k1" },
+    { allow = [
+        "CC0-1.0",
+    ], name = "secp256k1-sys" },
 
     # GPL-3.0 is allowed only for crates owned by Parity
-    { allow = ["GPL-3.0-only"], name = "pallet-xcm" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-core-primitives" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-parachain-primitives" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-primitives" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-common" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-metrics" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "polkadot-runtime-parachains" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "slot-range-helper" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "staging-xcm-builder" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "staging-xcm-executor" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "staging-xcm" }, # Polkadot SDK
-    { allow = ["GPL-3.0-only"], name = "xcm-procedural" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "pallet-xcm" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-core-primitives" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-parachain-primitives" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-primitives" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-runtime-common" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-runtime-metrics" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "polkadot-runtime-parachains" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "slot-range-helper" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "staging-xcm-builder" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "staging-xcm-executor" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "staging-xcm" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-only",
+    ], name = "xcm-procedural" }, # Polkadot SDK
 
     # GPL-3.0-or-later WITH Classpath-exception-2.0 for crates owned by Parity
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-block-builder" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-chain-spec" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-chain-spec-derive" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-cli" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-client-api" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-client-db" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus-aura" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus-babe" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus-epochs" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus-manual-seal" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-consensus-slots" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-executor" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-executor-common" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-executor-polkavm" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-executor-wasmtime" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-keystore" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-mixnet" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network-light" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network-sync" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network-transactions" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network-types" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-proposer-metrics" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-rpc" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-rpc-api" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-rpc-server" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-rpc-spec-v2" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-service" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-state-db" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-sysinfo" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-telemetry" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-tracing" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-transaction-pool" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-transaction-pool-api" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-basic-authorship" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-informant" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network" }, # Polkadot SDK
-    { allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"], name = "sc-network-common" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-block-builder" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-chain-spec" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-chain-spec-derive" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-cli" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-client-api" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-client-db" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus-aura" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus-babe" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus-epochs" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus-manual-seal" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-consensus-slots" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-executor" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-executor-common" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-executor-polkavm" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-executor-wasmtime" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-keystore" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-mixnet" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network-light" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network-sync" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network-transactions" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network-types" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-proposer-metrics" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-rpc" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-rpc-api" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-rpc-server" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-rpc-spec-v2" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-service" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-state-db" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-sysinfo" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-telemetry" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-tracing" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-transaction-pool" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-transaction-pool-api" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-basic-authorship" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-informant" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-network-common" }, # Polkadot SDK
 ]
 # copyleft = "deny"
 
@@ -179,4 +303,5 @@ allow-git = [
     "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/bluealloy/revm",
+    "https://github.com/paradigmxyz/solar",
 ]
