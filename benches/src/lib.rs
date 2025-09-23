@@ -11,6 +11,7 @@ use std::{
     process::Command,
     str::FromStr,
 };
+use tempfile; // Use secure temporary directories for benchmark output
 
 pub mod results;
 
@@ -219,11 +220,14 @@ impl BenchmarkProject {
         conclude: Option<&str>,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // Create structured temp directory for JSON output
-        // Format: <temp_dir>/<benchmark_name>/<version>/<repo_name>/<benchmark_name>.json
-        let temp_dir = std::env::temp_dir();
-        let json_dir =
-            temp_dir.join("foundry-bench").join(benchmark_name).join(version).join(&self.name);
+        / Create a secure, unique temporary directory to avoid symlink/race issues in shared /tmp
+        // Final layout inside this private dir: <tmp>/<benchmark_name>/<version>/<repo>/<benchmark_name>.json
+        let tmp_dir = tempfile::Builder::new().prefix("foundry-bench-").tempdir()?;
+        let json_dir = tmp_dir
+            .path()
+            .join(benchmark_name)
+            .join(version)
+            .join(&self.name);
         std::fs::create_dir_all(&json_dir)?;
 
         let json_path = json_dir.join(format!("{benchmark_name}.json"));
