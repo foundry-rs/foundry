@@ -73,6 +73,10 @@ pub struct StorageArgs {
 
     #[command(flatten)]
     build: BuildOpts,
+
+    /// Specify the solc version to compile with. Overrides detected version.
+    #[arg(long, value_parser = Version::parse)]
+    solc_version: Option<Version>,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -169,16 +173,24 @@ impl StorageArgs {
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
-        let mut version = metadata.compiler_version()?;
+        // Decide on compiler to use (user override -> metadata -> autodetect)
+        let meta_version = metadata.compiler_version()?;
         let mut auto_detect = false;
-        if let Some(solcc) = project.compiler.solc.as_mut()
-            && let SolcCompiler::Specific(solc) = solcc
-            && solc.version < MIN_SOLC
-        {
-            version = solc.version.clone();
-            *solcc = SolcCompiler::AutoDetect;
+        let desired = if let Some(user_version) = self.solc_version {
+            if user_version < MIN_SOLC {
+                sh_warn!(
+                    "The provided --solc-version is {user_version} while the minimum version for \
+                     storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                )?;
+            }
+            SolcCompiler::Specific(Solc::find_or_install(&user_version)?)
+        } else if meta_version < MIN_SOLC {
             auto_detect = true;
-        }
+            SolcCompiler::AutoDetect
+        } else {
+            SolcCompiler::Specific(Solc::find_or_install(&meta_version)?)
+        };
+        project.compiler.solc = Some(desired);
 
         // Compile
         let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
@@ -191,7 +203,7 @@ impl StorageArgs {
             if auto_detect && is_storage_layout_empty(&artifact.storage_layout) {
                 // try recompiling with the minimum version
                 sh_warn!(
-                    "The requested contract was compiled with {version} while the minimum version \
+                    "The requested contract was compiled with {meta_version} while the minimum version \
                      for storage layouts is {MIN_SOLC} and as a result the output may be empty.",
                 )?;
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
@@ -391,5 +403,11 @@ mod tests {
 
         let key = config.get_etherscan_api_key(None).unwrap();
         assert_eq!(key, "dummykey".to_string());
+    }
+
+    #[test]
+    fn parse_solc_version_arg() {
+        let args = StorageArgs::parse_from(["foundry-cli", "addr.eth", "--solc-version", "0.8.10"]);
+        assert_eq!(args.solc_version, Some(Version::parse("0.8.10").unwrap()));
     }
 }
