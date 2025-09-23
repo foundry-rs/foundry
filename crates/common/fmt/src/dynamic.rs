@@ -180,14 +180,24 @@ fn _serialize_value_as_json(
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
         DynSolValue::Int(i, _) => {
-            // let serde handle number parsing
-            let n = serde_json::from_str(&i.to_string())?;
-            Ok(Value::Number(n))
+            if let Ok(n) = i64::try_from(i) {
+                // Use `serde_json::Number` if the number can be accurately represented.
+                Ok(Value::Number(n.into()))
+            } else {
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
+                Ok(Value::String(i.to_string()))
+            }
         }
         DynSolValue::Uint(i, _) => {
-            // let serde handle number parsing
-            let n = serde_json::from_str(&i.to_string())?;
-            Ok(Value::Number(n))
+            if let Ok(n) = u64::try_from(i) {
+                // Use `serde_json::Number` if the number can be accurately represented.
+                Ok(Value::Number(n.into()))
+            } else {
+                // Otherwise, fallback to its string representation to preserve precision and ensure
+                // compatibility with alloy's `DynSolType` coercion.
+                Ok(Value::String(i.to_string()))
+            }
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
         DynSolValue::Array(e) | DynSolValue::FixedArray(e) => Ok(Value::Array(
