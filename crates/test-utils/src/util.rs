@@ -166,7 +166,7 @@ impl ExtTester {
         if self.rev.is_empty() {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
@@ -177,7 +177,7 @@ impl ExtTester {
         } else {
             let mut git = Command::new("git");
             git.current_dir(root).args(["checkout", self.rev]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
@@ -191,16 +191,16 @@ impl ExtTester {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
-            println!("cd {root}; {install_cmd:?}");
+            test_debug!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
-                    println!("\n\n{install_cmd:?}: {s}");
+                    test_debug!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
                         break;
                     }
                 }
                 Err(e) => {
-                    eprintln!("\n\n{install_cmd:?}: {e}");
+                    test_debug!("\n\n{install_cmd:?}: {e}");
                 }
             }
         }
@@ -210,7 +210,7 @@ impl ExtTester {
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
         if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
+            test_debug!("ETH_RPC_URL is not set; skipping");
             return;
         }
 
@@ -253,7 +253,7 @@ impl ExtTester {
 /// This sets the project's solc version to the [`SOLC_VERSION`].
 #[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
-    println!("initializing {}", target.display());
+    test_debug!("initializing {}", target.display());
 
     let tpath = TEMPLATE_PATH.as_path();
     pretty_err(tpath, fs::create_dir_all(tpath));
@@ -281,7 +281,7 @@ pub fn initialize(target: &Path) {
         if data != "1" {
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-            println!("- initializing template dir in {}", prj.root().display());
+            test_debug!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
             prj.write_config(Config {
@@ -317,7 +317,7 @@ pub fn initialize(target: &Path) {
         _read = lock.read().unwrap();
     }
 
-    println!("- copying template dir from {}", tpath.display());
+    test_debug!("- copying template dir from {}", tpath.display());
     pretty_err(target, fs::create_dir_all(target));
     pretty_err(target, copy_dir(tpath, target));
 }
@@ -327,12 +327,12 @@ pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
     cmd.args(["clone", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
-    println!("{cmd:?}");
+    test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
         panic!("git clone failed: {status}");
     }
-    println!();
+    test_debug!();
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -1028,7 +1028,7 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        println!("executing {:?}", self.cmd);
+        test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
