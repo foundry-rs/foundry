@@ -220,7 +220,7 @@ impl BenchmarkProject {
         conclude: Option<&str>,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        / Create a secure, unique temporary directory to avoid symlink/race issues in shared /tmp
+        // Create a secure, unique temporary directory to avoid symlink/race issues in shared /tmp
         // Final layout inside this private dir: <tmp>/<benchmark_name>/<version>/<repo>/<benchmark_name>.json
         let tmp_dir = tempfile::Builder::new().prefix("foundry-bench-").tempdir()?;
         let json_dir = tmp_dir
