@@ -1133,7 +1133,18 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
             ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
-            ast::ExprKind::Call(call_expr, call_args) => self.print_call_expr(call_expr, call_args),
+            ast::ExprKind::Call(call_expr, call_args) => {
+                self.print_member_or_call_chain(call_expr, None, |s| {
+                    s.print_call_args(
+                        call_args,
+                        ListFormat::compact()
+                            .break_cmnts()
+                            .break_single(true)
+                            .without_ind(s.return_bin_expr),
+                        get_callee_head_size(call_expr),
+                    );
+                })
+            }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
@@ -1280,11 +1291,10 @@ impl<'ast> State<'_, 'ast> {
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
 
-            let indent = if is_assign && has_complex_successor(&rhs.kind, true) {
-                0
-            } else if self.call_stack.is_nested()
-                && is_call_chain(&lhs.kind, false)
-                && self.estimate_size(lhs.span) >= self.space_left()
+            let indent = if (is_assign && has_complex_successor(&rhs.kind, true))
+                || self.call_stack.is_nested()
+                    && is_call_chain(&lhs.kind, false)
+                    && self.estimate_size(lhs.span) >= self.space_left()
             {
                 0
             } else {
@@ -1343,47 +1353,6 @@ impl<'ast> State<'_, 'ast> {
             self.binary_expr = prev_chain;
             self.end();
         }
-    }
-
-    /// Prints a function or method call expression. Handles call chaining and argument formatting.
-    fn print_call_expr(
-        &mut self,
-        call_expr: &'ast ast::Expr<'ast>,
-        call_args: &'ast ast::CallArgs<'ast>,
-    ) {
-        let callee_size = get_callee_head_size(call_expr);
-        // let with_single_call_chain_child = matches!(call_args.exprs().next(),
-        //     Some(child) if call_args.len() == 1 && is_call_chain(&child.kind, false)
-        // );
-
-        self.print_member_or_call_chain(call_expr, None, |s| {
-            // let space_left = {
-            //     let total_space = s.space_left();
-            //     let precall = s.call_stack.precall_size();
-            //     if total_space <= precall { total_space } else { total_space - precall }
-            // };
-
-            // let callee_fits = s.call_stack.size() + callee_size + 1 < space_left;
-            // let all_fits = s.call_stack.size() + callee_size + s.estimate_size(call_args.span) +
-            // 2     <= space_left;
-            // let is_single_arg = call_args.len() == 1;
-            // let break_single =
-            //     !all_fits && is_single_arg && !with_single_call_chain_child && callee_fits;
-
-            // let is_chained = s.call_stack.first().is_some_and(|c| c.is_chained());
-            // let without_ind =
-            //     (!all_fits && (callee_fits || is_chained) && with_single_call_chain_child)
-            //         || s.return_bin_expr;
-
-            s.print_call_args(
-                call_args,
-                ListFormat::compact()
-                    .break_cmnts()
-                    .break_single(true)
-                    .without_ind(s.return_bin_expr),
-                callee_size,
-            );
-        });
     }
 
     /// Prints an indexing expression.
@@ -1569,6 +1538,7 @@ impl<'ast> State<'_, 'ast> {
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
+
         // Call the closure to print the suffix for the current link, with the calculated position.
         print_suffix(self);
 

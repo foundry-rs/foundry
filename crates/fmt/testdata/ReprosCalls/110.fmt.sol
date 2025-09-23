@@ -6,6 +6,9 @@ function test() public {
         "string mismatch"
     );
 
+    address lerp =
+        LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
+
     (oracleRouter, eVault) = execute(
         oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount
     );
