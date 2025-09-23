@@ -1,5 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+    shared_corpus::{CorpusWorker, SharedCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -27,7 +28,6 @@ use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
-use crate::executors::corpus::CorpusManager;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
@@ -118,13 +118,10 @@ impl FuzzedExecutor {
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
-        let mut corpus_manager = CorpusManager::new(
-            self.config.corpus.clone(),
-            strategy.boxed(),
-            &self.executor,
-            Some(func),
-            None,
-        )?;
+        let shared_corpus =
+            SharedCorpus::new(self.config.corpus.clone(), &self.executor, Some(func), None)?;
+
+        let mut corpus_manager = shared_corpus.new_worker(strategy.boxed());
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
@@ -144,11 +141,12 @@ impl FuzzedExecutor {
                 failure.calldata
             } else {
                 // If running with progress, then increment current run.
+                let metrics_read = shared_corpus.metrics.read();
                 if let Some(progress) = progress {
                     progress.inc(1);
                     // Display metrics in progress bar.
                     if self.config.corpus.collect_edge_coverage() {
-                        progress.set_message(format!("{}", &corpus_manager.metrics));
+                        progress.set_message(format!("{}", &metrics_read));
                     }
                 } else if self.config.corpus.collect_edge_coverage()
                     && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
@@ -159,7 +157,7 @@ impl FuzzedExecutor {
                             .duration_since(UNIX_EPOCH)?
                             .as_secs(),
                         "test": func.name,
-                        "metrics": &corpus_manager.metrics,
+                        "metrics": &*metrics_read,
                     });
                     let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                     last_metrics_report = Instant::now();
@@ -257,7 +255,7 @@ impl FuzzedExecutor {
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             line_coverage: test_data.coverage,
             deprecated_cheatcodes: test_data.deprecated_cheatcodes,
-            failed_corpus_replays: corpus_manager.failed_replays(),
+            failed_corpus_replays: shared_corpus.failed_replays(),
         };
 
         match test_data.failure {
@@ -298,7 +296,7 @@ impl FuzzedExecutor {
         &mut self,
         address: Address,
         calldata: Bytes,
-        coverage_metrics: &mut CorpusManager,
+        coverage_metrics: &mut CorpusWorker,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
