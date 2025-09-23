@@ -338,7 +338,7 @@ fn sign_with_wallet(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
-    if state.wallets().is_empty() {
+    if state.wallets().is_empty()? {
         bail!("no wallets available");
     }
 
