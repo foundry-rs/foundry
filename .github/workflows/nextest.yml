@@ -65,7 +65,7 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@8ea32481661d5e04d602f215b94f17e4014b44f9 # v2
+      - uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # v2
         with:
           tool: nextest
 

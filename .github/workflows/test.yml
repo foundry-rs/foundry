@@ -161,7 +161,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
           toolchain: stable
-      - uses: taiki-e/install-action@8ea32481661d5e04d602f215b94f17e4014b44f9 # v2
+      - uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # v2
         with:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
