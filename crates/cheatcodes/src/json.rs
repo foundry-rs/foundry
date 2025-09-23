@@ -829,7 +829,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, U256};
+    use alloy_primitives::FixedBytes;
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
 
