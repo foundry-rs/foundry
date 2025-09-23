@@ -1790,22 +1790,19 @@ casttest!(tx_to_request_json, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(
-    #[ignore = "reth is currently slightly broken"]
-    tx_using_sender_and_nonce,
-    |_prj, cmd| {
-        let rpc = "https://reth-ethereum.ithaca.xyz/rpc";
-        // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-        let args = vec![
-            "tx",
-            "--from",
-            "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-            "--nonce",
-            "113642",
-            "--rpc-url",
-            rpc,
-        ];
-        cmd.args(args).assert_success().stdout_eq(str![[r#"
+casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
+    let args = vec![
+        "tx",
+        "--from",
+        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
+        "--nonce",
+        "113642",
+        "--rpc-url",
+        rpc.as_str(),
+    ];
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
 
 blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
 blockNumber          22287055
@@ -1829,8 +1826,7 @@ value                0
 yParity              1
 ...
 "#]]);
-    }
-);
+});
 
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {
@@ -1939,6 +1935,77 @@ casttest!(storage, |_prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
+});
+
+casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.10",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.23",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_invalid_solc_version_1, |_prj, cmd| {
+    let output = cmd
+        .args([
+            "storage",
+            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+            "--solc-version",
+            "0.4.0",
+            "--rpc-url",
+            next_http_archive_rpc_url().as_str(),
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(
+        stderr.contains(
+            "Warning: The provided --solc-version is 0.4.0 while the minimum version for storage layouts is 0.6.5"
+        ),
+        "stderr did not contain expected warning. Full stderr:\n{stderr}"
+    );
+});
+
+casttest!(storage_with_invalid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.2",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
 
 "#]]);
 });
