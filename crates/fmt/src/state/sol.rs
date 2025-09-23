@@ -1131,10 +1131,8 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
-            ast::ExprKind::Assign(lhs, Some(bin_op), rhs)
-            | ast::ExprKind::Binary(lhs, bin_op, rhs) => {
-                self.print_assign_binop_expr(lhs, bin_op, rhs, kind)
-            }
+            ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
+            ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
             ast::ExprKind::Call(call_expr, call_args) => self.print_call_expr(call_expr, call_args),
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
@@ -1267,13 +1265,13 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.reset_precall();
     }
 
-    /// Prints an assignment or binary operator expression. Handles operator chains and formatting.
-    fn print_assign_binop_expr(
+    /// Prints a binary operator expression. Handles operator chains and formatting.
+    fn print_bin_expr(
         &mut self,
         lhs: &'ast ast::Expr<'ast>,
         bin_op: &ast::BinOp,
         rhs: &'ast ast::Expr<'ast>,
-        kind: &ast::ExprKind<'_>,
+        is_assign: bool,
     ) {
         let prev_chain = self.binary_expr;
         let is_chain = prev_chain.is_some_and(|prev| prev == bin_op.kind.group());
@@ -1282,15 +1280,15 @@ impl<'ast> State<'_, 'ast> {
         if !is_chain {
             self.binary_expr = Some(bin_op.kind.group());
 
-            let indent = match kind {
-                ast::ExprKind::Assign(..) if has_complex_successor(&rhs.kind, true) => 0,
-                _ if self.call_stack.is_nested()
-                    && is_call_chain(&lhs.kind, false)
-                    && self.estimate_size(lhs.span) >= self.space_left() =>
-                {
-                    0
-                }
-                _ => self.ind,
+            let indent = if is_assign && has_complex_successor(&rhs.kind, true) {
+                0
+            } else if self.call_stack.is_nested()
+                && is_call_chain(&lhs.kind, false)
+                && self.estimate_size(lhs.span) >= self.space_left()
+            {
+                0
+            } else {
+                self.ind
             };
             self.s.ibox(indent);
         }
@@ -1300,35 +1298,32 @@ impl<'ast> State<'_, 'ast> {
 
         // Handle assignment (`+=`, etc.) vs binary ops (`+`, `*`, etc.).
         let no_trailing_comment = !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.lo()));
-        match kind {
-            ast::ExprKind::Assign(..) => {
-                if no_trailing_comment {
-                    self.nbsp();
-                }
-                self.word(bin_op.kind.to_str());
-                self.word("= ");
+        if is_assign {
+            if no_trailing_comment {
+                self.nbsp();
             }
-            _ => {
-                if no_trailing_comment
-                    && self
-                        .print_comments(
-                            bin_op.span.lo(),
-                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-                        )
-                        .is_none_or(|cmnt| cmnt.is_mixed())
-                {
-                    if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
-                        self.space_if_not_bol();
-                    } else if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
-                        self.zerobreak();
-                    }
-                }
-
-                self.word(bin_op.kind.to_str());
-
+            self.word(bin_op.kind.to_str());
+            self.word("= ");
+        } else {
+            if no_trailing_comment
+                && self
+                    .print_comments(
+                        bin_op.span.lo(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                    )
+                    .is_none_or(|cmnt| cmnt.is_mixed())
+            {
                 if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
-                    self.nbsp();
+                    self.space_if_not_bol();
+                } else if !self.is_bol_or_only_ind() && !self.last_token_is_break() {
+                    self.zerobreak();
                 }
+            }
+
+            self.word(bin_op.kind.to_str());
+
+            if !self.config.pow_no_space || !matches!(bin_op.kind, ast::BinOpKind::Pow) {
+                self.nbsp();
             }
         }
 
@@ -1357,35 +1352,35 @@ impl<'ast> State<'_, 'ast> {
         call_args: &'ast ast::CallArgs<'ast>,
     ) {
         let callee_size = get_callee_head_size(call_expr);
-        let with_single_call_chain_child = matches!(call_args.exprs().next(),
-            Some(child) if call_args.len() == 1 && is_call_chain(&child.kind, false)
-        );
+        // let with_single_call_chain_child = matches!(call_args.exprs().next(),
+        //     Some(child) if call_args.len() == 1 && is_call_chain(&child.kind, false)
+        // );
 
         self.print_member_or_call_chain(call_expr, None, |s| {
-            let space_left = {
-                let total_space = s.space_left();
-                let precall = s.call_stack.precall_size();
-                if total_space <= precall { total_space } else { total_space - precall }
-            };
+            // let space_left = {
+            //     let total_space = s.space_left();
+            //     let precall = s.call_stack.precall_size();
+            //     if total_space <= precall { total_space } else { total_space - precall }
+            // };
 
-            let callee_fits = s.call_stack.size() + callee_size + 1 < space_left;
-            let all_fits = s.call_stack.size() + callee_size + s.estimate_size(call_args.span) + 2
-                <= space_left;
-            let is_single_arg = call_args.len() == 1;
-            let break_single =
-                !all_fits && is_single_arg && !with_single_call_chain_child && callee_fits;
+            // let callee_fits = s.call_stack.size() + callee_size + 1 < space_left;
+            // let all_fits = s.call_stack.size() + callee_size + s.estimate_size(call_args.span) +
+            // 2     <= space_left;
+            // let is_single_arg = call_args.len() == 1;
+            // let break_single =
+            //     !all_fits && is_single_arg && !with_single_call_chain_child && callee_fits;
 
-            let is_chained = s.call_stack.first().is_some_and(|c| c.is_chained());
-            let without_ind =
-                (!all_fits && (callee_fits || is_chained) && with_single_call_chain_child)
-                    || s.return_bin_expr;
+            // let is_chained = s.call_stack.first().is_some_and(|c| c.is_chained());
+            // let without_ind =
+            //     (!all_fits && (callee_fits || is_chained) && with_single_call_chain_child)
+            //         || s.return_bin_expr;
 
             s.print_call_args(
                 call_args,
                 ListFormat::compact()
                     .break_cmnts()
-                    .break_single(break_single)
-                    .without_ind(without_ind),
+                    .break_single(true)
+                    .without_ind(s.return_bin_expr),
                 callee_size,
             );
         });

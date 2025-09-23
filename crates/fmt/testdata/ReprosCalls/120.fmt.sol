@@ -9,8 +9,9 @@ function test() public {
         execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
 
     if (eVault == address(0)) {
-        eVault = address(GenericFactory(eVaultFactory)
-            .createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0))));
+        eVault = address(
+            GenericFactory(eVaultFactory).createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0)))
+        );
     }
 
     content = string.concat(

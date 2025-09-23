@@ -17,12 +17,14 @@ function test() public {
     );
 
     if (eVault == address(0)) {
-        eVault = address(GenericFactory(eVaultFactory)
-            .createProxy(
-                address(0),
-                true,
-                abi.encodePacked(asset, address(0), address(0))
-            ));
+        eVault = address(
+            GenericFactory(eVaultFactory)
+                .createProxy(
+                    address(0),
+                    true,
+                    abi.encodePacked(asset, address(0), address(0))
+                )
+        );
     }
 
     content = string.concat(
@@ -33,10 +35,12 @@ function test() public {
         "\"}\n"
     );
 
-    oracleInfo = abi.encode(LidoOracleInfo({
-        base: IOracle(oracleAddress).WSTETH(),
-        quote: IOracle(oracleAddress).STETH()
-    }));
+    oracleInfo = abi.encode(
+        LidoOracleInfo({
+            base: IOracle(oracleAddress).WSTETH(),
+            quote: IOracle(oracleAddress).STETH()
+        })
+    );
 
     return someFunction().getValue().modifyValue().negate()
         .scaleBySomeFactor(1000).transformToTuple();
@@ -50,9 +54,9 @@ function test() public {
 
     (bool success, bytes memory data) = GenericFactory(eVaultFactory)
         .implementation()
-        .staticcall(abi.encodePacked(
-            EVCUtil.EVC.selector, uint256(0), uint256(0)
-        ));
+        .staticcall(
+            abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0))
+        );
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
 
