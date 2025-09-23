@@ -47,7 +47,11 @@ impl ResponseResult {
     where
         S: Serialize + 'static,
     {
-        Self::Success(serde_json::to_value(&content).unwrap())
+        // Avoid panicking if serialization fails; return an internal error instead.
+        match serde_json::to_value(&content) {
+            Ok(value) => Self::Success(value),
+            Err(_) => Self::Error(RpcError::internal_error()),
+        }
     }
 
     pub fn error(error: RpcError) -> Self {
