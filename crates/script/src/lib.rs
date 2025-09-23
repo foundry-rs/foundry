@@ -248,7 +248,6 @@ impl ScriptArgs {
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
-
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
         let bundled = if compiled.args.resume {
