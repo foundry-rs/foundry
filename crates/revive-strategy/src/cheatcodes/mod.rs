@@ -10,11 +10,11 @@ use foundry_cheatcodes::{
     Broadcast, BroadcastableTransactions, CheatcodeInspectorStrategy,
     CheatcodeInspectorStrategyContext, CheatcodeInspectorStrategyRunner, CheatsConfig, CheatsCtxt,
     CommonCreateInput, DealRecord, Ecx, EvmCheatcodeInspectorStrategyRunner, InnerEcx, Result,
-    Vm::{dealCall, getNonce_0Call, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall},
+    Vm::{dealCall, getNonce_0Call, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall, warpCall},
 };
 use foundry_common::sh_err;
 use foundry_compilers::resolc::dual_compiled_contracts::DualCompiledContracts;
-use revive_env::{AccountId, Runtime, System};
+use revive_env::{AccountId, Runtime, System, Timestamp};
 
 use polkadot_sdk::{
     frame_support::traits::{fungible::Mutate, Currency},
@@ -152,6 +152,18 @@ fn set_block_number(new_height: U256, ecx: InnerEcx<'_, '_, '_>) {
     });
 }
 
+fn set_timestamp(new_timestamp: U256, ecx: InnerEcx<'_, '_, '_>) {
+    // Set timestamp in EVM context.
+    ecx.env.block.timestamp = new_timestamp;
+
+    // Set timestamp in pallet-revive runtime.
+    execute_with_externalities(|externalities| {
+        externalities.execute_with(|| {
+            Timestamp::set_timestamp(new_timestamp.try_into().expect("Timestamp exceeds u64"));
+        })
+    });
+}
+
 /// Implements [CheatcodeInspectorStrategyRunner] for PVM.
 #[derive(Debug, Default, Clone)]
 pub struct PvmCheatcodeInspectorStrategyRunner;
@@ -225,6 +237,14 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
                 let &rollCall { newHeight } = cheatcode.as_any().downcast_ref().unwrap();
 
                 set_block_number(newHeight, ccx.ecx);
+
+                Ok(Default::default())
+            }
+            t if using_pvm && is::<warpCall>(t) => {
+                let &warpCall { newTimestamp } = cheatcode.as_any().downcast_ref().unwrap();
+
+                tracing::info!(cheatcode = ?cheatcode.as_debug() , using_pvm = ?using_pvm);
+                set_timestamp(newTimestamp, ccx.ecx);
 
                 Ok(Default::default())
             }
