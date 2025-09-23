@@ -590,32 +590,25 @@ impl<'ast> State<'_, 'ast> {
                     self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
             }
 
-            // Both current and next statements are enabled.
-            let should_break_between_enabled = !is_disabled
+            // when this stmt and the next one are enabled, break normally (except if last stmt)
+            if !is_disabled
                 && next_enabled
-                && (
-                    // Break unless this is the last statement without a mixed comment.
-                    !is_last
-                        || self
-                            .peek_comment_before(pos_hi)
-                            .is_some_and(|cmnt| cmnt.style.is_mixed())
-                );
-            if should_break_between_enabled {
+                && (!is_last
+                    || self.peek_comment_before(pos_hi).is_some_and(|cmnt| cmnt.style.is_mixed()))
+            {
                 self.hardbreak_if_not_bol();
                 continue;
             }
-
-            // Current is disabled, next is enabled, and no enabled comment precedes.
-            let should_break_after_disabled = is_disabled
+            // when this stmt is disabled and the next one is enabled, break if there is no
+            // enabled preceding comment. Otherwise the breakpoint is handled by the comment.
+            if is_disabled
                 && next_enabled
-                && next_lo
-                    .filter(|&lo| {
-                        self.peek_comment_before(lo)
-                            .is_none_or(|cmnt| self.inline_config.is_disabled(cmnt.span))
-                    })
-                    .is_some();
-            if should_break_after_disabled {
-                self.hardbreak_if_not_bol();
+                && let Some(next_lo) = next_lo
+                && self
+                    .peek_comment_before(next_lo)
+                    .is_none_or(|cmnt| self.inline_config.is_disabled(cmnt.span))
+            {
+                self.hardbreak_if_not_bol()
             }
         }
 

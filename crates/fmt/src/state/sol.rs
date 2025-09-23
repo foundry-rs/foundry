@@ -281,7 +281,7 @@ impl<'ast> State<'_, 'ast> {
 
         if let Some(first) = bases.first().map(|base| base.span())
             && let Some(last) = bases.last().map(|base| base.span())
-            && self.inline_config.is_disabled(first.until(last))
+            && self.inline_config.is_disabled(first.to(last))
         {
             _ = self.handle_span(first.until(last), false);
         } else if !bases.is_empty() {
@@ -2253,7 +2253,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
-            let if_span = cond.span.until(then.span);
+            let if_span = cond.span.to(then.span);
             if self.sm.is_multiline(if_span)
                 && matches!(
                     self.config.single_line_statement_blocks,
