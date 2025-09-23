@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
     Artifact, ArtifactId,
-    artifacts::{CompactContractBytecodeCow, Libraries},
+    artifacts::{CompactContractBytecodeCow, Libraries, Offsets},
     contracts::ArtifactContracts,
 };
 use rayon::prelude::*;
@@ -108,12 +108,12 @@ impl<'a> Linker<'a> {
         // Deep-merge link references from creation and deployed bytecode.
         // This ensures we don't lose libraries when both bytecode objects reference
         // libraries under the same source file key but with different library names.
-        let mut references = BTreeMap::new();
+        let mut references: BTreeMap<String, BTreeMap<String, Vec<Offsets>>> = BTreeMap::new();
         if let Some(bytecode) = &contract.bytecode {
             for (file, libs) in &bytecode.link_references {
-                let entry = references.entry(file.clone()).or_insert_with(BTreeMap::new);
+                let entry = references.entry(file.clone()).or_default();
                 for (name, offsets) in libs {
-                    entry.entry(name.clone()).or_insert_with(Vec::new).extend(offsets.clone());
+                    entry.entry(name.clone()).or_default().extend(offsets.clone());
                 }
             }
         }
@@ -121,9 +121,9 @@ impl<'a> Linker<'a> {
             && let Some(bytecode) = &deployed_bytecode.bytecode
         {
             for (file, libs) in &bytecode.link_references {
-                let entry = references.entry(file.clone()).or_insert_with(BTreeMap::new);
+                let entry = references.entry(file.clone()).or_default();
                 for (name, offsets) in libs {
-                    entry.entry(name.clone()).or_insert_with(Vec::new).extend(offsets.clone());
+                    entry.entry(name.clone()).or_default().extend(offsets.clone());
                 }
             }
         }
