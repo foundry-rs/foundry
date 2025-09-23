@@ -3193,5 +3193,5 @@ contract CounterScript is Script {
         "https://sepolia.infura.io/v3/test",
     ])
     .assert_failure()
-    .stderr_matches("error: the following required arguments were not provided:\n  --broadcast\n\nUsage: forge script [OPTIONS] <PATH> [ARGS]...\n\nFor more information, try '--help'.");
+    .stderr_eq("error: the following required arguments were not provided:\n  --broadcast\n\nUsage: forge script [OPTIONS] <PATH> [ARGS]...\n\nFor more information, try '--help'.");
 });
