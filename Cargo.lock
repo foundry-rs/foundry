@@ -4822,6 +4822,7 @@ dependencies = [
  "foundry-linking",
  "futures",
  "itertools 0.14.0",
+ "memchr",
  "rayon",
  "revm",
  "revm-inspectors",
@@ -4831,6 +4832,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "yansi",
 ]
 
 [[package]]
