@@ -161,7 +161,6 @@ jobs:
       - nextest
       - docs
       - doctest
-      - typos
       - clippy
       - rustfmt
       - forge-fmt
