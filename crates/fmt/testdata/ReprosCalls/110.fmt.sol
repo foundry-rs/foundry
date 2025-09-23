@@ -80,15 +80,3 @@ function returnLongBinaryOp() returns (bytes32) {
         uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce))
     );
 }
-
-function new_y(uint256 x, uint256 dx, uint256 x_basis, uint256 y, uint256 y_basis)
-    external
-    pure
-    returns (uint256)
-{
-    return _get_y(
-        x * _VELODROME_TOKEN_BASIS / x_basis,
-        dx * _VELODROME_TOKEN_BASIS / x_basis,
-        y * _VELODROME_TOKEN_BASIS / y_basis
-    );
-}
