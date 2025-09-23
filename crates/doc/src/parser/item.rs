@@ -83,7 +83,6 @@ impl ParseItem {
 
     /// Set formatted code on the [ParseItem].
     pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        // TODO(rusowsky): ensure that this is equivalent to the old fmt output
         self.code =
             forge_fmt::format(source, config).into_result().map_err(ParserError::Formatter)?;
 
