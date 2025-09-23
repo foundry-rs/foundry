@@ -489,9 +489,9 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// We only broadcast transactions if --broadcast or --resume was passed.
+    /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     fn should_broadcast(&self) -> bool {
-        self.broadcast || self.resume
+        self.broadcast || self.resume || self.verify
     }
 }
 
