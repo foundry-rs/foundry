@@ -759,6 +759,29 @@ mod tests {
     }
 
     #[test]
+    fn link_samefile_union() {
+        link_test("../../testdata/default/linking/samefile_union", |linker| {
+            linker
+                .assert_dependencies(
+                    "default/linking/samefile_union/SameFileUnion.t.sol:UsesBoth".to_string(),
+                    vec![
+                        (
+                            "default/linking/samefile_union/Libs.sol:LInit".to_string(),
+                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
+                                .unwrap(),
+                        ),
+                        (
+                            "default/linking/samefile_union/Libs.sol:LRun".to_string(),
+                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .test_with_sender_and_nonce(Address::default(), 1);
+        });
+    }
+
+    #[test]
     fn linking_failure() {
         let linker = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker_instance =
