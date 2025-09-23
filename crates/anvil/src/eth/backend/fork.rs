@@ -320,7 +320,10 @@ impl ClientFork {
                     }
                 }
                 // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
+                // Gracefully handle unsupported uncle-only block transactions to avoid panicking.
+                BlockTransactions::Uncle => {
+                    return Ok(None);
+                }
             }
         }
         Ok(None)
@@ -344,7 +347,10 @@ impl ClientFork {
                     }
                 }
                 // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
+                // Gracefully handle unsupported uncle-only block transactions to avoid panicking.
+                BlockTransactions::Uncle => {
+                    return Ok(None);
+                }
             }
         }
         Ok(None)
