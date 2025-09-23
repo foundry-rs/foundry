@@ -1765,6 +1765,8 @@ impl<'ast> State<'_, 'ast> {
             span.lo(),
             init_expr.span.lo(),
             |this, var| {
+                // NOTE(rusowsky): unless we add more spans to solar, it is not possible to print
+                // comments between the commas of unhandled vars
                 if let Some(var) = var {
                     this.print_var(var, true);
                 }
