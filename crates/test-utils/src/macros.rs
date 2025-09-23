@@ -125,6 +125,7 @@ macro_rules! forgesoldeer {
 
 #[macro_export]
 macro_rules! test_debug {
+    () => { $crate::test_debug!("") };
     ($($args:tt)*) => {
         $crate::test_debug(format_args!($($args)*))
     }
