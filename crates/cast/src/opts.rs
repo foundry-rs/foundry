@@ -644,6 +644,17 @@ pub enum CastSubcommand {
         args: Vec<String>,
     },
 
+    /// ABI encode an event and its arguments to generate topics and data.
+    #[command(visible_alias = "aee")]
+    AbiEncodeEvent {
+        /// The event signature.
+        sig: String,
+
+        /// The arguments of the event.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Compute the storage slot for an entry in a mapping.
     #[command(visible_alias = "in")]
     Index {
@@ -1065,11 +1076,11 @@ pub enum CastSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: foundry_common::clap::Shell,
+        shell: foundry_cli::clap::Shell,
     },
 
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
+    /// Generate Fig autocompletion spec. Deprecated: use `cast completions fig` instead.
+    #[command(visible_alias = "fig", hide = true)]
     GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.

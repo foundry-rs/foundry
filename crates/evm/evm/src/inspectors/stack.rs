@@ -14,6 +14,7 @@ use foundry_evm_core::{
     evm::new_evm_with_inspector,
 };
 use foundry_evm_coverage::HitMaps;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
@@ -69,8 +70,8 @@ pub struct InspectorStackBuilder {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
+    /// Networks with enabled features.
+    pub networks: NetworkConfigs,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -172,11 +173,10 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to enable Odyssey features.
-    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
+    /// Set networks with enabled features.
     #[inline]
-    pub fn odyssey(mut self, yes: bool) -> Self {
-        self.odyssey = yes;
+    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
+        self.networks = networks;
         self
     }
 
@@ -200,7 +200,7 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
-            odyssey,
+            networks,
             wallets,
             create2_deployer,
         } = self;
@@ -232,7 +232,7 @@ impl InspectorStackBuilder {
         stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
-        stack.odyssey(odyssey);
+        stack.networks(networks);
         stack.set_create2_deployer(create2_deployer);
 
         // environment, must come after all of the inspectors
@@ -330,7 +330,7 @@ pub struct InspectorStackInner {
 
     // InspectorExt and other internal data.
     pub enable_isolation: bool,
-    pub odyssey: bool,
+    pub networks: NetworkConfigs,
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -450,10 +450,10 @@ impl InspectorStack {
         self.enable_isolation = yes;
     }
 
-    /// Set whether to enable call isolation.
+    /// Set networks with enabled features.
     #[inline]
-    pub fn odyssey(&mut self, yes: bool) {
-        self.odyssey = yes;
+    pub fn networks(&mut self, networks: NetworkConfigs) {
+        self.networks = networks;
     }
 
     /// Set the CREATE2 deployer address.
@@ -1100,8 +1100,8 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ));
     }
 
-    fn is_odyssey(&self) -> bool {
-        self.inner.odyssey
+    fn get_networks(&self) -> NetworkConfigs {
+        self.inner.networks
     }
 
     fn create2_deployer(&self) -> Address {
@@ -1191,8 +1191,8 @@ impl InspectorExt for InspectorStack {
         self.as_mut().should_use_create2_factory(ecx, inputs)
     }
 
-    fn is_odyssey(&self) -> bool {
-        self.odyssey
+    fn get_networks(&self) -> NetworkConfigs {
+        self.networks
     }
 
     fn create2_deployer(&self) -> Address {

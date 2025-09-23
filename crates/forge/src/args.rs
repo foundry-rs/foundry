@@ -95,12 +95,15 @@ pub fn run_command(args: Forge) -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::GenerateFigSpec => {
-            clap_complete::generate(
-                clap_complete_fig::Fig,
+            generate(
+                foundry_cli::clap::Shell::Fig,
                 &mut Forge::command(),
                 "forge",
                 &mut std::io::stdout(),
             );
+            sh_eprintln!(
+                "[deprecated] `forge generate-fig-spec` is deprecated; use `forge completions fig`"
+            )?;
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
