@@ -323,7 +323,12 @@ impl TestArgs {
         // Populate solar's global context by parsing and lowering the sources.
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx(&mut pcx, &config, Some(&project), Some(&analysis_files))?;
+            configure_pcx(
+                &mut pcx,
+                &config,
+                Some(&project),
+                if analysis_files.is_empty() { None } else { Some(&analysis_files) },
+            )?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())

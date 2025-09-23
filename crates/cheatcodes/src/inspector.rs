@@ -570,7 +570,7 @@ impl Cheatcodes {
         }
     }
 
-    /// Enables cheatcode analysis capabilities by providing a solar [`Compiler`] instance.
+    /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
     pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
         self.analysis = Some(analysis);
     }

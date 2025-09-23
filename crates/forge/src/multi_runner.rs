@@ -584,7 +584,12 @@ impl MultiContractRunnerBuilder {
             output.output().sources.as_ref().keys().map(|path| path.to_path_buf()).collect();
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx(&mut pcx, self.config(), Some(self.project()), Some(&files))?;
+            configure_pcx(
+                &mut pcx,
+                self.config(),
+                Some(self.project()),
+                if files.is_empty() { None } else { Some(&files) },
+            )?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())
