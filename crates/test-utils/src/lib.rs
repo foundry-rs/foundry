@@ -54,7 +54,7 @@ pub fn init_tracing() {
 fn env_filter() -> tracing_subscriber::EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &include!("../../cli/src/utils/default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive("foundry_test_utils=debug".parse().unwrap())
+        .with_default_directive("debug".parse().unwrap())
         .from_env_lossy();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
