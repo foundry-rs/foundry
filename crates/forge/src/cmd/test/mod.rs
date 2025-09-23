@@ -343,7 +343,7 @@ impl TestArgs {
                 .enable_isolation(evm_opts.isolate)
                 .networks(evm_opts.networks)
                 .fail_fast(self.fail_fast)
-                .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
+                .build::<MultiCompiler>(&output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
