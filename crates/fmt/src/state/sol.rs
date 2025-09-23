@@ -97,10 +97,7 @@ impl<'ast> State<'_, 'ast> {
             if advance {
                 if self.peek_comment_before(span.lo()).is_some() {
                     self.print_comments(span.lo(), CommentConfig::default());
-                } else if self
-                    .inline_config
-                    .is_disabled(Span::new(span.lo(), span.lo() + BytePos(1)))
-                {
+                } else if self.inline_config.is_disabled(span.shrink_to_lo()) {
                     self.hardbreak();
                     self.cursor.advance_to(span.lo(), true);
                 }
@@ -284,9 +281,9 @@ impl<'ast> State<'_, 'ast> {
 
         if let Some(first) = bases.first().map(|base| base.span())
             && let Some(last) = bases.last().map(|base| base.span())
-            && self.inline_config.is_disabled(Span::new(first.lo(), last.hi()))
+            && self.inline_config.is_disabled(first.until(last))
         {
-            _ = self.handle_span(Span::new(first.lo(), last.hi()), false);
+            _ = self.handle_span(first.until(last), false);
         } else if !bases.is_empty() {
             self.word("is");
             self.space();
@@ -1625,7 +1622,7 @@ impl<'ast> State<'_, 'ast> {
                 s.print_expr(arg.value);
                 s.end();
             },
-            |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
+            |arg| Some(arg.name.span.until(arg.value.span)),
             list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
         );
         self.word("}");
@@ -1726,7 +1723,7 @@ impl<'ast> State<'_, 'ast> {
         block: &'ast ast::yul::Block<'ast>,
     ) {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
-        if !self.handle_span(Span::new(span.lo(), block.span.lo()), false) {
+        if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
             self.print_word("assembly ");
             if let Some(dialect) = dialect {
@@ -2079,7 +2076,7 @@ impl<'ast> State<'_, 'ast> {
         // NOTE(rusowsky): unless we add bracket spans to solar,
         // using `then.span.lo()` consumes "cmnt12" of the IfStatement test inside the preceding
         // clause: `self.print_if_cond("if", cond, cond.span.hi());`
-        if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), true) {
+        if !self.handle_span(cond.span.until(then.span), true) {
             self.print_if_cond("if", cond, then.span.lo());
             // if empty block without comments, ensure braces are inlined
             if let ast::StmtKind::Block(block) = &then.kind
@@ -2256,7 +2253,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
-            let if_span = Span::new(cond.span.lo(), then.span.hi());
+            let if_span = cond.span.until(then.span);
             if self.sm.is_multiline(if_span)
                 && matches!(
                     self.config.single_line_statement_blocks,
