@@ -965,21 +965,21 @@ impl<'ast> State<'_, 'ast> {
                 self.cbox(0);
                 self.word("function");
                 self.print_parameter_list(parameters, parameters.span, ListFormat::inline());
-                self.space();
 
                 if let Some(v) = visibility {
+                    self.space();
                     self.word(v.to_str());
-                    self.nbsp();
                 }
                 if let Some(sm) = state_mutability
                     && !matches!(**sm, ast::StateMutability::NonPayable)
                 {
+                    self.space();
                     self.word(sm.to_str());
-                    self.nbsp();
                 }
                 if let Some(ret) = returns
                     && !ret.is_empty()
                 {
+                    self.nbsp();
                     self.word("returns");
                     self.nbsp();
                     self.print_parameter_list(
