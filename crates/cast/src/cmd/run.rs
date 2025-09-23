@@ -158,7 +158,7 @@ impl RunArgs {
 
         let create2_deployer = evm_opts.create2_deployer;
         let (mut env, fork, chain, networks) =
-            TracingExecutor::get_fork_material(&config, evm_opts).await?;
+            TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;

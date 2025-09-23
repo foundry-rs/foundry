@@ -592,6 +592,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
+        self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });

@@ -165,7 +165,7 @@ main() {
       say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
 
       # Create a temporary directory to store the attestation link and artifact.
-      tmp_dir="$(mktemp -d 2>/dev/null || echo ".")"
+      tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp_dir/attestation.txt"
       ensure download "$ATTESTATION_URL" "$tmp"
       
@@ -255,17 +255,19 @@ main() {
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
-      tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       rm -f "$tmp"
     else
-      tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.tar.gz"
+      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+      tmp="$tmp/foundry.tar.gz"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
-      ensure tar tf $tmp 1> /dev/null
+      ensure tar tf "$tmp" 1> /dev/null
       ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf $tmp
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
       rm -f "$tmp"
     fi
 

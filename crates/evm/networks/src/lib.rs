@@ -2,9 +2,12 @@
 //!
 //! Foundry EVM network custom precompiles.
 
-use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, PRECOMPILE_ID_CELO_TRANSFER};
+use crate::celo::transfer::{
+    CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
+};
+use alloy_chains::NamedChain;
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::AddressHashMap};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -33,6 +36,13 @@ impl NetworkConfigs {
         Self { optimism: true, ..Default::default() }
     }
 
+    pub fn with_chain_id(mut self, chain_id: u64) -> Self {
+        if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
+            self.celo = true;
+        }
+        self
+    }
+
     /// Inject precompiles for configured networks.
     pub fn inject_precompiles(self, precompiles: &mut PrecompilesMap) {
         if self.celo {
@@ -40,6 +50,15 @@ impl NetworkConfigs {
                 Some(celo::transfer::precompile())
             });
         }
+    }
+
+    /// Returns precompiles label for configured networks, to be used in traces.
+    pub fn precompiles_label(self) -> AddressHashMap<String> {
+        let mut labels = AddressHashMap::default();
+        if self.celo {
+            labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
+        }
+        labels
     }
 
     /// Returns precompiles for configured networks.

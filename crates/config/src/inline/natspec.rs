@@ -494,8 +494,8 @@ contract FuzzInlineConf is DSTest {
 
     fn natspec() -> NatSpec {
         let conf = r"
-        forge-config: default.fuzz.runs = 600 
-        forge-config: ci.fuzz.runs = 500 
+        forge-config: default.fuzz.runs = 600
+        forge-config: ci.fuzz.runs = 500
         ========= SOME NOISY TEXT =============
          䩹𧀫Jx닧Ʀ̳盅K擷􅟽Ɂw첊}ꏻk86ᖪk-檻ܴ렝[ǲ𐤬oᘓƤ
         ꣖ۻ%Ƅ㪕ς:(饁΍av/烲ڻ̛߉橞㗡𥺃̹M봓䀖ؿ̄󵼁)𯖛d􂽰񮍃

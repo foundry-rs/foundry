@@ -77,7 +77,7 @@ impl TracingExecutor {
 
     /// uses the fork block number from the config
     pub async fn get_fork_material(
-        config: &Config,
+        config: &mut Config,
         mut evm_opts: EvmOpts,
     ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, NetworkConfigs)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
@@ -86,8 +86,10 @@ impl TracingExecutor {
         let env = evm_opts.evm_env().await?;
 
         let fork = evm_opts.get_fork(config, env.clone());
+        let networks = evm_opts.networks.with_chain_id(env.evm_env.cfg_env.chain_id);
+        config.labels.extend(networks.precompiles_label());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.networks))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await, networks))
     }
 }
 
