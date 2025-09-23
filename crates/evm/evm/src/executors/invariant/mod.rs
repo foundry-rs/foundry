@@ -1,7 +1,7 @@
 use crate::{
     executors::{
         Executor, RawCallResult,
-        shared_corpus::{CorpusWorker, SharedCorpus},
+        corpus::{CorpusWorker, SharedCorpus},
     },
     inspectors::Fuzzer,
 };
