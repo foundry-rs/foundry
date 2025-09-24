@@ -2,13 +2,13 @@
 pragma solidity ^0.8.18;
 
 library LInit {
-    function f() internal pure returns (uint256) {
-        return 1;
+    function f() external view returns (uint256) {
+        return block.number;
     }
 }
 
 library LRun {
-    function g() internal pure returns (uint256) {
-        return 2;
+    function g() external view returns (uint256) {
+        return block.timestamp;
     }
 }
