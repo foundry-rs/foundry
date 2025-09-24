@@ -322,7 +322,6 @@ impl CallArgs {
                 env_tx.nonce = nonce;
             }
 
-            // Note: value is already set via the `value` variable extracted from tx.value above
 
             if let Some(tx_type) = tx.inner.transaction_type {
                 env_tx.tx_type = tx_type;
