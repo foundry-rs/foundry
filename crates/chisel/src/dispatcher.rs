@@ -69,18 +69,8 @@ pub struct EtherscanABIResponse {
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
 pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
-    match forge_fmt::parse(source) {
-        Ok(parsed) => {
-            let mut formatted_source = String::default();
-
-            if forge_fmt::format_to(&mut formatted_source, parsed, config).is_err() {
-                eyre::bail!("Could not format source!");
-            }
-
-            Ok(formatted_source)
-        }
-        Err(_) => eyre::bail!("Formatter could not parse source!"),
-    }
+    let formatted = forge_fmt::format(source, config).into_result()?;
+    Ok(formatted)
 }
 
 impl ChiselDispatcher {
@@ -474,7 +464,8 @@ impl ChiselDispatcher {
             .into_iter()
             .next()
             .ok_or_else(|| eyre::eyre!("No ABI found for address {address} on Etherscan"))?;
-        let code = foundry_cli::utils::abi_to_solidity(&abi, &name)?;
+        let code = forge_fmt::format(&abi.to_sol(&name, None), FormatterConfig::default())
+            .into_result()?;
         self.source_mut().add_global_code(&code);
         sh_println!("Added {address}'s interface to source as `{name}`")
     }

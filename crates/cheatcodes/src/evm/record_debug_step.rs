@@ -67,9 +67,9 @@ fn recursive_flatten_call_trace<'a>(
 // Function to convert CallTraceStep to DebugStep
 pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugStep {
     let opcode = step.op.get();
-    let stack = get_stack_inputs_for_opcode(opcode, step.stack.as_ref());
+    let stack = get_stack_inputs_for_opcode(opcode, step.stack.as_deref());
 
-    let memory = get_memory_input_for_opcode(opcode, step.stack.as_ref(), step.memory.as_ref());
+    let memory = get_memory_input_for_opcode(opcode, step.stack.as_deref(), step.memory.as_ref());
 
     let is_out_of_gas = step.status == Some(InstructionResult::OutOfGas)
         || step.status == Some(InstructionResult::MemoryOOG)
@@ -91,7 +91,7 @@ pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugSte
 // is the last value of the vector
 fn get_memory_input_for_opcode(
     opcode: u8,
-    stack: Option<&Vec<U256>>,
+    stack: Option<&[U256]>,
     memory: Option<&RecordedMemory>,
 ) -> Bytes {
     let mut memory_input = Bytes::new();
@@ -109,7 +109,7 @@ fn get_memory_input_for_opcode(
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
-fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&Vec<U256>>) -> Vec<U256> {
+fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&[U256]>) -> Vec<U256> {
     let mut inputs = Vec::new();
 
     let Some(op) = OpCode::new(opcode) else { return inputs };

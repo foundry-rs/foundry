@@ -43,6 +43,8 @@ tempfile.workspace = true
 rayon.workspace = true
 solar.workspace = true
 revm.workspace = true
+yansi.workspace = true
+memchr.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -3235,10 +3235,8 @@ impl EthApi {
                             m.tx.max_fee_per_gas = self.gas_price();
                         }
                         if max_fee_per_blob_gas.is_none() {
-                            m.tx.max_fee_per_blob_gas = self
-                                .excess_blob_gas_and_price()
-                                .unwrap_or_default()
-                                .map_or(0, |g| g.blob_gasprice)
+                            m.tx.max_fee_per_blob_gas =
+                                self.backend.fees().get_next_block_blob_base_fee_per_gas();
                         }
                         TxEip4844Variant::TxEip4844WithSidecar(m)
                     }
@@ -3255,10 +3253,8 @@ impl EthApi {
                             tx.max_fee_per_gas = self.gas_price();
                         }
                         if max_fee_per_blob_gas.is_none() {
-                            tx.max_fee_per_blob_gas = self
-                                .excess_blob_gas_and_price()
-                                .unwrap_or_default()
-                                .map_or(0, |g| g.blob_gasprice)
+                            tx.max_fee_per_blob_gas =
+                                self.backend.fees().get_next_block_blob_base_fee_per_gas();
                         }
 
                         TxEip4844Variant::TxEip4844(tx)

@@ -51,39 +51,6 @@ pub fn is_markdown() -> bool {
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
-/// Terminal width.
-pub enum TtyWidth {
-    /// Not a terminal, or could not determine size.
-    NoTty,
-    /// A known width.
-    Known(usize),
-    /// A guess at the width.
-    Guess(usize),
-}
-
-impl TtyWidth {
-    /// Returns the width of the terminal from the environment, if known.
-    pub fn get() -> Self {
-        // use stderr
-        #[cfg(unix)]
-        let opt = terminal_size::terminal_size_of(std::io::stderr());
-        #[cfg(not(unix))]
-        let opt = terminal_size::terminal_size();
-        match opt {
-            Some((w, _)) => Self::Known(w.0 as usize),
-            None => Self::NoTty,
-        }
-    }
-
-    /// Returns the width used by progress bars for the tty.
-    pub fn progress_max_width(&self) -> Option<usize> {
-        match *self {
-            Self::NoTty => None,
-            Self::Known(width) | Self::Guess(width) => Some(width),
-        }
-    }
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 /// The requested output mode.
 pub enum OutputMode {
@@ -294,14 +261,6 @@ impl Shell {
     /// Returns `true` if the `needs_clear` flag is unset.
     pub fn is_cleared(&self) -> bool {
         !self.needs_clear()
-    }
-
-    /// Returns the width of the terminal in spaces, if any.
-    pub fn err_width(&self) -> TtyWidth {
-        match self.output {
-            ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
-            _ => TtyWidth::NoTty,
-        }
     }
 
     /// Gets the output format of the shell.

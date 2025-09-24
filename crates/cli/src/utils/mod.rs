@@ -98,12 +98,6 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
     filter
 }
 
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
-}
-
 /// Returns a [RetryProvider] instantiated using [Config]'s
 /// RPC
 pub fn get_provider(config: &Config) -> Result<RetryProvider> {
@@ -721,6 +715,18 @@ ignore them in the `.gitignore` file."
 
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
+    /// Get the URL of a submodule from git config
+    pub fn submodule_url(self, path: impl AsRef<OsStr>) -> Result<Option<String>> {
+        self.cmd()
+            .args([
+                "config",
+                "--get",
+                &format!("submodule.{}.url", path.as_ref().to_string_lossy()),
+            ])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
     }
 
     pub fn cmd(self) -> Command {

@@ -3,24 +3,26 @@ contract NumberLiteral {
     function test() external {
         1;
         123_000;
-        12e345_678;
+        // 1_2e345_678; // solar error: exponent too large
         -1;
         2e-10;
         0.1;
         1.3;
         2.5e1;
-        1.23454;
-        1.2e345_678;
-        134_411.2e345_678;
-        13_431.134112e34_135_678;
-        13_431.0134112;
-        13_431.134112e-1_393_141_340;
-        134_411.2e3_456_780;
-        13_431.134112e341_356_780;
-        0.134112;
+        1.234_54;
+        // 1.2e34_5_678; // solar error: exponent too large
+        // 134411.2e34_5_678; // solar error: exponent too large
+        // 13431.134112e34_135_678; // solar error: exponent too large
+        13_431.013_411_2;
+        // 13431.134112e-139_3141340; // solar error: exponent too large
+        // 00134411.200e0034_5_6780; // solar error: leading zeros are not allowed in integers
+        // 013431.13411200e34_135_6780; // solar error: leading zeros are not allowed in integers
+        // 00.1341120000; // solar error: leading zeros are not allowed in integers
         1.0;
-        13_431.134112e-1_393_141_340;
-        123e456;
+        // 0013431.13411200e-00139_3141340; // solar error: leading zeros are not allowed in integers
+        10_234e56;
+        1234e56;
+        10_000;
         1000;
     }
 }

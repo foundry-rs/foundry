@@ -247,9 +247,15 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += hits;
     }
 
+    /// Reserve space for additional hits.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.hits.reserve(additional);
+    }
+
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &Self) {
-        self.hits.reserve(other.len());
+        self.reserve(other.len());
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
         }

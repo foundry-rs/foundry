@@ -22,7 +22,7 @@ env:
 jobs:
   prepare:
     name: Prepare release
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -100,22 +100,22 @@ jobs:
           # `target`: Rust build target triple
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - runner: Linux-22.04
+          - runner: depot-ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: Linux-22.04
+          - runner: depot-ubuntu-24.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
             platform: alpine
             arch: amd64
-          - runner: Linux-22.04
+          - runner: depot-ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: Linux-22.04
+          - runner: depot-ubuntu-24.04
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: alpine
@@ -127,12 +127,12 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest-large
+          - runner: depot-macos-latest
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
             arch: arm64
-          - runner: Windows
+          - runner: depot-windows-latest
             target: x86_64-pc-windows-msvc
             svm_target_platform: windows-amd64
             platform: win32
@@ -145,6 +145,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'

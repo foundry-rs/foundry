@@ -9,6 +9,7 @@ fn forge_std() {
     ExtTester::new("foundry-rs", "forge-std", "60acb7aaadcce2d68e52986a0a66fe79f07d138f")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
+        .verbosity(2)
         .run();
 }
 
@@ -48,7 +49,8 @@ fn sablier_v2_core() {
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])
             // Try npm if bun fails / is not installed.
-            .install_command(&["npm", "install", "--prefer-offline"]);
+            .install_command(&["npm", "install", "--prefer-offline"])
+            .verbosity(2);
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
     // isolation because memory is divided between separate EVMs created by inner calls.
