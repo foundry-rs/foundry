@@ -125,6 +125,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
+use revm::context::Cfg;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -3578,7 +3579,7 @@ impl TransactionValidator for Backend {
             }
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
-            if let Some(cap) = env.evm_env.cfg_env.tx_gas_limit_cap
+            if tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
                 && tx.gas_limit() > cap
             {
                 warn!(target: "backend", "[{:?}] gas too high", tx.hash());
