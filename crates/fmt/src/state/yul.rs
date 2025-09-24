@@ -22,9 +22,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => {
-                self.print_yul_block(stmts, span, self.can_yul_block_be_inlined(stmts), false)
-            }
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
@@ -54,22 +52,22 @@ impl<'ast> State<'_, 'ast> {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
-                self.print_yul_block(stmts, span, self.can_yul_block_be_inlined(stmts), false);
+                self.print_yul_block(stmts, span, false);
             }
             yul::StmtKind::For { init, cond, step, body } => {
                 self.ibox(0);
 
                 self.word("for ");
-                self.print_yul_block(init, init.span, self.can_yul_block_be_inlined(init), false);
+                self.print_yul_block(init, init.span, false);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, step.span, self.can_yul_block_be_inlined(step), false);
+                self.print_yul_block(step, step.span, false);
 
                 self.space();
-                self.print_yul_block(body, body.span, self.can_yul_block_be_inlined(body), false);
+                self.print_yul_block(body, body.span, false);
 
                 self.end();
             }
@@ -96,7 +94,7 @@ impl<'ast> State<'_, 'ast> {
                         );
                         self.word("default ");
                     }
-                    self.print_yul_block(body, *span, self.can_yul_block_be_inlined(body), false);
+                    self.print_yul_block(body, *span, false);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
@@ -141,12 +139,7 @@ impl<'ast> State<'_, 'ast> {
                     );
                 }
                 self.end();
-                self.print_yul_block(
-                    body,
-                    span,
-                    self.can_yul_block_be_inlined(body),
-                    skip_opening_brace,
-                );
+                self.print_yul_block(body, span, skip_opening_brace);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
@@ -204,9 +197,8 @@ impl<'ast> State<'_, 'ast> {
 
     pub(super) fn print_yul_block(
         &mut self,
-        block: &'ast [yul::Stmt<'ast>],
+        block: &'ast yul::Block<'ast>,
         span: Span,
-        inline: bool,
         skip_opening_brace: bool,
     ) {
         if self.handle_span(span, false) {
@@ -217,7 +209,10 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        if inline {
+        let can_inline_block = block.len() <= 1
+            && !self.is_multiline_yul_block(block)
+            && self.estimate_size(block.span) <= self.space_left();
+        if can_inline_block {
             self.neverbreak();
             self.print_block_inner(
                 block,
@@ -276,14 +271,6 @@ impl<'ast> State<'_, 'ast> {
         }
         self.print_word("}");
         self.print_trailing_comment(span.hi(), None);
-    }
-
-    fn can_yul_block_be_inlined(&self, block: &'ast yul::Block<'ast>) -> bool {
-        if block.len() > 1 || self.is_multiline_yul_block(block) {
-            false
-        } else {
-            self.estimate_size(block.span) <= self.space_left()
-        }
     }
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.

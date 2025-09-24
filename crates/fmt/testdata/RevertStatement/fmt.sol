@@ -31,12 +31,14 @@ contract RevertStatement {
             message /* comment9 */
         ); /* comment10 */ // comment11
 
-        revert(string.concat(
-            message,
-            someVeryLongFunctionNameToGetDynamicErrorMessageString(
-                /* comment12 */
+        revert(
+            string.concat(
+                message,
+                someVeryLongFunctionNameToGetDynamicErrorMessageString(
+                    /* comment12 */
+                )
             )
-        ));
+        );
 
         revert TestError(0, false, message);
         revert TestError(

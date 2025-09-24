@@ -5,12 +5,15 @@ function test() public {
         "string mismatch"
     );
 
+    address lerp = LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
+
     (oracleRouter, eVault) =
         execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
 
     if (eVault == address(0)) {
-        eVault = address(GenericFactory(eVaultFactory)
-            .createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0))));
+        eVault = address(
+            GenericFactory(eVaultFactory).createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0)))
+        );
     }
 
     content = string.concat(

@@ -359,6 +359,15 @@ impl State<'_, '_> {
         self.word(ident.to_string());
     }
 
+    fn print_inside_parens<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.print_word("(");
+        f(self);
+        self.print_word(")");
+    }
+
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
             let (mut size, mut first_line) = (0, true);
