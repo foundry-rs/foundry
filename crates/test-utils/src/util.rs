@@ -261,7 +261,6 @@ impl ExtTester {
 /// test can initialize the template at a time.
 ///
 /// This sets the project's solc version to the [`SOLC_VERSION`].
-#[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
     test_debug!("initializing {}", target.display());
 
