@@ -319,7 +319,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the transaction's gas limit as imposed by Osaka (EIP-7825)
         if let Some(cap) = env.evm_env.cfg_env.tx_gas_limit_cap
-    && transaction.pending_transaction.transaction.gas_limit() > cap
+            && transaction.pending_transaction.transaction.gas_limit() > cap
         {
             return Some(TransactionExecutionOutcome::TransactionGasExhausted(transaction));
         }
