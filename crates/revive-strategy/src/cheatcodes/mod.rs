@@ -485,7 +485,6 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                         gas_limit,
                     )
                     .expect("gas limit is valid");
-                    //  TODO: storage deposit limit is incorrect
                     let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
                     let code = Code::Upload(contract.resolc_bytecode.as_bytes().unwrap().to_vec());
                     let data = constructor_args.to_vec();
