@@ -2556,6 +2556,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-debugger",
  "foundry-evm",
  "foundry-evm-core",
  "foundry-test-utils",
@@ -4401,7 +4402,6 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "foundry-debugger",
  "foundry-evm",
  "foundry-wallets",
  "futures",
@@ -4813,6 +4813,7 @@ dependencies = [
  "foundry-linking",
  "futures",
  "itertools 0.14.0",
+ "memchr",
  "rayon",
  "revm",
  "revm-inspectors",
@@ -4822,6 +4823,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "yansi",
 ]
 
 [[package]]
@@ -4899,8 +4901,10 @@ dependencies = [
  "parking_lot",
  "rand 0.9.2",
  "regex",
+ "reqwest",
  "serde_json",
  "snapbox",
+ "svm-rs",
  "tempfile",
  "tokio",
  "tracing",

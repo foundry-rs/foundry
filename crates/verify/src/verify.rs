@@ -145,6 +145,16 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub evm_version: Option<EvmVersion>,
 
+    /// Do not auto-detect the `solc` version.
+    #[arg(long, help_heading = "Compiler options")]
+    pub no_auto_detect: bool,
+
+    /// Specify the solc version, or a path to a local solc, to build with.
+    ///
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
+    pub use_solc: Option<String>,
+
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -192,6 +202,15 @@ impl figment::Provider for VerifyArgs {
         }
         if self.via_ir {
             dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
+        }
+
+        if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), figment::value::Value::serialize(false)?);
+        }
+
+        if let Some(ref solc) = self.use_solc {
+            let solc = solc.trim_start_matches("solc:");
+            dict.insert("solc".to_string(), figment::value::Value::serialize(solc)?);
         }
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
@@ -522,5 +541,19 @@ mod tests {
             "--via-ir",
         ]);
         assert!(args.via_ir);
+    }
+
+    #[test]
+    fn can_parse_new_compiler_flags() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--no-auto-detect",
+            "--use",
+            "0.8.23",
+        ]);
+        assert!(args.no_auto_detect);
+        assert_eq!(args.use_solc.as_deref(), Some("0.8.23"));
     }
 }
