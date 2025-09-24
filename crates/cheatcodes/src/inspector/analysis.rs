@@ -17,9 +17,8 @@ pub enum AnalysisError {
 
 /// Provides cached, on-demand syntactic and semantic analysis of a completed `Compiler` instance.
 ///
-/// This struct acts as a facade over the `Compiler`, offering lazy-loaded analysis
-/// for tools like cheatcode inspectors. It assumes the compiler has already
-/// completed parsing and lowering.
+/// This struct acts as a facade over the `Compiler`, offering lazy-loaded analysis for tools like
+/// cheatcode inspectors. It assumes the compiler has already completed parsing and lowering.
 ///
 /// # Adding with new analyses types
 ///
@@ -42,7 +41,7 @@ pub struct CheatcodeAnalysis {
 
     /// Cached struct definitions in the sources.
     /// Used to keep field order when parsing JSON values.
-    pub struct_defs: OnceLock<Result<StructDefinitions, AnalysisError>>,
+    struct_defs: OnceLock<Result<StructDefinitions, AnalysisError>>,
 }
 
 pub type StructDefinitions = BTreeMap<String, Vec<(String, String)>>;
@@ -76,14 +75,14 @@ impl CheatcodeAnalysis {
 }
 
 /// Generates a map of all struct definitions from the HIR using the resolved `Ty` system.
-pub struct StructDefinitionResolver<'hir> {
-    gcx: Gcx<'hir>,
+struct StructDefinitionResolver<'gcx> {
+    gcx: Gcx<'gcx>,
     struct_defs: StructDefinitions,
 }
 
-impl<'hir> StructDefinitionResolver<'hir> {
+impl<'gcx> StructDefinitionResolver<'gcx> {
     /// Constructs a new generator.
-    pub fn new(gcx: Gcx<'hir>) -> Self {
+    pub fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx, struct_defs: BTreeMap::new() }
     }
 
@@ -96,7 +95,7 @@ impl<'hir> StructDefinitionResolver<'hir> {
     }
 
     #[inline]
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
@@ -129,7 +128,7 @@ impl<'hir> StructDefinitionResolver<'hir> {
     }
 
     /// Converts a resolved `Ty` into its canonical string representation.
-    fn ty_to_string(&mut self, ty: sema::Ty<'hir>) -> Option<String> {
+    fn ty_to_string(&mut self, ty: sema::Ty<'gcx>) -> Option<String> {
         let ty = ty.peel_refs();
         let res = match ty.kind {
             sema::ty::TyKind::Elementary(e) => e.to_string(),
