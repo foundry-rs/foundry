@@ -9,16 +9,16 @@ contract NamedFunctionCallExpression {
         ComplexStruct memory complex = ComplexStruct({ val: 1, anotherVal: 2, flag: true, timestamp: block.timestamp });
 
         StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting memory long = StructWithAVeryLongNameThatExceedsMaximumLengthThatIsAllowedForFormatting({ whyNameSoLong: "dunno" });
-    
+
         SimpleStruct memory simple2 = SimpleStruct(
-    { // comment1 
+    { // comment1
         /* comment2 */ val : /* comment3 */ 0
-    
+
     }
         );
 
         SimpleStruct memory simple3 = SimpleStruct(
-            /* comment4 */  { 
+            /* comment4 */  {
                 // comment5
                 val: // comment6
                     0 // comment7

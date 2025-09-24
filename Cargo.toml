@@ -109,6 +109,7 @@ serde.opt-level = 3
 foundry-solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
 
+solar.opt-level = 3
 solar-ast.opt-level = 3
 solar-data-structures.opt-level = 3
 solar-interface.opt-level = 3
@@ -272,7 +273,6 @@ op-alloy-flz = "0.13.1"
 revm = { version = "29.0.0", default-features = false }
 revm-inspectors = { version = "0.29.0", features = ["serde"] }
 op-revm = { version = "10.0.0", default-features = false }
-
 ## alloy-evm
 alloy-evm = "0.20.1"
 alloy-op-evm = "0.20.1"
@@ -360,9 +360,11 @@ jiff = "0.2"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
-snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
+
+# testing
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
