@@ -688,6 +688,8 @@ impl TestArgs {
                         }
                     }
                 }
+                // Clear memory.
+                result.gas_report_traces = Default::default();
 
                 // Collect and merge gas snapshots.
                 for (group, new_snapshots) in &result.gas_snapshots {
