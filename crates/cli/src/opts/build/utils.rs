@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use solar::sema::ParsingContext;
 use std::{
     collections::{HashSet, VecDeque},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 /// Configures a [`ParsingContext`] from [`Config`].
@@ -75,6 +75,108 @@ pub fn configure_pcx(
     Ok(())
 }
 
+/// Configures a [`ParsingContext`] from a [`Project`] and [`SolcVersionedInput`].
+///
+/// - Configures include paths, remappings.
+/// - Source files are added if `add_source_file` is set
+pub fn configure_pcx_from_compile_output(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    output: &ProjectCompileOutput,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<()> {
+    // If targets are specified, find the max version among those files and their dependencies.
+    let (version, source_paths): (Version, Vec<PathBuf>) = if let Some(targets) = target_paths {
+        let mut scope = HashSet::new();
+        let mut queue: VecDeque<PathBuf> = targets
+            .iter()
+            .filter_map(|path| {
+                if let Ok(full_path) = dunce::canonicalize(path)
+                    && output
+                        .graph()
+                        .get_parsed_source(full_path.as_path())
+                        .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
+                {
+                    Some(full_path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        while let Some(path) = queue.pop_front() {
+            if scope.insert(path.to_path_buf()) {
+                for import in output.graph().imports(path.as_path()) {
+                    queue.push_back(import.to_path_buf());
+                }
+            }
+        }
+
+        let version = output
+            .output()
+            .sources
+            .sources_with_version()
+            .filter_map(|(p, _, v)| {
+                if let Ok(full_path) = dunce::canonicalize(p)
+                    && scope.contains(&full_path)
+                {
+                    Some(v)
+                } else {
+                    None
+                }
+            })
+            .max()
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
+
+        (version, scope.into_iter().collect())
+    }
+    // Otherwise, find the latest version among all compiled files.
+    else {
+        let (version, paths) = output
+            .output()
+            .sources
+            .sources_with_version()
+            .filter(|(path, _, _)| {
+                // Only process Solidity files.
+                output
+                    .graph()
+                    .get_parsed_source(path)
+                    .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
+            })
+            .fold((Version::new(0, 0, 0), Vec::new()), |(max_v, mut paths), (path, _, version)| {
+                match version.cmp(&max_v) {
+                    core::cmp::Ordering::Greater => (version.clone(), vec![path]),
+                    core::cmp::Ordering::Equal => {
+                        paths.push(path);
+                        (max_v, paths)
+                    }
+                    core::cmp::Ordering::Less => (max_v, paths),
+                }
+            });
+
+        (version, paths.into_iter().filter_map(|p| dunce::canonicalize(p).ok()).collect())
+    };
+
+    // Read the file content for each of the determined paths.
+    let mut sources = Sources::new();
+    for path in source_paths.into_iter() {
+        let source = Source::read(&path)?;
+        sources.insert(path, source);
+    }
+
+    let solc = SolcVersionedInput::build(
+        sources,
+        config.solc_settings()?,
+        SolcLanguage::Solidity,
+        version,
+    );
+
+    configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
+
+    Ok(())
+}
+
 /// Configures a [`ParsingContext`] from [`ProjectPathsConfig`] and [`SolcVersionedInput`].
 ///
 /// - Configures include paths, remappings.
@@ -114,95 +216,4 @@ fn configure_pcx_from_solc_cli(
         });
     }
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
-}
-
-/// Configures a [`ParsingContext`] from a [`Project`] and [`SolcVersionedInput`].
-///
-/// - Configures include paths, remappings.
-/// - Source files are added if `add_source_file` is set
-pub fn configure_pcx_from_compile_output(
-    pcx: &mut ParsingContext<'_>,
-    config: &Config,
-    output: &ProjectCompileOutput,
-    target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
-    // If targets are specified, find the max version among those files and their dependencies.
-    let (version, source_paths): (Version, Vec<PathBuf>) = if let Some(targets) = target_paths {
-        let mut scope = HashSet::new();
-        let mut queue: VecDeque<&Path> = targets
-            .iter()
-            .filter(|path| {
-                output
-                    .graph()
-                    .get_parsed_source(path)
-                    .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
-            })
-            .map(|path| path.as_path())
-            .collect();
-
-        while let Some(path) = queue.pop_front() {
-            if scope.insert(path.to_path_buf()) {
-                for import in output.graph().imports(path) {
-                    queue.push_back(import);
-                }
-            }
-        }
-
-        let version = output
-            .output()
-            .sources
-            .sources_with_version()
-            .filter(|(p, _, _)| scope.contains(*p))
-            .map(|(_, _, v)| v)
-            .max()
-            .cloned()
-            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
-
-        (version, scope.into_iter().collect())
-    }
-    // Otherwise, find the latest version among all compiled files.
-    else {
-        let (version, paths) = output
-            .output()
-            .sources
-            .sources_with_version()
-            .filter(|(path, _, _)| {
-                // Only process Solidity files.
-                output
-                    .graph()
-                    .get_parsed_source(path)
-                    .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
-            })
-            .fold((Version::new(0, 0, 0), Vec::new()), |(max_v, mut paths), (path, _, version)| {
-                match version.cmp(&max_v) {
-                    core::cmp::Ordering::Greater => (version.clone(), vec![path]),
-                    core::cmp::Ordering::Equal => {
-                        paths.push(path);
-                        (max_v, paths)
-                    }
-                    core::cmp::Ordering::Less => (max_v, paths),
-                }
-            });
-
-        (version, paths.into_iter().map(|p| p.to_path_buf()).collect())
-    };
-
-    // Read the file content for each of the determined paths.
-    let mut sources = Sources::new();
-    for p in &source_paths {
-        let path = dunce::canonicalize(p)?;
-        let source = Source::read(&path)?;
-        sources.insert(path, source);
-    }
-
-    let solc = SolcVersionedInput::build(
-        sources,
-        config.solc_settings()?,
-        SolcLanguage::Solidity,
-        version,
-    );
-
-    configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
-
-    Ok(())
 }
