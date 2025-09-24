@@ -319,7 +319,7 @@ pub fn print_storage_layout(
             }
             for (type_str, slot_dec) in &bucket_rows {
                 table.add_row([
-                    "storage-bucket",
+                    "storage-location",
                     type_str.as_str(),
                     slot_dec.as_str(),
                     "0",
