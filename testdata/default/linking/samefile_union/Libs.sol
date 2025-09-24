@@ -2,8 +2,13 @@
 pragma solidity ^0.8.18;
 
 library LInit {
-    function f() internal pure returns (uint) { return 1; }
+    function f() internal pure returns (uint256) {
+        return 1;
+    }
 }
+
 library LRun {
-    function g() internal pure returns (uint) { return 2; }
+    function g() internal pure returns (uint256) {
+        return 2;
+    }
 }
