@@ -19,3 +19,9 @@ pub fn new_lock(lock_path: impl AsRef<Path>) -> RwLock<File> {
     }
     new_lock(lock_path.as_ref())
 }
+
+pub(crate) const LOCK_TOKEN: &[u8] = b"1";
+
+pub(crate) fn lock_exists(lock_path: &Path) -> bool {
+    std::fs::read(lock_path).is_ok_and(|b| b == LOCK_TOKEN)
+}

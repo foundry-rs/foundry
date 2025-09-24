@@ -3,9 +3,9 @@ use crate::{
     GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
     document::{DocumentContent, read_context},
     parser::ParseSource,
+    solang_ext::SafeUnwrap,
     writer::BufWriter,
 };
-use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
 use std::path::{Path, PathBuf};
@@ -54,7 +54,7 @@ impl AsDoc for CommentsRef<'_> {
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
         for d in devs.iter() {
-            writer.write_italic(&d.value)?;
+            writer.write_dev_content(&d.value)?;
             writer.writeln()?;
         }
 

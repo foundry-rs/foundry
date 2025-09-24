@@ -10,7 +10,7 @@ use foundry_common::{
     errors::convert_solar_errors,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::lint::Severity;
+use foundry_config::{DenyLevel, lint::Severity};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
@@ -58,6 +58,7 @@ pub struct SolidityLinter<'a> {
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
+    // lint-specific configuration
     mixed_case_exceptions: &'a [String],
 }
 
@@ -222,7 +223,14 @@ impl<'a> Linter for SolidityLinter<'a> {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler) -> eyre::Result<()> {
+    fn lint(
+        &self,
+        input: &[PathBuf],
+        deny: DenyLevel,
+        compiler: &mut Compiler,
+    ) -> eyre::Result<()> {
+        convert_solar_errors(compiler.dcx())?;
+
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
         let sm = compiler.sess().clone_source_map();
@@ -241,9 +249,8 @@ impl<'a> Linter for SolidityLinter<'a> {
         }
 
         compiler.enter_mut(|compiler| -> eyre::Result<()> {
-            if compiler.gcx().stage() == Some(solar::config::CompilerStage::Parsing) {
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
-                convert_solar_errors(compiler.dcx())?;
             }
 
             let gcx = compiler.gcx();
@@ -272,7 +279,7 @@ impl<'a> Linter for SolidityLinter<'a> {
                 let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
             });
 
-            Ok(())
+            convert_solar_errors(compiler.dcx())
         })?;
 
         let sess = compiler.sess_mut();
@@ -282,7 +289,31 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
-        convert_solar_errors(compiler.dcx())
+        // Handle diagnostics and fail if necessary.
+        const MSG: &str = "aborting due to ";
+        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+            // Deny warnings.
+            (DenyLevel::Warnings, w, n) if w > 0 => {
+                if n > 0 {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
+                } else {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s)\n"))
+                }
+            }
+
+            // Deny any diagnostic.
+            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
+                (w, n) if w > 0 && n > 0 => {
+                    Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
+                }
+                (w, 0) => Err(eyre::eyre!("{MSG}{w} linter warning(s)\n")),
+                (0, n) => Err(eyre::eyre!("{MSG}{n} linter note(s)\n")),
+                _ => unreachable!(),
+            },
+
+            // Otherwise, succeed.
+            _ => Ok(()),
+        }
     }
 }
 

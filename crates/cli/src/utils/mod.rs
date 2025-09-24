@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -96,12 +96,6 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         filter = filter.add_directive(directive.parse().unwrap());
     }
     filter
-}
-
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s
@@ -245,6 +239,18 @@ pub fn install_crypto_provider() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install default rustls crypto provider");
+}
+
+/// Fetches the ABI of a contract from Etherscan.
+pub async fn fetch_abi_from_etherscan(
+    address: Address,
+    config: &foundry_config::Config,
+) -> Result<Vec<(JsonAbi, String)>> {
+    let chain = config.chain.unwrap_or_default();
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let source = client.contract_source_code(address).await?;
+    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 
 /// Useful extensions to [`std::process::Command`].

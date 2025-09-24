@@ -39,10 +39,10 @@ contract TryStatement {
         }
 
         try unknown.lookupMultipleValues() returns (uint256, uint256, uint256, uint256, uint256) {} catch Error(string memory) {} catch {}
- 
+
         try unknown.lookupMultipleValues() returns (uint256, uint256, uint256, uint256, uint256) {
             unknown.doSomething();
-        } 
+        }
         catch Error(string memory) {
              unknown.handleError();
         }
@@ -55,12 +55,34 @@ contract TryStatement {
         catch /* comment6 */ {}
 
         // comment7
-        try unknown.empty() { // comment8 
+        try unknown.empty() { // comment8
             unknown.doSomething();
         } /* comment9 */ catch /* comment10 */ Error(string memory) {
             unknown.handleError();
         } catch Panic /* comment11 */ (uint) {
             unknown.handleError();
         } catch {}
+    }
+
+    function test_multiParam() {
+        Mock mock = new Mock();
+
+        try mock.add(2, 3) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
+    }
+
+    function test_multiComment() {
+        try vm.envString("API_KEY") returns (string memory) {
+            console2.log("Forked Ethereum mainnet");
+            // Fork mainnet at a specific block for consistency
+            vm.createSelectFork(vm.rpcUrl("mainnet"), 21_900_000);
+            // do something
+        } catch /* sadness */ {
+            // more sadness
+            revert();
+        }
     }
 }
