@@ -1,4 +1,4 @@
-use crate::receipts::{TxStatus, check_tx_status, format_receipt};
+use crate::receipts::{TxStatus, PendingReceiptError, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
     B256,
@@ -213,7 +213,7 @@ impl ScriptProgress {
             match result {
                 Err(err) => {
                     // Check if this is a retry error for pending receipts
-                    if err.to_string().contains("Received a pending receipt") {
+                    if err.downcast_ref::<PendingReceiptError>().is_some() {
                         // We've already retried several times with sleep, but the receipt is still pending
                         discarded_transactions = true;
                         deployment_sequence.remove_pending(tx_hash);
