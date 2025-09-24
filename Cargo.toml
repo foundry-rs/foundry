@@ -319,7 +319,7 @@ evm-disassembler = "0.5"
 evmole = "0.8"
 eyre = "0.6"
 figment = "0.10"
-futures = "0.3"
+futures = { version = "0.3", default-features = false }
 hyper = "1.6"
 indicatif = "0.18"
 itertools = "0.14"
@@ -359,7 +359,7 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
-jiff = "0.2"
+jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"] }
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
