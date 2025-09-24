@@ -4470,7 +4470,6 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
- "terminal_size",
  "thiserror 2.0.16",
  "tokio",
  "tower",

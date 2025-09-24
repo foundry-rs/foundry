@@ -283,7 +283,6 @@ anstyle = "1.0"
 dialoguer = { version = "0.12", default-features = false, features = [
     "password",
 ] }
-terminal_size = "0.4"
 clap_complete = "4"
 clap_complete_nushell = "4"
 
