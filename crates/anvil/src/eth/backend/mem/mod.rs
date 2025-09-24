@@ -114,7 +114,7 @@ use op_revm::{
 use parking_lot::{Mutex, RwLock};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
@@ -125,7 +125,6 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm::context::Cfg;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
