@@ -36,15 +36,14 @@ semver.workspace = true
 codec = { version = "3.7.5", default-features = false, package = "parity-scale-codec" }
 scale-info = { version = "2.11.6", default-features = false }
 
-polkadot-sdk.version = "2507.1.0"
-polkadot-sdk.features = [
+polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", features = [
     "experimental",
     "runtime",
     "polkadot-runtime-common",
     "pallet-revive",
     "pallet-balances",
     "pallet-timestamp"
-]
+]}
 
 
 [lints]

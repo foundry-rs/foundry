@@ -296,7 +296,7 @@ thiserror = "2"
 
 # allocators
 mimalloc = "0.1"
-tikv-jemallocator = "0.5"
+tikv-jemallocator = "0.6"
 tracy-client = "0.18"
 
 # misc
@@ -365,6 +365,8 @@ serial_test = "2.0"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
+
+
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

@@ -12,7 +12,7 @@ license.workspace = true
 [dependencies]
 array-bytes = { version = "6.2.2", default-features = false }
 codec = { version = "3.7.5", default-features = false, package = "parity-scale-codec" }
-polkadot-sdk = { version = "2507.1.0", default-features = false, features = [
+polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", default-features = false, features = [
 	"pallet-balances",
 	"pallet-revive",
 	"pallet-sudo",
@@ -27,7 +27,7 @@ scale-info = { version = "2.11.6", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [build-dependencies]
-polkadot-sdk = { version = "2507.1.0", default-features = false, optional = true, features = ["substrate-wasm-builder"] }
+polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", default-features = false, optional = true, features = ["substrate-wasm-builder"] }
 
 [features]
 default = ["std"]

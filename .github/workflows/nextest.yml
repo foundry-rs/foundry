@@ -80,6 +80,13 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install clang on ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev
+
+          
       # macOS-specific setup
       - name: Install libusb 1.0.27 (macOS)
         if: matrix.os == 'macos'
@@ -91,6 +98,14 @@ jobs:
           ./configure --prefix=/usr/local
           make
           sudo make install
+
+      - name: Install clang (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          brew install llvm
+          brew link llvm
+          echo "LLVM_CONFIG_PATH=$(brew --prefix llvm)/bin/llvm-config" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -191,6 +206,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          prefix-key: "v0-rust-after-merge"
 
       - name: Setup Git config
         run: |
@@ -203,6 +219,20 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install clang (Ubuntu)
+        if: contains(matrix.runner_label, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev
+  
+      - name: Install clang (macOS)
+        if: contains(matrix.runner_label, 'macos')
+        run: |
+          brew install llvm
+          brew link llvm
+          echo "LLVM_CONFIG_PATH=$(brew --prefix llvm)/bin/llvm-config" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
