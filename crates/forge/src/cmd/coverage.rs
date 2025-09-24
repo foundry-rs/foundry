@@ -255,7 +255,8 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
-        let outcome = self.test.run_tests(project_root, config, evm_opts, output, &filter).await?;
+        let outcome =
+            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
         outcome.ensure_ok(false)?;
 
         let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
