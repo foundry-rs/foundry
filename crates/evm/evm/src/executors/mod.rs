@@ -62,6 +62,7 @@ pub use invariant::InvariantExecutor;
 
 mod corpus;
 mod trace;
+mod worker_corpus;
 
 pub use trace::TracingExecutor;
 
