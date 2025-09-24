@@ -6,6 +6,13 @@ use eyre::{Result, eyre};
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
+/// Marker error type for pending receipts
+#[derive(Debug, thiserror::Error)]
+#[error("Received a pending receipt for {tx_hash}, but transaction is still known to the node, retrying")]
+pub struct PendingReceiptError {
+    pub tx_hash: TxHash,
+}
+
 /// Convenience enum for internal signalling of transaction status
 pub enum TxStatus {
     Dropped,
@@ -51,9 +58,7 @@ pub async fn check_tx_status(
                             // Sleep for a short time to allow the transaction to be mined
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             // Transaction is still known to the node, retry
-                            Err(RetryError::Retry(eyre!(
-                                "Received a pending receipt for {hash}, but transaction is still known to the node, retrying"
-                            )))
+                            Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
                         Err(_) => {
                             // Transaction is not known to the node, mark it as dropped
