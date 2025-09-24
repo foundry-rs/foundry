@@ -33,6 +33,8 @@ rand.workspace = true
 snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
 ui_test = "0.30.2"
+reqwest.workspace = true
+svm.workspace = true
 
 # Pinned dependencies. See /Cargo.toml.
 [target.'cfg(any())'.dependencies]
