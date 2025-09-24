@@ -38,7 +38,7 @@ use foundry_evm_networks::NetworkConfigs;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -318,9 +318,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         // check that we comply with the transaction's gas limit as imposed by Osaka (EIP-7825)
-        if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
-            && transaction.pending_transaction.transaction.gas_limit()
-                > env.evm_env.cfg_env().tx_gas_limit_cap()
+        if let Some(cap) = env.evm_env.cfg_env.tx_gas_limit_cap
+            && transaction.pending_transaction.transaction.gas_limit() > cap
         {
             return Some(TransactionExecutionOutcome::TransactionGasExhausted(transaction));
         }

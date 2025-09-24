@@ -49,7 +49,7 @@ use rand_08::thread_rng;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
+    primitives::{eip7825::TX_GAS_LIMIT_CAP, hardfork::SpecId},
 };
 use serde_json::{Value, json};
 use std::{
@@ -1074,6 +1074,8 @@ impl NodeConfig {
 
         if !self.enable_tx_gas_limit {
             cfg.tx_gas_limit_cap = Some(u64::MAX);
+        } else {
+            cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
         }
 
         if let Some(value) = self.memory_limit {
