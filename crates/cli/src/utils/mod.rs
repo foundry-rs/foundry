@@ -2,7 +2,6 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
-use forge_fmt::FormatterConfig;
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
     shell,
@@ -97,12 +96,6 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         filter = filter.add_directive(directive.parse().unwrap());
     }
     filter
-}
-
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s, FormatterConfig::default()).into_result()?;
-    Ok(s)
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s
