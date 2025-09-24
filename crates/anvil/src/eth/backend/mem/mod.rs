@@ -3578,8 +3578,8 @@ impl TransactionValidator for Backend {
             }
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
-            if env.evm_env.cfg_env.tx_gas_limit_cap.is_some()
-                && tx.gas_limit() > env.evm_env.cfg_env().tx_gas_limit_cap()
+            if let Some(cap) = env.evm_env.cfg_env.tx_gas_limit_cap
+                && transaction.pending_transaction.transaction.gas_limit() > cap
             {
                 warn!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
