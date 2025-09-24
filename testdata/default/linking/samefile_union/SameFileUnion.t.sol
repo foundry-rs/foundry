@@ -11,7 +11,7 @@ contract UsesBoth {
         x = LInit.f();
     }
 
-    function y() external pure returns (uint256) {
+    function y() external view returns (uint256) {
         // used only in deployed bytecode
         return LRun.g();
     }
