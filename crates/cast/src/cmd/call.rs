@@ -297,6 +297,31 @@ impl CallArgs {
             let tx_kind = tx.inner.to.expect("set by builder");
             let env_tx = &mut executor.env_mut().tx;
 
+            // Set transaction options with --trace
+            if let Some(gas_limit) = tx.inner.gas {
+                env_tx.gas_limit = gas_limit;
+            }
+
+            if let Some(gas_price) = tx.inner.gas_price {
+                env_tx.gas_price = gas_price;
+            }
+
+            if let Some(max_fee_per_gas) = tx.inner.max_fee_per_gas {
+                env_tx.gas_price = max_fee_per_gas;
+            }
+
+            if let Some(max_priority_fee_per_gas) = tx.inner.max_priority_fee_per_gas {
+                env_tx.gas_priority_fee = Some(max_priority_fee_per_gas);
+            }
+
+            if let Some(max_fee_per_blob_gas) = tx.inner.max_fee_per_blob_gas {
+                env_tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
+            }
+
+            if let Some(nonce) = tx.inner.nonce {
+                env_tx.nonce = nonce;
+            }
+
             if let Some(tx_type) = tx.inner.transaction_type {
                 env_tx.tx_type = tx_type;
             }
@@ -479,7 +504,7 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256, fixed_bytes, hex};
+    use alloy_primitives::{U64, address, b256, fixed_bytes, hex};
 
     #[test]
     fn test_get_state_overrides() {
@@ -672,5 +697,37 @@ mod tests {
         assert!(args.trace);
         assert!(args.debug);
         assert_eq!(args.args, vec!["-999999"]);
+    }
+
+    #[test]
+    fn test_transaction_opts_with_trace() {
+        // Test that transaction options are correctly parsed when using --trace
+        let args = CallArgs::parse_from([
+            "foundry-cli",
+            "--trace",
+            "--gas-limit",
+            "1000000",
+            "--gas-price",
+            "20000000000",
+            "--priority-gas-price",
+            "2000000000",
+            "--nonce",
+            "42",
+            "--value",
+            "1000000000000000000", // 1 ETH
+            "--blob-gas-price",
+            "10000000000",
+            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+            "balanceOf(address)",
+            "0x123456789abcdef123456789abcdef123456789a",
+        ]);
+
+        assert!(args.trace);
+        assert_eq!(args.tx.gas_limit, Some(U256::from(1000000u32)));
+        assert_eq!(args.tx.gas_price, Some(U256::from(20000000000u64)));
+        assert_eq!(args.tx.priority_gas_price, Some(U256::from(2000000000u64)));
+        assert_eq!(args.tx.nonce, Some(U64::from(42)));
+        assert_eq!(args.tx.value, Some(U256::from(1000000000000000000u64)));
+        assert_eq!(args.tx.blob_gas_price, Some(U256::from(10000000000u64)));
     }
 }
