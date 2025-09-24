@@ -165,11 +165,6 @@ impl InMemoryBlockStates {
         }
     }
 
-    /// Checks if hash exists in in-memory state
-    pub fn has_state(&self, hash: &B256) -> bool {
-        self.states.contains_key(hash)
-    }
-
     /// Returns the in-memory state for the given `hash` if present
     pub fn get_state(&self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash)
