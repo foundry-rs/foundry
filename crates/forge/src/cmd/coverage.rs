@@ -98,18 +98,14 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let (paths, mut output) = {
-            let (project, output) = self.build(&config)?;
-            (project.paths, output)
-        };
-
-        self.populate_reporters(&paths.root);
+        let (project, mut output) = self.build(&config)?;
+        self.populate_reporters(&project.paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&paths, &mut output)?;
+        let report = self.prepare(&project.paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
+        self.collect(&output, report, Arc::new(config), evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -255,7 +251,6 @@ impl CoverageArgs {
     #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
-        root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
         config: Arc<Config>,
@@ -271,7 +266,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .set_coverage(true)
-            .build::<MultiCompiler>(root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(output, env, evm_opts)?;
 
         let known_contracts = runner.known_contracts.clone();
 

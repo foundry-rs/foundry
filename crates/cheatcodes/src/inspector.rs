@@ -21,6 +21,7 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecar;
+use alloy_dyn_abi::DynSolValue;
 use alloy_evm::eth::EthEvmContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
@@ -76,6 +77,9 @@ use std::{
 };
 
 mod utils;
+
+pub mod analysis;
+pub use analysis::CheatcodeAnalysis;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 
@@ -367,6 +371,9 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
 pub struct Cheatcodes {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Option<CheatcodeAnalysis>,
+
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -519,6 +526,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
+            analysis: None,
             fs_commit: true,
             labels: config.labels.clone(),
             config,
@@ -561,6 +569,11 @@ impl Cheatcodes {
             signatures_identifier: Default::default(),
             dynamic_gas_limit_sequence: Default::default(),
         }
+    }
+
+    /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
+    pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
+        self.analysis = Some(analysis);
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -1067,6 +1080,16 @@ impl Cheatcodes {
             Some(storage) => storage.copies.contains_key(address),
             None => false,
         }
+    }
+
+    /// Serializes a given [`DynSolValue`] into a [`serde_json::Value`].
+    ///
+    /// Attempts to preserve struct fields order if present in [`CheatcodeAnalysis`].
+    pub fn serialize_value_as_json(&self, value: DynSolValue) -> eyre::Result<serde_json::Value> {
+        foundry_common::fmt::serialize_value_as_json(
+            value,
+            self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )
     }
 }
 

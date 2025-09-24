@@ -153,7 +153,7 @@ impl BindJsonArgs {
         compiler.enter_mut(|compiler| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
             let mut pcx = compiler.parse();
-            configure_pcx_from_solc(&mut pcx, project, &input, false);
+            configure_pcx_from_solc(&mut pcx, &project.paths, &input, false);
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {

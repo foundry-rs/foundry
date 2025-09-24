@@ -282,8 +282,6 @@ impl TestArgs {
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
-        let project_root = &project.paths.root;
-
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
@@ -311,6 +309,7 @@ impl TestArgs {
 
         // Prepare the test builder.
         let config = Arc::new(config);
+        let project = Arc::new(project);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -321,7 +320,7 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
-            .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
+            .build::<MultiCompiler>(&output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
