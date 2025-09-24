@@ -145,6 +145,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'

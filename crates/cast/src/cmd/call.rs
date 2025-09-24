@@ -1,6 +1,7 @@
 use super::run::fetch_contracts_bytecode_from_trace;
 use crate::{
     Cast,
+    debug::handle_traces,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
@@ -15,7 +16,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, TraceResult, handle_traces, parse_ether_value},
+    utils::{self, TraceResult, parse_ether_value},
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
