@@ -10,7 +10,7 @@ RUN apk add clang lld curl build-base linux-headers git \
     && chmod +x ./rustup.sh \
     && ./rustup.sh -y
 
-RUN [[ "$TARGETARCH" = "arm64" ]] && echo "export CFLAGS=-mno-outline-atomics" >> $HOME/.profile || true
+RUN [ "$TARGETARCH" = "arm64" ] && echo "export CFLAGS=-mno-outline-atomics" >> "$HOME/.profile" || true
 
 WORKDIR /opt/foundry
 COPY . .
