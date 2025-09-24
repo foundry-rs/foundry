@@ -58,6 +58,7 @@ pub mod cmd;
 pub mod opts;
 
 pub mod base;
+pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
 pub mod tx;
