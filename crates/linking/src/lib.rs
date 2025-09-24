@@ -742,19 +742,16 @@ mod tests {
             });
             assert!(artifact_exists, "Expected UsesBoth artifact to be compiled");
 
-            // Seed empty expectations for all artifacts in this folder to avoid unexpected-ids.
-            let mut linker = linker.output.artifact_ids().fold(linker, |acc, (id, _)| {
-                let source = id
-                    .source
-                    .strip_prefix(acc.project.root())
-                    .unwrap_or(&id.source)
-                    .to_string_lossy()
-                    .into_owned();
-                let identifier = format!("{source}:{}", id.name);
-                acc.assert_dependencies(identifier, vec![])
-            });
-
             linker
+                // seed empty expectations for libraries in this folder to avoid unexpected-ids
+                .assert_dependencies(
+                    "default/linking/samefile_union/Libs.sol:LInit".to_string(),
+                    vec![],
+                )
+                .assert_dependencies(
+                    "default/linking/samefile_union/Libs.sol:LRun".to_string(),
+                    vec![],
+                )
                 .assert_dependencies(
                     "default/linking/samefile_union/SameFileUnion.t.sol:UsesBoth".to_string(),
                     vec![
