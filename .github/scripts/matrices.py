@@ -79,25 +79,13 @@ targets = (
 
 config = [
     Case(
-        name="unit",
-        filter="!kind(test)",
+        name="test",
+        filter="!test(/\\bext_integration/)",
         n_partitions=1,
         pr_cross_platform=True,
     ),
     Case(
-        name="integration",
-        filter="kind(test) & !test(/\\b(issue|ext_integration)/)",
-        n_partitions=1,
-        pr_cross_platform=True,
-    ),
-    Case(
-        name="integration / issue-repros",
-        filter="package(=forge) & test(/\\bissue/)",
-        n_partitions=1,
-        pr_cross_platform=False,
-    ),
-    Case(
-        name="integration / external",
+        name="external test",
         filter="package(=forge) & test(/\\bext_integration/)",
         n_partitions=1,
         pr_cross_platform=False,
