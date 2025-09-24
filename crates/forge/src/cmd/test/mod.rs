@@ -22,8 +22,13 @@ use foundry_cli::{
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
-    Language, ProjectCompileOutput, artifacts::output_selection::OutputSelection,
-    compilers::multi::MultiCompiler, multi::MultiCompilerLanguage, utils::source_files_iter,
+    ProjectCompileOutput,
+    artifacts::output_selection::OutputSelection,
+    compilers::{
+        Language,
+        multi::{MultiCompiler, MultiCompilerLanguage},
+    },
+    utils::source_files_iter,
 };
 use foundry_config::{
     Config, figment,
@@ -34,7 +39,7 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
-use foundry_evm::traces::identifier::TraceIdentifiers;
+use foundry_evm::traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers};
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -540,8 +545,9 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
-        for (contract_name, suite_result) in rx {
-            let tests = &suite_result.test_results;
+        let mut backtrace_builder = None;
+        for (contract_name, mut suite_result) in rx {
+            let tests = &mut suite_result.test_results;
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -604,7 +610,7 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &mut result.traces.clone() {
+                for (kind, arena) in &mut result.traces {
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -634,6 +640,31 @@ impl TestArgs {
                     sh_println!("Traces:")?;
                     for trace in &decoded_traces {
                         sh_println!("{trace}")?;
+                    }
+                }
+
+                // Extract and display backtrace for failed tests when verbosity >= 3
+                if !silent
+                    && result.status.is_failure()
+                    && verbosity >= 3
+                    && !result.traces.is_empty()
+                    && let Some((_, arena)) =
+                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                {
+                    // Lazily initialize the backtrace builder on first failure
+                    let builder = backtrace_builder.get_or_insert_with(|| {
+                        BacktraceBuilder::new(
+                            output,
+                            config.root.clone(),
+                            config.parsed_libraries().ok(),
+                            config.via_ir,
+                        )
+                    });
+
+                    let backtrace = builder.from_traces(arena);
+
+                    if !backtrace.is_empty() {
+                        sh_println!("{}", backtrace)?;
                     }
                 }
 

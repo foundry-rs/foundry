@@ -1,12 +1,14 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, Project, ProjectCompileOutput,
+    ProjectPathsConfig, Vyper,
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     project_util::{TempProject, copy_dir},
     solc::SolcSettings,
+    utils::RuntimeOrHandle,
 };
 use foundry_config::Config;
 use parking_lot::Mutex;
@@ -66,6 +68,7 @@ pub struct ExtTester {
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub install_commands: Vec<Vec<String>>,
+    pub verbosity: String,
 }
 
 impl ExtTester {
@@ -80,6 +83,7 @@ impl ExtTester {
             args: vec![],
             envs: vec![],
             install_commands: vec![],
+            verbosity: "-vvv".to_string(),
         }
     }
 
@@ -108,6 +112,12 @@ impl ExtTester {
         A: Into<String>,
     {
         self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Sets the verbosity
+    pub fn verbosity(mut self, verbosity: usize) -> Self {
+        self.verbosity = format!("-{}", "v".repeat(verbosity));
         self
     }
 
@@ -166,7 +176,7 @@ impl ExtTester {
         if self.rev.is_empty() {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
@@ -177,7 +187,7 @@ impl ExtTester {
         } else {
             let mut git = Command::new("git");
             git.current_dir(root).args(["checkout", self.rev]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
@@ -191,10 +201,10 @@ impl ExtTester {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
-            println!("cd {root}; {install_cmd:?}");
+            test_debug!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
-                    println!("\n\n{install_cmd:?}: {s}");
+                    test_debug!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
                         break;
                     }
@@ -222,7 +232,7 @@ impl ExtTester {
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=32", "--ffi", "-vvv"]);
+        test_cmd.args(["--fuzz-runs=32", "--ffi", &self.verbosity]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
@@ -251,9 +261,8 @@ impl ExtTester {
 /// test can initialize the template at a time.
 ///
 /// This sets the project's solc version to the [`SOLC_VERSION`].
-#[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
-    println!("initializing {}", target.display());
+    test_debug!("initializing {}", target.display());
 
     let tpath = TEMPLATE_PATH.as_path();
     pretty_err(tpath, fs::create_dir_all(tpath));
@@ -261,7 +270,7 @@ pub fn initialize(target: &Path) {
     // Initialize the global template if necessary.
     let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
     let mut _read = lock.read().unwrap();
-    if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
+    if !crate::fd_lock::lock_exists(TEMPLATE_LOCK.as_path()) {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
         // - run `forge init`;
@@ -272,16 +281,14 @@ pub fn initialize(target: &Path) {
 
         // Release the read lock and acquire a write lock, initializing the lock file.
         drop(_read);
-
         let mut write = lock.write().unwrap();
 
-        let mut data = String::new();
-        write.read_to_string(&mut data).unwrap();
-
-        if data != "1" {
+        let mut data = Vec::new();
+        write.read_to_end(&mut data).unwrap();
+        if data != crate::fd_lock::LOCK_TOKEN {
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-            println!("- initializing template dir in {}", prj.root().display());
+            test_debug!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
             prj.write_config(Config {
@@ -309,7 +316,7 @@ pub fn initialize(target: &Path) {
             // Update lockfile to mark that template is initialized.
             write.set_len(0).unwrap();
             write.seek(std::io::SeekFrom::Start(0)).unwrap();
-            write.write_all(b"1").unwrap();
+            write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
         }
 
         // Release the write lock and acquire a new read lock.
@@ -317,9 +324,102 @@ pub fn initialize(target: &Path) {
         _read = lock.read().unwrap();
     }
 
-    println!("- copying template dir from {}", tpath.display());
+    test_debug!("- copying template dir from {}", tpath.display());
     pretty_err(target, fs::create_dir_all(target));
     pretty_err(target, copy_dir(tpath, target));
+}
+
+/// Compile the project with a lock for the cache.
+pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
+    let lock_file_path = project.sources_path().join(".lock");
+    // We need to use a file lock because `cargo-nextest` runs tests in different processes.
+    // This is similar to `initialize`, see its comments for more details.
+    let mut lock = crate::fd_lock::new_lock(&lock_file_path);
+    let read = lock.read().unwrap();
+    let out;
+
+    let mut write = None;
+    if !project.cache_path().exists() || !crate::fd_lock::lock_exists(&lock_file_path) {
+        drop(read);
+        write = Some(lock.write().unwrap());
+        test_debug!("cache miss for {}", lock_file_path.display());
+    } else {
+        test_debug!("cache hit for {}", lock_file_path.display());
+    }
+
+    if project.compiler.vyper.is_none() {
+        project.compiler.vyper = Some(get_vyper());
+    }
+
+    test_debug!("compiling {}", lock_file_path.display());
+    out = project.compile().unwrap();
+    test_debug!("compiled {}", lock_file_path.display());
+
+    if out.has_compiler_errors() {
+        panic!("Compiled with errors:\n{out}");
+    }
+
+    if let Some(write) = &mut write {
+        write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
+    }
+
+    out
+}
+
+/// Installs Vyper if it's not already present.
+pub fn get_vyper() -> Vyper {
+    static VYPER: LazyLock<PathBuf> = LazyLock::new(|| std::env::temp_dir().join("vyper"));
+
+    if let Ok(vyper) = Vyper::new("vyper") {
+        return vyper;
+    }
+    if let Ok(vyper) = Vyper::new(&*VYPER) {
+        return vyper;
+    }
+    return RuntimeOrHandle::new().block_on(install());
+
+    async fn install() -> Vyper {
+        #[cfg(target_family = "unix")]
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+        let path = VYPER.as_path();
+        let mut file = File::create(path).unwrap();
+        if let Err(e) = file.try_lock() {
+            if let fs::TryLockError::WouldBlock = e {
+                file.lock().unwrap();
+                assert!(path.exists());
+                return Vyper::new(path).unwrap();
+            }
+            file.lock().unwrap();
+        }
+
+        let suffix = match svm::platform() {
+            svm::Platform::MacOsAarch64 => "darwin",
+            svm::Platform::LinuxAmd64 => "linux",
+            svm::Platform::WindowsAmd64 => "windows.exe",
+            platform => panic!(
+                "unsupported platform {platform:?} for installing vyper, \
+                 install it manually and add it to $PATH"
+            ),
+        };
+        let url = format!(
+            "https://github.com/vyperlang/vyper/releases/download/v0.4.3/vyper.0.4.3+commit.bff19ea2.{suffix}"
+        );
+
+        test_debug!("downloading vyper from {url}");
+        let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
+
+        assert!(res.status().is_success());
+
+        let bytes = res.bytes().await.unwrap();
+
+        file.write_all(&bytes).unwrap();
+
+        #[cfg(target_family = "unix")]
+        file.set_permissions(Permissions::from_mode(0o755)).unwrap();
+
+        Vyper::new(path).unwrap()
+    }
 }
 
 /// Clones a remote repository into the specified directory. Panics if the command fails.
@@ -327,12 +427,11 @@ pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
     cmd.args(["clone", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
-    println!("{cmd:?}");
+    test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
         panic!("git clone failed: {status}");
     }
-    println!();
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -1028,7 +1127,7 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        println!("executing {:?}", self.cmd);
+        test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {

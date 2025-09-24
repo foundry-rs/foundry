@@ -208,10 +208,16 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.1", default-features = false }
+foundry-compilers = { version = "0.19.1", default-features = false, features = [
+    "rustls",
+    "svm-solc",
+] }
 foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.7", default-features = false }
+svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
+    "rustls",
+] }
 
 ## alloy
 alloy-consensus = { version = "1.0.23", default-features = false }
@@ -319,6 +325,7 @@ itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 mesc = "0.3"
+memchr = "2.7"
 num-format = "0.4"
 parking_lot = "0.12"
 proptest = "1.7.0"

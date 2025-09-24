@@ -732,7 +732,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::GenerateFigSpec => {
             generate(
-                foundry_common::clap::Shell::Fig,
+                foundry_cli::clap::Shell::Fig,
                 &mut CastArgs::command(),
                 "cast",
                 &mut std::io::stdout(),
