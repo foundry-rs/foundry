@@ -7,13 +7,13 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_cli::opts::configure_pcx;
+use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
     shell::verbosity,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, Compiler, Project, ProjectCompileOutput,
+    Artifact, ArtifactId, Compiler, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
 };
 use foundry_config::{Config, InlineConfig};
@@ -394,18 +394,6 @@ impl TestRunnerConfig {
     }
 }
 
-#[derive(Clone)]
-pub struct ConfigAndProject {
-    pub config: Arc<Config>,
-    pub project: Arc<Project>,
-}
-
-impl ConfigAndProject {
-    pub fn new(config: Arc<Config>, project: Arc<Project>) -> Self {
-        Self { config, project }
-    }
-}
-
 /// Builder used for instantiating the multi-contract runner
 #[derive(Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -420,7 +408,7 @@ pub struct MultiContractRunnerBuilder {
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
-    pub config_and_project: ConfigAndProject,
+    pub config: Arc<Config>,
     /// Whether or not to collect line coverage info
     pub line_coverage: bool,
     /// Whether or not to collect debug info
@@ -436,9 +424,9 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
-    pub fn new(config_and_project: ConfigAndProject) -> Self {
+    pub fn new(config: Arc<Config>) -> Self {
         Self {
-            config_and_project,
+            config,
             sender: Default::default(),
             initial_balance: Default::default(),
             evm_spec: Default::default(),
@@ -450,14 +438,6 @@ impl MultiContractRunnerBuilder {
             networks: Default::default(),
             fail_fast: false,
         }
-    }
-
-    fn config(&self) -> &Arc<Config> {
-        &self.config_and_project.config
-    }
-
-    fn project(&self) -> &Arc<Project> {
-        &self.config_and_project.project
     }
 
     pub fn sender(mut self, sender: Address) -> Self {
@@ -518,7 +498,7 @@ impl MultiContractRunnerBuilder {
         env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        let root = self.project().root();
+        let root = &self.config.root;
         let contracts = output
             .artifact_ids()
             .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))
@@ -582,12 +562,13 @@ impl MultiContractRunnerBuilder {
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> =
             output.output().sources.as_ref().keys().map(|path| path.to_path_buf()).collect();
+
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
-            configure_pcx(
+            configure_pcx_from_compile_output(
                 &mut pcx,
-                self.config(),
-                Some(self.project()),
+                &self.config,
+                output,
                 if files.is_empty() { None } else { Some(&files) },
             )?;
             pcx.parse();
@@ -606,15 +587,15 @@ impl MultiContractRunnerBuilder {
             tcfg: TestRunnerConfig {
                 evm_opts,
                 env,
-                spec_id: self.evm_spec.unwrap_or_else(|| self.config().evm_spec_id()),
-                sender: self.sender.unwrap_or(self.config().sender),
+                spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
+                sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
-                inline_config: Arc::new(InlineConfig::new_parsed(output, self.config())?),
+                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
-                config: self.config().clone(),
+                config: self.config.clone(),
                 fail_fast: FailFast::new(self.fail_fast),
             },
 

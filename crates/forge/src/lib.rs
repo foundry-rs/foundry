@@ -18,7 +18,7 @@ pub mod coverage;
 pub mod gas_report;
 
 pub mod multi_runner;
-pub use multi_runner::{ConfigAndProject, MultiContractRunner, MultiContractRunnerBuilder};
+pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 mod runner;
 pub use runner::ContractRunner;

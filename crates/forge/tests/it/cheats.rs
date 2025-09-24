@@ -1,6 +1,4 @@
 //! Forge tests for cheatcodes.
-use std::sync::Arc;
-
 use crate::{
     config::*,
     test_helpers::{
@@ -78,7 +76,7 @@ async fn test_state_diff_storage_layout() {
         let mut project = config.project().unwrap();
         // Compile with StorageLayout
         let output = get_compiled(&mut project);
-        ForgeTestData { project: Arc::new(project), output, config: config.into(), profile }
+        ForgeTestData { project, output, config: config.into(), profile }
     };
     let filter = Filter::new(
         ".*",

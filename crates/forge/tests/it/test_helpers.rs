@@ -2,7 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{ConfigAndProject, MultiContractRunner, MultiContractRunnerBuilder};
+use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     Project, ProjectCompileOutput, SolcConfig, Vyper,
@@ -166,7 +166,7 @@ impl ForgeTestProfile {
 
 /// Container for test data for a specific test profile.
 pub struct ForgeTestData {
-    pub project: Arc<Project>,
+    pub project: Project,
     pub output: ProjectCompileOutput,
     pub config: Arc<Config>,
     pub profile: ForgeTestProfile,
@@ -182,18 +182,14 @@ impl ForgeTestData {
         let config = Arc::new(profile.config());
         let mut project = config.project().unwrap();
         let output = get_compiled(&mut project);
-        Self { project: Arc::new(project), output, config, profile }
+        Self { project, output, config, profile }
     }
 
     /// Builds a base runner
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
         let config = self.config.clone();
-        let mut runner = MultiContractRunnerBuilder::new(ConfigAndProject {
-            config,
-            project: self.project.clone(),
-        })
-        .sender(self.config.sender);
+        let mut runner = MultiContractRunnerBuilder::new(config).sender(self.config.sender);
         if self.profile.is_paris() {
             runner = runner.evm_spec(SpecId::MERGE);
         }
@@ -225,8 +221,7 @@ impl ForgeTestData {
 
         let mut builder = self.base_runner();
         let config = Arc::new(config);
-        builder.config_and_project =
-            ConfigAndProject { config: config.clone(), project: self.project.clone() };
+        builder.config = config.clone();
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)

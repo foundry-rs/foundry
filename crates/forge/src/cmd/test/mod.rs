@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::{ConfigAndProject, matches_artifact},
+    multi_runner::matches_artifact,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -17,7 +17,7 @@ use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs, configure_pcx},
+    opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
@@ -275,13 +275,10 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let files = self.get_sources_to_compile(&config, &filter)?;
-        let analysis_files = files.iter().map(|f| f.to_path_buf()).collect::<Vec<_>>();
-
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(files);
+            .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
@@ -310,45 +307,20 @@ impl TestArgs {
             InternalTraceMode::None
         };
 
-        // Initialize and configure the solar compiler.
-        let mut analysis = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
-        );
-        let dcx = analysis.dcx_mut();
-        dcx.set_emitter(Box::new(
-            solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
-                .source_map(Some(dcx.source_map().unwrap())),
-        ));
-        dcx.set_flags_mut(|f| f.track_diagnostics = false);
-        // Populate solar's global context by parsing and lowering the sources.
-        analysis.enter_mut(|compiler| -> Result<()> {
-            let mut pcx = compiler.parse();
-            configure_pcx(
-                &mut pcx,
-                &config,
-                Some(&project),
-                if analysis_files.is_empty() { None } else { Some(&analysis_files) },
-            )?;
-            pcx.parse();
-            let _ = compiler.lower_asts();
-            Ok(())
-        })?;
-
         // Prepare the test builder.
         let config = Arc::new(config);
         let project = Arc::new(project);
-        let runner =
-            MultiContractRunnerBuilder::new(ConfigAndProject::new(config.clone(), project.clone()))
-                .set_debug(should_debug)
-                .set_decode_internal(decode_internal)
-                .initial_balance(evm_opts.initial_balance)
-                .evm_spec(config.evm_spec_id())
-                .sender(evm_opts.sender)
-                .with_fork(evm_opts.get_fork(&config, env.clone()))
-                .enable_isolation(evm_opts.isolate)
-                .networks(evm_opts.networks)
-                .fail_fast(self.fail_fast)
-                .build::<MultiCompiler>(&output, env, evm_opts)?;
+        let runner = MultiContractRunnerBuilder::new(config.clone())
+            .set_debug(should_debug)
+            .set_decode_internal(decode_internal)
+            .initial_balance(evm_opts.initial_balance)
+            .evm_spec(config.evm_spec_id())
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, env.clone()))
+            .enable_isolation(evm_opts.isolate)
+            .networks(evm_opts.networks)
+            .fail_fast(self.fail_fast)
+            .build::<MultiCompiler>(&output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;

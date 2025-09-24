@@ -1,6 +1,6 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::{
-    ConfigAndProject, MultiContractRunnerBuilder,
+    MultiContractRunnerBuilder,
     coverage::{
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
@@ -105,13 +105,7 @@ impl CoverageArgs {
         let report = self.prepare(&project.paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(
-            &output,
-            report,
-            ConfigAndProject::new(Arc::new(config), Arc::new(project)),
-            evm_opts,
-        )
-        .await
+        self.collect(&output, report, Arc::new(config), evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -259,15 +253,14 @@ impl CoverageArgs {
         mut self,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
-        config_and_project: ConfigAndProject,
+        config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let verbosity = evm_opts.verbosity;
-        let config = config_and_project.config.clone();
 
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
-        let runner = MultiContractRunnerBuilder::new(config_and_project)
+        let runner = MultiContractRunnerBuilder::new(config.clone())
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)

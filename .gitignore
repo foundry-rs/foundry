@@ -17,5 +17,5 @@ _
 .vercel
 .vite
 .wrangler
-build
+./build/ # IMPORTANT: do not use `build` as it breaks IDE functionality for `crates/src/opts/build/`
 *.zip
