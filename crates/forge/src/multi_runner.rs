@@ -572,7 +572,10 @@ impl MultiContractRunnerBuilder {
                 if files.is_empty() { None } else { Some(&files) },
             )?;
             pcx.parse();
-            let _ = compiler.lower_asts();
+            // Check if any sources exist, to avoid logging `error: no files found`
+            if !compiler.sess().source_map().is_empty() {
+                let _ = compiler.lower_asts();
+            }
             Ok(())
         })?;
 
