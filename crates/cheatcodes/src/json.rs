@@ -4,7 +4,7 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*, inspector::analysis::StructDef
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
 use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
-use foundry_common::{fmt::serialize_value_as_json, fs};
+use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
 use std::{
@@ -343,7 +343,7 @@ impl Cheatcode for serializeJsonType_0Call {
         let struct_defs = state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok());
         let ty = resolve_type(typeDescription, struct_defs)?;
         let value = ty.abi_decode(value)?;
-        let value = serialize_value_as_json(value, struct_defs)?;
+        let value = state.serialize_value_as_json(value)?;
         Ok(value.to_string().abi_encode())
     }
 }
@@ -684,10 +684,7 @@ fn serialize_json(
     value_key: &str,
     value: DynSolValue,
 ) -> Result {
-    let value = serialize_value_as_json(
-        value,
-        state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-    )?;
+    let value = state.serialize_value_as_json(value)?;
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
     map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();
@@ -830,6 +827,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;
+    use foundry_common::fmt::serialize_value_as_json;
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
 
