@@ -38,7 +38,7 @@ use foundry_evm_networks::NetworkConfigs;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
     Database, DatabaseRef, Inspector, Journal,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
@@ -46,6 +46,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
+use revm::context::Cfg;
 use std::{fmt::Debug, sync::Arc};
 
 /// Represents an executed transaction (transacted on the DB)
