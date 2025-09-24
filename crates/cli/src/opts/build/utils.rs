@@ -125,7 +125,7 @@ pub fn configure_pcx_from_compile_output(
                     None
                 }
             })
-            .max()
+            .min()
             .cloned()
             .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
 
@@ -146,12 +146,12 @@ pub fn configure_pcx_from_compile_output(
             })
             .fold((Version::new(0, 0, 0), Vec::new()), |(max_v, mut paths), (path, _, version)| {
                 match version.cmp(&max_v) {
-                    core::cmp::Ordering::Greater => (version.clone(), vec![path]),
+                    core::cmp::Ordering::Less => (version.clone(), vec![path]),
                     core::cmp::Ordering::Equal => {
                         paths.push(path);
                         (max_v, paths)
                     }
-                    core::cmp::Ordering::Less => (max_v, paths),
+                    core::cmp::Ordering::Greater => (max_v, paths),
                 }
             });
 

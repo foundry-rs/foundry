@@ -1,10 +1,8 @@
 //! Cheatcode information, extracted from the syntactic and semantic analysis of the sources.
 
+use foundry_common::fmt::{StructDefinitions, TypeDefMap};
 use solar::sema::{self, Compiler, Gcx, hir};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 /// Represents a failure in one of the lazy analysis steps.
@@ -44,8 +42,6 @@ pub struct CheatcodeAnalysis {
     struct_defs: OnceLock<Result<StructDefinitions, AnalysisError>>,
 }
 
-pub type StructDefinitions = BTreeMap<String, Vec<(String, String)>>;
-
 impl std::fmt::Debug for CheatcodeAnalysis {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CheatcodeAnalysis")
@@ -74,16 +70,18 @@ impl CheatcodeAnalysis {
     }
 }
 
+// -- STRUCT DEFINITIONS -------------------------------------------------------
+
 /// Generates a map of all struct definitions from the HIR using the resolved `Ty` system.
 struct StructDefinitionResolver<'gcx> {
     gcx: Gcx<'gcx>,
-    struct_defs: StructDefinitions,
+    struct_defs: TypeDefMap,
 }
 
 impl<'gcx> StructDefinitionResolver<'gcx> {
     /// Constructs a new generator.
     pub fn new(gcx: Gcx<'gcx>) -> Self {
-        Self { gcx, struct_defs: BTreeMap::new() }
+        Self { gcx, struct_defs: TypeDefMap::new() }
     }
 
     /// Processes the HIR to generate all the struct definitions.
@@ -91,7 +89,7 @@ impl<'gcx> StructDefinitionResolver<'gcx> {
         for id in self.hir().strukt_ids() {
             self.resolve_struct_definition(id)?;
         }
-        Ok(self.struct_defs)
+        Ok(self.struct_defs.into())
     }
 
     #[inline]

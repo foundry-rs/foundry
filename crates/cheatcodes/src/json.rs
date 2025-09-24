@@ -1,10 +1,10 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*, inspector::analysis::StructDefinitions, string};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
 use alloy_primitives::{Address, B256, I256, U256, hex};
 use alloy_sol_types::SolValue;
-use foundry_common::fs;
+use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
 use std::{
@@ -544,8 +544,7 @@ pub(super) fn json_value_to_token(
     if let Some(defs) = defs {
         _json_value_to_token(value, defs)
     } else {
-        let defs = BTreeMap::new();
-        _json_value_to_token(value, &defs)
+        _json_value_to_token(value, &StructDefinitions::default())
     }
 }
 
@@ -782,7 +781,7 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
 fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSolType> {
     match ty {
         DynSolType::CustomStruct { name, prop_names, tuple } => {
-            if let Some(def) = struct_defs.get(&name) {
+            if let Some(def) = struct_defs.get(&name)? {
                 // The incoming `prop_names` and `tuple` are alphabetically sorted.
                 let type_map: std::collections::HashMap<String, DynSolType> =
                     prop_names.into_iter().zip(tuple).collect();
@@ -827,7 +826,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;
-    use foundry_common::fmt::serialize_value_as_json;
+    use foundry_common::fmt::{TypeDefMap, serialize_value_as_json};
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
 
@@ -906,9 +905,9 @@ mod tests {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.as_type().unwrap().to_string()))
                 .collect();
-            let mut defs_map = BTreeMap::new();
+            let mut defs_map = TypeDefMap::default();
             defs_map.insert(struct_name.clone(), def_fields);
-            (defs_map, DynSolValue::CustomStruct { name: struct_name, prop_names, tuple })
+            (defs_map.into(), DynSolValue::CustomStruct { name: struct_name, prop_names, tuple })
         })
     }
 
@@ -943,7 +942,7 @@ mod tests {
     #[test]
     fn test_resolve_type_with_definitions() -> Result<()> {
         // Define a struct with fields in a specific order (not alphabetical)
-        let mut struct_defs = BTreeMap::new();
+        let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Apple".to_string(),
             vec![
@@ -964,7 +963,7 @@ mod tests {
         let ty_desc = "FruitStall(Apple[] apples,string name)Apple(string color,uint8 sourness,uint8 sweetness)";
 
         // Resolve type and ensure struct definition order is preserved.
-        let ty = resolve_type(ty_desc, Some(&struct_defs)).unwrap();
+        let ty = resolve_type(ty_desc, Some(&struct_defs.into())).unwrap();
         if let DynSolType::CustomStruct { name, prop_names, tuple } = ty {
             assert_eq!(name, "FruitStall");
             assert_eq!(prop_names, vec!["name", "apples"]);
@@ -1009,7 +1008,7 @@ mod tests {
     #[test]
     fn test_resolve_type_for_array_of_structs() -> Result<()> {
         // Define a struct with fields in a specific, non-alphabetical order.
-        let mut struct_defs = BTreeMap::new();
+        let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Item".to_string(),
             vec![
@@ -1023,7 +1022,7 @@ mod tests {
         let ty_desc = "Item(uint256 id,string name,uint256 price)";
 
         // Resolve type and ensure struct definition order is preserved.
-        let ty = resolve_type(ty_desc, Some(&struct_defs)).unwrap();
+        let ty = resolve_type(ty_desc, Some(&struct_defs.into())).unwrap();
         let array_ty = DynSolType::Array(Box::new(ty));
         if let DynSolType::Array(item_ty) = array_ty
             && let DynSolType::CustomStruct { name, prop_names, tuple } = *item_ty
@@ -1042,7 +1041,7 @@ mod tests {
     #[test]
     fn test_parse_json_missing_field() {
         // Define a struct with a specific field order.
-        let mut struct_defs = BTreeMap::new();
+        let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Person".to_string(),
             vec![
@@ -1056,7 +1055,7 @@ mod tests {
 
         // Simulate resolver output: type string, using alphabetical order for fields.
         let type_description = "Person(uint256 age,string name)";
-        let ty = resolve_type(type_description, Some(&struct_defs)).unwrap();
+        let ty = resolve_type(type_description, Some(&struct_defs.into())).unwrap();
 
         // Now, attempt to parse the incomplete JSON using the ordered type.
         let json_value: Value = serde_json::from_str(json_str).unwrap();
@@ -1070,7 +1069,7 @@ mod tests {
     #[test]
     fn test_serialize_json_with_struct_def_order() {
         // Define a struct with a specific, non-alphabetical field order.
-        let mut struct_defs = BTreeMap::new();
+        let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Item".to_string(),
             vec![
@@ -1092,7 +1091,7 @@ mod tests {
         };
 
         // Serialize the value to JSON and verify that the order is preserved.
-        let json_value = serialize_value_as_json(item_struct, Some(&struct_defs)).unwrap();
+        let json_value = serialize_value_as_json(item_struct, Some(&struct_defs.into())).unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(json_string, r#"{"name":"Test Item","id":123,"active":true}"#);
     }
@@ -1100,7 +1099,7 @@ mod tests {
     #[test]
     fn test_json_full_cycle_typed_with_struct_defs() {
         // Define a struct with a specific, non-alphabetical field order.
-        let mut struct_defs = BTreeMap::new();
+        let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Wallet".to_string(),
             vec![
@@ -1125,7 +1124,8 @@ mod tests {
 
         // Serialize it. The resulting JSON should respect the struct definition order.
         let json_value =
-            serialize_value_as_json(original_wallet.clone(), Some(&struct_defs)).unwrap();
+            serialize_value_as_json(original_wallet.clone(), Some(&struct_defs.clone().into()))
+                .unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(
             json_string,
@@ -1134,7 +1134,7 @@ mod tests {
 
         // Resolve the type, which should also respect the struct definition order.
         let type_description = "Wallet(uint256 balance,bytes32 id,address owner)";
-        let resolved_type = resolve_type(type_description, Some(&struct_defs)).unwrap();
+        let resolved_type = resolve_type(type_description, Some(&struct_defs.into())).unwrap();
 
         // Parse the JSON using the correctly ordered resolved type. Ensure that it is identical to
         // the original one.

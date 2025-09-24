@@ -3,7 +3,6 @@
 use crate::{
     Cheatcode, Cheatcodes, Result,
     Vm::*,
-    inspector::analysis::StructDefinitions,
     json::{
         check_json_key_exists, parse_json, parse_json_coerce, parse_json_keys, resolve_type,
         upsert_json_value,
@@ -11,7 +10,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
-use foundry_common::fs;
+use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
