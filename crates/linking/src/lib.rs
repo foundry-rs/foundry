@@ -732,14 +732,14 @@ mod tests {
     fn link_samefile_union() {
         link_test("../../testdata/default/linking/samefile_union", |linker| {
             // fail fast if the artifact is missing (prevents false positives)
-            let artifact_exists = linker
-                .output
-                .artifact_ids()
-                .any(|(id, _)| {
-                    let source = id.source.strip_prefix(linker.project.root()).unwrap_or(&id.source);
-                    id.name == "UsesBoth" &&
-                        source == std::path::Path::new("default/linking/samefile_union/SameFileUnion.t.sol")
-                });
+            let artifact_exists = linker.output.artifact_ids().any(|(id, _)| {
+                let source = id.source.strip_prefix(linker.project.root()).unwrap_or(&id.source);
+                id.name == "UsesBoth"
+                    && source
+                        == std::path::Path::new(
+                            "default/linking/samefile_union/SameFileUnion.t.sol",
+                        )
+            });
             assert!(artifact_exists, "Expected UsesBoth artifact to be compiled");
 
             linker
