@@ -23,7 +23,9 @@ pub mod pt {
 mod ast_eq;
 mod loc;
 mod safe_unwrap;
+mod visit;
 
 pub use ast_eq::AstEq;
 pub use loc::CodeLocationExt;
 pub use safe_unwrap::SafeUnwrap;
+pub use visit::{Visitable, Visitor};

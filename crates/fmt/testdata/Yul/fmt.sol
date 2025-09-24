@@ -69,7 +69,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,
@@ -96,7 +96,9 @@ contract Yul {
             mstore(0xe0, 0x80)
 
             let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
-            if iszero(s2) { revert(3, 3) }
+            if iszero(s2) {
+                revert(3, 3)
+            }
         }
 
         // https://github.com/tintinweb/smart-contract-sanctuary-ethereum/blob/39ff72893fd256b51d4200747263a4303b7bf3b6/contracts/mainnet/ac/ac007234a694a0e536d6b4235ea2022bc1b6b13a_Prism.sol#L147
@@ -172,8 +174,8 @@ contract Yul {
                 v7
             {}
 
-            let zero:u32 := 0:u32
-            let v:u256, t:u32 := sample(1, 2)
+            let zero := 0
+            let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7
@@ -183,6 +185,50 @@ contract Yul {
 
         assembly {
             a := 1 /* some really really really long comment that should not fit in one line */
+        }
+
+        assembly ("memory-safe") {
+            let fmp := mload(0x40)
+            // do something
+        }
+
+        assembly {
+            let addrSlot :=
+                or(
+                    mul(eq(0x8f283970, fnSel), adminSlot), // `changeAdmin(address)`.
+                    mul(eq(0x0900f010, fnSel), adminSlot) // `upgrade(address)`.
+                )
+
+            for {} 1 {} {
+                if iszero(not(mload(i))) { break } // Break if all limbs are zero.
+            }
+
+            switch mode
+            // Get value.
+            case 0 {
+                result := getStr(
+                    input,
+                    _BITPOS_VALUE,
+                    _BITPOS_VALUE_LENGTH,
+                    _VALUE_INITED
+                )
+            }
+            // Get children.
+            case 3 { result := children(input) }
+            // Parse.
+            default {
+                let p := add(input, 0x20)
+                let e := add(p, mload(input))
+                if iszero(eq(p, e)) {
+                    let c := chr(e)
+                    mstore8(e, 34) // Place a '"' at the end to speed up parsing.
+                    // The `34 << 248` makes `mallocItem` preserve '"' at the end.
+                    mstore(0x00, setP(shl(248, 34), _BITPOS_STRING, input))
+                    result, p := parseValue(input, 0, p, e)
+                    mstore8(e, c) // Restore the original char at the end.
+                }
+                if or(lt(p, e), iszero(result)) { fail() }
+            }
         }
     }
 }

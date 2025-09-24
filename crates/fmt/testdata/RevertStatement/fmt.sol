@@ -27,7 +27,9 @@ contract RevertStatement {
             message // comment5 /* comment6 */
         );
 
-        revert( /* comment7 */ /* comment8 */ message /* comment9 */ ); /* comment10 */ // comment11
+        revert( /* comment7 */ /* comment8 */
+            message /* comment9 */
+        ); /* comment10 */ // comment11
 
         revert(
             string.concat(
