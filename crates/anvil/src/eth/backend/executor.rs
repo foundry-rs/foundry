@@ -318,7 +318,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         // check that we comply with the transaction's gas limit as imposed by Osaka (EIP-7825)
-        if env.evm_env.cfg_env.tx_gas_limit_cap.is_none()
+        if env.evm_env.cfg_env.tx_gas_limit_cap.is_some()
             && transaction.pending_transaction.transaction.gas_limit()
                 > env.evm_env.cfg_env().tx_gas_limit_cap()
         {
