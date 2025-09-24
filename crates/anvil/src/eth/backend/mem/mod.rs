@@ -2904,11 +2904,7 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        if let Some(tx) = self.blockchain.storage.read().transactions.get(&hash) {
-            Some(self.geth_trace(tx, opts))
-        } else {
-            None
-        }
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
     }
 
     /// Returns the traces for the given block
