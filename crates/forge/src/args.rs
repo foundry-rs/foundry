@@ -5,7 +5,7 @@ use crate::{
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::{handler, utils};
+use foundry_cli::utils;
 use foundry_common::shell;
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
@@ -21,11 +21,8 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::install_crypto_provider();
-    handler::install();
-    utils::load_dotenv();
+    utils::common_setup();
     utils::subscriber();
-    utils::enable_paint();
 
     Ok(())
 }
@@ -98,12 +95,15 @@ pub fn run_command(args: Forge) -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::GenerateFigSpec => {
-            clap_complete::generate(
-                clap_complete_fig::Fig,
+            generate(
+                foundry_cli::clap::Shell::Fig,
                 &mut Forge::command(),
                 "forge",
                 &mut std::io::stdout(),
             );
+            sh_eprintln!(
+                "[deprecated] `forge generate-fig-spec` is deprecated; use `forge completions fig`"
+            )?;
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {

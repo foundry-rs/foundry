@@ -345,29 +345,11 @@ impl Cheatcode for writeJson_0Call {
 
 impl Cheatcode for writeJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { json, path, valueKey } = self;
-        let json = serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.to_owned()));
-
-        let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let data_s = fs::read_to_string(data_path)?;
-        let data = serde_json::from_str(&data_s)?;
-        let value =
-            jsonpath_lib::replace_with(data, &canonicalize_json_path(valueKey), &mut |_| {
-                Some(json.clone())
-            })?;
-
-        let json_string = serde_json::to_string_pretty(&value)?;
-        super::fs::write_file(state, path.as_ref(), json_string.as_bytes())
-    }
-}
-
-impl Cheatcode for writeJsonUpsertCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json: value, path, valueKey } = self;
 
         // Read, parse, and update the JSON object
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let data_string = fs::read_to_string(&data_path)?;
+        let data_string = fs::locked_read_to_string(&data_path)?;
         let mut data =
             serde_json::from_str(&data_string).unwrap_or_else(|_| Value::String(data_string));
         upsert_json_value(&mut data, value, valueKey)?;
@@ -520,7 +502,6 @@ pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-#[instrument(target = "cheatcodes", level = "trace", ret)]
 pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),

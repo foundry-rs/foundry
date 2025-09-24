@@ -6546,6 +6546,26 @@
     },
     {
       "func": {
+        "id": "getStorageSlots",
+        "description": "Returns an array of storage slots occupied by the specified variable.",
+        "declaration": "function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageSlots(address,string)",
+        "selector": "0xefa136d9",
+        "selectorBytes": [
+          239,
+          161,
+          54,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
         "declaration": "function getWallets() external view returns (address[] memory wallets);",
@@ -10072,6 +10092,26 @@
     },
     {
       "func": {
+        "id": "signWithNonceUnsafe",
+        "description": "Signs `digest` with `privateKey` on the secp256k1 curve, using the given `nonce`\nas the raw ephemeral k value in ECDSA (instead of deriving it deterministically).",
+        "declaration": "function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signWithNonceUnsafe(uint256,bytes32,uint256)",
+        "selector": "0x2012783a",
+        "selectorBytes": [
+          32,
+          18,
+          120,
+          58
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "sign_0",
         "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
@@ -11274,26 +11314,6 @@
     },
     {
       "func": {
-        "id": "writeJsonUpsert",
-        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.\nUnlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.",
-        "declaration": "function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "writeJsonUpsert(string,string,string)",
-        "selector": "0xd0fd45d8",
-        "selectorBytes": [
-          208,
-          253,
-          69,
-          216
-        ]
-      },
-      "group": "toml",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "writeJson_0",
         "description": "Write a serialized JSON object to a file. If the file exists, it will be overwritten.",
         "declaration": "function writeJson(string calldata json, string calldata path) external;",
@@ -11315,7 +11335,7 @@
     {
       "func": {
         "id": "writeJson_1",
-        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.",
+        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.\nThis cheatcode will create new keys if they didn't previously exist.",
         "declaration": "function writeJson(string calldata json, string calldata path, string calldata valueKey) external;",
         "visibility": "external",
         "mutability": "",
@@ -11354,26 +11374,6 @@
     },
     {
       "func": {
-        "id": "writeTomlUpsert",
-        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.\nUnlike `writeToml`, this cheatcode will create new keys if they didn't previously exist.",
-        "declaration": "function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "writeTomlUpsert(string,string,string)",
-        "selector": "0x72333682",
-        "selectorBytes": [
-          114,
-          51,
-          54,
-          130
-        ]
-      },
-      "group": "toml",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "writeToml_0",
         "description": "Takes serialized JSON, converts to TOML and write a serialized TOML to a file.",
         "declaration": "function writeToml(string calldata json, string calldata path) external;",
@@ -11395,7 +11395,7 @@
     {
       "func": {
         "id": "writeToml_1",
-        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.\nThis cheatcode will create new keys if they didn't previously exist.",
         "declaration": "function writeToml(string calldata json, string calldata path, string calldata valueKey) external;",
         "visibility": "external",
         "mutability": "",

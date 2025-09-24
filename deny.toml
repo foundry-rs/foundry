@@ -9,8 +9,6 @@ ignore = [
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
     "RUSTSEC-2024-0437",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0021 gitoxide uses SHA-1 hash implementations without any collision detection, leaving it vulnerable to hash collision attacks.
-    "RUSTSEC-2025-0021",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -101,5 +99,8 @@ allow-git = [
     "https://github.com/foundry-rs/compilers",
     "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/paradigmxyz/solar",
     "https://github.com/bluealloy/revm",
+    # Only for tests.
+    "https://github.com/rust-cli/rexpect",
 ]

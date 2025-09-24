@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -90,15 +90,7 @@ pub fn subscriber() {
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
-    const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Low level networking
-        "hyper=off",
-        "hyper_util=off",
-        "h2=off",
-        "rustls=off",
-        // Tokio
-        "mio=off",
-    ];
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
@@ -200,6 +192,14 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
+}
+
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
@@ -245,6 +245,18 @@ pub fn install_crypto_provider() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install default rustls crypto provider");
+}
+
+/// Fetches the ABI of a contract from Etherscan.
+pub async fn fetch_abi_from_etherscan(
+    address: Address,
+    config: &foundry_config::Config,
+) -> Result<Vec<(JsonAbi, String)>> {
+    let chain = config.chain.unwrap_or_default();
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let source = client.contract_source_code(address).await?;
+    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 
 /// Useful extensions to [`std::process::Command`].

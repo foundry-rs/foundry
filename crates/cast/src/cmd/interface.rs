@@ -2,10 +2,12 @@ use alloy_json_abi::{ContractObject, JsonAbi};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{LoadConfig, fetch_abi_from_etherscan},
+};
 use foundry_common::{
     ContractsByArtifact,
-    abi::fetch_abi_from_etherscan,
     compile::{PathOrContractInfo, ProjectCompiler},
     find_target_path, fs, shell,
 };

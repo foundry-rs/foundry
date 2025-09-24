@@ -2,13 +2,17 @@
 
 name: test-isolate
 
+permissions: {}
+
 on:
   schedule:
-    - cron: "0 0 * * *"
-  workflow_dispatch:
+    - cron: "0 0 * * *" # Run daily at midnight UTC
+  workflow_dispatch: # Needed so we can run it manually
 
 jobs:
   nextest:
     uses: ./.github/workflows/nextest.yml
+    permissions:
+      contents: read
     with:
       profile: isolate

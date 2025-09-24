@@ -6,21 +6,28 @@ use crate::{
     inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
-use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
-use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
+use alloy_primitives::{
+    Address, B256, U256, hex, keccak256,
+    map::{B256Map, HashMap},
+};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{read_json_file, write_json_file};
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_common::{
+    fs::{read_json_file, write_json_file},
+    slot_identifier::{
+        ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
+        SlotInfo,
+    },
+};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::StackSnapshotType;
+use foundry_evm_traces::TraceMode;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -37,6 +44,7 @@ use std::{
 };
 
 mod record_debug_step;
+use foundry_common::fmt::format_token_raw;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -107,58 +115,11 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
-    /// Decoded values according to the Solidity type (e.g., uint256, address).
-    /// Only present when storage layout is available and decoding succeeds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    decoded: Option<DecodedSlotValues>,
-
     /// Storage layout metadata (variable name, type, offset).
     /// Only present when contract has storage layout output.
+    /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
-}
-
-/// Storage slot metadata from the contract's storage layout.
-#[derive(Serialize, Debug)]
-struct SlotInfo {
-    /// Variable name (e.g., "owner", "values\[0\]", "config.maxSize").
-    label: String,
-    /// Solidity type, serialized as string (e.g., "uint256", "address").
-    #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
-    dyn_sol_type: DynSolType,
-    /// Byte offset within the 32-byte slot (0 for full slot, 0-31 for packed).
-    offset: i64,
-    /// Storage slot number as decimal string.
-    slot: String,
-}
-
-fn serialize_dyn_sol_type<S>(dyn_type: &DynSolType, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&dyn_type.to_string())
-}
-
-/// Decoded storage values showing before and after states.
-#[derive(Debug)]
-struct DecodedSlotValues {
-    /// Decoded value before the state change.
-    previous_value: DynSolValue,
-    /// Decoded value after the state change.
-    new_value: DynSolValue,
-}
-
-impl Serialize for DecodedSlotValues {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
-        state.serialize_field("previousValue", &format_dyn_sol_value_raw(&self.previous_value))?;
-        state.serialize_field("newValue", &format_dyn_sol_value_raw(&self.new_value))?;
-        state.end()
-    }
 }
 
 /// Balance diff info.
@@ -226,30 +187,32 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                match (&slot_changes.slot_info, &slot_changes.decoded) {
-                    (Some(slot_info), Some(decoded)) => {
-                        // Have both slot info and decoded values - only show decoded values
-                        writeln!(
-                            f,
-                            "@ {slot} ({}, {}): {} → {}",
-                            slot_info.label,
-                            slot_info.dyn_sol_type,
-                            format_dyn_sol_value_raw(&decoded.previous_value),
-                            format_dyn_sol_value_raw(&decoded.new_value)
-                        )?;
+                match &slot_changes.slot_info {
+                    Some(slot_info) => {
+                        if slot_info.decoded.is_some() {
+                            // Have slot info with decoded values - show decoded values
+                            let decoded = slot_info.decoded.as_ref().unwrap();
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                format_token_raw(&decoded.previous_value),
+                                format_token_raw(&decoded.new_value)
+                            )?;
+                        } else {
+                            // Have slot info but no decoded values - show raw hex values
+                            writeln!(
+                                f,
+                                "@ {slot} ({}, {}): {} → {}",
+                                slot_info.label,
+                                slot_info.slot_type.dyn_sol_type,
+                                slot_changes.previous_value,
+                                slot_changes.new_value
+                            )?;
+                        }
                     }
-                    (Some(slot_info), None) => {
-                        // Have slot info but no decoded values - show raw hex values
-                        writeln!(
-                            f,
-                            "@ {slot} ({}, {}): {} → {}",
-                            slot_info.label,
-                            slot_info.dyn_sol_type,
-                            slot_changes.previous_value,
-                            slot_changes.new_value
-                        )?;
-                    }
-                    _ => {
+                    None => {
                         // No slot info - show raw hex values
                         writeln!(
                             f,
@@ -479,7 +442,7 @@ impl Cheatcode for getChainIdCall {
 impl Cheatcode for chainIdCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newChainId } = self;
-        ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64 - 1");
+        ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
         ccx.ecx.cfg.chain_id = newChainId.to();
         Ok(Default::default())
     }
@@ -509,7 +472,7 @@ impl Cheatcode for difficultyCall {
 impl Cheatcode for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBasefee } = self;
-        ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64 - 1");
+        ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
         ccx.ecx.block.basefee = newBasefee.saturating_to();
         Ok(Default::default())
     }
@@ -586,7 +549,7 @@ impl Cheatcode for getBlockNumberCall {
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newGasPrice } = self;
-        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64 - 1");
+        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
         ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
         Ok(Default::default())
     }
@@ -917,6 +880,8 @@ impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_account_diffs_stack = Some(Default::default());
+        // Enable mapping recording to track mapping slot accesses
+        state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
     }
 }
@@ -944,6 +909,83 @@ impl Cheatcode for getStateDiffJsonCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageSlotsCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, variableName } = self;
+
+        let storage_layout = get_contract_data(ccx, *target)
+            .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
+            .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+        trace!(storage = ?storage_layout.storage, "fetched storage");
+
+        let storage = storage_layout
+            .storage
+            .iter()
+            .find(|s| s.label.to_lowercase() == *variableName.to_lowercase())
+            .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
+
+        let storage_type = storage_layout
+            .types
+            .get(&storage.storage_type)
+            .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+
+        if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
+        {
+            return Err(fmt_err!(
+                "cannot get storage slots for variables with mapping or dynamic array types"
+            ));
+        }
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+
+        let mut slots = Vec::new();
+
+        // Always push the base slot
+        slots.push(slot);
+
+        if storage_type.encoding == ENCODING_INPLACE {
+            // For inplace encoding, calculate the number of slots needed
+            let num_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+                fmt_err!(
+                    "invalid number_of_bytes {} for variable {variableName}",
+                    storage_type.number_of_bytes
+                )
+            })?;
+            let num_slots = num_bytes.div_ceil(U256::from(32));
+
+            // Start from 1 since base slot is already added
+            for i in 1..num_slots.to::<usize>() {
+                slots.push(slot + U256::from(i));
+            }
+        }
+
+        if storage_type.encoding == ENCODING_BYTES {
+            // Try to check if it's a long bytes/string by reading the current storage
+            // value
+            if let Ok(value) = ccx.ecx.journaled_state.sload(*target, slot) {
+                let value_bytes = value.data.to_be_bytes::<32>();
+                let length_byte = value_bytes[31];
+                // Check if it's a long bytes/string (LSB is 1)
+                if length_byte & 1 == 1 {
+                    // Calculate data slots for long bytes/string
+                    let length: U256 = value.data >> 1;
+                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
+
+                    for i in 0..num_data_slots {
+                        slots.push(data_start + U256::from(i));
+                    }
+                }
+            }
+        }
+
+        Ok(slots.abi_encode())
     }
 }
 
@@ -988,7 +1030,7 @@ impl Cheatcode for broadcastRawTransactionCall {
 impl Cheatcode for setBlockhashCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber, blockHash } = *self;
-        ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64 - 1");
+        ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
             blockNumber <= U256::from(ccx.ecx.block.number),
             "block number must be less than or equal to the current block number"
@@ -1013,13 +1055,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
             original_tracer_config: *tracer.config(),
         };
 
-        // turn on tracer configuration for recording
-        tracer.update_config(|config| {
-            config
-                .set_steps(true)
-                .set_memory_snapshots(true)
-                .set_stack_snapshots(StackSnapshotType::Full)
-        });
+        // turn on tracer debug configuration for recording
+        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
@@ -1418,6 +1455,16 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                     }
                 }
 
+                // Collect all storage accesses for this account
+                let raw_changes_by_slot = account_access
+                    .storageAccesses
+                    .iter()
+                    .filter_map(|access| {
+                        (access.isWrite && !access.reverted)
+                            .then_some((access.slot, (access.previousValue, access.newValue)))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
@@ -1428,31 +1475,58 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
                             });
+                        let layout = storage_layouts.get(&storage_access.account);
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
                                 // Get storage layout info for this slot
-                                let slot_info = storage_layouts
-                                    .get(&storage_access.account)
-                                    .and_then(|layout| get_slot_info(layout, &storage_access.slot));
+                                // Include mapping slots if available for the account
+                                let mapping_slots = ccx
+                                    .state
+                                    .mapping_slots
+                                    .as_ref()
+                                    .and_then(|slots| slots.get(&storage_access.account));
 
-                                // Try to decode values if we have slot info
-                                let decoded = slot_info.as_ref().and_then(|info| {
-                                    let prev = decode_storage_value(
-                                        storage_access.previousValue,
-                                        &info.dyn_sol_type,
-                                    )?;
-                                    let new = decode_storage_value(
-                                        storage_access.newValue,
-                                        &info.dyn_sol_type,
-                                    )?;
-                                    Some(DecodedSlotValues { previous_value: prev, new_value: new })
+                                let slot_info = layout.and_then(|layout| {
+                                    let decoder = SlotIdentifier::new(layout.clone());
+                                    decoder
+                                        .identify(&storage_access.slot, mapping_slots)
+                                        .or_else(|| {
+                                            // Create a map of new values for bytes/string
+                                            // identification. These values are used to determine
+                                            // the length of the data which helps determine how many
+                                            // slots to search
+                                            let current_base_slot_values = raw_changes_by_slot
+                                                .iter()
+                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                                .collect::<B256Map<_>>();
+                                            decoder.identify_bytes_or_string(
+                                                &storage_access.slot,
+                                                &current_base_slot_values,
+                                            )
+                                        })
+                                        .map(|mut info| {
+                                            // Always decode values first
+                                            info.decode_values(
+                                                storage_access.previousValue,
+                                                storage_access.newValue,
+                                            );
+
+                                            // Then handle long bytes/strings if applicable
+                                            if info.is_bytes_or_string() {
+                                                info.decode_bytes_or_string_values(
+                                                    &storage_access.slot,
+                                                    &raw_changes_by_slot,
+                                                );
+                                            }
+
+                                            info
+                                        })
                                 });
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
-                                    decoded,
                                     slot_info,
                                 });
                             }
@@ -1460,14 +1534,12 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                 let entry = slot_state_diff.get_mut();
                                 entry.new_value = storage_access.newValue;
 
-                                if let Some(slot_info) = &entry.slot_info
-                                    && let Some(ref mut decoded) = entry.decoded
-                                    && let Some(new_value) = decode_storage_value(
+                                // Update decoded values if we have slot info
+                                if let Some(ref mut slot_info) = entry.slot_info {
+                                    slot_info.decode_values(
+                                        entry.previous_value,
                                         storage_access.newValue,
-                                        &slot_info.dyn_sol_type,
-                                    )
-                                {
-                                    decoded.new_value = new_value;
+                                    );
                                 }
                             }
                         }
@@ -1526,131 +1598,6 @@ fn get_contract_data<'a>(
 
     // Fallback to fuzzy matching if exact match fails
     artifacts.find_by_deployed_code(&code_bytes)
-}
-
-/// Gets storage layout info for a specific slot.
-fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
-    let slot = U256::from_be_bytes(slot.0);
-    let slot_str = slot.to_string();
-
-    for storage in &storage_layout.storage {
-        let base_slot = U256::from_str(&storage.slot).ok()?;
-        let storage_type = storage_layout.types.get(&storage.storage_type)?;
-        let dyn_type = DynSolType::parse(&storage_type.label).ok()?;
-
-        // Check for exact slot match
-        if storage.slot == slot_str {
-            let label = match &dyn_type {
-                DynSolType::FixedArray(_, _) => {
-                    // For arrays, label the base slot with indices
-                    format!("{}{}", storage.label, get_array_base_indices(&dyn_type))
-                }
-                _ => storage.label.clone(),
-            };
-
-            return Some(SlotInfo {
-                label,
-                dyn_sol_type: dyn_type,
-                offset: storage.offset,
-                slot: storage.slot.clone(),
-            });
-        }
-
-        // Check if slot is part of a static array
-        if let DynSolType::FixedArray(_, _) = &dyn_type
-            && let Ok(total_bytes) = storage_type.number_of_bytes.parse::<u64>()
-        {
-            let total_slots = total_bytes.div_ceil(32);
-
-            // Check if slot is within array range
-            if slot > base_slot && slot < base_slot + U256::from(total_slots) {
-                let index = (slot - base_slot).to::<u64>();
-                let label = format_array_element_label(&storage.label, &dyn_type, index);
-
-                return Some(SlotInfo {
-                    label,
-                    dyn_sol_type: dyn_type,
-                    offset: 0,
-                    slot: slot.to_string(),
-                });
-            }
-        }
-    }
-
-    None
-}
-
-/// Returns the base index [\0\] or [\0\][\0\] for a fixed array type depending on the dimensions.
-fn get_array_base_indices(dyn_type: &DynSolType) -> String {
-    match dyn_type {
-        DynSolType::FixedArray(inner, _) => {
-            if let DynSolType::FixedArray(_, _) = inner.as_ref() {
-                // Nested array (2D or higher)
-                format!("[0]{}", get_array_base_indices(inner))
-            } else {
-                // Simple 1D array
-                "[0]".to_string()
-            }
-        }
-        _ => String::new(),
-    }
-}
-
-/// Helper function to format an array element label given its index
-fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u64) -> String {
-    match dyn_type {
-        DynSolType::FixedArray(inner, _) => {
-            if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
-                // 2D array: calculate row and column
-                let row = index / (*inner_size as u64);
-                let col = index % (*inner_size as u64);
-                format!("{base_label}[{row}][{col}]")
-            } else {
-                // 1D array
-                format!("{base_label}[{index}]")
-            }
-        }
-        _ => base_label.to_string(),
-    }
-}
-
-/// Helper function to decode a single storage value using its DynSolType
-fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
-    // Storage values are always 32 bytes, stored as a single word
-    // For arrays, we need to unwrap to the base element type
-    let mut actual_type = dyn_type;
-    // Unwrap nested arrays to get to the base element type.
-    while let DynSolType::FixedArray(elem_type, _) = actual_type {
-        actual_type = elem_type.as_ref();
-    }
-
-    // Use abi_decode to decode the value
-    actual_type.abi_decode(&value.0).ok()
-}
-
-/// Helper function to format DynSolValue as raw string without type information
-fn format_dyn_sol_value_raw(value: &DynSolValue) -> String {
-    match value {
-        DynSolValue::Bool(b) => b.to_string(),
-        DynSolValue::Int(i, _) => i.to_string(),
-        DynSolValue::Uint(u, _) => u.to_string(),
-        DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
-        DynSolValue::Address(addr) => addr.to_string(),
-        DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
-        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
-        DynSolValue::String(s) => s.clone(),
-        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
-            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
-            format!("[{}]", formatted.join(", "))
-        }
-        DynSolValue::Tuple(values) => {
-            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
-            format!("({})", formatted.join(", "))
-        }
-        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
-            format_dyn_sol_value_raw(&DynSolValue::Tuple(tuple.clone()))
-        }
-    }
 }
 
 /// Helper function to set / unset cold storage slot of the target address.

@@ -432,6 +432,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStateDiffJson() external view returns (string memory diff);
 
+    /// Returns an array of storage slots occupied by the specified variable.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);
+
     /// Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -2552,14 +2556,9 @@ interface Vm {
 
     /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
     /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
+    /// This cheatcode will create new keys if they didn't previously exist.
     #[cheatcode(group = Json)]
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
-
-    /// Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>
-    /// This is useful to replace a specific value of a JSON file, without having to parse the entire thing.
-    /// Unlike `writeJson`, this cheatcode will create new keys if they didn't previously exist.
-    #[cheatcode(group = Toml)]
-    function writeJsonUpsert(string calldata json, string calldata path, string calldata valueKey) external;
 
     // ======== TOML Parsing and Manipulation ========
 
@@ -2663,14 +2662,9 @@ interface Vm {
 
     /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
     /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
+    /// This cheatcode will create new keys if they didn't previously exist.
     #[cheatcode(group = Toml)]
     function writeToml(string calldata json, string calldata path, string calldata valueKey) external;
-
-    /// Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>
-    /// This is useful to replace a specific value of a TOML file, without having to parse the entire thing.
-    /// Unlike `writeToml`, this cheatcode will create new keys if they didn't previously exist.
-    #[cheatcode(group = Toml)]
-    function writeTomlUpsert(string calldata json, string calldata path, string calldata valueKey) external;
 
     // ======== Cryptography ========
 
@@ -2703,6 +2697,11 @@ interface Vm {
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     #[cheatcode(group = Crypto)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs `digest` with `privateKey` on the secp256k1 curve, using the given `nonce`
+    /// as the raw ephemeral k value in ECDSA (instead of deriving it deterministically).
+    #[cheatcode(group = Crypto)]
+    function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
