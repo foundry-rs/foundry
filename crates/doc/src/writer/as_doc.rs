@@ -3,9 +3,9 @@ use crate::{
     GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
     document::{DocumentContent, read_context},
     parser::ParseSource,
+    solang_ext::SafeUnwrap,
     writer::BufWriter,
 };
-use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
 use std::path::{Path, PathBuf};

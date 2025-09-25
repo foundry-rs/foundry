@@ -49,8 +49,8 @@ contract IfStatement {
         /* comment9 */
         else if ( /* comment10 */
             anotherLongCondition // comment11
-        ) {
             /* comment12 */
+        ) {
             execute();
         } // comment13
         /* comment14 */
@@ -140,6 +140,25 @@ contract IfStatement {
             execute();
         } else {
             executeElse();
+        }
+    }
+
+    function test_nestedBkocks() public {
+        if (accesses[i].account == address(simpleStorage)) {
+            for (uint256 j = 0; j < accesses[i].storageAccesses.length; j++) {
+                bytes32 slot = accesses[i].storageAccesses[j].slot;
+                if (slot == bytes32(uint256(0))) foundValueSlot = true;
+                if (slot == bytes32(uint256(1))) foundOwnerSlot = true;
+                if (slot == bytes32(uint256(2))) foundValuesSlot0 = true;
+                if (slot == bytes32(uint256(3))) foundValuesSlot1 = true;
+                if (slot == bytes32(uint256(4))) foundValuesSlot2 = true;
+            }
+        }
+    }
+
+    function test_emptyIfBlock() external {
+        if (block.number < 10) {} else {
+            revert();
         }
     }
 }

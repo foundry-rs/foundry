@@ -14,17 +14,18 @@ workspace = true
 
 [dependencies]
 foundry-config.workspace = true
+foundry-common.workspace = true
 
-alloy-primitives.workspace = true
+solar.workspace = true
 
-ariadne = "0.5"
 itertools.workspace = true
-solang-parser.workspace = true
-thiserror.workspace = true
+similar = { version = "2", features = ["inline"] }
 tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 itertools.workspace = true
 similar-asserts.workspace = true
 toml.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+snapbox.workspace = true

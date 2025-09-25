@@ -50,6 +50,7 @@ pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
+#[derive(Clone, Debug)]
 pub struct MultiContractRunner {
     /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
@@ -274,7 +275,7 @@ impl MultiContractRunner {
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestRunnerConfig {
     /// Project config.
     pub config: Arc<Config>,

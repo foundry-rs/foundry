@@ -30,6 +30,7 @@ foundry-debugger.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+forge-fmt.workspace = true
 
 alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }

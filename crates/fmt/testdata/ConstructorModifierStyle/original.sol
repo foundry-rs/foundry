@@ -9,5 +9,7 @@ import {IAchievements} from "./interfaces/IAchievements.sol";
 import {SoulBound1155} from "./abstracts/SoulBound1155.sol";
 
 contract Achievements is IAchievements, SoulBound1155, Ownable {
-    constructor(address owner) Ownable() ERC1155() {}
+    constructor(address owner) my_modifier Ownable() ERC1155() {}
+
+    function f() my_modifier MyModifier() my_modifier() MyModifier {}
 }
