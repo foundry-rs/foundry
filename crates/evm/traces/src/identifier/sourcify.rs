@@ -28,13 +28,10 @@ impl Default for SourcifyIdentifier {
 impl TraceIdentifier for SourcifyIdentifier {
     fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         let mut identities = Vec::new();
-
-        // Skip network requests in test environment to avoid CI hangs
-        if cfg!(test) {
-            return identities;
-        }
-
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("Failed to create HTTP client");
 
         for &node in nodes {
             let address = node.trace.address;
@@ -43,14 +40,17 @@ impl TraceIdentifier for SourcifyIdentifier {
             let abi = foundry_common::block_on(async {
                 let url = format!("https://repo.sourcify.dev/contracts/full_match/1/{address:?}/");
 
-                let files: Vec<SourcifyFile> =
-                    client.get(&url).send().await.ok()?.json().await.ok()?;
-
-                let metadata_file = files.into_iter().find(|file| file.name == "metadata.json")?;
-                let metadata: serde_json::Value =
-                    serde_json::from_str(&metadata_file.content).ok()?;
-                let abi_value = metadata.get("output")?.get("abi")?;
-                serde_json::from_value::<JsonAbi>(abi_value.clone()).ok()
+                if let Ok(response) = client.get(&url).send().await
+                    && let Ok(files) = response.json::<Vec<SourcifyFile>>().await
+                {
+                    let metadata_file =
+                        files.into_iter().find(|file| file.name == "metadata.json")?;
+                    let metadata: serde_json::Value =
+                        serde_json::from_str(&metadata_file.content).ok()?;
+                    let abi_value = metadata.get("output")?.get("abi")?;
+                    return serde_json::from_value::<JsonAbi>(abi_value.clone()).ok();
+                }
+                None
             });
 
             if let Some(abi) = abi {
