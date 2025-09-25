@@ -68,7 +68,7 @@ contract RecordDebugTraceTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
     /**
      * The goal of this test is to ensure the debug steps provide the correct OPCODE with its stack
-     * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
+     * and memory input used. The test checks MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
 
