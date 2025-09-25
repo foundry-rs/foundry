@@ -682,6 +682,60 @@ impl WorkerCorpus {
 
         Ok(())
     }
+
+    /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
+    /// of other workers.
+    pub fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
+        if self.id == 0 || self.worker_dir.is_none() {
+            return Ok(());
+        }
+
+        let worker_dir = self.worker_dir.as_ref().unwrap();
+        let master_corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        for target_worker in 1..num_workers {
+            let target_dir = self
+                .config
+                .corpus_dir
+                .as_ref()
+                .unwrap()
+                .join(format!("{WORKER}{target_worker}"))
+                .join(SYNC_DIR);
+
+            if !target_dir.is_dir() {
+                foundry_common::fs::create_dir_all(&target_dir)?;
+            }
+
+            for entry in std::fs::read_dir(&master_corpus_dir)? {
+                let Ok(entry) = entry else {
+                    continue;
+                };
+
+                let path = entry.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && !name.contains(METADATA_SUFFIX)
+                {
+                    let sync_path = target_dir.join(name);
+
+                    let Ok((_, timestamp)) = parse_corpus_filename(name) else {
+                        continue;
+                    };
+
+                    if timestamp > self.last_sync_timestamp {
+                        let Ok(_) = foundry_common::fs::copy(&path, &sync_path) else {
+                            debug!(target: "corpus", "failed to distribute corpus {} from worker {} to {target_dir:?}", name, self.id);
+                            continue;
+                        };
+
+                        trace!(target: "corpus", "distributed corpus {} from worker {} to {target_dir:?}", name, self.id);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Parses the corpus filename and returns the uuid and timestamp associated with it.
