@@ -74,7 +74,6 @@ impl CorpusEntry {
     /// New corpus from given call sequence and corpus path to read uuid.
     pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
         let uuid = if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            // TODO: Account for "-timestamp"
             Uuid::try_from(stem.strip_suffix(JSON_EXTENSION).unwrap_or(stem).to_string())?
         } else {
             Uuid::new_v4()

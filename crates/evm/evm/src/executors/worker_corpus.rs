@@ -513,11 +513,11 @@ impl WorkerCorpus {
 
         for &index in &self.new_entry_indices {
             if let Some(entry) = self.in_memory_corpus.get(index) {
-                let ext = if self.config.corpus_gzip {
-                    format!("{JSON_EXTENSION}.gz")
-                } else {
-                    JSON_EXTENSION.to_string()
-                };
+                let ext = self
+                    .config
+                    .corpus_gzip
+                    .then_some(format!("{JSON_EXTENSION}.gz"))
+                    .unwrap_or(JSON_EXTENSION.to_string());
                 let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
                 let file_path = corpus_dir.join(&file_name);
                 let sync_path = master_sync_dir.join(&file_name);
@@ -538,7 +538,7 @@ impl WorkerCorpus {
 
     /// Imports the new corpus entries tx sequence which will be used to replay and update history
     /// map.
-    pub fn import(&self) -> eyre::Result<Vec<Vec<BasicTxDetails>>> {
+    fn import(&self) -> eyre::Result<Vec<Vec<BasicTxDetails>>> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(vec![]);
         };
@@ -578,6 +578,107 @@ impl WorkerCorpus {
         }
 
         Ok(imports)
+    }
+
+    pub fn calibrate(
+        &mut self,
+        executor: &Executor,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    ) -> eyre::Result<()> {
+        let Some(worker_dir) = &self.worker_dir else {
+            return Ok(());
+        };
+
+        // Helper to check if tx can be replayed
+        let can_replay_tx = |tx: &BasicTxDetails| -> bool {
+            fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+                || fuzzed_function.is_some_and(|function| {
+                    tx.call_details
+                        .calldata
+                        .get(..4)
+                        .is_some_and(|selector| function.selector() == selector)
+                })
+        };
+
+        let sync_dir = worker_dir.join(SYNC_DIR);
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        let mut executor = executor.clone();
+        for tx_seq in self.import()? {
+            if !tx_seq.is_empty() {
+                let mut new_coverage_on_sync = false;
+                for tx in &tx_seq {
+                    if can_replay_tx(tx) {
+                        let mut call_result = executor.call_raw(
+                            tx.sender,
+                            tx.call_details.target,
+                            tx.call_details.calldata.clone(),
+                            U256::ZERO,
+                        )?;
+
+                        // Check if this provides new coverage
+                        let (new_coverage, is_edge) =
+                            call_result.merge_edge_coverage(&mut self.history_map);
+
+                        if new_coverage {
+                            self.metrics.update_seen(is_edge);
+                            new_coverage_on_sync = true;
+                        }
+
+                        // Commit only for stateful tests
+                        if fuzzed_contracts.is_some() {
+                            executor.commit(&mut call_result);
+                        }
+
+                        trace!(
+                            target: "corpus",
+                            %new_coverage,
+                            "replayed tx for syncing worker {}: {:?}",
+                            self.id, &tx
+                        );
+                    }
+                }
+
+                if new_coverage_on_sync {
+                    let corpus_entry = CorpusEntry::from_tx_seq(&tx_seq);
+                    let ext = self
+                        .config
+                        .corpus_gzip
+                        .then_some(format!("{JSON_EXTENSION}.gz"))
+                        .unwrap_or(JSON_EXTENSION.to_string());
+
+                    let file_name =
+                        format!("{}-{}{ext}", corpus_entry.uuid, corpus_entry.timestamp);
+
+                    // Move file from sync/ to corpus/ directory
+                    let sync_path = sync_dir.join(&file_name);
+                    let corpus_path = corpus_dir.join(&file_name);
+
+                    let Ok(_) = std::fs::rename(&sync_path, &corpus_path) else {
+                        debug!(target: "corpus", "failed to move synced corpus {} from {sync_path:?} to {corpus_path:?} dir in worker {}", corpus_entry.uuid, self.id);
+                        continue;
+                    };
+
+                    trace!(
+                        target: "corpus",
+                        "moved synced corpus {} to corpus dir in worker {}",
+                        corpus_entry.uuid, self.id
+                    );
+
+                    self.in_memory_corpus.push(corpus_entry);
+                }
+            }
+        }
+
+        let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        trace!(target: "corpus", "sync complete for worker {}, updating last sync time to {}",
+            self.id,
+            last_sync
+        );
+        self.last_sync_timestamp = last_sync;
+
+        Ok(())
     }
 }
 
