@@ -1,30 +1,32 @@
+//! Command Line handler to convert Beacon block's execution payload to Execution JSON-RPC format.
+
+use std::path::PathBuf;
+
 use alloy_rpc_types_beacon::payload::BeaconBlockData;
 use alloy_rpc_types_engine::ExecutionPayload;
-use clap::Parser;
+use clap::{Parser, builder::ValueParser};
 use eyre::{Result, eyre};
 use foundry_common::{fs, sh_print};
-use std::path::PathBuf;
 
 /// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution
 /// JSON-RPC format.
 #[derive(Parser)]
 pub struct B2EPayloadArgs {
-    /// Input data provided through JSON file path.
-    #[arg(
-        long = "json-file",
-        value_name = "FILE",
-        help = "Path to the JSON file containing the beacon block"
-    )]
-    pub json_file: PathBuf,
+    /// Input data, it can be either a file path to JSON file or raw JSON string containing the
+    /// beacon block
+    #[arg(value_name = "INPUT", value_parser=ValueParser::new(parse_input_source), help = "File path to JSON file or raw JSON string containing the beacon block")]
+    pub input: InputSource,
 }
 
 impl B2EPayloadArgs {
     pub async fn run(self) -> Result<()> {
-        // Get input beacon block data
-        let beacon_block = fs::read_to_string(&self.json_file)
-            .map_err(|e| eyre!("Failed to read JSON file '{}': {}", self.json_file.display(), e))?;
+        let beacon_block_json = match self.input {
+            InputSource::Json(json) => json,
+            InputSource::File(path) => fs::read_to_string(&path)
+                .map_err(|e| eyre!("Failed to read JSON file '{}': {}", path.display(), e))?,
+        };
 
-        let beacon_block_data: BeaconBlockData = serde_json::from_str(&beacon_block)
+        let beacon_block_data: BeaconBlockData = serde_json::from_str(&beacon_block_json)
             .map_err(|e| eyre!("Failed to parse beacon block JSON: {}", e))?;
 
         let execution_payload = beacon_block_data.execution_payload();
@@ -48,4 +50,60 @@ fn format_as_json_rpc(execution_payload: ExecutionPayload) -> Result<String> {
 
     serde_json::to_string_pretty(&json_rpc_request)
         .map_err(|e| eyre!("Failed to serialize JSON-RPC response: {}", e))
+}
+
+/// Represents the different input sources for beacon block data
+#[derive(Debug, Clone)]
+pub enum InputSource {
+    File(PathBuf),
+    Json(String),
+}
+
+fn parse_input_source(s: &str) -> Result<InputSource, String> {
+    // Try parsing as JSON first
+    if serde_json::from_str::<serde_json::Value>(s).is_ok() {
+        return Ok(InputSource::Json(s.to_string()));
+    }
+
+    // Otherwise treat as file path
+    Ok(InputSource::File(PathBuf::from(s)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_input_source_json_object() {
+        let json_input = r#"{"execution_payload": {"block_hash": "0x123"}}"#;
+        let result = parse_input_source(json_input).unwrap();
+
+        match result {
+            InputSource::Json(json) => assert_eq!(json, json_input),
+            InputSource::File(_) => panic!("Expected JSON input, got File"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_source_json_array() {
+        let json_input = r#"[{"block": "data"}]"#;
+        let result = parse_input_source(json_input).unwrap();
+
+        match result {
+            InputSource::Json(json) => assert_eq!(json, json_input),
+            InputSource::File(_) => panic!("Expected JSON input, got File"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_source_file_path() {
+        let file_path =
+            "block-12225729-6ceadbf2a6adbbd64cbec33fdebbc582f25171cd30ac43f641cbe76ac7313ddf.json";
+        let result = parse_input_source(file_path).unwrap();
+
+        match result {
+            InputSource::File(path) => assert_eq!(path, PathBuf::from(file_path)),
+            InputSource::Json(_) => panic!("Expected File input, got JSON"),
+        }
+    }
 }
