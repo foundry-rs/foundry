@@ -51,7 +51,7 @@ pub(crate) enum MutationType {
 }
 
 /// Holds Corpus information.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct CorpusEntry {
     // Unique corpus identifier.
     pub(crate) uuid: Uuid,

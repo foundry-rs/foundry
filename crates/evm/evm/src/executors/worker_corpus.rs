@@ -536,8 +536,9 @@ impl WorkerCorpus {
         Ok(())
     }
 
-    /// Imports the new corpus entries that were written to the workers sync dir.
-    pub fn import(&self) -> eyre::Result<Vec<CorpusEntry>> {
+    /// Imports the new corpus entries tx sequence which will be used to replay and update history
+    /// map.
+    pub fn import(&self) -> eyre::Result<Vec<Vec<BasicTxDetails>>> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(vec![]);
         };
@@ -567,12 +568,10 @@ impl WorkerCorpus {
                 continue;
             }
 
-            // TODO: This is not useful right as `tx_seq` of CorpusEntry are not serialized i.e we
-            // can replay the corpus.
             let corpus = if self.config.corpus_gzip {
-                foundry_common::fs::read_json_gzip_file::<CorpusEntry>(&entry.path())?
+                foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&entry.path())?
             } else {
-                foundry_common::fs::read_json_file::<CorpusEntry>(&entry.path())?
+                foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&entry.path())?
             };
 
             imports.push(corpus);
