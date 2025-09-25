@@ -486,7 +486,7 @@ impl WorkerCorpus {
     // Sync Methods
 
     /// Exports the new corpus entries to the master workers (id = 0) sync dir.
-    pub fn export(&self) -> eyre::Result<()> {
+    fn export(&self) -> eyre::Result<()> {
         // Early return if no new entries or corpus dir not configured
         if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
             return Ok(());
@@ -582,7 +582,7 @@ impl WorkerCorpus {
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
-    pub fn calibrate(
+    fn calibrate(
         &mut self,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
@@ -685,8 +685,8 @@ impl WorkerCorpus {
 
     /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
     /// of other workers.
-    pub fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
-        if self.id == 0 || self.worker_dir.is_none() {
+    fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
+        if self.id != 0 || self.worker_dir.is_none() {
             return Ok(());
         }
 
@@ -733,6 +733,38 @@ impl WorkerCorpus {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
+    pub fn sync(
+        &mut self,
+        num_workers: usize,
+        executor: &Executor,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    ) -> eyre::Result<()> {
+        if self.id == 0 {
+            // Master worker
+            self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
+
+            self.distribute(num_workers)?;
+
+            self.new_entry_indices.clear();
+
+            trace!(target: "corpus", "master worker synced");
+
+            return Ok(());
+        }
+
+        self.export()?;
+
+        self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
+
+        self.new_entry_indices.clear();
+
+        trace!(target: "corpus", "synced worker {}", self.id);
 
         Ok(())
     }
