@@ -480,12 +480,13 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
                     ));
                     let evm_value = sp_core::U256::from_little_endian(&input.value().as_le_bytes());
 
-                    let (gas_limit, storage_deposit_limit) =
+                    let (gas_limit, _storage_deposit_limit) =
                     <<Runtime as Config>::EthGasEncoder as GasEncoder<BalanceOf<Runtime>>>::decode(
                         gas_limit,
                     )
                     .expect("gas limit is valid");
-                    let storage_deposit_limit = DepositLimit::Balance(storage_deposit_limit);
+                    // storage deposit broken on polkadot-sdk/master
+                    let storage_deposit_limit = DepositLimit::UnsafeOnlyForDryRun;
                     let code = Code::Upload(contract.resolc_bytecode.as_bytes().unwrap().to_vec());
                     let data = constructor_args.to_vec();
                     let salt = match input.scheme() {
