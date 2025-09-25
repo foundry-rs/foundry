@@ -65,9 +65,10 @@ impl<'ast> State<'_, 'ast> {
             out: &mut String,
             config: config::NumberUnderscore,
             string: &str,
+            is_dec: bool,
             reversed: bool,
         ) {
-            if !config.is_thousands() || string.len() < 5 {
+            if !config.is_thousands() || !is_dec || string.len() < 5 {
                 out.push_str(string);
                 return;
             }
@@ -114,12 +115,12 @@ impl<'ast> State<'_, 'ast> {
         if val.is_empty() {
             out.push('0');
         } else {
-            add_underscores(&mut out, config, val, false);
+            add_underscores(&mut out, config, val, is_dec, false);
         }
         if source.contains('.') {
             out.push('.');
             if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, true);
+                add_underscores(&mut out, config, fract, is_dec, true);
             } else {
                 out.push('0');
             }
@@ -127,7 +128,7 @@ impl<'ast> State<'_, 'ast> {
         if !exp.is_empty() {
             out.push('e');
             out.push_str(exp_sign);
-            add_underscores(&mut out, config, exp, false);
+            add_underscores(&mut out, config, exp, is_dec, false);
         }
 
         self.word(out);
