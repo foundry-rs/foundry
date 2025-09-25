@@ -358,7 +358,10 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
-jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"] }
+jiff = { version = "0.2", default-features = false, features = [
+    "std",
+    "perf-inline",
+] }
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
@@ -422,7 +425,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "74e215d" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", branch = "dani/rm-step_stack" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
