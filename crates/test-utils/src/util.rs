@@ -210,7 +210,7 @@ impl ExtTester {
                     }
                 }
                 Err(e) => {
-                    eprintln!("\n\n{install_cmd:?}: {e}");
+                    test_debug!("\n\n{install_cmd:?}: {e}");
                 }
             }
         }
@@ -220,7 +220,7 @@ impl ExtTester {
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
         if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
+            test_debug!("ETH_RPC_URL is not set; skipping");
             return;
         }
 

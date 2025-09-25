@@ -121,6 +121,7 @@ def main():
                 name += os_str
 
                 flags += " --no-fail-fast"
+                flags += " --no-capture"
 
                 obj = Expanded(
                     name=name,
