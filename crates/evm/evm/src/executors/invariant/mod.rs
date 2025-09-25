@@ -1,8 +1,5 @@
 use crate::{
-    executors::{
-        Executor, RawCallResult,
-        worker_corpus::WorkerCorpus,
-    },
+    executors::{Executor, RawCallResult, corpus::WorkerCorpus},
     inspectors::Fuzzer,
 };
 use alloy_primitives::{

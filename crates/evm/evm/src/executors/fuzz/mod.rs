@@ -1,6 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
-    worker_corpus::WorkerCorpus,
+    corpus::WorkerCorpus,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;

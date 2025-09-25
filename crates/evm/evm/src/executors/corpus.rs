@@ -9,7 +9,6 @@ use foundry_evm_fuzz::{
     invariant::FuzzRunIdentifiedContracts,
     strategies::{EvmFuzzState, mutate_param_value},
 };
-use parking_lot::RwLock;
 use proptest::{
     prelude::{Just, Rng, Strategy},
     prop_oneof,
@@ -20,10 +19,7 @@ use serde::Serialize;
 use std::{
     fmt,
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -32,10 +28,13 @@ const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
 const COVERAGE_MAP_SIZE: usize = 65536;
+const WORKER: &str = "worker";
+const CORPUS_DIR: &str = "corpus";
+const SYNC_DIR: &str = "sync";
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
-pub(crate) enum MutationType {
+enum MutationType {
     /// Splice original call sequence.
     Splice,
     /// Repeat selected call several times.
@@ -52,22 +51,22 @@ pub(crate) enum MutationType {
 
 /// Holds Corpus information.
 #[derive(Clone, Serialize)]
-pub(crate) struct CorpusEntry {
+struct CorpusEntry {
     // Unique corpus identifier.
-    pub(crate) uuid: Uuid,
+    uuid: Uuid,
     // Total mutations of corpus as primary source.
-    pub(crate) total_mutations: usize,
+    total_mutations: usize,
     // New coverage found as a result of mutating this corpus.
-    pub(crate) new_finds_produced: usize,
+    new_finds_produced: usize,
     // Corpus call sequence.
     #[serde(skip_serializing)]
-    pub(crate) tx_seq: Vec<BasicTxDetails>,
+    tx_seq: Vec<BasicTxDetails>,
     // Whether this corpus is favored, i.e. producing new finds more often than
     // `FAVORABILITY_THRESHOLD`.
-    pub(crate) is_favored: bool,
+    is_favored: bool,
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
-    pub(crate) timestamp: u64,
+    timestamp: u64,
 }
 
 impl CorpusEntry {
@@ -104,13 +103,13 @@ impl CorpusEntry {
 #[derive(Serialize, Default)]
 pub(crate) struct CorpusMetrics {
     // Number of edges seen during the invariant run.
-    pub(crate) cumulative_edges_seen: usize,
+    cumulative_edges_seen: usize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
-    pub(crate) cumulative_features_seen: usize,
+    cumulative_features_seen: usize,
     // Number of corpus entries.
-    pub(crate) corpus_count: usize,
+    corpus_count: usize,
     // Number of corpus entries that are favored.
-    pub(crate) favored_items: usize,
+    favored_items: usize,
 }
 
 impl fmt::Display for CorpusMetrics {
@@ -144,40 +143,46 @@ impl CorpusMetrics {
     }
 }
 
-/// Shared corpus used for coverage guided fuzzing campaigns by both stateless and stateful tests.
-#[derive(Clone)]
-pub(crate) struct SharedCorpus {
-    // Corpus configuration.
-    config: Arc<FuzzCorpusConfig>,
-    /// Shared in-memory corpus, populated from the persisted files and runs across multiple
-    /// workers. Mutation is performed on these.
-    ///
-    /// Map of corpus [`Uuid`] to [`CorpusEntry`].
-    in_memory_corpus: Arc<RwLock<Vec<CorpusEntry>>>,
-    /// Number of failed replays from persisted corpus.
-    failed_replays: Arc<AtomicUsize>,
+/// Per-worker corpus manager.
+pub struct WorkerCorpus {
+    /// Worker Id
+    id: u32,
+    /// In-memory corpus entries populated from the persisted files and
+    /// runs administered by this worker.
+    in_memory_corpus: Vec<CorpusEntry>,
     /// History of binned hitcount of edges seen during fuzzing
-    history_map: Arc<RwLock<Vec<u8>>>,
-    /// Corpus metrics.
-    pub(crate) metrics: Arc<RwLock<CorpusMetrics>>,
-}
-
-/// Operates on the [`SharedCorpus`] for coverage guided fuzzing and generating fuzz inputs using
-/// [`CorpusWorker::new_input`] for stateless tests, [`CorpusWorker::new_inputs`] for stateful
-/// tests.
-pub(crate) struct CorpusWorker {
-    /// Shared Corpus
-    corpus: SharedCorpus,
+    history_map: Vec<u8>,
+    /// Number of failed replays from initial corpus
+    pub(crate) failed_replays: usize,
+    /// Worker Metrics
+    pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
-    /// Call sequence mutation strategy type generator.
+    /// Call sequence mutation strategy type generator used by stateful fuzzing.
     mutation_generator: BoxedStrategy<MutationType>,
     /// Identifier of current mutated entry for this worker.
     current_mutated: Option<Uuid>,
+    /// Config
+    config: Arc<FuzzCorpusConfig>,
+    /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
+    new_entry_indices: Vec<usize>,
+    /// Last sync timestamp in seconds.
+    last_sync_timestamp: u64,
+    /// Worker Dir
+    /// corpus_dir/worker1/
+    worker_dir: Option<PathBuf>,
 }
 
-impl CorpusWorker {
-    pub fn new(corpus: SharedCorpus, tx_generator: BoxedStrategy<BasicTxDetails>) -> Self {
+impl WorkerCorpus {
+    pub fn new(
+        id: u32,
+        config: FuzzCorpusConfig,
+        tx_generator: BoxedStrategy<BasicTxDetails>,
+        // Only required by master worker (id = 0) to replay existing corpus
+        executor: Option<&Executor>,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    ) -> eyre::Result<Self> {
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
             Just(MutationType::Repeat),
@@ -188,36 +193,159 @@ impl CorpusWorker {
         ]
         .boxed();
 
-        Self { corpus, tx_generator, mutation_generator, current_mutated: None }
+        let worker_dir = if let Some(corpus_dir) = &config.corpus_dir {
+            // Create the necessary directories for the worker
+            let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
+            let worker_corpus = &worker_dir.join(CORPUS_DIR);
+            let sync_dir = &worker_dir.join(SYNC_DIR);
+
+            if !worker_corpus.is_dir() {
+                foundry_common::fs::create_dir_all(worker_corpus)?;
+            }
+
+            if !sync_dir.is_dir() {
+                foundry_common::fs::create_dir_all(sync_dir)?;
+            }
+
+            Some(worker_dir)
+        } else {
+            None
+        };
+
+        let mut in_memory_corpus = vec![];
+        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        let mut metrics = CorpusMetrics::default();
+        let mut failed_replays = 0;
+
+        if id == 0 && config.corpus_dir.is_some() {
+            // Master worker loads the initial corpus if it exists
+            let corpus_dir = config.corpus_dir.as_ref().unwrap();
+
+            let can_replay_tx = |tx: &BasicTxDetails| -> bool {
+                fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+                    || fuzzed_function.is_some_and(|function| {
+                        tx.call_details
+                            .calldata
+                            .get(..4)
+                            .is_some_and(|selector| function.selector() == selector)
+                    })
+            };
+
+            let executor = executor.expect("Executor required for master worker");
+            'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
+                let path = entry?.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && name.contains(METADATA_SUFFIX)
+                {
+                    // Ignore metadata files
+                    continue;
+                }
+
+                let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("gz") => {
+                        foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
+                    }
+                    _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
+                };
+
+                let Ok(tx_seq) = read_corpus_result else {
+                    trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                    continue;
+                };
+
+                if !tx_seq.is_empty() {
+                    // Warm up history map from loaded sequences.
+                    let mut executor = executor.clone();
+                    for tx in &tx_seq {
+                        if can_replay_tx(tx) {
+                            let mut call_result = executor
+                                .call_raw(
+                                    tx.sender,
+                                    tx.call_details.target,
+                                    tx.call_details.calldata.clone(),
+                                    U256::ZERO,
+                                )
+                                .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+                            let (new_coverage, is_edge) =
+                                call_result.merge_edge_coverage(&mut history_map);
+                            if new_coverage {
+                                metrics.update_seen(is_edge);
+                            }
+
+                            // Commit only when running invariant / stateful tests.
+                            if fuzzed_contracts.is_some() {
+                                executor.commit(&mut call_result);
+                            }
+                        } else {
+                            failed_replays += 1;
+
+                            // If the only input for fuzzed function cannot be replied, then move to
+                            // next one without adding it in memory.
+                            if fuzzed_function.is_some() {
+                                continue 'corpus_replay;
+                            }
+                        }
+                    }
+
+                    metrics.corpus_count += 1;
+
+                    trace!(
+                        target: "corpus",
+                        "load sequence with len {} from corpus file {}",
+                        tx_seq.len(),
+                        path.display()
+                    );
+
+                    // Populate in memory corpus with the sequence from corpus file.
+                    in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
+                }
+            }
+        }
+
+        Ok(Self {
+            id,
+            in_memory_corpus,
+            history_map,
+            failed_replays,
+            metrics,
+            tx_generator,
+            mutation_generator,
+            current_mutated: None,
+            config: config.into(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir,
+        })
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
     pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
-        // Early return if corpus dir / coverage guided fuzzing is not configured.
-        let Some(corpus_dir) = &self.corpus.config.corpus_dir else {
+        let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
 
-        let mut in_mem_write = self.corpus.in_memory_corpus.write();
-        let mut metrics_write = self.corpus.metrics.write();
         // Update stats of current mutated primary corpus.
         if let Some(uuid) = &self.current_mutated {
-            if let Some(corpus) = in_mem_write.iter_mut().find(|corpus| corpus.uuid.eq(uuid)) {
+            if let Some(corpus) =
+                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid.eq(uuid))
+            {
                 corpus.total_mutations += 1;
                 if new_coverage {
                     corpus.new_finds_produced += 1
                 }
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
                     < FAVORABILITY_THRESHOLD;
-                metrics_write.update_favored(is_favored, corpus.is_favored);
+                self.metrics.update_favored(is_favored, corpus.is_favored);
                 corpus.is_favored = is_favored;
 
                 trace!(
                     target: "corpus",
-                    "updated corpus {}, total mutations: {}, new finds: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
+                    "updated worker {} corpus {}, total mutations: {}, new finds: {}",
+                    self.id, corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
                 );
             }
 
@@ -231,33 +359,53 @@ impl CorpusWorker {
 
         let corpus = CorpusEntry::from_tx_seq(inputs);
         let corpus_uuid = corpus.uuid;
-
+        let timestamp = corpus.timestamp;
         // Persist to disk if corpus dir is configured.
-        let write_result = if self.corpus.config.corpus_gzip {
+        let write_result = if self.config.corpus_gzip {
             foundry_common::fs::write_json_gzip_file(
-                corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}.gz")).as_path(),
+                worker_corpus
+                    .join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}.gz"))
+                    .as_path(),
                 &corpus.tx_seq,
             )
         } else {
             foundry_common::fs::write_json_file(
-                corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}")).as_path(),
+                worker_corpus.join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}")).as_path(),
                 &corpus.tx_seq,
             )
         };
 
         if let Err(err) = write_result {
-            debug!(target: "corpus", %err, "Failed to record call sequence {:?}", &corpus.tx_seq);
+            debug!(target: "corpus", %err, "Failed to record call sequence {:?} in worker {}", &corpus.tx_seq, self.id);
         } else {
             trace!(
                 target: "corpus",
-                "persisted {} inputs for new coverage in {corpus_uuid} corpus",
-                &corpus.tx_seq.len()
+                "persisted {} inputs for new coverage in worker {} for {corpus_uuid} corpus",
+                self.id, &corpus.tx_seq.len()
             );
         }
+
+        // Track in-memory corpus changes to update MasterWorker on sync
+        let new_index = self.in_memory_corpus.len();
+        self.new_entry_indices.push(new_index);
+
         // This includes reverting txs in the corpus and `can_continue` removes
         // them. We want this as it is new coverage and may help reach the other branch.
-        metrics_write.corpus_count += 1;
-        in_mem_write.push(corpus);
+        self.metrics.corpus_count += 1;
+        self.in_memory_corpus.push(corpus);
+    }
+
+    /// Collects coverage from call result and updates metrics.
+    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+        if !self.config.collect_edge_coverage() {
+            return false;
+        }
+
+        let (new_coverage, is_edge) = call_result.merge_edge_coverage(&mut self.history_map);
+        if new_coverage {
+            self.metrics.update_seen(is_edge);
+        }
+        new_coverage
     }
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
@@ -272,13 +420,12 @@ impl CorpusWorker {
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
         // configured.
-        if !self.corpus.config.is_coverage_guided() {
+        if !self.config.is_coverage_guided() {
             new_seq.push(self.new_tx(test_runner)?);
             return Ok(new_seq);
         };
 
-        let in_mem_read = self.corpus.in_memory_corpus.read();
-        if !in_mem_read.is_empty() {
+        if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
 
             let mutation_type = self
@@ -286,10 +433,11 @@ impl CorpusWorker {
                 .new_tree(test_runner)
                 .map_err(|err| eyre!("Could not generate mutation type {err}"))?
                 .current();
+
             let rng = test_runner.rng();
-            let corpus_len = in_mem_read.len();
-            let primary = &in_mem_read[rng.random_range(0..corpus_len)];
-            let secondary = &in_mem_read[rng.random_range(0..corpus_len)];
+            let corpus_len = self.in_memory_corpus.len();
+            let primary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
+            let secondary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
 
             match mutation_type {
                 MutationType::Splice => {
@@ -389,7 +537,7 @@ impl CorpusWorker {
     }
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
-    /// than configured max mutations value. Used by fuzz test campaigns.
+    /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
     pub fn new_input(
         &mut self,
         test_runner: &mut TestRunner,
@@ -397,15 +545,15 @@ impl CorpusWorker {
         function: &Function,
     ) -> eyre::Result<Bytes> {
         // Early return if not running with coverage guided fuzzing.
-        if !self.corpus.config.is_coverage_guided() {
+        if !self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
         }
 
         self.evict_oldest_corpus()?;
 
-        let in_mem_read = self.corpus.in_memory_corpus.read();
-        let tx = if !in_mem_read.is_empty() {
-            let corpus = &in_mem_read[test_runner.rng().random_range(0..in_mem_read.len())];
+        let tx = if !self.in_memory_corpus.is_empty() {
+            let corpus = &self.in_memory_corpus
+                [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let new_seq = corpus.tx_seq.clone();
             let mut tx = new_seq.first().unwrap().clone();
@@ -442,7 +590,7 @@ impl CorpusWorker {
     ) -> eyre::Result<BasicTxDetails> {
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
-        if self.corpus.config.corpus_dir.is_none() || discarded {
+        if self.config.corpus_dir.is_none() || discarded {
             return self.new_tx(test_runner);
         }
 
@@ -458,34 +606,41 @@ impl CorpusWorker {
 
     /// Flush the oldest corpus mutated more than configured max mutations unless they are
     /// favored.
-    fn evict_oldest_corpus(&self) -> eyre::Result<()> {
-        let mut in_mem_write = self.corpus.in_memory_corpus.write();
-        if in_mem_write.len() > self.corpus.config.corpus_min_size.max(1)
-            && let Some(index) = in_mem_write.iter().position(|corpus| {
-                corpus.total_mutations > self.corpus.config.corpus_min_mutations
-                    && !corpus.is_favored
+    fn evict_oldest_corpus(&mut self) -> eyre::Result<()> {
+        if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
+            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+                corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
             })
         {
-            let corpus = in_mem_write.get(index).unwrap();
+            let corpus = self.in_memory_corpus.get(index).unwrap();
 
             let uuid = corpus.uuid;
-            debug!(target: "corpus", "evict corpus {uuid}");
+            debug!(target: "corpus", "evict corpus {uuid} in worker {}", self.id);
 
             // Flush to disk the seed metadata at the time of eviction.
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             foundry_common::fs::write_json_file(
-                self.corpus
-                    .config
-                    .corpus_dir
+                self.worker_dir
                     .clone()
                     .unwrap()
+                    .join(format!("{WORKER}{}", self.id)) // Worker dir
                     .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
                     .as_path(),
                 &corpus,
             )?;
 
             // Remove corpus from memory.
-            in_mem_write.remove(index);
+            self.in_memory_corpus.remove(index);
+
+            // Adjust the tracked indices
+            self.new_entry_indices.retain_mut(|i| {
+                if *i > index {
+                    *i -= 1; // Shift indices down
+                    true // Keep this index
+                } else {
+                    *i != index // Remove if it's the deleted index, keep otherwise
+                }
+            });
         }
         Ok(())
     }
@@ -534,49 +689,116 @@ impl CorpusWorker {
         Ok(())
     }
 
-    /// Collects coverage from call result and updates metrics.
-    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
-        if !self.corpus.config.collect_edge_coverage() {
-            return false;
+    // Sync Methods
+
+    /// Exports the new corpus entries to the master workers (id = 0) sync dir.
+    fn export(&self) -> eyre::Result<()> {
+        // Early return if no new entries or corpus dir not configured
+        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
+            return Ok(());
         }
 
-        let mut history_map_write = self.corpus.history_map.write();
-        let (new_coverage, is_edge) = call_result.merge_edge_coverage(&mut history_map_write);
-        if new_coverage {
-            self.corpus.metrics.write().update_seen(is_edge);
+        let worker_dir = self.worker_dir.as_ref().unwrap();
+
+        // Master doesn't export (it only receives from others)
+        if self.id == 0 {
+            return Ok(());
         }
-        new_coverage
+
+        let Some(master_sync_dir) = self
+            .config
+            .corpus_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{WORKER}0")).join(SYNC_DIR))
+        else {
+            return Ok(());
+        };
+
+        let mut exported = 0;
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        for &index in &self.new_entry_indices {
+            if let Some(entry) = self.in_memory_corpus.get(index) {
+                let ext = self
+                    .config
+                    .corpus_gzip
+                    .then_some(format!("{JSON_EXTENSION}.gz"))
+                    .unwrap_or(JSON_EXTENSION.to_string());
+                let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
+                let file_path = corpus_dir.join(&file_name);
+                let sync_path = master_sync_dir.join(&file_name);
+
+                let Ok(_) = foundry_common::fs::copy(file_path, sync_path) else {
+                    debug!(target: "corpus", "failed to export corpus {} from worker {}", entry.uuid, self.id);
+                    continue;
+                };
+
+                exported += 1;
+            }
+        }
+
+        trace!(target: "corpus", "exported {exported} new corpus entries from worker {}", self.id);
+
+        Ok(())
     }
-}
 
-impl SharedCorpus {
-    pub fn new(
-        config: FuzzCorpusConfig,
+    /// Imports the new corpus entries tx sequence which will be used to replay and update history
+    /// map.
+    fn import(&self) -> eyre::Result<Vec<Vec<BasicTxDetails>>> {
+        let Some(worker_dir) = &self.worker_dir else {
+            return Ok(vec![]);
+        };
+
+        let sync_dir = worker_dir.join(SYNC_DIR);
+        if !sync_dir.is_dir() {
+            return Ok(vec![]);
+        }
+
+        let mut imports = vec![];
+        for entry in std::fs::read_dir(sync_dir)? {
+            let Ok(entry) = entry else {
+                continue;
+            };
+
+            // Get the uuid and timestamp from the filename
+            let timestamp = if let Some(name) = entry.file_name().to_str()
+                && let Ok((_, timestamp)) = parse_corpus_filename(name)
+            {
+                timestamp
+            } else {
+                continue;
+            };
+
+            if timestamp <= self.last_sync_timestamp {
+                // TODO: Delete synced file
+                continue;
+            }
+
+            let corpus = if self.config.corpus_gzip {
+                foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&entry.path())?
+            } else {
+                foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&entry.path())?
+            };
+
+            imports.push(corpus);
+        }
+
+        Ok(imports)
+    }
+
+    /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
+    /// found from the corpus findings of other workers.
+    fn calibrate(
+        &mut self,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    ) -> eyre::Result<Self> {
-        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
-        let mut metrics = CorpusMetrics::default();
-        let mut in_memory_corpus = vec![];
-        let failed_replays = AtomicUsize::new(0);
-
-        // Early return if corpus dir / coverage guided fuzzing not configured.
-        let Some(corpus_dir) = &config.corpus_dir else {
-            return Ok(Self {
-                config: config.into(),
-                in_memory_corpus: Arc::new(RwLock::new(in_memory_corpus)),
-                failed_replays: failed_replays.into(),
-                history_map: Arc::new(RwLock::new(history_map)),
-                metrics: Arc::new(RwLock::new(metrics)),
-            });
+    ) -> eyre::Result<()> {
+        let Some(worker_dir) = &self.worker_dir else {
+            return Ok(());
         };
 
-        // Ensure corpus dir for current test is created.
-        if !corpus_dir.is_dir() {
-            foundry_common::fs::create_dir_all(corpus_dir)?;
-        }
-
+        // Helper to check if tx can be replayed
         let can_replay_tx = |tx: &BasicTxDetails| -> bool {
             fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
                 || fuzzed_function.is_some_and(|function| {
@@ -587,91 +809,180 @@ impl SharedCorpus {
                 })
         };
 
-        'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
-            let path = entry?.path();
-            if path.is_file()
-                && let Some(name) = path.file_name().and_then(|s| s.to_str())
-                && name.contains(METADATA_SUFFIX)
-            {
-                // Ignore metadata files
-                continue;
-            }
+        let sync_dir = worker_dir.join(SYNC_DIR);
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-            let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
-                Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
-                _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
-            };
-
-            let Ok(tx_seq) = read_corpus_result else {
-                trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                continue;
-            };
-
+        let mut executor = executor.clone();
+        for tx_seq in self.import()? {
             if !tx_seq.is_empty() {
-                // Warm up history map from loaded sequences.
-                let mut executor = executor.clone();
+                let mut new_coverage_on_sync = false;
                 for tx in &tx_seq {
                     if can_replay_tx(tx) {
-                        let mut call_result = executor
-                            .call_raw(
-                                tx.sender,
-                                tx.call_details.target,
-                                tx.call_details.calldata.clone(),
-                                U256::ZERO,
-                            )
-                            .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+                        let mut call_result = executor.call_raw(
+                            tx.sender,
+                            tx.call_details.target,
+                            tx.call_details.calldata.clone(),
+                            U256::ZERO,
+                        )?;
 
+                        // Check if this provides new coverage
                         let (new_coverage, is_edge) =
-                            call_result.merge_edge_coverage(&mut history_map);
+                            call_result.merge_edge_coverage(&mut self.history_map);
+
                         if new_coverage {
-                            metrics.update_seen(is_edge);
+                            self.metrics.update_seen(is_edge);
+                            new_coverage_on_sync = true;
                         }
 
-                        // Commit only when running invariant / stateful tests.
+                        // Commit only for stateful tests
                         if fuzzed_contracts.is_some() {
                             executor.commit(&mut call_result);
                         }
-                    } else {
-                        failed_replays.fetch_add(1, Ordering::Relaxed);
 
-                        // If the only input for fuzzed function cannot be replied, then move to
-                        // next one without adding it in memory.
-                        if fuzzed_function.is_some() {
-                            continue 'corpus_replay;
-                        }
+                        trace!(
+                            target: "corpus",
+                            %new_coverage,
+                            "replayed tx for syncing worker {}: {:?}",
+                            self.id, &tx
+                        );
                     }
                 }
 
-                metrics.corpus_count += 1;
+                if new_coverage_on_sync {
+                    let corpus_entry = CorpusEntry::from_tx_seq(&tx_seq);
+                    let ext = self
+                        .config
+                        .corpus_gzip
+                        .then_some(format!("{JSON_EXTENSION}.gz"))
+                        .unwrap_or(JSON_EXTENSION.to_string());
 
-                trace!(
-                    target: "corpus",
-                    "load sequence with len {} from corpus file {}",
-                    tx_seq.len(),
-                    path.display()
-                );
+                    let file_name =
+                        format!("{}-{}{ext}", corpus_entry.uuid, corpus_entry.timestamp);
 
-                // Populate in memory corpus with the sequence from corpus file.
+                    // Move file from sync/ to corpus/ directory
+                    let sync_path = sync_dir.join(&file_name);
+                    let corpus_path = corpus_dir.join(&file_name);
 
-                in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
+                    let Ok(_) = std::fs::rename(&sync_path, &corpus_path) else {
+                        debug!(target: "corpus", "failed to move synced corpus {} from {sync_path:?} to {corpus_path:?} dir in worker {}", corpus_entry.uuid, self.id);
+                        continue;
+                    };
+
+                    trace!(
+                        target: "corpus",
+                        "moved synced corpus {} to corpus dir in worker {}",
+                        corpus_entry.uuid, self.id
+                    );
+
+                    self.in_memory_corpus.push(corpus_entry);
+                }
             }
         }
 
-        Ok(Self {
-            config: config.into(),
-            in_memory_corpus: Arc::new(RwLock::new(in_memory_corpus)),
-            failed_replays: failed_replays.into(),
-            history_map: Arc::new(RwLock::new(history_map)),
-            metrics: Arc::new(RwLock::new(metrics)),
-        })
+        let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        trace!(target: "corpus", "sync complete for worker {}, updating last sync time to {}",
+            self.id,
+            last_sync
+        );
+        self.last_sync_timestamp = last_sync;
+
+        Ok(())
     }
 
-    pub fn new_worker(&self, tx_generator: BoxedStrategy<BasicTxDetails>) -> CorpusWorker {
-        CorpusWorker::new(self.clone(), tx_generator)
+    /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
+    /// of other workers.
+    fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
+        if self.id != 0 || self.worker_dir.is_none() {
+            return Ok(());
+        }
+
+        let worker_dir = self.worker_dir.as_ref().unwrap();
+        let master_corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        for target_worker in 1..num_workers {
+            let target_dir = self
+                .config
+                .corpus_dir
+                .as_ref()
+                .unwrap()
+                .join(format!("{WORKER}{target_worker}"))
+                .join(SYNC_DIR);
+
+            if !target_dir.is_dir() {
+                foundry_common::fs::create_dir_all(&target_dir)?;
+            }
+
+            for entry in std::fs::read_dir(&master_corpus_dir)? {
+                let Ok(entry) = entry else {
+                    continue;
+                };
+
+                let path = entry.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && !name.contains(METADATA_SUFFIX)
+                {
+                    let sync_path = target_dir.join(name);
+
+                    let Ok((_, timestamp)) = parse_corpus_filename(name) else {
+                        continue;
+                    };
+
+                    if timestamp > self.last_sync_timestamp {
+                        let Ok(_) = foundry_common::fs::copy(&path, &sync_path) else {
+                            debug!(target: "corpus", "failed to distribute corpus {} from worker {} to {target_dir:?}", name, self.id);
+                            continue;
+                        };
+
+                        trace!(target: "corpus", "distributed corpus {} from worker {} to {target_dir:?}", name, self.id);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
-    /// Returns campaign failed replays.
-    pub fn failed_replays(self) -> usize {
-        self.failed_replays.load(Ordering::Relaxed)
+    /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
+    pub fn sync(
+        &mut self,
+        num_workers: usize,
+        executor: &Executor,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    ) -> eyre::Result<()> {
+        if self.id == 0 {
+            // Master worker
+            self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
+
+            self.distribute(num_workers)?;
+
+            self.new_entry_indices.clear();
+
+            trace!(target: "corpus", "master worker synced");
+
+            return Ok(());
+        }
+
+        self.export()?;
+
+        self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
+
+        self.new_entry_indices.clear();
+
+        trace!(target: "corpus", "synced worker {}", self.id);
+
+        Ok(())
     }
+}
+
+/// Parses the corpus filename and returns the uuid and timestamp associated with it.
+fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
+    let name = name.trim_end_matches(".gz").trim_end_matches(JSON_EXTENSION);
+
+    let parts = name.rsplitn(2, "-").collect::<Vec<_>>();
+    let uuid = Uuid::parse_str(parts[0])?;
+    let timestamp = parts[1].parse()?;
+
+    Ok((uuid, timestamp))
 }
