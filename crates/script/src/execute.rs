@@ -335,10 +335,11 @@ impl ExecutedState {
             .with_label_disabled(self.args.disable_labels)
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_etherscan(
-            &self.script_config.config,
-            self.script_config.evm_opts.get_remote_chain_id().await,
-        )?;
+        let mut identifier =
+            TraceIdentifiers::new().with_local(known_contracts).with_sourcify().with_etherscan(
+                &self.script_config.config,
+                self.script_config.evm_opts.get_remote_chain_id().await,
+            )?;
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);

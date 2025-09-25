@@ -12,6 +12,9 @@ pub use local::LocalTraceIdentifier;
 mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
+mod sourcify;
+pub use sourcify::SourceifyIdentifier;
+
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
 
@@ -43,6 +46,8 @@ pub struct TraceIdentifiers<'a> {
     pub local: Option<LocalTraceIdentifier<'a>>,
     /// The optional Etherscan trace identifier.
     pub etherscan: Option<EtherscanIdentifier>,
+    /// The optional Sourcify trace identifier.
+    pub sourcify: Option<SourceifyIdentifier>,
 }
 
 impl Default for TraceIdentifiers<'_> {
@@ -60,6 +65,9 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
                 return identities;
             }
         }
+        if let Some(sourcify) = &mut self.sourcify {
+            identities.extend(sourcify.identify_addresses(nodes));
+        }
         if let Some(etherscan) = &mut self.etherscan {
             identities.extend(etherscan.identify_addresses(nodes));
         }
@@ -70,7 +78,7 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
 impl<'a> TraceIdentifiers<'a> {
     /// Creates a new, empty instance.
     pub const fn new() -> Self {
-        Self { local: None, etherscan: None }
+        Self { local: None, etherscan: None, sourcify: None }
     }
 
     /// Sets the local identifier.
@@ -96,8 +104,14 @@ impl<'a> TraceIdentifiers<'a> {
         Ok(self)
     }
 
+    /// Sets the sourcify identifier.
+    pub fn with_sourcify(mut self) -> Self {
+        self.sourcify = Some(SourceifyIdentifier::new());
+        self
+    }
+
     /// Returns `true` if there are no set identifiers.
     pub fn is_empty(&self) -> bool {
-        self.local.is_none() && self.etherscan.is_none()
+        self.local.is_none() && self.etherscan.is_none() && self.sourcify.is_none()
     }
 }

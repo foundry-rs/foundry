@@ -35,6 +35,7 @@ revm-inspectors.workspace = true
 eyre.workspace = true
 futures.workspace = true
 itertools.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
