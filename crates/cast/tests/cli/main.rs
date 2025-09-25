@@ -4136,18 +4136,24 @@ casttest!(run_celo_with_precompiles, |_prj, cmd| {
     cmd.args([
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
+        "--quick",
         "--rpc-url",
         rpc.as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [17776] 0x471EcE3750Da237f93B8E339c536989b8978a438::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17])
     ├─ [12370] 0xFeA1B35f1D5f2A58532a70e7A32e6F2D3Bc4F7B1::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17]) [delegatecall]
     │   ├─ [9000] CELO_TRANSFER_PRECOMPILE::00000000(00000000000000008106680ba7095cfd8f4351a8b7041da3060afb83000000000000000000000000d2eb2d37d238caeff39cfa36a013299c6dbac56a00000000000000000000000000000000000000000000000001ea4644d3010000)
     │   │   └─ ← [Return]
-...
+    │   ├─ emit Transfer(param0: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, param1: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, param2: 138000000000000000 [1.38e17])
+    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });
