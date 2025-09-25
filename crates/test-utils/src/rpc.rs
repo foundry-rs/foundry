@@ -2,7 +2,9 @@
 
 use foundry_config::{
     NamedChain,
-    NamedChain::{Arbitrum, Base, BinanceSmartChainTestnet, Mainnet, Optimism, Polygon, Sepolia},
+    NamedChain::{
+        Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+    },
 };
 use rand::seq::SliceRandom;
 use std::sync::{
@@ -126,14 +128,14 @@ pub fn next_ws_archive_rpc_url() -> String {
 fn next_archive_url(is_ws: bool) -> String {
     let domain = next(if is_ws { &WS_ARCHIVE_DOMAINS } else { &HTTP_ARCHIVE_DOMAINS });
     let url = if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") };
-    eprintln!("--- next_archive_url(is_ws={is_ws}) = {url} ---");
+    test_debug!("next_archive_url(is_ws={is_ws}) = {url}");
     url
 }
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
     let key = next(&ETHERSCAN_KEYS).to_string();
-    eprintln!("--- next_etherscan_api_key() = {key} ---");
+    test_debug!("next_etherscan_api_key() = {key}");
     key
 }
 
@@ -148,6 +150,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 
     if matches!(chain, BinanceSmartChainTestnet) {
         return "https://bsc-testnet-rpc.publicnode.com".to_string();
+    }
+
+    if matches!(chain, Celo) {
+        return "https://celo.drpc.org".to_string();
     }
 
     let reth_works = true;
@@ -169,7 +175,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 
     let url = if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") };
 
-    eprintln!("--- next_url(is_ws={is_ws}, chain={chain:?}) = {url} ---");
+    test_debug!("next_url(is_ws={is_ws}, chain={chain:?}) = {url}");
     url
 }
 

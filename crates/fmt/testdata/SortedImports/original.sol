@@ -6,8 +6,8 @@ import "SomeFile0.sol" as SomeOtherFile;
 import "AnotherFile2.sol" as SomeSymbol;
 import "AnotherFile1.sol" as SomeSymbol;
 
-import {symbol2, symbol1 as alias} from "File3.sol";
-import {symbol2, symbol1 as alias} from "File2.sol";
+import {symbol2, symbol1 as alias0} from "File3.sol";
+import {symbol2, symbol1 as alias0} from "File2.sol";
 import {symbol2 as alias2, symbol1 as alias1, symbol3 as alias3, symbol4} from "File6.sol";
 import {symbol3 as alias1, symbol2 as alias2, symbol1 as alias3, symbol4} from "File0.sol";
 
@@ -18,6 +18,6 @@ import {Something3, Something2} from "someFile.sol";
 // This is a comment
 import {Something3, Something2} from "someFile.sol";
 
-import {symbol2, symbol1 as alias} from "File3.sol";
+import {symbol2, symbol1 as alias0} from "File3.sol";
 // comment inside group is treated as a separator for now
-import {symbol2, symbol1 as alias} from "File2.sol";
+import {symbol2, symbol1 as alias0} from "File2.sol";

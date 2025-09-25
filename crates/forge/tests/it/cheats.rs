@@ -3,14 +3,14 @@ use crate::{
     config::*,
     test_helpers::{
         ForgeTestData, ForgeTestProfile, RE_PATH_SEPARATOR, TEST_DATA_DEFAULT,
-        TEST_DATA_MULTI_VERSION, TEST_DATA_PARIS, get_compiled,
+        TEST_DATA_MULTI_VERSION, TEST_DATA_PARIS,
     },
 };
 use alloy_primitives::U256;
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{FsPermissions, fs_permissions::PathPermission};
-use foundry_test_utils::{Filter, init_tracing};
+use foundry_test_utils::{Filter, init_tracing, util::get_compiled};
 
 /// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode or
 /// specific seed.
@@ -26,7 +26,7 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
 
     if cfg!(feature = "isolate-by-default") {
         filter = filter.exclude_contracts(
-            "(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|RecordAccount)",
+            "(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount)",
         );
     }
 

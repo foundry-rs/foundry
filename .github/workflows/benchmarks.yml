@@ -1,5 +1,7 @@
 name: Foundry Benchmarks
 
+permissions: {}
+
 on:
   workflow_dispatch:
     inputs:
@@ -18,22 +20,23 @@ on:
         type: string
         default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
-permissions:
-  contents: write
-  pull-requests: write
-
 env:
   ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
   VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
   DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   run-benchmarks:
     name: Run All Benchmarks
     runs-on: foundry-runner
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -41,26 +44,28 @@ jobs:
           sudo apt-get install -y build-essential pkg-config
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
-          workspaces: |
-            ./
+          toolchain: stable
+
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
       - name: Setup Foundry
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
 
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
 
@@ -150,13 +155,18 @@ jobs:
   publish-results:
     name: Publish Results
     needs: run-benchmarks
-    runs-on: foundry-runner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Download benchmark results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: benchmark-results
           path: benches/
@@ -169,7 +179,7 @@ jobs:
 
       - name: Create PR for manual runs
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const branchName = '${{ needs.run-benchmarks.outputs.branch_name }}';
@@ -197,7 +207,7 @@ jobs:
 
       - name: Comment on PR
         if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};

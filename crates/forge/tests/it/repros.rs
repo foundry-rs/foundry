@@ -349,9 +349,9 @@ test_repro!(8004);
 
 // https://github.com/foundry-rs/foundry/issues/2851
 test_repro!(2851, false, None, |res| {
-    let mut res = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
-    let test = res.test_results.remove("invariantNotZero()").unwrap();
-    assert_eq!(test.status, TestStatus::Failure);
+    let mut suite_result = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
+    let tr = suite_result.test_results.remove("invariantNotZero()").unwrap();
+    assert_eq!(tr.status, TestStatus::Failure, "{tr}");
 });
 
 // https://github.com/foundry-rs/foundry/issues/8006
@@ -415,10 +415,10 @@ test_repro!(10552);
 test_repro!(10586);
 
 // https://github.com/foundry-rs/foundry/issues/10957
-test_repro!(
-    #[ignore = "reth is currently slightly broken"]
-    10957
-);
+test_repro!(10957);
 
 // https://github.com/foundry-rs/foundry/issues/11353
 test_repro!(11353);
+
+// https://github.com/foundry-rs/foundry/issues/11616
+test_repro!(11616);
