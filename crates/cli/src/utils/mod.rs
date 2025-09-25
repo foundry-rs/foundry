@@ -286,15 +286,7 @@ impl CommandUtils for Command {
                 format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
             };
 
-            let mut name = self.get_program().to_string_lossy();
-            if let Some(arg) = self.get_args().next() {
-                let arg = arg.to_string_lossy();
-                if !arg.starts_with('-') {
-                    let name = name.to_mut();
-                    name.push(' ');
-                    name.push_str(&arg);
-                }
-            }
+            let name = self.get_program().to_string_lossy();
 
             let mut err = match output.status.code() {
                 Some(code) => format!("{name} exited with code {code}"),
