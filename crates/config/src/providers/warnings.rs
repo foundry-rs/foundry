@@ -3,6 +3,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map, Value},
 };
+use heck::ToSnakeCase;
 use std::collections::BTreeMap;
 
 /// Generate warnings for unknown sections and deprecated keys
@@ -81,6 +82,39 @@ impl<P: Provider> WarningsProvider<P> {
                 .flat_map(BTreeMap::keys)
                 .filter_map(deprecated_key_warning),
         );
+
+        // Add warning for unknown keys within the active profile table (root keys only here).
+        // Determine allowed top-level keys by serializing default Config to dict.
+        // Note: this only checks keys under [profile.<active>] and does not dive into nested
+        // subtables.
+        if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
+            && let Some(default_dict) = default_map.get(&Config::DEFAULT_PROFILE)
+        {
+            let allowed_keys: std::collections::BTreeSet<String> =
+                default_dict.keys().cloned().collect();
+
+            let active_profile_dict = data
+                .get(&figment::Profile::new(Config::PROFILE_SECTION))
+                .and_then(|dict| dict.get(self.profile.as_str().as_str()))
+                .and_then(Value::as_dict);
+
+            if let Some(profile_dict) = active_profile_dict {
+                for key in profile_dict.keys() {
+                    if !allowed_keys.contains(key)
+                        && !allowed_keys.contains(&key.to_snake_case())
+                        && key != "extends"
+                        && key != "__warnings"
+                    {
+                        let source = self.provider.metadata().source.map(|s| s.to_string());
+                        out.push(Warning::UnknownKey {
+                            key: key.clone(),
+                            profile: Some(self.profile.to_string()),
+                            source,
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(out)
     }
