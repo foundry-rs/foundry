@@ -821,7 +821,15 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_expr(init);
             } else {
-                if pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false) {
+                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &init.kind {
+                    self.estimate_size(call_expr.span) + pre_init_size > init_space_left
+                } else {
+                    false
+                };
+
+                if (pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false))
+                    || callee_doesnt_fit
+                {
                     self.s.ibox(self.ind);
                 } else {
                     self.s.ibox(0);
@@ -833,7 +841,9 @@ impl<'ast> State<'_, 'ast> {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
-                        if init_size + pre_init_size + 1 >= init_space_left
+                        if callee_doesnt_fit {
+                            self.print_sep(Separator::Space);
+                        } else if init_size + pre_init_size + 1 >= init_space_left
                             && init_size + self.config.tab_width < init_space_left
                             && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {

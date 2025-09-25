@@ -120,6 +120,7 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
+    debug: bool,
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -203,6 +204,7 @@ impl<'sess> State<'sess, '_> {
         comments: Comments,
     ) -> Self {
         Self {
+            debug: false,
             s: pp::Printer::new(
                 config.line_length,
                 if matches!(config.style, IndentStyle::Tab) {
@@ -367,15 +369,20 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut prev_with_semicolon) = (0, false);
+            let (mut size, mut prev_needs_space) = (0, false);
             for line in snip.lines() {
-                if prev_with_semicolon {
-                    // If previous line ended with ';' a hardbreak is required.
+                if prev_needs_space {
+                    // Previous line ended with a bracket and config with bracket spacing.
+                    // Previous line ended with ',' a hardbreak or a space are required.
+                    // Previous line ended with ';' a hardbreak is required.
                     size += 1;
                 }
                 size += line.trim().len();
 
-                prev_with_semicolon = line.ends_with(';');
+                prev_needs_space = self.config.bracket_spacing
+                    && (line.ends_with('(') || line.ends_with('{'))
+                    || line.ends_with(',')
+                    || line.ends_with(';');
             }
             return size;
         }

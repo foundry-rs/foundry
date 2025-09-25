@@ -135,13 +135,6 @@ contract Orchestrator {
             recipient,
             minBuyAmount
         );
-        uint256 globalBuyAmount = Take.take(
-            state,
-            notes,
-            uint32(IPoolManager.take.selector),
-            recipient,
-            minBuyAmount
-        );
 
         {
             u.executionData = _transferExecution(
@@ -150,9 +143,19 @@ contract Orchestrator {
             u.executionData = _transferExecution(
                 address(paymentToken), address(0xabcd), 1 ether
             );
-            u.executionData = _transferExecution(
-                address(paymentToken), address(0xabcd), 1 ether
-            );
         }
+
+        ISettlerBase.AllowedSlippage memory allowedSlippage =
+            ISettlerBase.AllowedSlippage({
+                recipient: payable(address(0)),
+                buyToken: IERC20(address(0)),
+                minAmountOut: 0
+            });
+        ISettlerBase.AllowedSlippage memory allowedSlippage =
+            ISettlerBase.AllowedSlippage({
+                recipient: payable(address(0)),
+                buyToken: IERC20(address(0)),
+                minAmountOut: 0
+            });
     }
 }
