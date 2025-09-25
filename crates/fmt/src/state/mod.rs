@@ -379,8 +379,8 @@ impl State<'_, '_> {
                 }
                 size += line.trim().len();
 
-                prev_needs_space = self.config.bracket_spacing
-                    && (line.ends_with('(') || line.ends_with('{'))
+                prev_needs_space = (self.config.bracket_spacing
+                    && (line.ends_with('(') || line.ends_with('{')))
                     || line.ends_with(',')
                     || line.ends_with(';');
             }
