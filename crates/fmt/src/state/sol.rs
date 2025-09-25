@@ -822,9 +822,9 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(init);
             } else {
                 let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &init.kind {
-                    let calle_size = get_callee_head_size(call_expr);
-                    calle_size + pre_init_size > init_space_left
-                        && calle_size + self.config.tab_width < init_space_left
+                    let callee_size = get_callee_head_size(call_expr);
+                    callee_size + pre_init_size > init_space_left
+                        && callee_size + self.config.tab_width < init_space_left
                 } else {
                     false
                 };
