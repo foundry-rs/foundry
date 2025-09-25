@@ -233,6 +233,7 @@ alloy-provider = { version = "1.0.36", default-features = false }
 alloy-pubsub = { version = "1.0.36", default-features = false }
 alloy-rpc-client = { version = "1.0.36", default-features = false }
 alloy-rpc-types = { version = "1.0.36", default-features = true }
+alloy-rpc-types-beacon = { version = "1.0.36", default-features = true }
 alloy-serde = { version = "1.0.36", default-features = false }
 alloy-signer = { version = "1.0.36", default-features = false }
 alloy-signer-aws = { version = "1.0.36", default-features = false }
