@@ -135,7 +135,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: Option<BinOpGroup>,
     return_bin_expr: bool,
     var_init: bool,
-    fn_body: bool,
+    block_depth: usize,
     call_stack: CallStack,
 }
 
@@ -223,7 +223,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: None,
             return_bin_expr: false,
             var_init: false,
-            fn_body: false,
+            block_depth: 0,
             call_stack: CallStack::default(),
         }
     }
@@ -231,10 +231,7 @@ impl<'sess> State<'sess, '_> {
     fn space_left(&self) -> usize {
         std::cmp::min(
             self.s.space_left(),
-            self.config
-                .line_length
-                .saturating_sub(if self.fn_body { self.config.tab_width } else { 0 })
-                .saturating_sub(if self.contract.is_some() { self.config.tab_width } else { 0 }),
+            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
         )
     }
 
@@ -370,16 +367,15 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut first_line) = (0, true);
+            let (mut size, mut prev_with_semicolon) = (0, false);
             for line in snip.lines() {
-                size += line.trim().len();
-
-                // Subsequent lines require either a hardbreak or a space.
-                if first_line {
-                    first_line = false;
-                } else {
+                if prev_with_semicolon {
+                    // If previous line ended with ';' a hardbreak is required.
                     size += 1;
                 }
+                size += line.trim().len();
+
+                prev_with_semicolon = line.ends_with(';');
             }
             return size;
         }

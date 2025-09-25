@@ -77,3 +77,17 @@ function returnLongBinaryOp() returns (bytes32) {
     return
         bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
+
+contract Orchestrator {
+    function test() public {
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+
+        {
+            u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+            u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+            u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+        }
+    }
+}

@@ -516,6 +516,9 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
+        // update block depth
+        self.block_depth += 1;
+
         // Print multiline block comments.
         let block_lo = get_block_span(&block[0]).lo();
         match block_format {
@@ -626,6 +629,9 @@ impl<'ast> State<'_, 'ast> {
         if block_format.with_braces() {
             self.print_word("}");
         }
+
+        // restore block depth
+        self.block_depth -= 1;
     }
 
     fn print_single_line_block<T: Debug>(

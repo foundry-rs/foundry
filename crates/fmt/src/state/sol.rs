@@ -311,6 +311,9 @@ impl<'ast> State<'_, 'ast> {
         self.print_word("{");
         self.end();
         if !body.is_empty() {
+            // update block depth
+            self.block_depth += 1;
+
             self.print_sep(Separator::Hardbreak);
             if self.config.contract_new_lines {
                 self.hardbreak();
@@ -345,6 +348,9 @@ impl<'ast> State<'_, 'ast> {
             if self.config.contract_new_lines {
                 self.hardbreak_if_nonempty();
             }
+
+            // restore block depth
+            self.block_depth -= 1;
         } else {
             if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
                 self.zerobreak();
@@ -544,10 +550,6 @@ impl<'ast> State<'_, 'ast> {
 
         // Print fn body
         if let Some(body) = body {
-            // update cache
-            let cache = self.fn_body;
-            self.fn_body = true;
-
             if self.handle_span(self.cursor.span(body_span.lo()), false) {
                 // Print spacing if necessary. Updates cursor.
             } else {
@@ -589,9 +591,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word("}");
                 self.cursor.advance_to(body_span.hi(), true);
             }
-
-            // restore cache
-            self.fn_body = cache;
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
@@ -601,7 +600,6 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_word(";");
         }
-        self.fn_body = false;
 
         if let Some(cmnt) = self.peek_trailing_comment(body_span.hi(), None) {
             if cmnt.is_doc {
