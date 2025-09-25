@@ -116,7 +116,7 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: depot-ubuntu-22.04-arm-16
+          - runner: depot-ubuntu-22.04-16
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: alpine
