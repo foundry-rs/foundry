@@ -580,6 +580,8 @@ impl WorkerCorpus {
         Ok(imports)
     }
 
+    /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
+    /// found from the corpus findings of other workers.
     pub fn calibrate(
         &mut self,
         executor: &Executor,
