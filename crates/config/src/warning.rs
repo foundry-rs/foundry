@@ -46,6 +46,15 @@ pub enum Warning {
         /// is being removed completely without replacement
         new: String,
     },
+    /// An unknown key was encountered in a profile in a TOML file
+    UnknownKey {
+        /// The unknown key name
+        key: String,
+        /// The profile where the key was found, if applicable
+        profile: Option<String>,
+        /// The source where the key was found
+        source: Option<String>,
+    },
 }
 
 impl fmt::Display for Warning {
@@ -86,6 +95,12 @@ impl fmt::Display for Warning {
                     f,
                     "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions."
                 )
+            }
+            Self::UnknownKey { key, profile, source } => {
+                let source = source.as_ref().map(|src| format!(" in {src}")).unwrap_or_default();
+                let profile =
+                    profile.as_ref().map(|p| format!(" for profile `{p}`")).unwrap_or_default();
+                write!(f, "Found unknown config key{source}{profile}: `{key}`")
             }
         }
     }
