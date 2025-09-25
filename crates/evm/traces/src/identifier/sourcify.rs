@@ -61,3 +61,39 @@ impl TraceIdentifier for SourcifyIdentifier {
         identities
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sourcify_identifier_creation() {
+        let identifier = SourcifyIdentifier::new();
+        assert!(std::ptr::eq(&identifier, &identifier));
+    }
+
+    #[test]
+    fn test_sourcify_identifier_default() {
+        let identifier = SourcifyIdentifier::default();
+        assert!(std::ptr::eq(&identifier, &identifier));
+    }
+
+    #[test]
+    fn test_empty_nodes() {
+        let mut identifier = SourcifyIdentifier::new();
+        let nodes: Vec<&CallTraceNode> = vec![];
+        let result = identifier.identify_addresses(&nodes);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_sourcify_file_deserialization() {
+        let json = r#"{"name": "metadata.json", "content": "{\"output\": {\"abi\": []}}"}"#;
+        let file: Result<SourcifyFile, _> = serde_json::from_str(json);
+        assert!(file.is_ok());
+
+        let file = file.unwrap();
+        assert_eq!(file.name, "metadata.json");
+        assert!(file.content.contains("abi"));
+    }
+}
