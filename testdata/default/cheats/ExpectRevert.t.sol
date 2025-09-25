@@ -159,7 +159,7 @@ contract ExpectRevertTest is DSTest {
 
         Dummy dummy = new Dummy();
         vm.expectRevert();
-        reverter.callThenRevert(dummy, "revert message 4 i ran out of synonims for also");
+        reverter.callThenRevert(dummy, "revert message 4 i ran out of synonyms for also");
 
         vm.expectRevert();
         reverter.revertWithoutReason();
