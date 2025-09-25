@@ -561,9 +561,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rpc-types-beacon"
-version = "1.0.30"
+version = "1.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d3c0e6cc87a8be5582d08f929f96db25843f44cb636a0985a4a6bf02609c02f"
+checksum = "7e46a3740113636ec4643b2740e3e9ea4192820f56b056177ceb0569d711b2af"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
