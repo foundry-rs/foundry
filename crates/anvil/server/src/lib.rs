@@ -17,7 +17,8 @@ use axum::{
     http::{HeaderValue, Method, header},
     routing::{MethodRouter, post},
 };
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use std::fmt;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -30,26 +31,37 @@ mod handler;
 mod pubsub;
 pub use pubsub::{PubSubContext, PubSubRpcHandler};
 
+mod beacon;
+use beacon::beacon_router;
+
 mod ws;
 
 #[cfg(feature = "ipc")]
 pub mod ipc;
 
 /// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.
-pub fn http_ws_router<Http, Ws>(config: ServerConfig, http: Http, ws: Ws) -> Router
+pub fn http_ws_router<Http, Ws, Beacon>(
+    config: ServerConfig,
+    http: Http,
+    ws: Ws,
+    beacon: Beacon,
+) -> Router
 where
     Http: RpcHandler,
     Ws: PubSubRpcHandler,
+    Beacon: BeaconApiHandler,
 {
     router_inner(config, post(handler::handle).get(ws::handle_ws), (http, ws))
+        .nest("/eth", beacon_router(beacon))
 }
 
 /// Configures an [`axum::Router`] that handles JSON-RPC calls via HTTP.
-pub fn http_router<Http>(config: ServerConfig, http: Http) -> Router
+pub fn http_router<Http, Beacon>(config: ServerConfig, http: Http, beacon: Beacon) -> Router
 where
     Http: RpcHandler,
+    Beacon: BeaconApiHandler,
 {
-    router_inner(config, post(handler::handle), (http, ()))
+    router_inner(config, post(handler::handle), (http, ())).nest("/eth", beacon_router(beacon))
 }
 
 fn router_inner<S: Clone + Send + Sync + 'static>(
@@ -123,4 +135,47 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum BeaconRequest {
+    GetBlobSidecarsByBlockId(String),
+}
+
+/// Response of a _single_ rpc call
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeaconResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_optimistic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finalized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+impl BeaconResponse {
+    pub fn success(
+        version: Option<String>,
+        execution_optimistic: Option<bool>,
+        finalized: Option<bool>,
+        data: Option<Value>,
+    ) -> Self {
+        Self { version, execution_optimistic, finalized, data, ..Default::default() }
+    }
+
+    pub fn error(code: i32, message: String) -> Self {
+        Self { code: Some(code), message: Some(message), ..Default::default() }
+    }
+}
+
+pub trait BeaconApiHandler: Clone + Send + Sync + 'static {
+    fn call(&self, request: BeaconRequest) -> BeaconResponse;
 }

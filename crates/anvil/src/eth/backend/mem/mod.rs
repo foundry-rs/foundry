@@ -64,6 +64,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
     anvil::Forking,
+    beacon::sidecar::{BeaconBlobBundle, BlobData},
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
@@ -3279,6 +3280,40 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    pub fn get_blob_sidecars_by_block_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BeaconBlobBundle>> {
+        let Some(full_block) = self.get_full_block(block_id) else {
+            return Ok(None);
+        };
+
+        let blob_data_items = full_block
+            .into_transactions_iter()
+            .map(TypedTransaction::try_from)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter_map(|typed_tx| typed_tx.sidecar().map(|sidecar| sidecar.sidecar().clone()))
+            .flatten()
+            .map(|item| BlobData {
+                index: item.index,
+                blob: item.blob,
+                kzg_commitment: item.kzg_commitment,
+                kzg_proof: item.kzg_proof,
+                // We don't have the signed block header, so we use a default one
+                signed_block_header: alloy_rpc_types::beacon::header::Header::default(),
+                // We don't have the kzg commitment inclusion proof, so we use an empty vector
+                kzg_commitment_inclusion_proof: vec![],
+            })
+            .collect::<Vec<BlobData>>();
+
+        if blob_data_items.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(BeaconBlobBundle { data: blob_data_items }))
+        }
     }
 
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
