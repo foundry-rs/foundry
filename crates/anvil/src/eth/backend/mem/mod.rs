@@ -3444,10 +3444,10 @@ impl Backend {
             let hash = &common_block.header.hash_slow();
             let read_guard = self.states.upgradable_read();
             if let Some(db) = read_guard.get_state(hash) {
-                return_state_or_throw_err(Some(db)).unwrap()
+                return_state_or_throw_err(Some(db))?
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                return_state_or_throw_err(write_guard.get_on_disk_state(hash)).unwrap()
+                return_state_or_throw_err(write_guard.get_on_disk_state(hash))?
             }
         };
 
