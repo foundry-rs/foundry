@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use alloy_rpc_types_beacon::payload::BeaconBlockData;
-use alloy_rpc_types_engine::ExecutionPayload;
 use clap::{Parser, builder::ValueParser};
 use eyre::{Result, eyre};
 use foundry_common::{fs, sh_print};
@@ -31,25 +30,13 @@ impl B2EPayloadArgs {
 
         let execution_payload = beacon_block_data.execution_payload();
 
-        let json_rpc_output = format_as_json_rpc(execution_payload.clone())?;
-        sh_print!("{}", json_rpc_output)?;
+        // Raw format ouput
+        let output = serde_json::to_string(&execution_payload)
+            .map_err(|e| eyre!("Failed to serialize execution payload: {}", e))?;
+        sh_print!("{}", output)?;
 
         Ok(())
     }
-}
-
-// Helper to format the execution payload as JSON-RPC response
-fn format_as_json_rpc(execution_payload: ExecutionPayload) -> Result<String> {
-    // TODO: check if we used this format and this method engine version
-    let json_rpc_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "engine_newPayloadV3",
-        "params": [execution_payload],
-        "id": 1
-    });
-
-    serde_json::to_string_pretty(&json_rpc_request)
-        .map_err(|e| eyre!("Failed to serialize JSON-RPC response: {}", e))
 }
 
 /// Represents the different input sources for beacon block data
