@@ -273,6 +273,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Artifact(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
+        CastSubcommand::B2EPayload(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             sh_println!("{}", pretty_calldata(&calldata, offline).await?)?;

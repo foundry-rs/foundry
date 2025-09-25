@@ -17,12 +17,12 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   PROFILE: maxperf
-  STABLE_VERSION: "v1.2.3"
+  STABLE_VERSION: "v1.3.6"
 
 jobs:
   prepare:
     name: Prepare release
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -116,7 +116,7 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: depot-ubuntu-22.04-arm-16
+          - runner: depot-ubuntu-22.04-16
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: alpine
