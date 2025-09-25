@@ -198,9 +198,8 @@ contract AttachDelegationTest is DSTest {
         calls[0] = SimpleDelegateContract.Call({
             to: address(token), data: abi.encodeCall(ERC20.mint, (50, address(this))), value: 0
         });
-        calls[1] = SimpleDelegateContract.Call({
-            to: address(token), data: abi.encodeCall(ERC20.mint, (50, alice)), value: 0
-        });
+        calls[1] =
+            SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, alice)), value: 0});
         vm.broadcast(bob_pk);
         SimpleDelegateContract(alice).execute(calls);
 
