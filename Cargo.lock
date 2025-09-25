@@ -2554,7 +2554,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types",
  "alloy-rpc-types-beacon",
- "alloy-rpc-types-engine",
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
