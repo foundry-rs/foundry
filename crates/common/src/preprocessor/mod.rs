@@ -62,12 +62,14 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             let mut preprocessed_paths = vec![];
             let sources = &mut input.input.sources;
             for (path, source) in sources.iter() {
-                if let Ok(src_file) = compiler
+                let Ok(src_file) = compiler
                     .sess()
                     .source_map()
                     .new_source_file(path.clone(), source.content.as_str())
-                    && paths.is_test_or_script(path)
-                {
+                else {
+                    continue;
+                };
+                if paths.is_test_or_script(path) {
                     pcx.add_file(src_file);
                     preprocessed_paths.push(path.clone());
                 }
