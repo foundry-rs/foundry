@@ -1,4 +1,5 @@
 use std::{
+    ffi::{OsStr, OsString},
     path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -152,8 +153,7 @@ impl WorkerCorpus {
 
         let corpus = CorpusEntry::from_tx_seq(inputs);
         let corpus_uuid = corpus.uuid;
-        // TODO: Remove unwrap
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = corpus.timestamp;
         // Persist to disk if corpus dir is configured.
         let write_result = if self.config.corpus_gzip {
             foundry_common::fs::write_json_gzip_file(
@@ -484,6 +484,113 @@ impl WorkerCorpus {
     }
 
     // Sync Methods
+
+    /// Exports the new corpus entries to the master workers (id = 0) sync dir.
+    pub fn export(&self) -> eyre::Result<()> {
+        // Early return if no new entries or corpus dir not configured
+        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
+            return Ok(());
+        }
+
+        let worker_dir = self.worker_dir.as_ref().unwrap();
+
+        // Master doesn't export (it only receives from others)
+        if self.id == 0 {
+            return Ok(());
+        }
+
+        let Some(master_sync_dir) = self
+            .config
+            .corpus_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{WORKER}0")).join(SYNC_DIR))
+        else {
+            return Ok(());
+        };
+
+        let mut exported = 0;
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+
+        for &index in &self.new_entry_indices {
+            if let Some(entry) = self.in_memory_corpus.get(index) {
+                let ext = if self.config.corpus_gzip {
+                    format!("{JSON_EXTENSION}.gz")
+                } else {
+                    JSON_EXTENSION.to_string()
+                };
+                let file_name = format!("{}-{}{ext}", entry.uuid, entry.timestamp);
+                let file_path = corpus_dir.join(&file_name);
+                let sync_path = master_sync_dir.join(&file_name);
+
+                let Ok(_) = foundry_common::fs::copy(file_path, sync_path) else {
+                    debug!(target: "corpus", "failed to export corpus {} from worker {}", entry.uuid, self.id);
+                    continue;
+                };
+
+                exported += 1;
+            }
+        }
+
+        trace!(target: "corpus", "exported {exported} new corpus entries from worker {}", self.id);
+
+        Ok(())
+    }
+
+    /// Imports the new corpus entries that were written to the workers sync dir.
+    pub fn import(&self) -> eyre::Result<Vec<CorpusEntry>> {
+        let Some(worker_dir) = &self.worker_dir else {
+            return Ok(vec![]);
+        };
+
+        let sync_dir = worker_dir.join(SYNC_DIR);
+        if !sync_dir.is_dir() {
+            return Ok(vec![]);
+        }
+
+        let mut imports = vec![];
+        for entry in std::fs::read_dir(sync_dir)? {
+            let Ok(entry) = entry else {
+                continue;
+            };
+
+            // Get the uuid and timestamp from the filename
+            let timestamp = if let Some(name) = entry.file_name().to_str()
+                && let Ok((_, timestamp)) = parse_corpus_filename(name)
+            {
+                timestamp
+            } else {
+                continue;
+            };
+
+            if timestamp <= self.last_sync_timestamp {
+                // TODO: Delete synced file
+                continue;
+            }
+
+            // TODO: This is not useful right as `tx_seq` of CorpusEntry are not serialized i.e we
+            // can replay the corpus.
+            let corpus = if self.config.corpus_gzip {
+                foundry_common::fs::read_json_gzip_file::<CorpusEntry>(&entry.path())?
+            } else {
+                foundry_common::fs::read_json_file::<CorpusEntry>(&entry.path())?
+            };
+
+            imports.push(corpus);
+        }
+
+        Ok(imports)
+    }
+}
+
+/// Parses the corpus filename and returns the uuid and timestamp associated with it.
+fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
+    let name = name.trim_end_matches(".gz").trim_end_matches(JSON_EXTENSION);
+
+    let parts = name.rsplitn(2, "-").collect::<Vec<_>>();
+    let uuid = Uuid::parse_str(parts[0])?;
+    let timestamp = parts[1].parse()?;
+
+    Ok((uuid, timestamp))
 }
 
 /// Global corpus across workers to share coverage updates

@@ -16,7 +16,7 @@ use proptest::{
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     path::PathBuf,
@@ -51,7 +51,7 @@ pub(crate) enum MutationType {
 }
 
 /// Holds Corpus information.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct CorpusEntry {
     // Unique corpus identifier.
     pub(crate) uuid: Uuid,
@@ -65,17 +65,28 @@ pub(crate) struct CorpusEntry {
     // Whether this corpus is favored, i.e. producing new finds more often than
     // `FAVORABILITY_THRESHOLD`.
     pub(crate) is_favored: bool,
+    /// Timestamp of when this entry was written to disk in seconds.
+    #[serde(skip_serializing)]
+    pub(crate) timestamp: u64,
 }
 
 impl CorpusEntry {
     /// New corpus from given call sequence and corpus path to read uuid.
     pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
         let uuid = if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            // TODO: Account for "-timestamp"
             Uuid::try_from(stem.strip_suffix(JSON_EXTENSION).unwrap_or(stem).to_string())?
         } else {
             Uuid::new_v4()
         };
-        Ok(Self { uuid, total_mutations: 0, new_finds_produced: 0, tx_seq, is_favored: false })
+        Ok(Self {
+            uuid,
+            total_mutations: 0,
+            new_finds_produced: 0,
+            tx_seq,
+            is_favored: false,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        })
     }
 
     /// New corpus with given call sequence and new uuid.
@@ -86,6 +97,7 @@ impl CorpusEntry {
             new_finds_produced: 0,
             tx_seq: tx_seq.into(),
             is_favored: false,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
         }
     }
 }
