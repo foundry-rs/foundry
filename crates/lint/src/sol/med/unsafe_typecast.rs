@@ -1,6 +1,6 @@
 use super::UnsafeTypecast;
 use crate::{
-    linter::{LateLintPass, LintContext, Snippet},
+    linter::{LateLintPass, LintContext, Suggestion},
     sol::{Severity, SolLint},
 };
 use solar::{
@@ -32,14 +32,11 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             ctx.emit_with_fix(
                 &UNSAFE_TYPECAST,
                 expr.span,
-                Snippet::Block {
-                    desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
-                    code: format!(
+                Suggestion::example(
+                    format!(
                         "// casting to '{abi_ty}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
                         abi_ty = ty.to_abi_str()
-                    )
-                }
-            );
+            )).with_desc("consider disabling this lint if you're certain the cast is safe"));
         }
     }
 }
