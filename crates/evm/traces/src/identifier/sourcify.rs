@@ -28,27 +28,23 @@ impl Default for SourceifyIdentifier {
 impl TraceIdentifier for SourceifyIdentifier {
     fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         let mut identities = Vec::new();
+        let client = reqwest::Client::new();
 
         for &node in nodes {
             let address = node.trace.address;
 
             // Try to get ABI from Sourcify
             let abi = foundry_common::block_on(async {
-                let client = reqwest::Client::new();
                 let url = format!("https://repo.sourcify.dev/contracts/full_match/1/{address:?}/");
 
                 let files: Vec<SourceifyFile> =
                     client.get(&url).send().await.ok()?.json().await.ok()?;
 
-                for file in files {
-                    if file.name == "metadata.json" {
-                        let metadata: serde_json::Value =
-                            serde_json::from_str(&file.content).ok()?;
-                        let abi_value = metadata.get("output")?.get("abi")?;
-                        return serde_json::from_value::<JsonAbi>(abi_value.clone()).ok();
-                    }
-                }
-                None
+                let metadata_file = files.into_iter().find(|file| file.name == "metadata.json")?;
+                let metadata: serde_json::Value =
+                    serde_json::from_str(&metadata_file.content).ok()?;
+                let abi_value = metadata.get("output")?.get("abi")?;
+                serde_json::from_value::<JsonAbi>(abi_value.clone()).ok()
             });
 
             if let Some(abi) = abi {
