@@ -5,27 +5,27 @@ use serde::Deserialize;
 use std::borrow::Cow;
 
 #[derive(Deserialize)]
-struct SourceifyFile {
+struct SourcifyFile {
     name: String,
     content: String,
 }
 
 /// A trace identifier that uses Sourcify to identify contract ABIs.
-pub struct SourceifyIdentifier;
+pub struct SourcifyIdentifier;
 
-impl SourceifyIdentifier {
+impl SourcifyIdentifier {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for SourceifyIdentifier {
+impl Default for SourcifyIdentifier {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TraceIdentifier for SourceifyIdentifier {
+impl TraceIdentifier for SourcifyIdentifier {
     fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         let mut identities = Vec::new();
         let client = reqwest::Client::new();
@@ -37,7 +37,7 @@ impl TraceIdentifier for SourceifyIdentifier {
             let abi = foundry_common::block_on(async {
                 let url = format!("https://repo.sourcify.dev/contracts/full_match/1/{address:?}/");
 
-                let files: Vec<SourceifyFile> =
+                let files: Vec<SourcifyFile> =
                     client.get(&url).send().await.ok()?.json().await.ok()?;
 
                 let metadata_file = files.into_iter().find(|file| file.name == "metadata.json")?;

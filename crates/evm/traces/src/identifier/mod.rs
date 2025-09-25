@@ -13,7 +13,7 @@ mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
 mod sourcify;
-pub use sourcify::SourceifyIdentifier;
+pub use sourcify::SourcifyIdentifier;
 
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
@@ -47,7 +47,7 @@ pub struct TraceIdentifiers<'a> {
     /// The optional Etherscan trace identifier.
     pub etherscan: Option<EtherscanIdentifier>,
     /// The optional Sourcify trace identifier.
-    pub sourcify: Option<SourceifyIdentifier>,
+    pub sourcify: Option<SourcifyIdentifier>,
 }
 
 impl Default for TraceIdentifiers<'_> {
@@ -106,7 +106,7 @@ impl<'a> TraceIdentifiers<'a> {
 
     /// Sets the sourcify identifier.
     pub fn with_sourcify(mut self) -> Self {
-        self.sourcify = Some(SourceifyIdentifier::new());
+        self.sourcify = Some(SourcifyIdentifier::new());
         self
     }
 
