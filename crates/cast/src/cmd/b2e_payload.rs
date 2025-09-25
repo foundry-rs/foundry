@@ -1,4 +1,4 @@
-//! Command Line handler to convert Beacon block's execution payload to Execution JSON-RPC format.
+//! Command Line handler to convert Beacon block's execution payload to Execution format.
 
 use std::path::PathBuf;
 
@@ -7,8 +7,7 @@ use clap::{Parser, builder::ValueParser};
 use eyre::{Result, eyre};
 use foundry_common::{fs, sh_print};
 
-/// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution
-/// JSON-RPC format.
+/// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution format.
 #[derive(Parser)]
 pub struct B2EPayloadArgs {
     /// Input data, it can be either a file path to JSON file or raw JSON string containing the
@@ -30,7 +29,7 @@ impl B2EPayloadArgs {
 
         let execution_payload = beacon_block_data.execution_payload();
 
-        // Raw format ouput
+        // Output raw execution payload
         let output = serde_json::to_string(&execution_payload)
             .map_err(|e| eyre!("Failed to serialize execution payload: {}", e))?;
         sh_print!("{}", output)?;
@@ -42,7 +41,9 @@ impl B2EPayloadArgs {
 /// Represents the different input sources for beacon block data
 #[derive(Debug, Clone)]
 pub enum InputSource {
+    /// Path to a JSON file containing beacon block data
     File(PathBuf),
+    /// Raw JSON string containing beacon block data
     Json(String),
 }
 
@@ -91,6 +92,18 @@ mod tests {
         match result {
             InputSource::File(path) => assert_eq!(path, PathBuf::from(file_path)),
             InputSource::Json(_) => panic!("Expected File input, got JSON"),
+        }
+    }
+
+    #[test]
+    fn test_parse_input_source_malformed_but_not_json() {
+        let malformed = "not-json-{";
+        let result = parse_input_source(malformed).unwrap();
+
+        // Should be treated as file path since it's not valid JSON
+        match result {
+            InputSource::File(path) => assert_eq!(path, PathBuf::from(malformed)),
+            InputSource::Json(_) => panic!("Expected File input, got File"),
         }
     }
 }
