@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -30,6 +31,8 @@ const JSON_EXTENSION: &str = ".json";
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
 const COVERAGE_MAP_SIZE: usize = 65536;
 const WORKER: &str = "worker";
+const CORPUS_DIR: &str = "corpus";
+const SYNC_DIR: &str = "sync";
 
 /// Per-worker corpus manager.
 pub struct WorkerCorpus {
@@ -52,6 +55,10 @@ pub struct WorkerCorpus {
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entry_indices: Vec<usize>,
+    /// Last sync timestamp in seconds.
+    last_sync_timestamp: u64,
+    /// Worker Dir
+    worker_dir: Option<PathBuf>,
 }
 
 impl WorkerCorpus {
@@ -71,13 +78,23 @@ impl WorkerCorpus {
         ]
         .boxed();
 
-        if let Some(corpus_dir) = &config.corpus_dir {
+        let worker_dir = if let Some(corpus_dir) = &config.corpus_dir {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
+            let worker_corpus = &worker_dir.join(CORPUS_DIR);
+            let sync_dir = &worker_dir.join(SYNC_DIR);
 
-            if !worker_dir.is_dir() {
-                foundry_common::fs::create_dir_all(worker_dir)?;
+            if !worker_corpus.is_dir() {
+                foundry_common::fs::create_dir_all(worker_corpus)?;
             }
-        }
+
+            if !sync_dir.is_dir() {
+                foundry_common::fs::create_dir_all(sync_dir)?;
+            }
+
+            Some(worker_dir)
+        } else {
+            None
+        };
 
         Ok(Self {
             id,
@@ -91,6 +108,8 @@ impl WorkerCorpus {
             current_mutated: None,
             config,
             new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir,
         })
     }
 
@@ -98,10 +117,7 @@ impl WorkerCorpus {
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
     pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
-        // Early return if corpus dir / coverage guided fuzzing is not configured.
-        let worker_dir = if let Some(corpus_dir) = &self.config.corpus_dir {
-            corpus_dir.join(format!("{WORKER}{}", self.id))
-        } else {
+        let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
 
@@ -136,16 +152,19 @@ impl WorkerCorpus {
 
         let corpus = CorpusEntry::from_tx_seq(inputs);
         let corpus_uuid = corpus.uuid;
-
+        // TODO: Remove unwrap
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         // Persist to disk if corpus dir is configured.
         let write_result = if self.config.corpus_gzip {
             foundry_common::fs::write_json_gzip_file(
-                worker_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}.gz")).as_path(),
+                worker_corpus
+                    .join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}.gz"))
+                    .as_path(),
                 &corpus.tx_seq,
             )
         } else {
             foundry_common::fs::write_json_file(
-                worker_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}")).as_path(),
+                worker_corpus.join(format!("{corpus_uuid}-{timestamp}{JSON_EXTENSION}")).as_path(),
                 &corpus.tx_seq,
             )
         };
@@ -395,8 +414,7 @@ impl WorkerCorpus {
             // Flush to disk the seed metadata at the time of eviction.
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             foundry_common::fs::write_json_file(
-                self.config
-                    .corpus_dir
+                self.worker_dir
                     .clone()
                     .unwrap()
                     .join(format!("{WORKER}{}", self.id)) // Worker dir
@@ -464,6 +482,8 @@ impl WorkerCorpus {
             function.abi_encode_input(&prev_inputs).map_err(|e| eyre!(e.to_string()))?.into();
         Ok(())
     }
+
+    // Sync Methods
 }
 
 /// Global corpus across workers to share coverage updates
