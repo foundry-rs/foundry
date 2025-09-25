@@ -44,6 +44,8 @@ pub struct WorkerCorpus {
     in_memory_corpus: Vec<CorpusEntry>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
+    /// Number of failed replays from initial corpus
+    failed_replays: usize,
     /// Worker Metrics
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
@@ -65,10 +67,13 @@ pub struct WorkerCorpus {
 impl WorkerCorpus {
     pub fn new(
         id: u32,
-        master: &MasterCorpus,
+        config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
+        // Only required by master worker (id = 0) to replay existing corpus
+        executor: Option<&Executor>,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> eyre::Result<Self> {
-        let config = master.config.clone();
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
             Just(MutationType::Repeat),
@@ -80,6 +85,7 @@ impl WorkerCorpus {
         .boxed();
 
         let worker_dir = if let Some(corpus_dir) = &config.corpus_dir {
+            // Create the necessary directories for the worker
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
             let worker_corpus = &worker_dir.join(CORPUS_DIR);
             let sync_dir = &worker_dir.join(SYNC_DIR);
@@ -97,17 +103,108 @@ impl WorkerCorpus {
             None
         };
 
+        let mut in_memory_corpus = vec![];
+        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        let mut metrics = CorpusMetrics::default();
+        let mut failed_replays = 0;
+
+        if id == 0 && config.corpus_dir.is_some() {
+            // Master worker loads the initial corpus if it exists
+            let corpus_dir = config.corpus_dir.as_ref().unwrap();
+
+            let can_replay_tx = |tx: &BasicTxDetails| -> bool {
+                fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+                    || fuzzed_function.is_some_and(|function| {
+                        tx.call_details
+                            .calldata
+                            .get(..4)
+                            .is_some_and(|selector| function.selector() == selector)
+                    })
+            };
+
+            let executor = executor.expect("Executor required for master worker");
+            'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
+                let path = entry?.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && name.contains(METADATA_SUFFIX)
+                {
+                    // Ignore metadata files
+                    continue;
+                }
+
+                let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("gz") => {
+                        foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
+                    }
+                    _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
+                };
+
+                let Ok(tx_seq) = read_corpus_result else {
+                    trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                    continue;
+                };
+
+                if !tx_seq.is_empty() {
+                    // Warm up history map from loaded sequences.
+                    let mut executor = executor.clone();
+                    for tx in &tx_seq {
+                        if can_replay_tx(tx) {
+                            let mut call_result = executor
+                                .call_raw(
+                                    tx.sender,
+                                    tx.call_details.target,
+                                    tx.call_details.calldata.clone(),
+                                    U256::ZERO,
+                                )
+                                .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+                            let (new_coverage, is_edge) =
+                                call_result.merge_edge_coverage(&mut history_map);
+                            if new_coverage {
+                                metrics.update_seen(is_edge);
+                            }
+
+                            // Commit only when running invariant / stateful tests.
+                            if fuzzed_contracts.is_some() {
+                                executor.commit(&mut call_result);
+                            }
+                        } else {
+                            failed_replays += 1;
+
+                            // If the only input for fuzzed function cannot be replied, then move to
+                            // next one without adding it in memory.
+                            if fuzzed_function.is_some() {
+                                continue 'corpus_replay;
+                            }
+                        }
+                    }
+
+                    metrics.corpus_count += 1;
+
+                    trace!(
+                        target: "corpus",
+                        "load sequence with len {} from corpus file {}",
+                        tx_seq.len(),
+                        path.display()
+                    );
+
+                    // Populate in memory corpus with the sequence from corpus file.
+                    in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
+                }
+            }
+        }
+
         Ok(Self {
             id,
-            in_memory_corpus: master.in_memory_corpus.clone(),
-            // TODO: This clones the history_map with size COVERAGE_MAP_SIZE
-            // history_map size per worker should be dependent on the total number of workers?
-            history_map: master.history_map.clone(),
-            metrics: Default::default(),
+            in_memory_corpus,
+            history_map,
+            failed_replays,
+            metrics,
             tx_generator,
             mutation_generator,
             current_mutated: None,
-            config,
+            config: config.into(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
             worker_dir,
@@ -779,131 +876,4 @@ fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
     let timestamp = parts[1].parse()?;
 
     Ok((uuid, timestamp))
-}
-
-/// Global corpus across workers to share coverage updates
-pub struct MasterCorpus {
-    /// Config
-    config: Arc<FuzzCorpusConfig>,
-    /// In-memory corpus entries populated from the persisted files. This is global corpus entry
-    /// across workers.
-    in_memory_corpus: Vec<CorpusEntry>,
-    /// Number of failed replays from the persisted files.
-    pub(crate) failed_replays: usize,
-    /// History of binned hitcount of edges seen during fuzzing
-    history_map: Vec<u8>,
-    /// Master Metrics
-    metrics: CorpusMetrics,
-}
-
-impl MasterCorpus {
-    pub fn new(
-        config: FuzzCorpusConfig,
-        executor: &Executor,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    ) -> eyre::Result<Self> {
-        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
-        let mut metrics = CorpusMetrics::default();
-        let mut in_memory_corpus = vec![];
-        let mut failed_replays = 0;
-
-        // Early return if corpus dir / coverage guided fuzzing not configured.
-        let Some(corpus_dir) = &config.corpus_dir else {
-            return Ok(Self {
-                config: config.into(),
-                in_memory_corpus,
-                failed_replays,
-                history_map,
-                metrics,
-            });
-        };
-
-        // Ensure corpus dir for current test is created.
-        if !corpus_dir.is_dir() {
-            foundry_common::fs::create_dir_all(corpus_dir)?;
-        }
-
-        let can_replay_tx = |tx: &BasicTxDetails| -> bool {
-            fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
-                || fuzzed_function.is_some_and(|function| {
-                    tx.call_details
-                        .calldata
-                        .get(..4)
-                        .is_some_and(|selector| function.selector() == selector)
-                })
-        };
-
-        'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
-            let path = entry?.path();
-            if path.is_file()
-                && let Some(name) = path.file_name().and_then(|s| s.to_str())
-                && name.contains(METADATA_SUFFIX)
-            {
-                // Ignore metadata files
-                continue;
-            }
-
-            let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
-                Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
-                _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
-            };
-
-            let Ok(tx_seq) = read_corpus_result else {
-                trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                continue;
-            };
-
-            if !tx_seq.is_empty() {
-                // Warm up history map from loaded sequences.
-                let mut executor = executor.clone();
-                for tx in &tx_seq {
-                    if can_replay_tx(tx) {
-                        let mut call_result = executor
-                            .call_raw(
-                                tx.sender,
-                                tx.call_details.target,
-                                tx.call_details.calldata.clone(),
-                                U256::ZERO,
-                            )
-                            .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
-                        let (new_coverage, is_edge) =
-                            call_result.merge_edge_coverage(&mut history_map);
-                        if new_coverage {
-                            metrics.update_seen(is_edge);
-                        }
-
-                        // Commit only when running invariant / stateful tests.
-                        if fuzzed_contracts.is_some() {
-                            executor.commit(&mut call_result);
-                        }
-                    } else {
-                        failed_replays += 1;
-
-                        // If the only input for fuzzed function cannot be replied, then move to
-                        // next one without adding it in memory.
-                        if fuzzed_function.is_some() {
-                            continue 'corpus_replay;
-                        }
-                    }
-                }
-
-                metrics.corpus_count += 1;
-
-                trace!(
-                    target: "corpus",
-                    "load sequence with len {} from corpus file {}",
-                    tx_seq.len(),
-                    path.display()
-                );
-
-                // Populate in memory corpus with the sequence from corpus file.
-
-                in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
-            }
-        }
-
-        Ok(Self { config: config.into(), in_memory_corpus, failed_replays, history_map, metrics })
-    }
 }
