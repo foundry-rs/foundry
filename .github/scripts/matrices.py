@@ -71,7 +71,7 @@ t_linux_x86 = Target("depot-ubuntu-latest-8", "x86_64-unknown-linux-gnu", "linux
 t_linux_arm = Target(
     "depot-ubuntu-24.04-arm-8", "aarch64-unknown-linux-gnu", "linux-aarch64"
 )
-t_macos = Target("depot-macos-latest-8", "aarch64-apple-darwin", "macosx-aarch64")
+t_macos = Target("depot-macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
 t_windows = Target("depot-windows-latest-8", "x86_64-pc-windows-msvc", "windows-amd64")
 targets = (
     [t_linux_x86, t_windows]
