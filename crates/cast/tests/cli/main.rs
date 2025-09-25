@@ -4137,6 +4137,7 @@ casttest!(run_celo_with_precompiles, |_prj, cmd| {
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
         "--rpc-url",
+        "--quick",
         rpc.as_str(),
     ])
     .assert_success()
