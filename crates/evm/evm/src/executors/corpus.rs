@@ -16,7 +16,7 @@ use proptest::{
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     fmt,
     path::PathBuf,

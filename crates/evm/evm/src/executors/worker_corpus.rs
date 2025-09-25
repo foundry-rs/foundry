@@ -1,5 +1,4 @@
 use std::{
-    ffi::{OsStr, OsString},
     path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -45,7 +44,7 @@ pub struct WorkerCorpus {
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
     /// Number of failed replays from initial corpus
-    failed_replays: usize,
+    pub(crate) failed_replays: usize,
     /// Worker Metrics
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.

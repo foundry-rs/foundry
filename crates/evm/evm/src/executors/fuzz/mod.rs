@@ -1,7 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
-    corpus::{CorpusWorker, SharedCorpus},
-    worker_corpus::{MasterCorpus, WorkerCorpus},
+    worker_corpus::WorkerCorpus,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -119,10 +118,14 @@ impl FuzzedExecutor {
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
-        let master_corpus =
-            MasterCorpus::new(self.config.corpus.clone(), &self.executor, Some(func), None)?;
-
-        let mut corpus_manager = WorkerCorpus::new(0, &master_corpus, strategy.boxed())?;
+        let mut corpus_manager = WorkerCorpus::new(
+            0, // Id of the Master
+            self.config.corpus.clone(),
+            strategy.boxed(),
+            Some(&self.executor),
+            Some(func),
+            None,
+        )?;
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
@@ -255,7 +258,7 @@ impl FuzzedExecutor {
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             line_coverage: test_data.coverage,
             deprecated_cheatcodes: test_data.deprecated_cheatcodes,
-            failed_corpus_replays: master_corpus.failed_replays,
+            failed_corpus_replays: corpus_manager.failed_replays,
         };
 
         match test_data.failure {
