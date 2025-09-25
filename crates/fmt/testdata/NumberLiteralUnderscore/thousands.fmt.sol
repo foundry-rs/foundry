@@ -1,5 +1,7 @@
 // config: number_underscore = "thousands"
 contract NumberLiteral {
+    bytes4 internal constant HEX_NUM = 0x01ffc9a7;
+
     function test() external {
         1;
         123_000;
