@@ -7,7 +7,8 @@ use clap::{Parser, builder::ValueParser};
 use eyre::{Result, eyre};
 use foundry_common::{fs, sh_print};
 
-/// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution format.
+/// CLI arguments for `cast b2e-payload`, convert Beacon block's execution payload to Execution
+/// format.
 #[derive(Parser)]
 pub struct B2EPayloadArgs {
     /// Input data, it can be either a file path to JSON file or raw JSON string containing the
