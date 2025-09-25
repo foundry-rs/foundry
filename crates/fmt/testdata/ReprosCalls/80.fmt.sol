@@ -157,5 +157,18 @@ contract Orchestrator {
                 buyToken: IERC20(address(0)),
                 minAmountOut: 0
             });
+
+        ISignatureTransfer.PermitTransferFrom memory permit =
+            defaultERC20PermitTransfer(
+                address(fromToken()),
+                amount(),
+                0 /* nonce */
+            );
+        ISignatureTransfer.PermitTransferFrom memory permit =
+            defaultERC20PermitTransfer(
+                address(fromToken()),
+                amount(),
+                0 /* nonce */
+            );
     }
 }

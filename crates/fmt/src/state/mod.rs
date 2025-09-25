@@ -377,7 +377,21 @@ impl State<'_, '_> {
                     // Previous line ended with ';' a hardbreak is required.
                     size += 1;
                 }
-                size += line.trim().len();
+
+                // trim spaces before and after mixed comments
+                let mut search = line;
+                loop {
+                    if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
+                        size += lhs.trim().len() + 2;
+                        search = comment;
+                    } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
+                        size += comment.len() + 2;
+                        search = rhs;
+                    } else {
+                        size += search.trim().len();
+                        break;
+                    }
+                }
 
                 prev_needs_space = (self.config.bracket_spacing
                     && (line.ends_with('(') || line.ends_with('{')))

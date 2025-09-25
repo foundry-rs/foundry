@@ -1570,6 +1570,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.call_stack.push(CallContext::nested(callee_size));
+
         // Clear the binary expression cache before the call.
         let cache = self.binary_expr.take();
 
