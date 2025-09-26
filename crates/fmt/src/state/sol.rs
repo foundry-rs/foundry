@@ -1266,7 +1266,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(rhs);
                 self.end();
             }
-            _ if (overflows && fits_alone) || (is_simple_rhs && overflows) => {
+            _ if overflows && (fits_alone || is_simple_rhs) => {
                 self.print_sep(Separator::Space);
                 self.print_expr(rhs);
             }
