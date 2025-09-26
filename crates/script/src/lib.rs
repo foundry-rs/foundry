@@ -190,7 +190,7 @@ pub struct ScriptArgs {
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[arg(long)]
+    #[arg(long, requires = "broadcast")]
     pub verify: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
@@ -250,8 +250,7 @@ impl ScriptArgs {
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
-        {
+        let bundled = if compiled.args.resume {
             compiled.resume().await?
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
@@ -489,9 +488,9 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// We only broadcast transactions if --broadcast or --resume was passed.
+    /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     fn should_broadcast(&self) -> bool {
-        self.broadcast || self.resume
+        self.broadcast || self.resume || self.verify
     }
 }
 
