@@ -85,6 +85,41 @@ forgetest!(can_clean_non_existing, |prj, cmd| {
     prj.assert_cleaned();
 });
 
+// checks that `clean` doesn't output warnings
+forgetest_init!(can_clean_without_warnings, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "Simple.sol",
+        r#"
+pragma solidity ^0.8.5;
+
+contract Simple {
+    uint public value = 42;
+}
+"#,
+    );
+
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[default]
+evm_version = "cancun"
+solc = "0.8.5"
+"#,
+    );
+    // `forge build` warns
+    cmd.forge_fuse().arg("build").assert_success().stderr_eq(str![[r#"
+Warning: Found unknown config section in foundry.toml: [default]
+This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
+Please use [profile.default] instead or run `forge config --fix`.
+
+"#]]);
+    // `forge clear` should not warn
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq(str![[r#"
+
+"#]]);
+});
+
 // checks that `cache ls` can be invoked and displays the foundry cache
 forgetest!(
     #[ignore]
