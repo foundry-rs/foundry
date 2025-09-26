@@ -217,8 +217,7 @@ impl ScriptProgress {
                         // We've already retried several times with sleep, but the receipt is still pending
                         discarded_transactions = true;
                         deployment_sequence.remove_pending(tx_hash);
-                        let msg = format!("Transaction {tx_hash:?} was discarded by RPC despite multiple retry attempts. It will be retried when using --resume.");
-                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &err.to_string())?;
                     } else {
                         errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
                         seq_progress.inner.write().finish_tx_spinner(tx_hash);
