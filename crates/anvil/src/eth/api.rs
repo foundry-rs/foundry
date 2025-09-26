@@ -36,6 +36,7 @@ use alloy_consensus::{
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
+    eip4844::BlobTransactionSidecar,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -53,7 +54,6 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
-    beacon::sidecar::BeaconBlobBundle,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
@@ -1360,7 +1360,7 @@ impl EthApi {
     pub fn anvil_get_blob_sidecars_by_block_id(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<BeaconBlobBundle>> {
+    ) -> Result<Option<Vec<BlobTransactionSidecar>>> {
         node_info!("anvil_getBlobSidecarsByBlockId");
         Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
