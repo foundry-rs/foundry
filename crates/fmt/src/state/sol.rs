@@ -1246,9 +1246,8 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.add_precall(lhs_size);
 
         let is_simple_rhs = matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-        let is_chain = is_call_chain(&rhs.kind, false);
 
-        if (is_chain && overflows && fits_alone) || is_simple_rhs {
+        if (overflows && fits_alone) || is_simple_rhs {
             self.s.ibox(self.ind)
         } else {
             self.s.ibox(0)
@@ -1267,7 +1266,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(rhs);
                 self.end();
             }
-            _ if (is_chain && overflows && fits_alone) || (is_simple_rhs && overflows) => {
+            _ if (overflows && fits_alone) || (is_simple_rhs && overflows) => {
                 self.print_sep(Separator::Space);
                 self.print_expr(rhs);
             }
