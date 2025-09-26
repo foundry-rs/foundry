@@ -4690,6 +4690,7 @@ dependencies = [
  "indicatif 0.18.0",
  "parking_lot",
  "proptest",
+ "rayon",
  "revm",
  "revm-inspectors",
  "serde",
