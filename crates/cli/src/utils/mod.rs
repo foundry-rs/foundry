@@ -725,7 +725,7 @@ ignore them in the `.gitignore` file."
             .args([
                 "config",
                 "--get",
-                &format!("submodule.{}.url", path_str),
+                &format!("submodule.{path_str}.url"),
             ])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
