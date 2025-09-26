@@ -49,27 +49,27 @@ contract GetCodeTest is DSTest {
 
     // TODO: Huff uses its own ABI.
     /*
-        function testGetCodeHuffArtifact() public {
-            string memory path = "fixtures/GetCode/HuffWorkingContract.json";
-            bytes memory bytecode = vm.getCode(path);
-            string memory expected = string(
-                bytes(
-                    hex"602d8060093d393df33d3560e01c63d1efd30d14610012573d3dfd5b6f656d6f2e6574682077757a206865726560801b3d523d6020f3"
-                )
-            );
-            assertEq(string(bytecode), expected, "code for path was incorrect");
+    function testGetCodeHuffArtifact() public {
+        string memory path = "fixtures/GetCode/HuffWorkingContract.json";
+        bytes memory bytecode = vm.getCode(path);
+        string memory expected = string(
+            bytes(
+                hex"602d8060093d393df33d3560e01c63d1efd30d14610012573d3dfd5b6f656d6f2e6574682077757a206865726560801b3d523d6020f3"
+            )
+        );
+        assertEq(string(bytecode), expected, "code for path was incorrect");
 
-            // deploy the contract from the bytecode
-            address deployed;
-            assembly {
-                deployed := create(0, add(bytecode, 0x20), mload(bytecode))
-            }
-            // get the deployed code using the cheatcode
-            bytes memory deployedCode = vm.getDeployedCode(path);
-            // compare the loaded code to the actual deployed code
-            assertEq(string(deployedCode), string(deployed.code), "deployedCode for path was incorrect");
+        // deploy the contract from the bytecode
+        address deployed;
+        assembly {
+            deployed := create(0, add(bytecode, 0x20), mload(bytecode))
         }
-        */
+        // get the deployed code using the cheatcode
+        bytes memory deployedCode = vm.getDeployedCode(path);
+        // compare the loaded code to the actual deployed code
+        assertEq(string(deployedCode), string(deployed.code), "deployedCode for path was incorrect");
+    }
+    */
 
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfGetUnlinked() public {

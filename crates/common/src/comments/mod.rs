@@ -239,6 +239,9 @@ impl<'ast> CommentGatherer<'ast> {
                 // least-indented line.
                 if !is_doc {
                     col = token_text.lines().skip(1).fold(col, |min, line| {
+                        if line.is_empty() {
+                            return min;
+                        }
                         std::cmp::min(
                             CharPos(line.chars().count() - line.trim_start().chars().count()),
                             min,
