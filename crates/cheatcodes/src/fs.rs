@@ -648,12 +648,19 @@ fn ffi(state: &Cheatcodes, input: &[String]) -> Result<FfiResult> {
         .output()
         .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
 
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
+    // The stdout might intentionally be hex-encoded. Only decode when explicitly marked
+    // with a `0x`/`0X` prefix to avoid accidentally decoding plain text that happens
+    // to be hex-like (e.g. "deadbeef").
     let trimmed_stdout = String::from_utf8(output.stdout)?;
     let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
+    let encoded_stdout = if let Some(hex_str) =
+        trimmed_stdout.strip_prefix("0x").or_else(|| trimmed_stdout.strip_prefix("0X"))
+    {
+        match hex::decode(hex_str) {
+            Ok(bytes) => bytes,
+            // If the content after 0x is not valid hex, fall back to raw bytes.
+            Err(_) => trimmed_stdout.as_bytes().to_vec(),
+        }
     } else {
         trimmed_stdout.as_bytes().to_vec()
     };
