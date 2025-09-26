@@ -77,3 +77,33 @@ function returnLongBinaryOp() returns (bytes32) {
     return
         bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
+
+contract Orchestrator {
+    function test() public {
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+
+        {
+            u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+            u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+        }
+
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)), buyToken: IERC20(address(0)), minAmountOut: 0
+        });
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)), buyToken: IERC20(address(0)), minAmountOut: 0
+        });
+
+        ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
+            address(fromToken()),
+            amount(),
+            0 /* nonce */
+        );
+        ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
+            address(fromToken()),
+            amount(),
+            0 /* nonce */
+        );
+    }
+}

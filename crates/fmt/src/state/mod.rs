@@ -120,6 +120,7 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
+    debug: bool,
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -135,7 +136,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: Option<BinOpGroup>,
     return_bin_expr: bool,
     var_init: bool,
-    fn_body: bool,
+    block_depth: usize,
     call_stack: CallStack,
 }
 
@@ -203,6 +204,7 @@ impl<'sess> State<'sess, '_> {
         comments: Comments,
     ) -> Self {
         Self {
+            debug: false,
             s: pp::Printer::new(
                 config.line_length,
                 if matches!(config.style, IndentStyle::Tab) {
@@ -223,7 +225,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: None,
             return_bin_expr: false,
             var_init: false,
-            fn_body: false,
+            block_depth: 0,
             call_stack: CallStack::default(),
         }
     }
@@ -231,10 +233,7 @@ impl<'sess> State<'sess, '_> {
     fn space_left(&self) -> usize {
         std::cmp::min(
             self.s.space_left(),
-            self.config
-                .line_length
-                .saturating_sub(if self.fn_body { self.config.tab_width } else { 0 })
-                .saturating_sub(if self.contract.is_some() { self.config.tab_width } else { 0 }),
+            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
         )
     }
 
@@ -370,16 +369,34 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut first_line) = (0, true);
+            let (mut size, mut prev_needs_space) = (0, false);
             for line in snip.lines() {
-                size += line.trim().len();
-
-                // Subsequent lines require either a hardbreak or a space.
-                if first_line {
-                    first_line = false;
-                } else {
+                if prev_needs_space {
+                    // Previous line ended with a bracket and config with bracket spacing.
+                    // Previous line ended with ',' a hardbreak or a space are required.
+                    // Previous line ended with ';' a hardbreak is required.
                     size += 1;
                 }
+
+                // trim spaces before and after mixed comments
+                let mut search = line;
+                loop {
+                    if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
+                        size += lhs.trim().len() + 2;
+                        search = comment;
+                    } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
+                        size += comment.len() + 2;
+                        search = rhs;
+                    } else {
+                        size += search.trim().len();
+                        break;
+                    }
+                }
+
+                prev_needs_space = (self.config.bracket_spacing
+                    && (line.ends_with('(') || line.ends_with('{')))
+                    || line.ends_with(',')
+                    || line.ends_with(';');
             }
             return size;
         }
@@ -813,6 +830,13 @@ impl<'sess> State<'sess, '_> {
         'sess: 'b,
     {
         self.comments.iter().take_while(|c| c.pos() < pos).find(|c| !c.style.is_blank())
+    }
+
+    fn has_comment_before_with<F>(&self, pos: BytePos, f: F) -> bool
+    where
+        F: FnMut(&Comment) -> bool,
+    {
+        self.comments.iter().take_while(|c| c.pos() < pos).any(f)
     }
 
     fn peek_comment_between<'b>(&'b self, pos_lo: BytePos, pos_hi: BytePos) -> Option<&'b Comment>
