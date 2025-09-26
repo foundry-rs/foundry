@@ -60,6 +60,8 @@ pub struct SharedFuzzState {
     found_failure: OnceLock<u32>,
     /// Maximum number of runs
     max_runs: u32,
+    /// Total rejects across workers
+    total_rejects: Arc<AtomicU32>,
     /// Fuzz timer
     timer: FuzzTestTimer,
     /// Fail Fast coordinator
@@ -72,6 +74,7 @@ impl SharedFuzzState {
             total_runs: Arc::new(AtomicU32::new(0)),
             found_failure: OnceLock::new(),
             max_runs,
+            total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
             fail_fast,
         }
@@ -79,6 +82,10 @@ impl SharedFuzzState {
 
     pub fn increment_runs(&self) -> u32 {
         self.total_runs.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn increment_rejects(&self) -> u32 {
+        self.total_rejects.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn should_continue(&self) -> bool {
@@ -115,6 +122,10 @@ impl SharedFuzzState {
 
     pub fn total_runs(&self) -> u32 {
         self.total_runs.load(Ordering::Relaxed)
+    }
+
+    pub fn total_rejects(&self) -> u32 {
+        self.total_rejects.load(Ordering::Relaxed)
     }
 }
 

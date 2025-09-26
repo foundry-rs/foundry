@@ -474,12 +474,13 @@ impl FuzzedExecutor {
                         }
                         TestCaseError::Reject(_) => {
                             // Apply max rejects only if configured, otherwise silently discard run.
-                            // TODO: Add max_rejects to SharedFuzzState and track rejects across
-                            // workers.
                             if self.config.max_test_rejects > 0 {
                                 worker.rejects += 1;
-                                if worker.rejects >= self.config.max_test_rejects {
+                                shared_state.increment_rejects();
+                                // Fail only total_rejects across workers exceeds the config value
+                                if shared_state.total_rejects() >= self.config.max_test_rejects {
                                     worker.failure = Some(err);
+                                    shared_state.try_claim_failure(worker_id);
                                     break 'stop;
                                 }
                             }
