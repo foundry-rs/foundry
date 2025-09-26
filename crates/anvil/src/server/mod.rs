@@ -4,7 +4,7 @@ use crate::{EthApi, IpcTask};
 use anvil_server::{ServerConfig, ipc::IpcEndpoint};
 use axum::Router;
 use futures::StreamExt;
-use handler::{HttpEthBeaconApiHandler, HttpEthRpcHandler, PubSubEthRpcHandler};
+use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
 use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
@@ -36,9 +36,8 @@ pub async fn serve_on(
 /// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 pub fn router(api: EthApi, config: ServerConfig) -> Router {
     let http = HttpEthRpcHandler::new(api.clone());
-    let ws = PubSubEthRpcHandler::new(api.clone());
-    let beacon = HttpEthBeaconApiHandler::new(api);
-    anvil_server::http_ws_router(config, http, ws, beacon)
+    let ws = PubSubEthRpcHandler::new(api);
+    anvil_server::http_ws_router(config, http, ws)
 }
 
 /// Launches an ipc server at the given path in a new task

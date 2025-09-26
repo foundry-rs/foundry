@@ -10,9 +10,7 @@ use alloy_rpc_types::{
 };
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use anvil_server::{
-    BeaconApiHandler, BeaconRequest, BeaconResponse, PubSubContext, PubSubRpcHandler, RpcHandler,
-};
+use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
@@ -138,44 +136,6 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
         match request {
             EthRpcCall::Request(request) => self.api.execute(*request).await,
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct HttpEthBeaconApiHandler {
-    api: EthApi,
-}
-
-impl HttpEthBeaconApiHandler {
-    pub fn new(api: EthApi) -> Self {
-        Self { api }
-    }
-}
-
-#[async_trait::async_trait]
-impl BeaconApiHandler for HttpEthBeaconApiHandler {
-    fn call(&self, request: BeaconRequest) -> BeaconResponse {
-        match request {
-            BeaconRequest::GetBlobSidecarsByBlockId(block_id) => {
-                let Ok(block_id) = block_id.parse() else {
-                    return BeaconResponse::error(400, format!("Invalid block ID: {block_id}"));
-                };
-                match self.api.anvil_get_blob_sidecars_by_block_id(block_id) {
-                    Ok(Some(blob_sidecars)) => {
-                        if let Ok(data) = serde_json::to_value(&blob_sidecars) {
-                            BeaconResponse::success(None, None, None, Some(data))
-                        } else {
-                            BeaconResponse::error(
-                                500,
-                                "Failed to serialize blob sidecars".to_string(),
-                            )
-                        }
-                    }
-                    Ok(None) => BeaconResponse::error(404, "Block not found".to_string()),
-                    Err(e) => BeaconResponse::error(500, e.to_string()),
-                }
-            }
         }
     }
 }
