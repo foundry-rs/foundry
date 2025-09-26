@@ -1,7 +1,7 @@
 //! Adapted from [`rustc_ast_pretty`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast_pretty/src/pp.rs)
 //! and [`prettyplease`](https://github.com/dtolnay/prettyplease/blob/8eb8c14649aea32e810732bd4d64fe519e6b752a/src/algorithm.rs).
 
-use crate::{DEBUG, DEBUG_INDENT};
+use crate::{DEBUG, DEBUG_INDENT, pp::helpers::StringCrlf};
 use ring::RingBuffer;
 use std::{borrow::Cow, cmp, collections::VecDeque, iter};
 
@@ -104,6 +104,8 @@ pub struct Printer {
     margin: isize,
     /// If `Some(tab_width)` the printer will use tabs for indentation.
     indent_config: Option<usize>,
+    /// If `true`, all line breaks are output as CRLF (`\r\n`) instead of LF (`\n`).
+    use_crlf: bool,
 }
 
 #[derive(Debug)]
@@ -113,7 +115,7 @@ pub struct BufEntry {
 }
 
 impl Printer {
-    pub fn new(margin: usize, use_tab_with_size: Option<usize>) -> Self {
+    pub fn new(margin: usize, use_tab_with_size: Option<usize>, use_crlf: bool) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             out: String::new(),
@@ -129,6 +131,17 @@ impl Printer {
 
             margin,
             indent_config: use_tab_with_size,
+            use_crlf,
+        }
+    }
+
+    /// Acts as the gatekeeper for line-ending normalization. When `use_crlf` is `true`, leverages
+    /// the [`StringCrlf`] trait to process strings with CRLF conversion.
+    fn push_str(&mut self, string: &str) {
+        if self.use_crlf {
+            self.out.push_str_crlf(string);
+        } else {
+            self.out.push_str(string);
         }
     }
 
@@ -449,18 +462,18 @@ impl Printer {
         } else {
             if let Some(pre_break) = token.pre_break {
                 self.print_indent();
-                self.out.push_str(pre_break);
+                self.push_str(pre_break);
             }
             if DEBUG {
                 self.out.push('·');
             }
-            self.out.push('\n');
+            self.out.push_str(if self.use_crlf { "\r\n" } else { "\n" });
             let indent = self.indent as isize + token.offset;
             self.pending_indentation = usize::try_from(indent).expect("negative indentation");
             self.space = cmp::max(self.margin - indent, MIN_SPACE);
             if let Some(post_break) = token.post_break {
                 self.print_indent();
-                self.out.push_str(post_break);
+                self.push_str(post_break);
                 self.space -= post_break.len() as isize;
             }
         }
@@ -468,7 +481,7 @@ impl Printer {
 
     fn print_string(&mut self, string: &str) {
         self.print_indent();
-        self.out.push_str(string);
+        self.push_str(string);
         self.space -= string.len() as isize;
     }
 

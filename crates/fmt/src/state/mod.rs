@@ -120,7 +120,6 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
-    debug: bool,
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -204,7 +203,6 @@ impl<'sess> State<'sess, '_> {
         comments: Comments,
     ) -> Self {
         Self {
-            debug: false,
             s: pp::Printer::new(
                 config.line_length,
                 if matches!(config.style, IndentStyle::Tab) {
@@ -212,6 +210,7 @@ impl<'sess> State<'sess, '_> {
                 } else {
                     None
                 },
+                sm.files().iter().any(|file| file.src.contains("\r\n")),
             ),
             ind: config.tab_width as isize,
             sm,

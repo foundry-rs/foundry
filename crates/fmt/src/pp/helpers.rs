@@ -1,6 +1,30 @@
 use super::{Printer, Token};
 use std::borrow::Cow;
 
+/// Provides a method `fn push_str_crlf(..)` for appending a string slice while normalizing its line
+/// endings to CRLF (`\r\n`).
+///
+/// Used to ensure that output is compatible with platforms that expect Windows-style line endings.
+pub(super) trait StringCrlf {
+    fn push_str_crlf(&mut self, string: &str);
+}
+
+impl StringCrlf for String {
+    fn push_str_crlf(&mut self, string: &str) {
+        // Reserve memory in to minimize re-allocations.
+        self.reserve(string.len());
+
+        let mut last_was_cr = self.ends_with('\r');
+        for ch in string.chars() {
+            if ch == '\n' && !last_was_cr {
+                self.push('\r');
+            }
+            self.push(ch);
+            last_was_cr = ch == '\r';
+        }
+    }
+}
+
 impl Printer {
     pub fn word_space(&mut self, w: impl Into<Cow<'static, str>>) {
         self.word(w);
