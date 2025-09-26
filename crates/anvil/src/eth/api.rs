@@ -1360,7 +1360,7 @@ impl EthApi {
     pub fn anvil_get_blob_sidecars_by_block_id(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<Vec<BlobTransactionSidecar>>> {
+    ) -> Result<Option<BlobTransactionSidecar>> {
         node_info!("anvil_getBlobSidecarsByBlockId");
         Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
