@@ -109,10 +109,9 @@ pub fn write_json_gzip_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let mut encoder = GzEncoder::new(writer, Compression::default());
     serde_json::to_writer(&mut encoder, obj)
         .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
-    encoder
-        .finish()
-        .map_err(serde_json::Error::io)
-        .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+    // Ensure we surface any I/O errors on final gzip write and buffer flush.
+    let mut inner_writer = encoder.finish().map_err(|e| FsPathError::write(e, path))?;
+    inner_writer.flush().map_err(|e| FsPathError::write(e, path))?;
     Ok(())
 }
 
