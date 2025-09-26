@@ -832,6 +832,13 @@ impl<'sess> State<'sess, '_> {
         self.comments.iter().take_while(|c| c.pos() < pos).find(|c| !c.style.is_blank())
     }
 
+    fn has_comment_before_with<F>(&self, pos: BytePos, f: F) -> bool
+    where
+        F: FnMut(&Comment) -> bool,
+    {
+        self.comments.iter().take_while(|c| c.pos() < pos).any(f)
+    }
+
     fn peek_comment_between<'b>(&'b self, pos_lo: BytePos, pos_hi: BytePos) -> Option<&'b Comment>
     where
         'sess: 'b,

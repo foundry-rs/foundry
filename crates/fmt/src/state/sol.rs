@@ -1886,14 +1886,28 @@ impl<'ast> State<'_, 'ast> {
         let mut current_else = els_opt.as_deref();
         while let Some(els) = current_else {
             if self.ends_with('}') {
-                match self.print_comments(els.span.lo(), CommentConfig::skip_ws().mixed_no_break())
-                {
-                    Some(cmnt) => {
-                        if cmnt.is_mixed() {
-                            self.hardbreak();
-                        }
+                // If there are comments with line breaks, don't add spaces to mixed comments
+                if self.has_comment_before_with(els.span.lo(), |cmnt| !cmnt.style.is_mixed()) {
+                    // If last comment is miced, ensure line break
+                    if self
+                        .print_comments(els.span.lo(), CommentConfig::skip_ws().mixed_no_break())
+                        .is_some_and(|cmnt| cmnt.is_mixed())
+                    {
+                        self.hardbreak();
                     }
-                    None => self.nbsp(),
+                }
+                // Otherwise, ensure a non-breaking space is added
+                else if self
+                    .print_comments(
+                        els.span.lo(),
+                        CommentConfig::skip_ws()
+                            .mixed_no_break()
+                            .mixed_prev_space()
+                            .mixed_post_nbsp(),
+                    )
+                    .is_none()
+                {
+                    self.nbsp();
                 }
             } else {
                 self.hardbreak_if_not_bol();
