@@ -173,7 +173,7 @@ impl ExtTester {
         clone_remote(&repo_url, root, recursive);
 
         // Checkout the revision.
-        if self.rev.is_empty() {
+        if self.rev.is_empty() || !recursive {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
             test_debug!("$ {git:?}");

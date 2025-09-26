@@ -210,6 +210,7 @@ impl<'sess> State<'sess, '_> {
                 } else {
                     None
                 },
+                sm.files().iter().any(|file| file.src.contains("\r\n")),
             ),
             ind: config.tab_width as isize,
             sm,
