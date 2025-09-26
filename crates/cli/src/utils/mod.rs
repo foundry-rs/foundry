@@ -722,11 +722,7 @@ ignore them in the `.gitignore` file."
         // Git always uses forward slashes in submodule config keys, even on Windows
         let path_str = path.as_ref().to_string_lossy().replace('\\', "/");
         self.cmd()
-            .args([
-                "config",
-                "--get",
-                &format!("submodule.{path_str}.url"),
-            ])
+            .args(["config", "--get", &format!("submodule.{path_str}.url")])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
     }
