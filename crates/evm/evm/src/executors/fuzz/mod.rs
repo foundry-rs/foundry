@@ -421,7 +421,7 @@ impl FuzzedExecutor {
                             "failed to generate fuzzed input in worker {}: {err}",
                             worker.worker_id
                         )));
-                        // TODO: Send signal to stop all workers via SharedFuzzState
+                        shared_state.try_claim_failure(worker_id);
                         break 'stop;
                     }
                 }
@@ -459,17 +459,17 @@ impl FuzzedExecutor {
                     }) => {
                         let reason = rd.maybe_decode(&outcome.1.result, status);
                         worker.logs.extend(outcome.1.logs.clone());
-                        // TODO: Send signal for failure via SharedFuzzState
                         worker.counterexample = Some(outcome);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        shared_state.try_claim_failure(worker_id);
                         break 'stop;
                     }
                 },
                 Err(err) => {
                     match err {
                         TestCaseError::Fail(_) => {
-                            // TODO: Send signal for failure via SharedFuzzState
                             worker.failure = Some(err);
+                            shared_state.try_claim_failure(worker_id);
                             break 'stop;
                         }
                         TestCaseError::Reject(_) => {

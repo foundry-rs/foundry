@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
@@ -52,8 +52,12 @@ pub enum FuzzOutcome {
 pub struct SharedFuzzState {
     /// Total runs across workers
     total_runs: Arc<AtomicU32>,
-    /// Whether a counterexample has been found (use example from first failure)
-    found_counterexample: Arc<AtomicBool>,
+    /// Found failure
+    ///
+    /// The worker that found the failure sets it's ID.
+    ///
+    /// This ID is then used to correctly extract the failure reason and counterexample.
+    found_failure: OnceLock<u32>,
     /// Maximum number of runs
     max_runs: u32,
     /// Fuzz timer
@@ -66,7 +70,7 @@ impl SharedFuzzState {
     pub fn new(max_runs: u32, timeout: Option<u32>, fail_fast: FailFast) -> Self {
         Self {
             total_runs: Arc::new(AtomicU32::new(0)),
-            found_counterexample: Arc::new(AtomicBool::new(false)),
+            found_failure: OnceLock::new(),
             max_runs,
             timer: FuzzTestTimer::new(timeout),
             fail_fast,
@@ -93,14 +97,16 @@ impl SharedFuzzState {
         }
     }
 
-    pub fn try_claim_failure(&self) -> bool {
-        let claimed = self
-            .found_counterexample
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok();
+    /// Returns true if the worker was able to claim the failure, false if failure was set by
+    /// another worker
+    pub fn try_claim_failure(&self, worker_id: u32) -> bool {
+        if self.found_failure.get().is_some() {
+            return false;
+        }
 
+        let claimed = self.found_failure.set(worker_id).is_ok();
         if claimed {
-            // Record failure
+            // Record failure in FailFast as well
             self.fail_fast.record_fail();
         }
 
