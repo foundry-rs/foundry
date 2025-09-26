@@ -36,16 +36,16 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
     },
     error::SolcError,
-    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    multi::{MultiCompilerParser, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
 };
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
 use semver::Version;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -62,11 +62,10 @@ pub use endpoints::{
 };
 
 mod etherscan;
-use etherscan::{
-    EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
-};
+pub use etherscan::EtherscanConfigError;
+use etherscan::{EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig};
 
-mod resolve;
+pub mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
@@ -100,14 +99,13 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use foundry_block_explorers::EtherscanApiVersion;
 
 pub mod providers;
 pub use providers::Remappings;
 use providers::*;
 
 mod fuzz;
-pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
+pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 
 mod invariant;
 pub use invariant::InvariantConfig;
@@ -129,6 +127,8 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod extend;
 use extend::Extends;
+
+pub use semver;
 
 /// Foundry configuration
 ///
@@ -298,8 +298,6 @@ pub struct Config {
     pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
-    /// etherscan API version
-    pub etherscan_api_version: Option<EtherscanApiVersion>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
@@ -308,7 +306,10 @@ pub struct Config {
     /// list of file paths to ignore
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
-    /// When true, compiler warnings are treated as errors
+    /// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+    pub deny: DenyLevel,
+    /// DEPRECATED: use `deny` instead.
+    #[serde(default, skip_serializing)]
     pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
@@ -446,8 +447,6 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
-    /// Fork configuration
-    pub forks: HashMap<String, ForkConfig>,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -491,8 +490,11 @@ pub struct Config {
     /// Useful for more correct gas accounting and EVM behavior in general.
     pub isolate: bool,
 
-    /// Whether to disable the block gas limit.
+    /// Whether to disable the block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    pub enable_tx_gas_limit: bool,
 
     /// Address labels
     pub labels: AddressHashMap<String>,
@@ -528,9 +530,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Whether to enable Odyssey features.
-    #[serde(alias = "alphanet")]
-    pub odyssey: bool,
+    /// Whether to enable Celo precompiles.
+    #[serde(default)]
+    pub celo: bool,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -563,16 +565,99 @@ pub struct Config {
     pub _non_exhaustive: (),
 }
 
-/// Fork-scoped config for tests and scripts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ForkConfig {
-    // Optional RPC endpoint for the fork.
-    //
-    // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
-    // for the name of the forked chain.
-    pub rpc_endpoint: Option<RpcEndpoint>,
-    // Any arbitrary key-value pair of variables.
-    pub vars: HashMap<String, toml::Value>,
+/// Diagnostic level (minimum) at which the process should finish with a non-zero exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DenyLevel {
+    /// Always exit with zero code.
+    #[default]
+    Never,
+    /// Exit with a non-zero code if any warnings are found.
+    Warnings,
+    /// Exit with a non-zero code if any notes or warnings are found.
+    Notes,
+}
+
+// Custom deserialization to make `DenyLevel` parsing case-insensitive and backwards compatible with
+// booleans.
+impl<'de> Deserialize<'de> for DenyLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct DenyLevelVisitor;
+
+        impl<'de> de::Visitor<'de> for DenyLevelVisitor {
+            type Value = DenyLevel;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("one of the following strings: `never`, `warnings`, `notes`")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(DenyLevel::from(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                DenyLevel::from_str(value).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_any(DenyLevelVisitor)
+    }
+}
+
+impl FromStr for DenyLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "warnings" | "warning" | "w" => Ok(Self::Warnings),
+            "notes" | "note" | "n" => Ok(Self::Notes),
+            "never" | "false" | "f" => Ok(Self::Never),
+            _ => Err(format!(
+                "unknown variant: found `{s}`, expected one of `never`, `warnings`, `notes`"
+            )),
+        }
+    }
+}
+
+impl From<bool> for DenyLevel {
+    fn from(deny: bool) -> Self {
+        if deny { Self::Warnings } else { Self::Never }
+    }
+}
+
+impl DenyLevel {
+    /// Returns `true` if the deny level includes warnings.
+    pub fn warnings(&self) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Warnings | Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level includes notes.
+    pub fn notes(&self) -> bool {
+        match self {
+            Self::Never | Self::Warnings => false,
+            Self::Notes => true,
+        }
+    }
+
+    /// Returns `true` if the deny level is set to never (only errors).
+    pub fn never(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Warnings | Self::Notes => false,
+        }
+    }
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -581,7 +666,8 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 /// Deprecated keys and their replacements.
 ///
 /// See [Warning::DeprecatedKey]
-pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
+pub const DEPRECATIONS: &[(&str, &str)] =
+    &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
 
 impl Config {
     /// The default profile: "default"
@@ -607,7 +693,6 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
-        "forks",
     ];
 
     /// File name of config toml file
@@ -721,14 +806,14 @@ impl Config {
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
             figment = Self::merge_toml_provider(
                 figment,
-                TomlFileProvider::new(None, global_toml).cached(),
+                TomlFileProvider::new(None, global_toml),
                 profile.clone(),
             );
         }
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)).cached(),
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
             profile.clone(),
         );
 
@@ -970,6 +1055,20 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// A cached, in-memory project that does not request any artifacts.
+    ///
+    /// Use this when you just want the source graph or the Solar compiler context.
+    pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+        let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
+        let mut project = self.create_project(self.cache && !ui_testing, false)?;
+        project.update_output_selection(|selection| {
+            // We have to request something to populate `contracts` in the output and thus
+            // artifacts.
+            *selection = OutputSelection::common_output_selection(["abi".into()]);
+        });
+        Ok(project)
+    }
+
     /// Builds mapping with additional settings profiles.
     fn additional_settings(
         &self,
@@ -998,7 +1097,7 @@ impl Config {
             return Ok(BTreeMap::new());
         }
 
-        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let graph = Graph::<MultiCompilerParser>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
 
         for res in &self.compilation_restrictions {
@@ -1051,7 +1150,7 @@ impl Config {
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
-            .set_compiler_severity_filter(if self.deny_warnings {
+            .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
                 Severity::Error
@@ -1095,7 +1194,8 @@ impl Config {
             }
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
-        remove_test_dir(&self.invariant.corpus_dir);
+        remove_test_dir(&self.fuzz.corpus.corpus_dir);
+        remove_test_dir(&self.invariant.corpus.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -1139,9 +1239,8 @@ impl Config {
     }
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
-    #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(self.evm_version, self.odyssey)
+        evm_spec_id(self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -1420,23 +1519,17 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let default_api_version = self.etherscan_api_version.unwrap_or_default();
-
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
             && self.etherscan.contains_key(maybe_alias)
         {
-            return self
-                .etherscan
-                .clone()
-                .resolved(default_api_version)
-                .remove(maybe_alias)
-                .transpose();
+            return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
         }
 
         // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain.or(self.chain).and_then(|chain| {
-            self.etherscan.clone().resolved(default_api_version).find_chain(chain)
-        }) {
+        if let Some(res) = chain
+            .or(self.chain)
+            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        {
             match (res, self.etherscan_api_key.as_ref()) {
                 (Ok(mut config), Some(key)) => {
                     // we update the key, because if an etherscan_api_key is set, it should take
@@ -1454,19 +1547,10 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            match ResolvedEtherscanConfig::create(
+            return Ok(ResolvedEtherscanConfig::create(
                 key,
                 chain.or(self.chain).unwrap_or_default(),
-                default_api_version,
-            ) {
-                Some(config) => return Ok(Some(config)),
-                None => {
-                    return Err(EtherscanConfigError::UnknownChain(
-                        String::new(),
-                        chain.unwrap_or_default(),
-                    ));
-                }
-            }
+            ));
         }
         Ok(None)
     }
@@ -1478,17 +1562,6 @@ impl Config {
     /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
-    }
-
-    /// Helper function to get the API version.
-    ///
-    /// See also [Self::get_etherscan_config_with_chain]
-    pub fn get_etherscan_api_version(&self, chain: Option<Chain>) -> EtherscanApiVersion {
-        self.get_etherscan_config_with_chain(chain)
-            .ok()
-            .flatten()
-            .map(|c| c.api_version)
-            .unwrap_or_default()
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -1711,16 +1784,6 @@ impl Config {
             src: "contracts".into(),
             out: "artifacts".into(),
             libs: vec!["node_modules".into()],
-            ..Self::default()
-        }
-    }
-
-    /// Returns the default config that uses dapptools style paths
-    pub fn dapptools() -> Self {
-        Self {
-            chain: Some(Chain::from_id(99)),
-            block_timestamp: U256::ZERO,
-            block_number: U256::ZERO,
             ..Self::default()
         }
     }
@@ -2156,7 +2219,6 @@ impl Config {
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        // TODO: add a warning if evm_version is provided but incompatible
         if figment.contains("evm_version") {
             return figment;
         }
@@ -2169,6 +2231,13 @@ impl Config {
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
         {
             figment = figment.merge(("evm_version", version));
+        }
+
+        // Normalize `deny` based on the provided `deny_warnings` version.
+        if self.deny_warnings
+            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+        {
+            figment = figment.merge(("deny", DenyLevel::Warnings));
         }
 
         figment
@@ -2424,6 +2493,7 @@ impl Default for Config {
             block_prevrandao: Default::default(),
             block_gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_accept_invalid_certs: false,
@@ -2431,7 +2501,6 @@ impl Default for Config {
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
             etherscan_api_key: None,
-            etherscan_api_version: None,
             verbosity: 0,
             remappings: vec![],
             auto_detect_remappings: true,
@@ -2443,6 +2512,7 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
             ],
             ignored_file_paths: vec![],
+            deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
             ast: false,
@@ -2473,13 +2543,12 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            odyssey: false,
+            celo: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
-            forks: Default::default(),
         }
     }
 }
@@ -2639,7 +2708,6 @@ mod tests {
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
-    use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{fs::File, io::Write};
@@ -3130,11 +3198,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
+            assert!(config.etherscan.clone().resolved().has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
+            let configs = config.etherscan.resolved();
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3148,7 +3216,6 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3158,7 +3225,6 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -3185,11 +3251,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
+            assert!(config.etherscan.clone().resolved().has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
+            let configs = config.etherscan.resolved();
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3203,7 +3269,6 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3213,7 +3278,6 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: EtherscanApiVersion::V1,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -3305,19 +3369,19 @@ mod tests {
                 r#"
                 [profile.default]
                 [rpc_endpoints]
-                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
+                polygonAmoy = "https://polygon-amoy.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
             "#,
             )?;
             let mut config = Config::load().unwrap();
-            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            config.eth_rpc_url = Some("polygonAmoy".to_string());
             assert!(config.get_rpc_url().unwrap().is_err());
 
             jail.set_env("_RESOLVE_RPC_ALIAS", "123455");
 
             let mut config = Config::load().unwrap();
-            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            config.eth_rpc_url = Some("polygonAmoy".to_string());
             assert_eq!(
-                "https://polygon-mumbai.g.alchemy.com/v2/123455",
+                "https://polygon-amoy.g.alchemy.com/v2/123455",
                 config.get_rpc_url().unwrap().unwrap()
             );
 
@@ -3567,7 +3631,7 @@ mod tests {
 
                 [etherscan]
                 optimism = { key = "https://etherscan-optimism.com/" }
-                mumbai = { key = "https://etherscan-mumbai.com/" }
+                amoy = { key = "https://etherscan-amoy.com/" }
             "#,
             )?;
 
@@ -3576,10 +3640,10 @@ mod tests {
             let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism.into()));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
 
-            config.etherscan_api_key = Some("mumbai".to_string());
+            config.etherscan_api_key = Some("amoy".to_string());
 
-            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
-            assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+            let amoy = config.get_etherscan_api_key(Some(NamedChain::PolygonAmoy.into()));
+            assert_eq!(amoy, Some("https://etherscan-amoy.com/".to_string()));
 
             Ok(())
         });
@@ -3594,17 +3658,17 @@ mod tests {
                 [profile.default]
 
                 [etherscan]
-                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 }
+                amoy = { key = "https://etherscan-amoy.com/", chain = 80002 }
             "#,
             )?;
 
             let config = Config::load().unwrap();
 
-            let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
+            let amoy = config
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonAmoy.into()))
                 .unwrap()
                 .unwrap();
-            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            assert_eq!(amoy.key, "https://etherscan-amoy.com/".to_string());
 
             Ok(())
         });
@@ -3619,18 +3683,18 @@ mod tests {
                 [profile.default]
 
                 [etherscan]
-                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 , url =  "https://verifier-url.com/"}
+                amoy = { key = "https://etherscan-amoy.com/", chain = 80002 , url =  "https://verifier-url.com/"}
             "#,
             )?;
 
             let config = Config::load().unwrap();
 
-            let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
+            let amoy = config
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonAmoy.into()))
                 .unwrap()
                 .unwrap();
-            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
-            assert_eq!(mumbai.api_url, "https://verifier-url.com/".to_string());
+            assert_eq!(amoy.key, "https://etherscan-amoy.com/".to_string());
+            assert_eq!(amoy.api_url, "https://verifier-url.com/".to_string());
 
             Ok(())
         });
@@ -3643,23 +3707,23 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [profile.default]
-                eth_rpc_url = "mumbai"
+                eth_rpc_url = "amoy"
 
                 [etherscan]
-                mumbai = { key = "https://etherscan-mumbai.com/" }
+                amoy = { key = "https://etherscan-amoy.com/" }
 
                 [rpc_endpoints]
-                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/mumbai"
+                amoy = "https://polygon-amoy.g.alchemy.com/v2/amoy"
             "#,
             )?;
 
             let config = Config::load().unwrap();
 
-            let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
-            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            let amoy = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
+            assert_eq!(amoy.key, "https://etherscan-amoy.com/".to_string());
 
-            let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
-            assert_eq!(mumbai_rpc, "https://polygon-mumbai.g.alchemy.com/v2/mumbai");
+            let amoy_rpc = config.get_rpc_url().unwrap().unwrap();
+            assert_eq!(amoy_rpc, "https://polygon-amoy.g.alchemy.com/v2/amoy");
             Ok(())
         });
     }
@@ -3797,7 +3861,7 @@ mod tests {
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
                 ignored_warnings_from = ["something"]
-                deny_warnings = false
+                deny = "never"
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
@@ -4614,7 +4678,6 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
-                    corpus_dir: None,
                     ..Default::default()
                 }
             );
@@ -5159,61 +5222,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_script_config() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                    [forks]
-
-                    [forks.mainnet]
-                    rpc_endpoint = "mainnet-rpc"
-
-                    [forks.mainnet.vars]
-                    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-                    usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-                    pool_name = "USDC-ETH"
-                    pool_fee = 3000
-                    max_slippage = 500
-                "#,
-            )?;
-            let config = Config::load().unwrap();
-
-            let expected: HashMap<String, ForkConfig> = vec![(
-                "mainnet".to_string(),
-                ForkConfig {
-                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
-                        "mainnet-rpc".to_string(),
-                    ))),
-                    vars: vec![
-                        ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
-                        ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
-                        ("pool_name".into(), "USDC-ETH".into()),
-                        ("pool_fee".into(), 3000.into()),
-                        ("max_slippage".into(), 500.into()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                },
-            )]
-            .into_iter()
-            .collect();
-            assert_eq!(
-                expected.keys().sorted().collect::<Vec<_>>(),
-                config.forks.keys().sorted().collect::<Vec<_>>()
-            );
-
-            let expected_mainnet = expected.get("mainnet").unwrap();
-            let mainnet = config.forks.get("mainnet").unwrap();
-            assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
-            for (k, v) in &expected_mainnet.vars {
-                assert_eq!(v, mainnet.vars.get(k).unwrap());
-            }
-            Ok(())
-        });
-    }
-
-    #[test]
     fn test_can_inherit_a_base_toml() {
         figment::Jail::expect_with(|jail| {
             // Create base config file with optimizer_runs = 800
@@ -5244,7 +5252,7 @@ mod tests {
                     depth = 15
 
                     [rpc_endpoints]
-                    mainnet = "https://reth-ethereum.ithaca.xyz/rpc"
+                    mainnet = "https://test.xyz/rpc"
                     "#,
             )?;
 
@@ -5262,12 +5270,7 @@ mod tests {
             // optimism should be inherited from base config
             let endpoints = config.rpc_endpoints.resolved();
             assert!(
-                endpoints
-                    .get("mainnet")
-                    .unwrap()
-                    .url()
-                    .unwrap()
-                    .contains("reth-ethereum.ithaca.xyz")
+                endpoints.get("mainnet").unwrap().url().unwrap().contains("https://test.xyz/rpc")
             );
             assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
 
@@ -6295,6 +6298,24 @@ mod tests {
             // Non-array values should be replaced
             assert_eq!(config.optimizer, Some(false));
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_deprecated_deny_warnings_is_handled() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                deny_warnings = true
+                "#,
+            )?;
+            let config = Config::load().unwrap();
+
+            // Assert that the deprecated flag is correctly interpreted
+            assert_eq!(config.deny, DenyLevel::Warnings);
             Ok(())
         });
     }

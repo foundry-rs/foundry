@@ -1,13 +1,11 @@
 //! ABI related helper functions.
 
+use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::{
-    Client, EtherscanApiVersion, contract::ContractMetadata, errors::EtherscanError,
-};
-use foundry_config::Chain;
+use foundry_block_explorers::{Client, contract::ContractMetadata, errors::EtherscanError};
 use std::pin::Pin;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
@@ -15,6 +13,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let args: Vec<S> = args.into_iter().collect();
+
+    if inputs.len() != args.len() {
+        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len())
+    }
+
     std::iter::zip(inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect()
@@ -47,6 +51,16 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let args: Vec<S> = args.into_iter().collect();
+
+    if func.inputs.len() != args.len() {
+        eyre::bail!(
+            "encode length mismatch: expected {} types, got {}",
+            func.inputs.len(),
+            args.len(),
+        );
+    }
+
     let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect::<Result<Vec<_>>>()?
@@ -96,7 +110,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an error signature string, it tries to parse it as a `Error`
 pub fn get_error(sig: &str) -> Result<Error> {
-    Error::parse(sig).wrap_err("could not parse event signature")
+    Error::parse(sig).wrap_err("could not parse error signature")
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
@@ -129,9 +143,8 @@ pub async fn get_func_etherscan(
     args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
-    etherscan_api_version: EtherscanApiVersion,
 ) -> Result<Function> {
-    let client = Client::new_with_api_version(chain, etherscan_api_key, etherscan_api_version)?;
+    let client = Client::new(chain, etherscan_api_key)?;
     let source = find_source(client, contract).await?;
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
@@ -256,5 +269,44 @@ mod tests {
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
+    }
+
+    #[test]
+    fn test_encode_args_length_validation() {
+        use alloy_json_abi::Param;
+
+        let params = vec![
+            Param {
+                name: "a".to_string(),
+                ty: "uint256".to_string(),
+                internal_type: None,
+                components: vec![],
+            },
+            Param {
+                name: "b".to_string(),
+                ty: "address".to_string(),
+                internal_type: None,
+                components: vec![],
+            },
+        ];
+
+        // Less arguments than parameters
+        let args = vec!["1"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
+
+        // Exact number of arguments and parameters
+        let args = vec!["1", "0x0000000000000000000000000000000000000001"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_ok());
+        let values = res.unwrap();
+        assert_eq!(values.len(), 2);
+
+        // More arguments than parameters
+        let args = vec!["1", "0x0000000000000000000000000000000000000001", "extra"];
+        let res = encode_args(&params, &args);
+        assert!(res.is_err());
+        assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
     }
 }

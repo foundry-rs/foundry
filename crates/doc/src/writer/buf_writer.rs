@@ -1,6 +1,8 @@
 use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown, writer::traits::ParamLike};
 use itertools::Itertools;
-use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
+use solang_parser::pt::{
+    EnumDefinition, ErrorParameter, EventParameter, Parameter, VariableDeclaration,
+};
 use std::{
     fmt::{self, Display, Write},
     sync::LazyLock,
@@ -18,6 +20,11 @@ static PARAM_TABLE_SEPARATOR: LazyLock<String> =
 const DEPLOYMENTS_TABLE_HEADERS: &[&str] = &["Network", "Address"];
 static DEPLOYMENTS_TABLE_SEPARATOR: LazyLock<String> =
     LazyLock::new(|| DEPLOYMENTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
+
+/// Headers and separator for rendering the variants table.
+const VARIANTS_TABLE_HEADERS: &[&str] = &["Name", "Description"];
+static VARIANTS_TABLE_SEPARATOR: LazyLock<String> =
+    LazyLock::new(|| VARIANTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -80,6 +87,24 @@ impl BufWriter {
     /// Writes text in italics to the buffer formatted as [Markdown::Italic].
     pub fn write_italic(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Italic(text))
+    }
+
+    /// Writes dev content to the buffer, handling markdown lists properly.
+    /// If the content contains markdown lists, it formats them correctly.
+    /// Otherwise, it writes the content in italics.
+    pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(content) = trimmed.strip_prefix("- ") {
+                writeln!(self.buf, "- *{content}*")?;
+            } else if !trimmed.is_empty() {
+                writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
+            } else {
+                writeln!(self.buf)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Writes bold text to the buffer formatted as [Markdown::Bold].
@@ -177,6 +202,45 @@ impl BufWriter {
         self.try_write_table(CommentTag::Param, params, comments, "Properties")
     }
 
+    /// Tries to write the variant table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_variant_table(
+        &mut self,
+        params: &EnumDefinition,
+        comments: &Comments,
+    ) -> fmt::Result {
+        let comments = comments.include_tags(&[CommentTag::Param]);
+
+        // There is nothing to write.
+        if comments.is_empty() {
+            return Ok(());
+        }
+
+        self.write_bold("Variants")?;
+        self.writeln()?;
+
+        self.write_piped(&VARIANTS_TABLE_HEADERS.join("|"))?;
+        self.write_piped(&VARIANTS_TABLE_SEPARATOR)?;
+
+        for value in &params.values {
+            let param_name = value.as_ref().map(|v| v.name.clone());
+
+            let comment = param_name.as_ref().and_then(|name| {
+                comments.iter().find_map(|comment| comment.match_first_word(name))
+            });
+
+            let row = [
+                Markdown::Code(&param_name.unwrap_or("<none>".to_string())).as_doc()?,
+                comment.unwrap_or_default().replace('\n', " "),
+            ];
+            self.write_piped(&row.join("|"))?;
+        }
+
+        self.writeln()?;
+
+        Ok(())
+    }
+
     /// Tries to write the parameters table to the buffer.
     /// Doesn't write anything if either params or comments are empty.
     pub fn try_write_events_table(
@@ -248,5 +312,54 @@ impl BufWriter {
     /// Finish and return underlying buffer.
     pub fn finish(self) -> String {
         self.buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_dev_content_with_list() {
+        let mut writer = BufWriter::default();
+        let content = "This function will revert if:\n- Any of the Coolers are not owned by the caller.\n- Any of the Coolers have not been created by the CoolerFactory.\n- A duplicate Cooler is provided.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content with list");
+        let result = writer.finish();
+
+        // Check that the first line is italicized
+        assert!(result.contains("*This function will revert if:*"));
+        // Check that list items are properly formatted
+        assert!(result.contains("- *Any of the Coolers are not owned by the caller.*"));
+        assert!(
+            result.contains("- *Any of the Coolers have not been created by the CoolerFactory.*")
+        );
+        assert!(result.contains("- *A duplicate Cooler is provided.*"));
+    }
+
+    #[test]
+    fn test_write_dev_content_without_list() {
+        let mut writer = BufWriter::default();
+        let content = "This is a simple dev comment without any lists.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content without list");
+        let result = writer.finish();
+
+        // Check that the entire content is italicized
+        assert!(result.contains("*This is a simple dev comment without any lists.*"));
+    }
+
+    #[test]
+    fn test_write_dev_content_empty_lines() {
+        let mut writer = BufWriter::default();
+        let content = "This function will revert if:\n\n- First item.\n\n- Second item.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content with empty lines");
+        let result = writer.finish();
+
+        // Check that empty lines are preserved
+        assert!(result.contains("*This function will revert if:*"));
+        assert!(result.contains("- *First item.*"));
+        assert!(result.contains("- *Second item.*"));
     }
 }

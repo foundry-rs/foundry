@@ -1,6 +1,6 @@
 //! Modified from [`rustc_ast::util::comments`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast/src/util/comments.rs).
 
-use solar_parse::{
+use solar::parse::{
     ast::{CommentKind, Span},
     interface::BytePos,
 };
@@ -15,6 +15,21 @@ pub enum CommentStyle {
     Mixed,
     /// Just a manual blank line "\n\n", for layout
     BlankLine,
+}
+
+impl CommentStyle {
+    pub fn is_mixed(&self) -> bool {
+        matches!(self, Self::Mixed)
+    }
+    pub fn is_trailing(&self) -> bool {
+        matches!(self, Self::Trailing)
+    }
+    pub fn is_isolated(&self) -> bool {
+        matches!(self, Self::Isolated)
+    }
+    pub fn is_blank(&self) -> bool {
+        matches!(self, Self::BlankLine)
+    }
 }
 
 #[derive(Clone, Debug)]

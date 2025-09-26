@@ -44,6 +44,10 @@ use revm::{
 };
 use std::{
     borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -56,8 +60,12 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
+mod corpus;
 mod trace;
+
 pub use trace::TracingExecutor;
+
+const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 sol! {
     interface ITest {
@@ -484,6 +492,22 @@ impl Executor {
         self.transact_with_env(env)
     }
 
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization last.
+    pub fn transact_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        env.tx.set_signed_authorization(authorization_list);
+        env.tx.tx_type = 4;
+        self.transact_with_env(env)
+    }
+
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.
@@ -846,7 +870,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
 }
 
@@ -1095,8 +1119,44 @@ impl FuzzTestTimer {
         Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
     }
 
+    /// Whether the fuzz test timer is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Whether the current fuzz test timed out and should be stopped.
     pub fn is_timed_out(&self) -> bool {
         self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)
+    }
+}
+
+/// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
+#[derive(Clone, Debug)]
+pub struct FailFast {
+    /// Shared atomic flag set to `true` when a failure occurs.
+    /// None if fail-fast is disabled.
+    inner: Option<Arc<AtomicBool>>,
+}
+
+impl FailFast {
+    pub fn new(fail_fast: bool) -> Self {
+        Self { inner: fail_fast.then_some(Arc::new(AtomicBool::new(false))) }
+    }
+
+    /// Returns `true` if fail-fast is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    /// Sets the failure flag. Used by other tests to stop early.
+    pub fn record_fail(&self) {
+        if let Some(fail_fast) = &self.inner {
+            fail_fast.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether a failure has been recorded and test should stop.
+    pub fn should_stop(&self) -> bool {
+        self.inner.as_ref().map(|flag| flag.load(Ordering::Relaxed)).unwrap_or(false)
     }
 }

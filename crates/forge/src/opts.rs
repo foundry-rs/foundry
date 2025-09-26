@@ -96,11 +96,11 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: clap_complete::Shell,
+        shell: foundry_cli::clap::Shell,
     },
 
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
+    /// Generate Fig autocompletion spec. Deprecated: use `forge completions fig` instead.
+    #[command(visible_alias = "fig", hide = true)]
     GenerateFigSpec,
 
     /// Remove the build artifacts and cache directories.
@@ -145,6 +145,8 @@ pub enum ForgeSubcommand {
     Tree(tree::TreeArgs),
 
     /// Detects usage of unsafe cheat codes in a project and its dependencies.
+    ///
+    /// This is an alias for `forge lint --only-lint unsafe-cheatcode`.
     Geiger(geiger::GeigerArgs),
 
     /// Generate documentation for the project.
@@ -158,6 +160,7 @@ pub enum ForgeSubcommand {
     },
 
     /// Generate scaffold files.
+    #[command(hide = true)]
     Generate(generate::GenerateArgs),
 
     /// Compiler utilities.

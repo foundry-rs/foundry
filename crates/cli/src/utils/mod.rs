@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -90,26 +90,12 @@ pub fn subscriber() {
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
-    const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Low level networking
-        "hyper=off",
-        "hyper_util=off",
-        "h2=off",
-        "rustls=off",
-        // Tokio
-        "mio=off",
-    ];
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
     }
     filter
-}
-
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s
@@ -200,6 +186,14 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
+}
+
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
@@ -245,6 +239,18 @@ pub fn install_crypto_provider() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install default rustls crypto provider");
+}
+
+/// Fetches the ABI of a contract from Etherscan.
+pub async fn fetch_abi_from_etherscan(
+    address: Address,
+    config: &foundry_config::Config,
+) -> Result<Vec<(JsonAbi, String)>> {
+    let chain = config.chain.unwrap_or_default();
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let source = client.contract_source_code(address).await?;
+    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -319,12 +325,10 @@ pub struct Git<'a> {
 }
 
 impl<'a> Git<'a> {
-    #[inline]
     pub fn new(root: &'a Path) -> Self {
         Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
-    #[inline]
     pub fn from_config(config: &'a Config) -> Self {
         Self::new(config.root.as_path())
     }
@@ -389,18 +393,15 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    #[inline]
     pub fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    #[inline]
     pub fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
@@ -412,6 +413,11 @@ impl<'a> Git<'a> {
             .arg(tag)
             .exec()
             .map(drop)
+    }
+
+    /// Returns the current HEAD commit hash of the current branch.
+    pub fn head(self) -> Result<String> {
+        self.cmd().args(["rev-parse", "HEAD"]).get_stdout_lossy()
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
@@ -709,6 +715,18 @@ ignore them in the `.gitignore` file."
 
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
+    /// Get the URL of a submodule from git config
+    pub fn submodule_url(self, path: impl AsRef<OsStr>) -> Result<Option<String>> {
+        self.cmd()
+            .args([
+                "config",
+                "--get",
+                &format!("submodule.{}.url", path.as_ref().to_string_lossy()),
+            ])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
     }
 
     pub fn cmd(self) -> Command {

@@ -3,7 +3,8 @@
 use crate::constants::*;
 use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
 use foundry_config::{
-    BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
+    BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    parse_with_profile,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -53,6 +54,9 @@ Display options:
       --json
           Format log messages as JSON
 
+      --md
+          Format log messages as Markdown
+
   -q, --quiet
           Do not print log messages
 
@@ -79,6 +83,41 @@ forgetest!(can_clean_non_existing, |prj, cmd| {
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
+});
+
+// checks that `clean` doesn't output warnings
+forgetest_init!(can_clean_without_warnings, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "Simple.sol",
+        r#"
+pragma solidity ^0.8.5;
+
+contract Simple {
+    uint public value = 42;
+}
+"#,
+    );
+
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[default]
+evm_version = "cancun"
+solc = "0.8.5"
+"#,
+    );
+    // `forge build` warns
+    cmd.forge_fuse().arg("build").assert_success().stderr_eq(str![[r#"
+Warning: Found unknown config section in foundry.toml: [default]
+This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
+Please use [profile.default] instead or run `forge config --fix`.
+
+"#]]);
+    // `forge clear` should not warn
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq(str![[r#"
+
+"#]]);
 });
 
 // checks that `cache ls` can be invoked and displays the foundry cache
@@ -775,6 +814,63 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// checks that `forge init` works.
+forgetest!(can_init_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Counter.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Counter.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Counter.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+});
+
+// checks that `forge init --vyper` works.
+forgetest!(can_init_vyper_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("src").join("Counter.vy").exists());
+    assert!(prj.root().join("src").join("ICounter.sol").exists());
+
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("test").join("Counter.t.sol").exists());
+
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("script").join("Counter.s.sol").exists());
+
+    assert!(prj.root().join(".github").join("workflows").exists());
+    assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
+});
+
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
 forgetest!(can_clone_with_node_modules, |prj, cmd| {
@@ -967,8 +1063,7 @@ contract Greeter {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1016,8 +1111,7 @@ contract Foo {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FooLib",
@@ -1028,8 +1122,7 @@ library FooLib {
     function check2(Foo f) public {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1042,10 +1135,9 @@ Compiler run successful!
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj, cmd| {
     let contract_name = "Foo";
-    let path = prj
-        .add_source(
-            contract_name,
-            r#"
+    let path = prj.add_source(
+        contract_name,
+        r#"
 contract Foo {
     event log_string(string);
     function run() external {
@@ -1053,8 +1145,7 @@ contract Foo {
     }
 }
     "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("inspect").arg(contract_name).arg("bytecode").assert_success().stdout_eq(str![[r#"
 0x60806040[..]
@@ -1084,8 +1175,7 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["snapshot"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1114,7 +1204,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
-    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
         config.ignored_error_codes = vec![];
@@ -1128,8 +1218,7 @@ contract A {
     function testExample() public {}
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1166,8 +1255,7 @@ contract A {
     function testExample() public {}
 }
    ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1198,7 +1286,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = false;
+        config.deny = DenyLevel::Never;
     });
     prj.add_raw_source(
         "A",
@@ -1208,8 +1296,7 @@ contract A {
     function testExample() public {}
 }
    ",
-    )
-    .unwrap();
+    );
 
     // there are no errors
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
@@ -1226,7 +1313,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // warning fails to compile
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
-        config.deny_warnings = true;
+        config.deny = DenyLevel::Warnings;
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
@@ -1240,7 +1327,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     // ignores error code and compiles
     prj.update_config(|config| {
         config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
-        config.deny_warnings = true;
+        config.deny = DenyLevel::Warnings;
     });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
@@ -1270,8 +1357,7 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "BTest.t.sol",
         r#"
@@ -1282,8 +1368,7 @@ contract BTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1306,7 +1391,7 @@ contract CTest is DSTest {
    "#;
 
     // introduce contract with syntax error
-    prj.add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err);
 
     // `forge build --force` which should fail
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
@@ -1345,8 +1430,7 @@ contract CTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1362,7 +1446,7 @@ Compiler run successful!
     let cache = fs::read_to_string(prj.cache()).unwrap();
 
     // introduce the error again but building without force
-    prj.add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err);
     cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
@@ -1568,8 +1652,7 @@ import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-        )
-        .unwrap();
+        );
 
         // build and check output
         cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
@@ -1668,7 +1751,7 @@ contract ContractThreeTest is DSTest {
 
 forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
     // report for all
     prj.update_config(|config| {
@@ -2101,7 +2184,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
     // report for One
     prj.update_config(|config| config.gas_reports = vec!["ContractOne".to_string()]);
@@ -2247,7 +2330,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
     // ignore ContractOne
     prj.update_config(|config| {
@@ -2563,8 +2646,7 @@ contract Counter {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "CounterTest.t.sol",
@@ -2587,8 +2669,7 @@ contract CounterTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2712,8 +2793,7 @@ contract GasReportFallbackTest is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_fallback_gas_report", "-vvvv", "--gas-report"])
         .assert_success()
@@ -2837,8 +2917,7 @@ contract CounterWithFallbackTest is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_fallback_with_calldata", "-vvvv", "--gas-report"])
         .assert_success()
@@ -2935,8 +3014,7 @@ contract NestedDeploy is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_nested_create_gas_report", "--gas-report"])
         .assert_success()
@@ -3063,8 +3141,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
 
     interface IConfig {}
    ",
-    )
-    .unwrap();
+    );
 
     prj.add_lib(
         "myDependency/src/Config.sol",
@@ -3073,8 +3150,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
 
     contract Config is IConfig {}
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Greeter",
@@ -3085,8 +3161,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
         Config config;
     }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3103,8 +3178,7 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
         r"
 interface IMyScript {}
         ",
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "MyScript.sol",
@@ -3113,16 +3187,14 @@ import "script/IMyScript.sol";
 
 contract MyScript is IMyScript {}
         "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "IMyTest.sol",
         r"
 interface IMyTest {}
         ",
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "MyTest.sol",
@@ -3131,8 +3203,7 @@ import "test/IMyTest.sol";
 
 contract MyTest is IMyTest {}
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3234,8 +3305,7 @@ forgetest_init!(can_build_skip_glob, |prj, cmd| {
 contract TestDemo {
 function test_run() external {}
 }",
-    )
-    .unwrap();
+    );
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     prj.clear();
@@ -3267,24 +3337,21 @@ forgetest_init!(can_build_specific_paths, |prj, cmd| {
 contract Counter {
 function count() external {}
 }",
-    )
-    .unwrap();
+    );
     prj.add_test(
         "Foo.sol",
         r"
 contract Foo {
 function test_foo() external {}
 }",
-    )
-    .unwrap();
+    );
     prj.add_test(
         "Bar.sol",
         r"
 contract Bar {
 function test_bar() external {}
 }",
-    )
-    .unwrap();
+    );
 
     // Build 2 files within test dir
     prj.clear();
@@ -3345,6 +3412,15 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 +============================================================================================+
 | Counter  | 481              | 509               | 24,095             | 48,643              |
 ╰----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  | 481              | 509               | 24,095             | 48,643              |
 
 
 "#]]);
@@ -3462,7 +3538,7 @@ const ANOTHER_COUNTER: &str = r#"
     }
 "#;
 forgetest!(inspect_custom_counter_abi, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
 
@@ -3503,7 +3579,7 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 });
 
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
 
@@ -3520,7 +3596,7 @@ forgetest!(inspect_custom_counter_events, |prj, cmd| {
 });
 
 forgetest!(inspect_custom_counter_errors, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
 
@@ -3537,7 +3613,7 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 });
 
 forgetest!(inspect_path_only_identifier, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
 
@@ -3555,7 +3631,7 @@ forgetest!(inspect_path_only_identifier, |prj, cmd| {
 
 forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
     let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
-    prj.add_source("Counter.sol", &source).unwrap();
+    prj.add_source("Counter.sol", &source);
 
     cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);
 
@@ -3580,10 +3656,9 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
         r#"
     contract Source {
         function foo() public {}
-    }   
+    }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "another/Source.sol",
@@ -3592,8 +3667,7 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
         function bar() public {}
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["inspect", "src/another/Source.sol:Source", "methodIdentifiers"])
         .assert_success()
@@ -3610,7 +3684,7 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
 });
 
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
-    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
 
@@ -3631,6 +3705,51 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 |----------------------------+------------|
 | square()                   | d742cb01   |
 ╰----------------------------+------------╯
+
+
+"#]]);
+});
+
+const CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS: &str = r#"
+contract Counter {
+    struct BigStruct {
+        uint256 a;
+        uint256 b;
+        uint256 c;
+        uint256 d;
+        uint256 e;
+        uint256 f;
+    }
+
+    struct NestedBigStruct {
+        BigStruct a;
+        BigStruct b;
+        BigStruct c;
+    }
+
+    function hugeIdentifier(NestedBigStruct[] calldata _bigStructs, NestedBigStruct calldata _bigStruct) external {}
+}
+"#;
+
+forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS);
+
+    cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
+
+╭-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------╮
+| Method                                                                                                                                                                                                                                                                                                                            | Identifier |
++================================================================================================================================================================================================================================================================================================================================================+
+| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))[],((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))) | f38dafbb   |
+╰-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------╯
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "method-identifiers", "--md"]).assert_success().stdout_eq(str![[r#"
+
+| Method                                                                                                                                                                                                                                                                                                                            | Identifier |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))[],((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))) | f38dafbb   |
 
 
 "#]]);
@@ -3683,6 +3802,41 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 "#]]);
 });
 
+forgetest_init!(can_inspect_libraries, |prj, cmd| {
+    prj.add_source(
+        "Source.sol",
+        r#"
+    import "./Lib.sol";
+
+    library Lib2 {
+        function foo() public {}
+    }
+
+    contract Source {
+        function foo() public {
+            Lib.foo();
+            Lib2.foo();
+        }
+    }"#,
+    );
+
+    prj.add_source(
+        "Lib.sol",
+        r#"
+    library Lib {
+        function foo() public {}
+    }
+    "#,
+    );
+
+    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+Dynamically linked libraries:
+  src/Lib.sol:Lib
+  src/Source.sol:Lib2
+
+"#]]);
+});
+
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
     prj.update_config(|config| {
@@ -3727,6 +3881,35 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | test_Increment                          | 51847           | 51847  | 51847  | 51847  | 1       |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
+
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| src/Counter.sol:Counter Contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 156813                           | 509             |       |        |       |         |
+|                                  |                 |       |        |       |         |
+| Function Name                    | Min             | Avg   | Median | Max   | # Calls |
+| increment                        | 43482           | 43482 | 43482  | 43482 | 1       |
+| number                           | 2424            | 2424  | 2424   | 2424  | 1       |
+| setNumber                        | 23784           | 23784 | 23784  | 23784 | 1       |
+
+| test/Counter.t.sol:CounterTest Contract |                 |        |        |        |         |
+|-----------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                         | Deployment Size |        |        |        |         |
+| 1544498                                 | 7573            |        |        |        |         |
+|                                         |                 |        |        |        |         |
+| Function Name                           | Min             | Avg    | Median | Max    | # Calls |
+| setUp                                   | 218902          | 218902 | 218902 | 218902 | 1       |
+| test_Increment                          | 51847           | 51847  | 51847  | 51847  | 1       |
 
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -3832,8 +4015,7 @@ contract FooBarTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--gas-report"]).assert_success();
 });
@@ -3849,8 +4031,7 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
         enum MyEnum { A, B, C }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "UseEnum.sol",
@@ -3859,8 +4040,7 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     contract UseEnum {
         Enum.MyEnum public myEnum;
     }"#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
         r#"[COMPILING_FILES] with [SOLC_VERSION]

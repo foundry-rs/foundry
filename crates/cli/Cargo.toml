@@ -13,16 +13,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-forge-fmt.workspace = true
+foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
-foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
-foundry-block-explorers.workspace = true
 
-foundry-compilers = { workspace = true, features = ["full"] }
-solar-sema.workspace = true
+foundry-compilers.workspace = true
+solar.workspace = true
 
 alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
@@ -35,6 +33,9 @@ alloy-ens = { workspace = true, features = ["provider"] }
 
 cfg-if = "1.0"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete.workspace = true
+clap_complete_nushell.workspace = true
+clap_complete_fig = "4"
 color-eyre.workspace = true
 dotenvy = "0.15"
 eyre.workspace = true

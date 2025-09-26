@@ -35,7 +35,7 @@ pub fn load_config_with_root(root: Option<&Path>) -> eyre::Result<Config> {
 pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
     let root =
         if relative_to.is_absolute() { relative_to } else { &dunce::canonicalize(relative_to)? };
-    Ok(root.ancestors().find(|p| p.join(".git").is_dir()).map(Path::to_path_buf))
+    Ok(root.ancestors().find(|p| p.join(".git").exists()).map(Path::to_path_buf))
 }
 
 /// Returns the root path to set for the project root.
@@ -283,11 +283,7 @@ impl FromStr for Numeric {
 }
 
 /// Returns the [SpecId] derived from [EvmVersion]
-#[inline]
-pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
-    if odyssey {
-        return SpecId::OSAKA;
-    }
+pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
     match evm_version {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
         EvmVersion::TangerineWhistle => SpecId::TANGERINE,

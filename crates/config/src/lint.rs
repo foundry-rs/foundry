@@ -3,11 +3,11 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar_interface::diagnostics::Level;
+use solar::interface::diagnostics::Level;
 use std::str::FromStr;
 use yansi::Paint;
 
-/// Contains the config and rule set
+/// Contains the config and rule set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
@@ -18,14 +18,21 @@ pub struct LinterConfig {
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
     pub exclude_lints: Vec<String>,
 
-    /// Globs to ignore
+    /// Globs to ignore.
     pub ignore: Vec<String>,
 
     /// Whether to run linting during `forge build`.
     ///
     /// Defaults to true. Set to false to disable automatic linting during builds.
     pub lint_on_build: bool,
+
+    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    ///
+    /// Default's to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
+    /// or `tokenURI`.
+    pub mixed_case_exceptions: Vec<String>,
 }
+
 impl Default for LinterConfig {
     fn default() -> Self {
         Self {
@@ -33,11 +40,12 @@ impl Default for LinterConfig {
             severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
+            mixed_case_exceptions: vec!["ERC".to_string(), "URI".to_string()],
         }
     }
 }
 
-/// Severity of a lint
+/// Severity of a lint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
 pub enum Severity {
     High,

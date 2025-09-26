@@ -10,11 +10,11 @@ use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     Graph, Project,
     artifacts::{Metadata, Source, output_selection::OutputSelection},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
-    multi::MultiCompilerSettings,
+    compilers::solc::SolcCompiler,
+    multi::{MultiCompilerParser, MultiCompilerSettings},
     solc::Solc,
 };
-use foundry_config::Config;
+use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
 use std::{fmt, path::PathBuf, str::FromStr};
 
@@ -88,8 +88,7 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph =
-            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
@@ -169,7 +168,12 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
+    pub fn client(
+        &self,
+        key: Option<&str>,
+        chain: Option<Chain>,
+        has_url: bool,
+    ) -> Result<Box<dyn VerificationProvider>> {
         let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
         // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
         if !has_key && self.is_sourcify() {
@@ -180,8 +184,14 @@ impl VerificationProviderType {
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
-        // 2. If `--verifier etherscan` is explicitly set, enforce the API key requirement.
+        // 2. If `--verifier etherscan` is explicitly set, check if chain is supported and
+        // enforce the API key requirement.
         if self.is_etherscan() {
+            if let Some(chain) = chain
+                && chain.etherscan_urls().is_none()
+            {
+                eyre::bail!(EtherscanConfigError::UnknownChain(String::new(), chain))
+            }
             if !has_key {
                 eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
             }
@@ -189,8 +199,11 @@ impl VerificationProviderType {
         }
 
         // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
-        //    verifier.
+        //    verifier and make sure an URL was specified.
         if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+            if !has_url {
+                eyre::bail!("No verifier URL specified for verifier {}", self);
+            }
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 

@@ -131,7 +131,7 @@ impl VerifyBundle {
                         .to_string(),
                 };
 
-                // We strip the build metadadata information, since it can lead to
+                // We strip the build metadata information, since it can lead to
                 // etherscan not identifying it correctly. eg:
                 // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
                 let version = Version::new(
@@ -146,6 +146,8 @@ impl VerifyBundle {
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
+                    no_auto_detect: false,
+                    use_solc: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
                     rpc: Default::default(),
@@ -163,6 +165,7 @@ impl VerifyBundle {
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
                     language: None,
+                    creation_transaction_hash: None,
                 };
 
                 return Some(verify);
