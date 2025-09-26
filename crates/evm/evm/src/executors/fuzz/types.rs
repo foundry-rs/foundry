@@ -106,13 +106,17 @@ impl SharedFuzzState {
 
         claimed
     }
+
+    pub fn total_runs(&self) -> u32 {
+        self.total_runs.load(Ordering::Relaxed)
+    }
 }
 
+#[derive(Default)]
 pub struct FuzzWorker {
     /// Worker identifier
     pub worker_id: u32,
     /// First fuzz case this worker encountered (with global run number)
-    /// The global run number is used to compare which worker found the failure first.
     pub first_case: Option<(u32, FuzzCase)>,
     /// Gas usage for all cases this worker ran
     pub gas_by_case: Vec<(u64, u64)>,
@@ -134,26 +138,10 @@ pub struct FuzzWorker {
     pub rejects: u32,
     /// Failure reason if this worker failed
     pub failure: Option<TestCaseError>,
-    /// Worker's corpus manager
-    pub corpus: WorkerCorpus,
 }
 
 impl FuzzWorker {
-    pub fn new(worker_id: u32, corpus: WorkerCorpus) -> Self {
-        Self {
-            worker_id,
-            corpus,
-            first_case: Default::default(),
-            gas_by_case: Default::default(),
-            counterexample: Default::default(),
-            traces: Default::default(),
-            breakpoints: Default::default(),
-            coverage: Default::default(),
-            logs: Default::default(),
-            deprecated_cheatcodes: Default::default(),
-            runs: 0,
-            rejects: 0,
-            failure: Default::default(),
-        }
+    pub fn new(worker_id: u32) -> Self {
+        Self { worker_id, ..Default::default() }
     }
 }

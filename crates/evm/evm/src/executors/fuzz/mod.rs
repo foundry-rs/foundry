@@ -1,6 +1,7 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
     corpus::WorkerCorpus,
+    fuzz::types::{FuzzWorker, SharedFuzzState},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -25,7 +26,10 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use serde_json::json;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -356,6 +360,137 @@ impl FuzzedExecutor {
         }
     }
 
+    fn run_worker(
+        &mut self,
+        worker_id: u32,
+        num_workers: u32,
+        func: &Function,
+        fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
+        address: Address,
+        rd: &RevertDecoder,
+        shared_state: Arc<SharedFuzzState>,
+        progress: Option<&ProgressBar>,
+    ) -> Result<FuzzWorker> {
+        // Prepare
+        let state = self.build_fuzz_state(deployed_libs);
+        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
+        let strategy = proptest::prop_oneof![
+            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
+        ]
+        .prop_map(move |calldata| BasicTxDetails {
+            sender: Default::default(),
+            call_details: CallDetails { target: Default::default(), calldata },
+        });
+
+        let mut corpus = WorkerCorpus::new(
+            worker_id,
+            self.config.corpus.clone(),
+            strategy.boxed(),
+            if worker_id == 0 { Some(&self.executor) } else { None },
+            if worker_id == 0 { Some(func) } else { None },
+            None, // fuzzed_contracts for invariant tests
+        )?;
+
+        let mut worker = FuzzWorker::new(worker_id);
+        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+
+        let mut runner = self.runner.clone();
+        // TODO: Add sync interval parameters for corpus sync
+        'stop: while shared_state.should_continue() {
+            let input = if let Some(failure) = self.persisted_failure.take() {
+                failure.calldata
+            } else {
+                if let Some(progress) = progress {
+                    progress.inc(1);
+
+                    if self.config.corpus.collect_edge_coverage() {
+                        // TODO: Display Global Corpus Metrics
+                    }
+                } else if self.config.corpus.collect_edge_coverage() {
+                    // TODO: Display global corpus metrics since DURATION_BETWEEN_METRICS_REPORT
+                }
+
+                worker.runs += 1;
+
+                match corpus.new_input(&mut runner, &state, func) {
+                    Ok(input) => input,
+                    Err(err) => {
+                        worker.failure = Some(TestCaseError::fail(format!(
+                            "failed to generate fuzzed input in worker {}: {err}",
+                            worker.worker_id
+                        )));
+                        // TODO: Send signal to stop all workers via SharedFuzzState
+                        break 'stop;
+                    }
+                }
+            };
+
+            match self.single_fuzz(address, input, &mut corpus) {
+                Ok(fuzz_outcome) => match fuzz_outcome {
+                    FuzzOutcome::Case(case) => {
+                        worker.gas_by_case.push((case.case.gas, case.case.stipend));
+
+                        if worker.first_case.is_none() {
+                            let total_runs = shared_state.total_runs();
+                            worker.first_case.replace((total_runs, case.case));
+                        }
+
+                        if let Some(call_traces) = case.traces {
+                            if worker.traces.len() == max_traces_to_collect {
+                                worker.traces.pop();
+                            }
+                            worker.traces.push(call_traces);
+                            worker.breakpoints.replace(case.breakpoints);
+                        }
+
+                        if self.config.show_logs {
+                            worker.logs.extend(case.logs);
+                        }
+
+                        HitMaps::merge_opt(&mut worker.coverage, case.coverage);
+                        worker.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                    }
+                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+                        exit_reason: status,
+                        counterexample: outcome,
+                        ..
+                    }) => {
+                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        worker.logs.extend(outcome.1.logs.clone());
+                        // TODO: Send signal for failure via SharedFuzzState
+                        worker.counterexample = Some(outcome);
+                        worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        break 'stop;
+                    }
+                },
+                Err(err) => {
+                    match err {
+                        TestCaseError::Fail(_) => {
+                            // TODO: Send signal for failure via SharedFuzzState
+                            worker.failure = Some(err);
+                            break 'stop;
+                        }
+                        TestCaseError::Reject(_) => {
+                            // Apply max rejects only if configured, otherwise silently discard run.
+                            // TODO: Add max_rejects to SharedFuzzState and track rejects across
+                            // workers.
+                            if self.config.max_test_rejects > 0 {
+                                worker.rejects += 1;
+                                if worker.rejects >= self.config.max_test_rejects {
+                                    worker.failure = Some(err);
+                                    break 'stop;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(worker)
+    }
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
