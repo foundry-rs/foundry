@@ -525,10 +525,10 @@ impl TestArgs {
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
-        // Avoid using etherscan for gas report as we decode more traces and this will be
-        // expensive.
+        // Avoid using etherscan and sourcify for gas report as we decode more traces and this will
+        // be expensive.
         if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+            identifier = identifier.with_sourcify().with_etherscan(&config, remote_chain_id)?;
         }
 
         // Build the trace decoder.
