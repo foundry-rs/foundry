@@ -38,42 +38,49 @@ function ensureSecureUrl(urlString: string, purpose: string) {
   }
 }
 
-function makeRequest(url: string): Promise<Buffer> {
+/**
+ * Perform an HTTP(S) GET with safe redirect handling.
+ * - Limits the total number of redirects to avoid infinite loops
+ * - Detects redirect cycles via a visited set
+ */
+function makeRequest(url: string, maxRedirects = 5, visited = new Set<string>()): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    try {
     ensureSecureUrl(url, 'HTTP request')
+      } catch (err) {
+      return reject(err)
+    }
+
+    if (visited.has(url)) return reject(new Error('Redirect loop detected'))
+    visited.add(url)
 
     const client = url.startsWith('https:') ? NodeHttps : NodeHttp
-    client
-      .get(url, response => {
-        if (response?.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
-          const chunks: Array<Buffer> = []
-
-          response.on('data', chunk => chunks.push(chunk))
-          response.on('end', () => resolve(Buffer.concat(chunks)))
-        } else if (
-          response?.statusCode
-          && response.statusCode >= 300
-          && response.statusCode < 400
-          && response.headers.location
-        ) {
-          // Follow redirects
-          const redirected = (() => {
-            try {
-              return new URL(response.headers.location, url).href
-            } catch {
-              return response.headers.location
-            }
-          })()
-          makeRequest(redirected).then(resolve, reject)
-        } else {
-          reject(
-            new Error(
-              `Package registry responded with status code ${response.statusCode} when downloading the package.`
-            )
+    const req = client.get(url, response => {
+      const statusCode = response?.statusCode ?? 0
+      if (statusCode >= 200 && statusCode < 300) {
+        const chunks: Array<Buffer> = []
+        response.on('data', chunk => chunks.push(chunk))
+        response.on('end', () => resolve(Buffer.concat(chunks)))
+      } else if (statusCode >= 300 && statusCode < 400 && response.headers.location) {
+        if (maxRedirects <= 0) return reject(new Error('Too many redirects'))
+        // Follow redirects; use absolute URL resolution against the current URL
+        const redirected = (() => {
+          try {
+            return new URL(response.headers.location as string, url).href
+          } catch {
+            return response.headers.location as string
+          }
+        })()
+        makeRequest(redirected, maxRedirects - 1, visited).then(resolve, reject)
+      } else {
+        reject(
+          new Error(
+            `Package registry responded with status code ${response.statusCode} when downloading the package.`
           )
-        }
-      })
-      .on('error', error => reject(error))
+        )
+      }
+    })
+    req.on('error', error => reject(error))
   })
 }
 
