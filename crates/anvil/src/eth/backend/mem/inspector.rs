@@ -58,7 +58,7 @@ impl AnvilInspector {
         }
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`]
+    /// Configures the `TracingInspector` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
         self
@@ -70,27 +70,21 @@ impl AnvilInspector {
         self
     }
 
-    /// Enables steps recording for `Tracer`.
+    /// Enables steps recording for `TracingInspector`.
     pub fn with_steps_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`] with a log collector
+    /// Configures the `TracingInspector` [`revm::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(Default::default());
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`] with a transfer event collector
+    /// Configures the `TracingInspector` [`revm::Inspector`] with a transfer event collector
     pub fn with_transfers(mut self) -> Self {
         self.transfer = Some(TransferInspector::new(false).with_logs(true));
-        self
-    }
-
-    /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
-    pub fn with_trace_printer(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 }
