@@ -111,5 +111,10 @@ contract Orchestrator {
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
             address(fromToken()), amount(), 0 /* nonce */
         );
+
+        isValid =
+            _isSuperLongAdminThatBreaks(keyHash) || _getKeyExtraStorage(keyHash).checkers.contains(msg.sender);
+        isValid = _isSuperLongAdminThatBreaks(keyHash)
+            || _getKeyExtraStorage(keyHash).checkers.contains(msg.sender);
     }
 }
