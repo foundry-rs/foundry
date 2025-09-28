@@ -111,5 +111,12 @@ contract Orchestrator {
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
             address(fromToken()), amount(), 0 /* nonce */
         );
+
+        CurrenciesOutOfOrderOrEqual.selector.revertWith(
+            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1)
+        );
+
+        nestedStruct.withCalls.thatCause.aBreak(param1, param2, param3 // long line
+        );
     }
 }
