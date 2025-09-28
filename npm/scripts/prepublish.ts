@@ -73,12 +73,13 @@ function getPlatformInfo() {
 
 function findForgeBinary(arch: string, platform: string, profile: string) {
   const targetDir = TARGET_MAP[`${arch}-${platform}` as keyof typeof TARGET_MAP]
-  const targetPath = NodePath.join(process.cwd(), '..', 'target', targetDir, profile, 'forge')
+  const binaryName = platform === 'win32' ? 'forge.exe' : 'forge'
+  const targetPath = NodePath.join(process.cwd(), '..', 'target', targetDir, profile, binaryName)
 
   if (NodeFS.existsSync(targetPath))
     return targetPath
 
-  return NodePath.join(process.cwd(), '..', 'target', 'release', 'forge')
+  return NodePath.join(process.cwd(), '..', 'target', 'release', binaryName)
 }
 
 async function cleanPackageDirectory(packagePath: string) {
@@ -112,7 +113,8 @@ async function copyBinary(forgeBinPath: string, packagePath: string, platform: s
     throw new Error(`Source binary not found at ${forgeBinPath}`)
 
   const binaryName = platform === 'win32' ? 'forge.exe' : 'forge'
-  const targetDir = NodePath.join('@foundry-rs', NodePath.basename(packagePath), 'bin')
+  // Ensure we write inside the prepared package directory
+  const targetDir = NodePath.join(packagePath, 'bin')
 
   NodeFS.mkdirSync(targetDir, { recursive: true })
 
