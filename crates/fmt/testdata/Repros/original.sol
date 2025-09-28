@@ -167,6 +167,30 @@ contract DbgFmtTest is Test {
     }
 }
 
+// https://github.com/foundry-rs/foundry/issues/11836
+contract TupleLhsComments {
+    function f() external pure {
+        (
+            /* poolIndex */, // comment in empty slot 0
+            uint256 sellAmount1,
+            uint256 buyAmount1,
+            /* poolKey1 */, /* sellToken */, /* buyToken */, /* sellTokenBalanceBefore */,
+            uint256 buyTokenBalanceBefore1,
+            /* hashMul */,
+            /* hashMod */
+        ) = _swapPre(2, TOTAL_SUPPLY / 1_000, false, zeroForOne1);
+
+        (
+            , /* poolIndex */
+            uint256 sellAmount1,
+            uint256 buyAmount1, /* poolKey1 */ /* sellToken */ /* buyToken */ /* sellTokenBalanceBefore */ /* hashMul */
+            /* hashMod */
+            ,,,,
+            uint256 buyTokenBalanceBefore1,,
+        ) = _swapPre(2, TOTAL_SUPPLY / 1_000, false, zeroForOne1);
+    }
+}
+
 // https://github.com/foundry-rs/foundry/issues/11249
 function argListRepro(address tokenIn, uint256 amountIn, bool data) {
     maverickV2SwapCallback(
