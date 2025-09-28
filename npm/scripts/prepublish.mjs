@@ -4,22 +4,29 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
 
-import { colors } from '#const.ts'
+import { colors } from '#const.mjs'
+import { generateBinaryPackageJson } from '#src/generate-package-json.mjs'
+
+/**
+ * @typedef {import('#const.mjs').Arch} Arch
+ * @typedef {import('#const.mjs').Platform} Platform
+ * @typedef {import('#const.mjs').Profile} Profile
+ */
 
 const PRESERVED_FILES = ['package.json', 'README.md']
-const PLATFORM_MAP = {
+const PLATFORM_MAP = /** @type {const} */ (/** @type {Record<Platform, Platform>} */ ({
   linux: 'linux',
   darwin: 'darwin',
   win32: 'win32'
-} as const
+}))
 
-const TARGET_MAP = {
+const TARGET_MAP = /** @type {const} */ (/** @type {Record<`${Arch}-${Platform}`, string>} */ ({
   'amd64-linux': 'x86_64-unknown-linux-gnu',
   'arm64-linux': 'aarch64-unknown-linux-gnu',
   'amd64-darwin': 'x86_64-apple-darwin',
   'arm64-darwin': 'aarch64-apple-darwin',
   'amd64-win32': 'x86_64-pc-windows-msvc'
-} as const
+}))
 
 main().catch(error => {
   console.error(colors.red, error)
@@ -35,16 +42,17 @@ async function main() {
   await NodeFS.promises.mkdir(packagePath, { recursive: true, mode: 0o755 })
   console.info(colors.green, `Ensured package directory at ${packagePath}`, colors.reset)
 
+  await generateBinaryPackageJson({ tool: 'forge', platform, arch, packagePath })
+
   await cleanPackageDirectory(packagePath)
-  await buildScripts()
   await copyBinary(forgeBinPath, packagePath, platform)
 
   console.info(colors.green, 'Binary copy completed successfully!', colors.reset)
 }
 
 function getPlatformInfo() {
-  const platformEnv = Bun.env.PLATFORM_NAME as keyof typeof PLATFORM_MAP
-  const archEnv = (Bun.env.ARCH || '') as 'amd64' | 'arm64' | 'aarch64'
+  const platformEnv = Bun.env.PLATFORM_NAME
+  const archEnv = Bun.env.ARCH || ''
 
   if (!platformEnv || !archEnv)
     throw new Error('PLATFORM_NAME and ARCH environment variables are required')
@@ -71,8 +79,15 @@ function getPlatformInfo() {
   return { platform, arch, forgeBinPath }
 }
 
-function findForgeBinary(arch: string, platform: string, profile: string) {
-  const targetDir = TARGET_MAP[`${arch}-${platform}` as keyof typeof TARGET_MAP]
+/**
+ * @param {Arch} arch
+ * @param {Platform} platform
+ * @param {Profile} profile
+ * @returns {string}
+ */
+function findForgeBinary(arch, platform, profile) {
+  // @ts-ignore
+  const targetDir = TARGET_MAP[`${arch}-${platform}`]
   const targetPath = NodePath.join(process.cwd(), '..', 'target', targetDir, profile, 'forge')
 
   if (NodeFS.existsSync(targetPath))
@@ -81,7 +96,11 @@ function findForgeBinary(arch: string, platform: string, profile: string) {
   return NodePath.join(process.cwd(), '..', 'target', 'release', 'forge')
 }
 
-async function cleanPackageDirectory(packagePath: string) {
+/**
+ * @param {string} packagePath
+ * @returns {Promise<void>}
+ */
+async function cleanPackageDirectory(packagePath) {
   const items = await NodeFS.promises
     .readdir(packagePath, { withFileTypes: true, recursive: true })
     .catch(() => [])
@@ -98,16 +117,13 @@ async function cleanPackageDirectory(packagePath: string) {
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 }
 
-async function buildScripts() {
-  const result = await Bun.$`bun x tsdown --config tsdown.config.ts`.nothrow().quiet()
-
-  if (result.exitCode !== 0)
-    throw new Error(`Failed to build scripts: ${result.stderr.toString()}`)
-
-  console.info(colors.green, result.stdout.toString(), colors.reset)
-}
-
-async function copyBinary(forgeBinPath: string, packagePath: string, platform: string) {
+/**
+ * @param {string} forgeBinPath
+ * @param {string} packagePath
+ * @param {Platform} platform
+ * @returns {Promise<void>}
+ */
+async function copyBinary(forgeBinPath, packagePath, platform) {
   if (!(await Bun.file(forgeBinPath).exists()))
     throw new Error(`Source binary not found at ${forgeBinPath}`)
 
