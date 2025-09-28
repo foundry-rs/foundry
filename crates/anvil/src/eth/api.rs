@@ -36,6 +36,7 @@ use alloy_consensus::{
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
+    eip4844::BlobTransactionSidecar,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -283,6 +284,9 @@ impl EthApi {
             }
             EthRequest::GetBlobByTransactionHash(hash) => {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
+            }
+            EthRequest::GetBlobSidecarsByBlockId(block_id) => {
+                self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -1350,6 +1354,15 @@ impl EthApi {
     pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
+    pub fn anvil_get_blob_sidecars_by_block_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlobTransactionSidecar>> {
+        node_info!("anvil_getBlobSidecarsByBlockId");
+        Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
 
     /// Get transaction by its hash.
