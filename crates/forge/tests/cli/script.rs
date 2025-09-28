@@ -3169,3 +3169,29 @@ Traces:
 Error: script failed: call to non-contract address [..]
 "#]]);
 });
+
+// Test that --verify without --broadcast fails with a clear error message
+forgetest!(verify_without_broadcast_fails, |prj, cmd| {
+    let script = prj.add_source(
+        "Counter",
+        r#"
+import "forge-std/Script.sol";
+
+contract CounterScript is Script {
+    function run() external {
+        // Simple script that does nothing
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "script",
+        script.to_str().unwrap(),
+        "--verify",
+        "--rpc-url",
+        "https://sepolia.infura.io/v3/test",
+    ])
+    .assert_failure()
+    .stderr_eq("error: the following required arguments were not provided:\n  --broadcast\n\nUsage: forge script [OPTIONS] <PATH> [ARGS]...\n+ Usage: forge script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...\n\nFor more information, try '--help'.");
+});
