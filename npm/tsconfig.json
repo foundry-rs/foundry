@@ -48,11 +48,12 @@
   ],
   "include": [
     "./src/**/*",
+    "./src/*.mjs",
+
     "./scripts/**/*"
   ],
   "files": [
     "env.d.ts",
-    "package.json",
-    "tsdown.config.ts"
+    "package.json"
   ]
 }

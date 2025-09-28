@@ -1,11 +1,11 @@
 {
-  "name": "@foundry-rs/forge",
+  "name": "@foundry-rs/chisel",
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://getfoundry.sh/forge",
-  "description": "Fast and flexible Ethereum testing framework",
+  "homepage": "https://getfoundry.sh/chisel",
+  "description": "Chisel is a fast, utilitarian, and verbose Solidity REPL",
   "bin": {
-    "forge": "./bin.mjs"
+    "chisel": "./bin.mjs"
   },
   "files": [
     "bin",
@@ -15,11 +15,11 @@
     "postinstall": "node ./dist/install.mjs"
   },
   "optionalDependencies": {
-    "@foundry-rs/forge-darwin-arm64": "0.0.0",
-    "@foundry-rs/forge-darwin-amd64": "0.0.0",
-    "@foundry-rs/forge-linux-arm64": "0.0.0",
-    "@foundry-rs/forge-linux-amd64": "0.0.0",
-    "@foundry-rs/forge-win32-amd64": "0.0.0"
+    "@foundry-rs/chisel-darwin-arm64": "0.0.0",
+    "@foundry-rs/chisel-darwin-amd64": "0.0.0",
+    "@foundry-rs/chisel-linux-arm64": "0.0.0",
+    "@foundry-rs/chisel-linux-amd64": "0.0.0",
+    "@foundry-rs/chisel-win32-amd64": "0.0.0"
   },
   "publishConfig": {
     "access": "public",

@@ -98,14 +98,6 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install Dependencies
-        working-directory: ./npm
-        run: bun install --frozen-lockfile
-
-      - name: Transpile TS -> JS
-        working-directory: ./npm
-        run: bun run build
-
       - name: Derive RELEASE_VERSION
         id: release-version
         working-directory: ./npm

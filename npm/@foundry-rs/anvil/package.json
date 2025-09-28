@@ -1,11 +1,11 @@
 {
-  "name": "@foundry-rs/forge",
+  "name": "@foundry-rs/anvil",
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://getfoundry.sh/forge",
-  "description": "Fast and flexible Ethereum testing framework",
+  "homepage": "https://getfoundry.sh/anvil",
+  "description": "Anvil is a fast local Ethereum development node",
   "bin": {
-    "forge": "./bin.mjs"
+    "anvil": "./bin.mjs"
   },
   "files": [
     "bin",
@@ -15,11 +15,11 @@
     "postinstall": "node ./dist/install.mjs"
   },
   "optionalDependencies": {
-    "@foundry-rs/forge-darwin-arm64": "0.0.0",
-    "@foundry-rs/forge-darwin-amd64": "0.0.0",
-    "@foundry-rs/forge-linux-arm64": "0.0.0",
-    "@foundry-rs/forge-linux-amd64": "0.0.0",
-    "@foundry-rs/forge-win32-amd64": "0.0.0"
+    "@foundry-rs/anvil-darwin-arm64": "0.0.0",
+    "@foundry-rs/anvil-darwin-amd64": "0.0.0",
+    "@foundry-rs/anvil-linux-arm64": "0.0.0",
+    "@foundry-rs/anvil-linux-amd64": "0.0.0",
+    "@foundry-rs/anvil-win32-amd64": "0.0.0"
   },
   "publishConfig": {
     "access": "public",
