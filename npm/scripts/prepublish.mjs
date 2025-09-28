@@ -5,7 +5,7 @@ import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
 
 import { colors } from '#const.mjs'
-import { generateBinaryPackageJson } from '#src/generate-package-json.mjs'
+import { generateBinaryPackageJson } from '../src/generate-package-json.mjs'
 
 /**
  * @typedef {import('#const.mjs').Arch} Arch

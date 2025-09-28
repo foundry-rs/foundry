@@ -1,14 +1,16 @@
 {
   "private": true,
+  "type": "module",
   "imports": {
-    "#src/*": "./src/*",
+    "#*": "./src/*",
     "#scripts/*": "./scripts/*",
     "#package.json": "./package.json"
   },
   "dependencies": {
-    "typescript": "^5.9.2",
     "@types/bun": "^1.2.22",
-    "@types/node": "^24.5.2"
+    "@types/node": "^24.5.2",
+    "bun": "^1.2.22",
+    "typescript": "^5.9.2"
   },
   "license": "MIT OR Apache-2.0",
   "$schema": "https://json.schemastore.org/package.json"

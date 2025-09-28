@@ -32,14 +32,6 @@
       "bun",
       "node"
     ],
-    "paths": {
-      "#*": [
-        "./src/*"
-      ],
-      "#package.json": [
-        "./package.json"
-      ]
-    }
   },
   "exclude": [
     "dist",
