@@ -4,7 +4,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ext::TraceApi};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
-use clap::{Parser, command};
+use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
 use foundry_block_explorers::Client;
 use foundry_cli::{
