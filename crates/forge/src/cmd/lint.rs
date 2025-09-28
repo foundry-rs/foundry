@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{FoundryPathExt, LoadConfig},
 };
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
@@ -30,10 +30,6 @@ pub struct LintArgs {
     /// `exclude_lints` project config.
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     pub(crate) lint: Option<Vec<String>>,
-
-    /// Activates the linter's JSON formatter (rustc-compatible).
-    #[arg(long)]
-    pub(crate) json: bool,
 
     #[command(flatten)]
     pub(crate) build: BuildOpts,
@@ -103,7 +99,7 @@ impl LintArgs {
         }
 
         let linter = SolidityLinter::new(path_config)
-            .with_json_emitter(self.json)
+            .with_json_emitter(shell::is_json())
             .with_description(true)
             .with_lints(include)
             .without_lints(exclude)

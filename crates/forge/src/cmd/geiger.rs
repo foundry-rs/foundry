@@ -49,7 +49,6 @@ impl GeigerArgs {
             paths: self.paths,
             severity: None,
             lint: Some(vec!["unsafe-cheatcode".to_string()]),
-            json: false,
             build: self.build,
         };
         lint_args.build.deny = Some(DenyLevel::Notes);
