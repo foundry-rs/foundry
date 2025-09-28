@@ -457,7 +457,14 @@ impl<'ast> State<'_, 'ast> {
             {
                 ListFormat::always_break()
             }
-            _ => ListFormat::consistent().break_cmnts(),
+            _ => ListFormat::consistent().break_cmnts().break_single(
+                // ensure fn params are always breakable when there is a single `Contract.Struct`
+                parameters.len() == 1
+                    && matches!(
+                        &parameters[0].ty,
+                        ast::Type { kind: ast::TypeKind::Custom(ty), .. } if ty.segments().len() > 1
+                    ),
+            ),
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();

@@ -115,4 +115,8 @@ contract Orchestrator {
                 param3 // long line
             );
     }
+
+    function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed) public {
+        a = 1;
+    }
 }
