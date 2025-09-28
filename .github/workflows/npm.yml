@@ -22,7 +22,6 @@ defaults:
     shell: bash
 
 env:
-  ACTIONS_RUNNER_DEBUG: true
   NPM_CONFIG_PROVENANCE: true
   NPM_REGISTRY_URL: "https://registry.npmjs.org"
 
@@ -151,7 +150,7 @@ jobs:
           fi
 
           echo "Staging binary $BIN into @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-          PLATFORM_NAME=${{ matrix.os }} ARCH=${{ matrix.arch }} FORGE_BIN_PATH="$BIN" bun ./scripts/prepublish.ts
+          PLATFORM_NAME=${{ matrix.os }} ARCH=${{ matrix.arch }} FORGE_BIN_PATH="$BIN" bun ./scripts/prepublish.mjs
 
       - name: Sanity Check Binary
         working-directory: ./npm
@@ -189,7 +188,7 @@ jobs:
 
           ls -la ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
 
-          bun ./scripts/publish.ts ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          bun ./scripts/publish.mjs ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
 
           echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
 
@@ -232,7 +231,7 @@ jobs:
 
       - name: Publish Meta
         working-directory: ./npm
-        run: bun run ./scripts/publish.ts ./@foundry-rs/forge
+        run: bun run ./scripts/publish.mjs ./@foundry-rs/forge
         env:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
