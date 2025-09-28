@@ -22,6 +22,7 @@ export function resolveTargetTool(raw = process.env.TARGET_TOOL) {
     throw new Error('TARGET_TOOL must be set to one of: ' + KNOWN_TOOLS.join(', '))
   if (value !== NodePath.basename(value) || value.includes('..') || value.includes('/') || value.includes('\\'))
     throw new Error('TARGET_TOOL contains invalid path segments')
+  // @ts-expect-error _
   if (!TOOL_SET.has(value))
     throw new Error(`TARGET_TOOL "${value}" is not supported. Expected: ${KNOWN_TOOLS.join(', ')}`)
   return /** @type {Tool} */ (value)
@@ -66,6 +67,7 @@ export const BINARY_NAME = tool => process.platform === 'win32' ? `${tool}.exe` 
  * @returns {string | undefined}
  */
 export const PLATFORM_SPECIFIC_PACKAGE_NAME = tool => {
+  // @ts-ignore
   const platformPackages = BINARY_DISTRIBUTION_PACKAGES(tool)[process.platform]
   if (!platformPackages) return undefined
   return platformPackages?.[process.arch]

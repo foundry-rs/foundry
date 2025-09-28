@@ -26,5 +26,3 @@ This folder contains npm publisher and installer scripts for `forge`, `cast`, `a
   - `@foundry-rs/chisel-linux-arm64`
   - `@foundry-rs/chisel-linux-amd64`
   - `@foundry-rs/chisel-win32-amd64`
-
-A guide on how to publish to a local registry and test via `npx`/`bunx` is available in [./test/README.md](./test/README.md).
