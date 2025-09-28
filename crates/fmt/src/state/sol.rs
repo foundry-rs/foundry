@@ -24,6 +24,110 @@ macro_rules! get_span {
 
 /// Language-specific pretty printing: Solidity.
 impl<'ast> State<'_, 'ast> {
+    /// Compute per-slot spans for a parenthesized tuple between `pos_lo` (inclusive)
+    /// and `pos_hi` (exclusive). This enables anchoring comments for empty tuple slots.
+    fn compute_tuple_slot_spans(
+        &self,
+        pos_lo: BytePos,
+        pos_hi: BytePos,
+        expected_slots: usize,
+    ) -> Vec<Option<Span>> {
+        let mut result: Vec<Option<Span>> = Vec::with_capacity(expected_slots);
+        let Ok(snippet) = self.sm.span_to_snippet(Span::new(pos_lo, pos_hi)) else {
+            result.resize(expected_slots, None);
+            return result;
+        };
+
+        let bytes = snippet.as_bytes();
+        let len = bytes.len();
+
+        // Find opening '('
+        let mut open_idx = 0usize;
+        while open_idx < len && bytes[open_idx] != b'(' {
+            open_idx += 1;
+        }
+        if open_idx == len {
+            result.resize(expected_slots, None);
+            return result;
+        }
+
+        // Find closing ')'
+        let mut close_idx = len;
+        while close_idx > open_idx && bytes[close_idx.saturating_sub(1)] != b')' {
+            close_idx -= 1;
+        }
+        if close_idx <= open_idx {
+            result.resize(expected_slots, None);
+            return result;
+        }
+
+        let start = open_idx + 1; // after '('
+        let end = close_idx.saturating_sub(1); // position of the char before ')'
+
+        // Split by top-level commas, skipping comments and nested parens.
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut i = start;
+        let mut current_start = start;
+        let mut depth: i32 = 0;
+        while i <= end {
+            let b = bytes[i];
+            match b {
+                b'(' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b')' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                    i += 1;
+                }
+                b'/' if i < end && bytes[i + 1] == b'*' => {
+                    // Skip block comment
+                    i += 2;
+                    while i < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    if i < end {
+                        i += 2; // consume '*/'
+                    }
+                }
+                b'/' if i < end && bytes[i + 1] == b'/' => {
+                    // Skip line comment
+                    i += 2;
+                    while i <= end && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                b',' if depth == 0 => {
+                    ranges.push((current_start, i));
+                    i += 1;
+                    current_start = i;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        // Final slot
+        if current_start <= end + 1 {
+            ranges.push((current_start, end + 1));
+        }
+
+        // Map to absolute spans and resize/trim to expected_slots
+        for (idx, (lo, hi)) in ranges.into_iter().enumerate() {
+            if idx >= expected_slots {
+                break;
+            }
+            let slot_lo = pos_lo + BytePos(lo as u32);
+            let slot_hi = pos_lo + BytePos(hi as u32);
+            result.push(Some(Span::new(slot_lo, slot_hi)));
+        }
+        if result.len() < expected_slots {
+            result.resize(expected_slots, None);
+        }
+        result
+    }
     pub(crate) fn print_source_unit(&mut self, source_unit: &'ast ast::SourceUnit<'ast>) {
         let mut items = source_unit.items.iter().peekable();
         let mut is_first = true;
@@ -529,11 +633,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
         }
-        if !skip_returns
-            && let Some(ret) = returns
-            && !ret.is_empty()
-            && let Some(ret) = returns
-        {
+        if !skip_returns && let Some(ret) = returns && !ret.is_empty() {
             if !self.handle_span(self.cursor.span(ret.span.lo()), false) {
                 if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                     self.print_sep(Separator::Space);
@@ -1768,18 +1868,24 @@ impl<'ast> State<'_, 'ast> {
 
         self.s.ibox(self.ind);
         self.s.ibox(-self.ind);
+        // Compute slot spans so comments can anchor even for empty slots
+        let pos_lo = span.lo();
+        let pos_hi = init_expr.span.lo();
+        let slot_spans = self.compute_tuple_slot_spans(pos_lo, pos_hi, vars.len());
+        // Zip vars with their corresponding slot spans
+        let slots: Vec<(Option<&ast::VariableDefinition<'ast>>, Option<Span>)> =
+            vars.iter().zip(slot_spans).map(|(v, s)| (v.as_ref(), s)).collect();
+
         self.print_tuple(
-            vars,
-            span.lo(),
-            init_expr.span.lo(),
-            |this, var| {
-                // NOTE(rusowsky): unless we add more spans to solar, it is not possible to print
-                // comments between the commas of unhandled vars
-                if let Some(var) = var {
+            &slots,
+            pos_lo,
+            pos_hi,
+            |this, slot| {
+                if let Some(var) = slot.0 {
                     this.print_var(var, true);
                 }
             },
-            |v| v.as_ref().map(|v| v.span),
+            |slot| slot.1,
             ListFormat::consistent(),
         );
         self.end();
