@@ -41,7 +41,10 @@ impl TaskManager {
     /// Spawns the blocking task and returns a handle to it.
     ///
     /// Returning the `JoinHandle` allows callers to cancel the task or await its completion.
-    pub fn spawn_blocking(&self, task: impl Future<Output = ()> + Send + 'static) -> JoinHandle<()> {
+    pub fn spawn_blocking(
+        &self,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> JoinHandle<()> {
         let handle = self.tokio_handle.clone();
         self.tokio_handle.spawn_blocking(move || {
             handle.block_on(task);
