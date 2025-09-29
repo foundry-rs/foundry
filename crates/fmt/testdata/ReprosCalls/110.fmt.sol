@@ -126,6 +126,12 @@ contract Orchestrator {
                 param2,
                 param3 // long line
             );
+
+        // https://github.com/foundry-rs/foundry/issues/11835
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
     }
 
     // https://github.com/foundry-rs/foundry/issues/11834

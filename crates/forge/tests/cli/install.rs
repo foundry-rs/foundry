@@ -450,7 +450,7 @@ Compiler run successful!
 async fn uni_v4_core_sync_foundry_lock() {
     let (prj, mut cmd) =
         ExtTester::new("Uniswap", "v4-core", "e50237c43811bd9b526eff40f26772152a42daba")
-            .setup_forge_prj();
+            .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -504,7 +504,7 @@ async fn oz_contracts_sync_foundry_lock() {
         "openzeppelin-contracts",
         "840c974028316f3c8172c1b8e5ed67ad95e255ca",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -561,7 +561,7 @@ async fn correctly_sync_dep_with_multiple_version() {
         "sync-lockfile-multi-version-dep",
         "1ca47e73a168e54f8f7761862dbd0c603856c5c8",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
