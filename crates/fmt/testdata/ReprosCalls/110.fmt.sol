@@ -116,6 +116,7 @@ contract Orchestrator {
             0 /* nonce */
         );
 
+        // https://github.com/foundry-rs/foundry/issues/11834
         CurrenciesOutOfOrderOrEqual.selector
             .revertWith(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
 
@@ -127,6 +128,7 @@ contract Orchestrator {
             );
     }
 
+    // https://github.com/foundry-rs/foundry/issues/11834
     function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed)
         public
     {
