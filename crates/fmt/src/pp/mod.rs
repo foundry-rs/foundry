@@ -299,6 +299,11 @@ impl Printer {
 
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
+        // Prevent panic if Win CRLF - <https://github.com/foundry-rs/foundry/issues/11841>.
+        if !self.last_token_is_break() {
+            return;
+        };
+
         match &mut self.buf.last_mut().token {
             Token::Break(token) => token.offset += offset,
             Token::Begin(_) => {}
