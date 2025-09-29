@@ -93,12 +93,16 @@ impl<P: Provider> WarningsProvider<P> {
                 default_dict.keys().cloned().collect();
             for profile_map in profiles {
                 for (profile, value) in profile_map {
-
                     let Some(profile_dict) = value.as_dict() else {
                         continue;
                     };
 
-                    let source = self.provider.metadata().source.map(|s| s.to_string()).unwrap_or(Config::FILE_NAME.to_string());
+                    let source = self
+                        .provider
+                        .metadata()
+                        .source
+                        .map(|s| s.to_string())
+                        .unwrap_or(Config::FILE_NAME.to_string());
                     for key in profile_dict.keys() {
                         let is_not_deprecated =
                             !DEPRECATIONS.iter().any(|(deprecated_key, _)| *deprecated_key == key);

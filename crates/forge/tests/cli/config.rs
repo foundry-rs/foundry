@@ -1939,7 +1939,6 @@ forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
     out = 'out'
     bar = 'another_unknown'";
 
-
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
 Warning: Found unknown `bar` config for profile `another` defined in foundry.toml.
