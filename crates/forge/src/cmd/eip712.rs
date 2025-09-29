@@ -2,7 +2,7 @@ use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, shell};
 use serde::Serialize;
 use solar::sema::{
     Gcx, Hir,
@@ -24,10 +24,6 @@ pub struct Eip712Args {
     /// The path to the file from which to read struct definitions.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
-
-    /// Output in JSON format.
-    #[arg(long, help = "Output in JSON format")]
-    pub json: bool,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -72,7 +68,7 @@ impl Eip712Args {
                 })
                 .collect::<Vec<_>>();
 
-            if self.json {
+            if shell::is_json() {
                 sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
             } else {
                 for output in &outputs {

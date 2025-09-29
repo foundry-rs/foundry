@@ -457,7 +457,14 @@ impl<'ast> State<'_, 'ast> {
             {
                 ListFormat::always_break()
             }
-            _ => ListFormat::consistent().break_cmnts(),
+            _ => ListFormat::consistent().break_cmnts().break_single(
+                // ensure fn params are always breakable when there is a single `Contract.Struct`
+                parameters.len() == 1
+                    && matches!(
+                        &parameters[0].ty,
+                        ast::Type { kind: ast::TypeKind::Custom(ty), .. } if ty.segments().len() > 1
+                    ),
+            ),
         };
         self.print_parameter_list(parameters, parameters.span, params_format);
         self.end();
@@ -1140,8 +1147,13 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
             ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
-            ast::ExprKind::Call(call_expr, call_args) => {
-                self.print_member_or_call_chain(call_expr, None, |s| {
+            ast::ExprKind::Call(call_expr, call_args) => self.print_member_or_call_chain(
+                call_expr,
+                MemberOrCallArgs::CallArgs(
+                    self.estimate_size(call_args.span),
+                    self.has_comments_between_elements(call_args.span, call_args.exprs()),
+                ),
+                |s| {
                     s.print_call_args(
                         call_args,
                         ListFormat::compact()
@@ -1150,8 +1162,8 @@ impl<'ast> State<'_, 'ast> {
                             .without_ind(s.return_bin_expr),
                         get_callee_head_size(call_expr),
                     );
-                })
-            }
+                },
+            ),
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
@@ -1170,15 +1182,21 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::ExprKind::Member(member_expr, ident) => {
-                self.print_member_or_call_chain(member_expr, Some(ident), |s| {
-                    s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                    if !matches!(member_expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_))
-                    {
-                        s.zerobreak();
-                    }
-                    s.word(".");
-                    s.print_ident(ident);
-                });
+                self.print_member_or_call_chain(
+                    member_expr,
+                    MemberOrCallArgs::Member(self.estimate_size(ident.span)),
+                    |s| {
+                        s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
+                        if !matches!(
+                            member_expr.kind,
+                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)
+                        ) {
+                            s.zerobreak();
+                        }
+                        s.word(".");
+                        s.print_ident(ident);
+                    },
+                );
             }
             ast::ExprKind::New(ty) => {
                 self.word("new ");
@@ -1246,9 +1264,8 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.add_precall(lhs_size);
 
         let is_simple_rhs = matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-        let is_chain = is_call_chain(&rhs.kind, false);
 
-        if (is_chain && overflows && fits_alone) || is_simple_rhs {
+        if (overflows && fits_alone) || is_simple_rhs {
             self.s.ibox(self.ind)
         } else {
             self.s.ibox(0)
@@ -1267,7 +1284,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(rhs);
                 self.end();
             }
-            _ if (is_chain && overflows && fits_alone) || (is_simple_rhs && overflows) => {
+            _ if overflows && (fits_alone || is_simple_rhs) => {
                 self.print_sep(Separator::Space);
                 self.print_expr(rhs);
             }
@@ -1515,28 +1532,42 @@ impl<'ast> State<'_, 'ast> {
     fn print_member_or_call_chain<F>(
         &mut self,
         child_expr: &'ast ast::Expr<'ast>,
-        member_ident: Option<&ast::Ident>, // only members have `Ident`, calls don't
+        member_or_args: MemberOrCallArgs,
         print_suffix: F,
     ) where
         F: FnOnce(&mut Self),
     {
+        fn member_depth(depth: usize, expr: &ast::Expr<'_>) -> usize {
+            if let ast::ExprKind::Member(child, ..) = &expr.kind {
+                member_depth(depth + 1, child)
+            } else {
+                depth
+            }
+        }
+
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
-            let member_size = member_ident.map_or(0, |i| self.estimate_size(i.span));
-            let callee_size = get_callee_head_size(child_expr);
-            let total_size = callee_size + member_size + 2;
+            let callee_size = get_callee_head_size(child_expr) + member_or_args.member_size();
+            let expr_size = self.estimate_size(child_expr.span);
 
             // Start a new chain if needed
             if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size + member_size));
+                self.call_stack.push(CallContext::chained(callee_size));
             }
 
-            let fits_line = self.space_left() > total_size;
+            let callee_fits_line = self.space_left() > callee_size + 1;
+            let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
             let no_mixed_comment =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
-            if !is_call_chain(&child_expr.kind, true) && fits_line && no_mixed_comment {
+            if !is_call_chain(&child_expr.kind, true)
+                && no_mixed_comment
+                && callee_fits_line
+                && (member_depth(0, child_expr) < 2
+                    // calls with cmnts between the args always break
+                    || (total_fits_line && !member_or_args.has_comments()))
+            {
                 self.s.ibox(0);
             } else {
                 self.s.ibox(self.ind);
@@ -2419,9 +2450,53 @@ impl<'ast> State<'_, 'ast> {
     fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
         self.estimate_header_params_size(header) <= self.space_left()
     }
+
+    fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
+    where
+        I: IntoIterator<Item = &'ast ast::Expr<'ast>>,
+    {
+        let mut last_span_end = limits.lo();
+        for expr in elements {
+            if self.has_comment_between(last_span_end, expr.span.lo()) {
+                return true;
+            }
+            last_span_end = expr.span.hi();
+        }
+
+        if self.has_comment_between(last_span_end, limits.hi()) {
+            return true;
+        }
+
+        false
+    }
 }
 
 // -- HELPERS (language-specific) ----------------------------------------------
+
+#[derive(Debug)]
+enum MemberOrCallArgs {
+    Member(usize),
+    CallArgs(usize, bool),
+}
+
+impl MemberOrCallArgs {
+    fn size(&self) -> usize {
+        match self {
+            Self::CallArgs(size, ..) | Self::Member(size) => *size,
+        }
+    }
+
+    fn member_size(&self) -> usize {
+        match self {
+            Self::CallArgs(..) => 0,
+            Self::Member(size) => *size,
+        }
+    }
+
+    fn has_comments(&self) -> bool {
+        matches!(self, Self::CallArgs(.., true))
+    }
+}
 
 #[derive(Debug, Clone)]
 enum AttributeKind<'ast> {

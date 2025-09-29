@@ -111,5 +111,26 @@ contract Orchestrator {
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
             address(fromToken()), amount(), 0 /* nonce */
         );
+
+        // https://github.com/foundry-rs/foundry/issues/11834
+        CurrenciesOutOfOrderOrEqual.selector.revertWith(
+            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1)
+        );
+
+        nestedStruct.withCalls.thatCause.aBreak(param1, param2, param3 // long line
+        );
+
+        // https://github.com/foundry-rs/foundry/issues/11835
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128
+            - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/11834
+    function test_ffi_fuzz_addLiquidity_defaultPool(
+            IPoolManager.ModifyLiquidityParams memory paramSeed
+    ) public {
+        a = 1;
     }
 }

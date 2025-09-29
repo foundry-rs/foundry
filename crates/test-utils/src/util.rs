@@ -147,7 +147,7 @@ impl ExtTester {
         self
     }
 
-    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
+    pub fn setup_forge_prj(&self, recursive: bool) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Export vyper and forge in test command - workaround for snekmate venom tests.
@@ -170,7 +170,7 @@ impl ExtTester {
         // Clone the external repository.
         let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
         let root = prj.root().to_str().unwrap();
-        clone_remote(&repo_url, root);
+        clone_remote(&repo_url, root, recursive);
 
         // Checkout the revision.
         if self.rev.is_empty() {
@@ -224,7 +224,7 @@ impl ExtTester {
             return;
         }
 
-        let (prj, mut test_cmd) = self.setup_forge_prj();
+        let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
         self.run_install_commands(prj.root().to_str().unwrap());
@@ -423,9 +423,14 @@ pub fn get_vyper() -> Vyper {
 }
 
 /// Clones a remote repository into the specified directory. Panics if the command fails.
-pub fn clone_remote(repo_url: &str, target_dir: &str) {
+pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone"]);
+    if recursive {
+        cmd.args(["--recursive", "--shallow-submodules"]);
+    } else {
+        cmd.args(["--depth=1", "--no-checkout", "--filter=blob:none", "--no-recurse-submodules"]);
+    }
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();

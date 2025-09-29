@@ -1627,7 +1627,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast
+        if let Some(broadcast) = &mut self.broadcast
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
@@ -1644,7 +1644,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             ecx.tx.caller = broadcast.new_origin;
 
-            if curr_depth == broadcast.depth {
+            if curr_depth == broadcast.depth || broadcast.deploy_from_code {
+                // Reset deploy from code flag for upcoming calls;
+                broadcast.deploy_from_code = false;
+
                 input.set_caller(broadcast.new_origin);
 
                 // Ensure account is touched.
