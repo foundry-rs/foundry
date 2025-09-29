@@ -183,14 +183,18 @@ pub(super) enum Separator {
 }
 
 impl Separator {
-    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos) {
+    fn print(&self, p: &mut pp::Printer, sm: &SourceMap, cursor: &mut SourcePos) {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
-        cursor.advance(1);
+        let is_at_crlf = sm
+            .span_to_snippet(cursor.span(cursor.pos + 1))
+            .is_ok_and(|snip| matches!(snip.as_str(), "\r"));
+
+        cursor.advance(if is_at_crlf { 2 } else { 1 });
     }
 }
 
@@ -226,6 +230,12 @@ impl<'sess> State<'sess, '_> {
             block_depth: 0,
             call_stack: CallStack::default(),
         }
+    }
+
+    fn is_at_crlf(&self) -> bool {
+        self.sm
+            .span_to_snippet(self.cursor.span(self.cursor.pos + 1))
+            .is_ok_and(|snip| matches!(snip.as_str(), "\r"))
     }
 
     fn space_left(&self) -> usize {
@@ -340,11 +350,18 @@ impl State<'_, '_> {
     }
 
     fn print_sep(&mut self, sep: Separator) {
-        if self.handle_span(self.cursor.span(self.cursor.pos + BytePos(1)), true) {
+        if self.handle_span(
+            self.cursor.span(self.cursor.pos + if self.is_at_crlf() { 2 } else { 1 }),
+            true,
+        ) {
             return;
         }
 
-        sep.print(&mut self.s, &mut self.cursor);
+        sep.print(&mut self.s, &self.sm, &mut self.cursor);
+    }
+
+    fn print_sep_unhandled(&mut self, sep: Separator) {
+        sep.print(&mut self.s, &self.sm, &mut self.cursor);
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
@@ -698,7 +715,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(1);
+                                this.cursor.advance(if this.is_at_crlf() { 2 } else { 1 });
                             }
                         };
                         if line.is_empty() {
@@ -732,7 +749,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(1);
+                                this.cursor.advance(if this.is_at_crlf() { 2 } else { 1 });
                             }
                         };
                         if line.is_empty() {
@@ -808,7 +825,7 @@ impl<'sess> State<'sess, '_> {
                 // Pre-requisite: ensure that blank links are printed at the beginning of new line.
                 if !self.last_token_is_break() && !self.is_bol_or_only_ind() {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(1);
+                    self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
                 }
 
                 // We need to do at least one, possibly two hardbreaks.
@@ -820,10 +837,10 @@ impl<'sess> State<'sess, '_> {
                 };
                 if twice {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(1);
+                    self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
                 }
                 config.hardbreak(&mut self.s);
-                self.cursor.advance(1);
+                self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
             }
         }
     }

@@ -150,7 +150,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.advance(1);
+        self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -821,7 +821,7 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             } else if is_binary_expr(&init.kind) {
                 if !self.is_bol_or_only_ind() {
-                    Separator::Space.print(&mut self.s, &mut self.cursor);
+                    self.print_sep_unhandled(Separator::Space);
                 }
                 if matches!(ty.kind, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..)) {
                     self.s.offset(self.ind);
@@ -864,7 +864,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                 } else {
                     if !self.is_bol_or_only_ind() {
-                        Separator::Space.print(&mut self.s, &mut self.cursor);
+                        self.print_sep_unhandled(Separator::Space);
                     }
                     if matches!(ty.kind, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..))
                     {
@@ -2149,7 +2149,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>, pos_hi: BytePos) {
         self.print_word(kw);
-        Separator::Nbsp.print(&mut self.s, &mut self.cursor);
+        self.print_sep_unhandled(Separator::Nbsp);
         self.print_tuple(
             std::slice::from_ref(cond),
             cond.span.lo(),
