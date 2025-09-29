@@ -151,7 +151,7 @@ impl FmtArgs {
                         match fs::write(path, formatted) {
                             Ok(()) => {}
                             Err(e) => return Some(Err(e.into())),
-                        };
+                        }
                         let _ = sh_println!("Formatted {}", path.display());
                         None
                     } else {
@@ -169,7 +169,9 @@ impl FmtArgs {
                     }
                     let _ = stdout.write_all(diff.as_bytes());
                 }
-                std::process::exit(1);
+                if self.check {
+                    std::process::exit(1);
+                }
             }
 
             convert_solar_errors(compiler.dcx())
