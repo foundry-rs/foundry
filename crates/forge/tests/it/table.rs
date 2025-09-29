@@ -200,7 +200,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    cmd.forge_fuse().args(["coverage"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["coverage", "--exclude-tests"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
