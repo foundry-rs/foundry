@@ -55,7 +55,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
-            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Quicknode => {
+            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Gnosis => {
                 if env.block.prevrandao.is_none() {
                     // <https://github.com/foundry-rs/foundry/issues/4232>
                     env.block.prevrandao = Some(B256::random());
