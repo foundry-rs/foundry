@@ -171,6 +171,10 @@ impl SourcePos {
         self.enabled = enabled;
     }
 
+    pub(super) fn next_line(&mut self, is_at_crlf: bool) {
+        self.pos += if is_at_crlf { 2 } else { 1 };
+    }
+
     pub(super) fn span(&self, to: BytePos) -> Span {
         Span::new(self.pos, to)
     }
@@ -192,7 +196,7 @@ impl Separator {
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
 
-        cursor.advance(if is_at_crlf { 2 } else { 1 });
+        cursor.next_line(is_at_crlf);
     }
 }
 
@@ -728,7 +732,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(if this.is_at_crlf() { 2 } else { 1 });
+                                this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
@@ -762,7 +766,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(if this.is_at_crlf() { 2 } else { 1 });
+                                this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
@@ -838,7 +842,7 @@ impl<'sess> State<'sess, '_> {
                 // Pre-requisite: ensure that blank links are printed at the beginning of new line.
                 if !self.last_token_is_break() && !self.is_bol_or_only_ind() {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
+                    self.cursor.next_line(self.is_at_crlf());
                 }
 
                 // We need to do at least one, possibly two hardbreaks.
@@ -850,10 +854,10 @@ impl<'sess> State<'sess, '_> {
                 };
                 if twice {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
+                    self.cursor.next_line(self.is_at_crlf());
                 }
                 config.hardbreak(&mut self.s);
-                self.cursor.advance(if self.is_at_crlf() { 2 } else { 1 });
+                self.cursor.next_line(self.is_at_crlf());
             }
         }
     }
