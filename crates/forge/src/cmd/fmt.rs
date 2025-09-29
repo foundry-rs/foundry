@@ -138,15 +138,15 @@ impl FmtArgs {
             Input::Stdin(_) => unreachable!(),
         };
 
-        let mut compiler = Compiler::new({
-            let source_map = SourceMap::default();
-            if cfg!(windows) {
-                source_map.set_file_loader(RealFileLoaderDos2Unix);
-            }
+        let source_map = SourceMap::default();
+        if cfg!(windows) {
+            source_map.set_file_loader(RealFileLoaderDos2Unix);
+        }
 
+        let mut compiler = Compiler::new({
             solar::interface::Session::builder()
-                .with_buffer_emitter(Default::default())
                 .source_map(Arc::new(source_map))
+                .with_buffer_emitter(Default::default())
                 .build()
         });
 
