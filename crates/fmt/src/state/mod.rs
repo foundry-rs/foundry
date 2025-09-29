@@ -357,11 +357,11 @@ impl State<'_, '_> {
             return;
         }
 
-        sep.print(&mut self.s, &self.sm, &mut self.cursor);
+        sep.print(&mut self.s, self.sm, &mut self.cursor);
     }
 
     fn print_sep_unhandled(&mut self, sep: Separator) {
-        sep.print(&mut self.s, &self.sm, &mut self.cursor);
+        sep.print(&mut self.s, self.sm, &mut self.cursor);
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
