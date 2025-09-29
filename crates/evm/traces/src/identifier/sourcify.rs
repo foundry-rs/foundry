@@ -1,14 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_json_abi::JsonAbi;
 use revm_inspectors::tracing::types::CallTraceNode;
-use serde::Deserialize;
 use std::borrow::Cow;
-
-#[derive(Deserialize)]
-struct SourcifyFile {
-    name: String,
-    content: String,
-}
 
 /// A trace identifier that uses Sourcify to identify contract ABIs.
 pub struct SourcifyIdentifier;
@@ -36,21 +29,15 @@ impl TraceIdentifier for SourcifyIdentifier {
         for &node in nodes {
             let address = node.trace.address;
 
-            // Try to get ABI from Sourcify
+            // Try to get ABI from Sourcify using APIv2
             let abi = foundry_common::block_on(async {
-                let url = format!("https://repo.sourcify.dev/contracts/full_match/1/{address:?}/");
+                let url =
+                    format!("https://sourcify.dev/server/v2/contract/1/{address}?fields=abi");
 
-                if let Ok(response) = client.get(&url).send().await
-                    && let Ok(files) = response.json::<Vec<SourcifyFile>>().await
-                {
-                    let metadata_file =
-                        files.into_iter().find(|file| file.name == "metadata.json")?;
-                    let metadata: serde_json::Value =
-                        serde_json::from_str(&metadata_file.content).ok()?;
-                    let abi_value = metadata.get("output")?.get("abi")?;
-                    return serde_json::from_value::<JsonAbi>(abi_value.clone()).ok();
-                }
-                None
+                let response = client.get(&url).send().await.ok()?;
+                let json: serde_json::Value = response.json().await.ok()?;
+                let abi_value = json.get("abi")?;
+                serde_json::from_value::<JsonAbi>(abi_value.clone()).ok()
             });
 
             if let Some(abi) = abi {
@@ -93,13 +80,27 @@ mod tests {
     }
 
     #[test]
-    fn test_sourcify_file_deserialization() {
-        let json = r#"{"name": "metadata.json", "content": "{\"output\": {\"abi\": []}}"}"#;
-        let file: Result<SourcifyFile, _> = serde_json::from_str(json);
-        assert!(file.is_ok());
+    fn test_sourcify_apiv2_response_parsing() {
+        // Test that we can parse the new APIv2 response format correctly
+        let response_json = r#"{
+            "abi": [
+                {"name": "transfer", "type": "function", "inputs": [], "outputs": []}
+            ],
+            "matchId": "1532018",
+            "creationMatch": "match",
+            "runtimeMatch": "match",
+            "verifiedAt": "2024-08-08T13:20:07Z",
+            "match": "match",
+            "chainId": "1",
+            "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        }"#;
 
-        let file = file.unwrap();
-        assert_eq!(file.name, "metadata.json");
-        assert!(file.content.contains("abi"));
+        let json: serde_json::Value = serde_json::from_str(response_json).unwrap();
+        let abi_value = json.get("abi").unwrap();
+        let abi: Result<JsonAbi, _> = serde_json::from_value(abi_value.clone());
+
+        assert!(abi.is_ok());
+        let abi = abi.unwrap();
+        assert_eq!(abi.len(), 1);
     }
 }
