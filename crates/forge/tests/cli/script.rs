@@ -3169,3 +3169,94 @@ Traces:
 Error: script failed: call to non-contract address [..]
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11855>
+forgetest_async!(can_broadcast_from_deploy_code_cheatcode, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Counter.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        address addr1 = vm.deployCode("src/Counter.sol:Counter");
+        Counter(addr1).increment();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/Counter.s.sol:CounterScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "-vvvv",
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] CounterScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   │   └─ ← [Return] 481 bytes of code
+    │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
+    ├─ [..] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 481 bytes of code
+
+  [..] Counter::increment()
+    └─ ← [Stop]
+
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});

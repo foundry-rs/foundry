@@ -359,6 +359,12 @@ fn deploy_code(
     salt: Option<U256>,
 ) -> Result {
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+
+    // If active broadcast then set flag to deploy from code.
+    if let Some(broadcast) = &mut ccx.state.broadcast {
+        broadcast.deploy_from_code = true;
+    }
+
     if let Some(args) = constructor_args {
         bytecode.extend_from_slice(args);
     }
