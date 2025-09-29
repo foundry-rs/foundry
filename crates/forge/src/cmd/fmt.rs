@@ -7,7 +7,10 @@ use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
-use solar::sema::Compiler;
+use solar::{
+    interface::{SourceMap, source_map::RealFileLoaderDos2Unix},
+    sema::Compiler,
+};
 use std::{
     fmt::{self, Write},
     io,
@@ -135,9 +138,17 @@ impl FmtArgs {
             Input::Stdin(_) => unreachable!(),
         };
 
-        let mut compiler = Compiler::new(
-            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
-        );
+        let mut compiler = Compiler::new({
+            let source_map = SourceMap::default();
+            if cfg!(windows) {
+                source_map.set_file_loader(RealFileLoaderDos2Unix);
+            }
+
+            solar::interface::Session::builder()
+                .with_buffer_emitter(Default::default())
+                .source_map(Arc::new(source_map))
+                .build()
+        });
 
         // Parse, format, and check the diffs.
         let res = compiler.enter_mut(|c| -> Result<()> {
