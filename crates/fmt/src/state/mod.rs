@@ -374,14 +374,12 @@ impl State<'_, '_> {
 
                 if prev_needs_space {
                     size += 1;
-                } else if !first && let Some(c) = line.chars().next() {
+                } else if !first
+                    && let Some(c) = line.chars().next()
+                    && matches!(c, '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^')
+                {
                     // if the line starts with an operator, a space or a line break are required.
-                    match c {
-                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' => {
-                            size += 1
-                        }
-                        _ => (),
-                    }
+                    size += 1
                 }
                 first = false;
 
@@ -400,7 +398,7 @@ impl State<'_, '_> {
                     }
                 }
 
-                // Next line requires a line brak if this one:
+                // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
