@@ -50,12 +50,12 @@ forgetest!(fmt_stdin, |_prj, cmd| {
 
 forgetest_init!(fmt_check_mode, |prj, cmd| {
     // Run fmt --check on a well-formatted file
-    prj.add_source("Test.sol", FORMATTED);
+    prj.add_raw_source("Test.sol", FORMATTED);
     cmd.arg("fmt").arg("--check").arg("src/Test.sol");
     cmd.assert_success().stderr_eq("").stdout_eq("");
 
     // Run fmt --check on a mal-formatted file
-    prj.add_source("Test2.sol", UNFORMATTED);
+    prj.add_raw_source("Test2.sol", UNFORMATTED);
     cmd.forge_fuse().arg("fmt").arg("--check").arg("src/Test2.sol");
     cmd.assert_failure();
 });
