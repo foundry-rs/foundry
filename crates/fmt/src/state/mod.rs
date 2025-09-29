@@ -247,7 +247,7 @@ impl<'sess> State<'sess, '_> {
     /// Checks if the cursor is currently positioned at the start of a CRLF sequence (`\r\n`).
     /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
-        self.has_crlf && self.char_at(self.cursor.pos) == '\r'
+        self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
     fn space_left(&self) -> usize {
@@ -294,9 +294,9 @@ impl<'sess> State<'sess, '_> {
 
 /// Span to source.
 impl State<'_, '_> {
-    fn char_at(&self, pos: BytePos) -> char {
+    fn char_at(&self, pos: BytePos) -> Option<char> {
         let res = self.sm.lookup_byte_offset(pos);
-        res.sf.src[res.pos.to_usize()..].chars().next().unwrap()
+        res.sf.src.get(res.pos.to_usize()..)?.chars().next()
     }
 
     fn print_span(&mut self, span: Span) {

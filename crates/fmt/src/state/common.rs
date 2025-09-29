@@ -147,7 +147,7 @@ impl<'ast> State<'_, 'ast> {
         let quote = match self.config.quote_style {
             config::QuoteStyle::Double => '\"',
             config::QuoteStyle::Single => '\'',
-            config::QuoteStyle::Preserve => self.char_at(quote_pos),
+            config::QuoteStyle::Preserve => self.char_at(quote_pos).unwrap_or_default(),
         };
         debug_assert!(matches!(quote, '\"' | '\''), "{quote:?}");
         let s = solar::parse::interface::data_structures::fmt::from_fn(move |f| {
