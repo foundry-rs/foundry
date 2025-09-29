@@ -679,6 +679,9 @@ impl Config {
     /// TOML section for profiles
     pub const PROFILE_SECTION: &'static str = "profile";
 
+    /// External config sections, ignored from warnings.
+    pub const EXTERNAL_SECTION: &'static str = "external";
+
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
         "rpc_endpoints",
