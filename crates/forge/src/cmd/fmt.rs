@@ -133,16 +133,19 @@ impl FmtArgs {
                     }
 
                     if self.check || path.is_none() {
-                        let name = match path {
-                            Some(path) => path
-                                .strip_prefix(&config.root)
-                                .unwrap_or(path)
-                                .display()
-                                .to_string(),
-                            None => "stdin".to_string(),
+                        let summary = if self.raw {
+                            formatted
+                        } else {
+                            let name = match path {
+                                Some(path) => path
+                                    .strip_prefix(&config.root)
+                                    .unwrap_or(path)
+                                    .display()
+                                    .to_string(),
+                                None => "stdin".to_string(),
+                            };
+                            format_diff_summary(&name, &TextDiff::from_lines(original, &formatted))
                         };
-                        let summary =
-                            format_diff_summary(&name, &TextDiff::from_lines(original, &formatted));
                         Some(Ok(summary))
                     } else if let Some(path) = path {
                         match fs::write(path, formatted) {
