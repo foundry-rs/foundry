@@ -388,8 +388,9 @@ impl FuzzedExecutor {
             worker_id,
             self.config.corpus.clone(),
             strategy.boxed(),
+            // Master worker replays the persisted corpus using the executor
             if worker_id == 0 { Some(&self.executor) } else { None },
-            if worker_id == 0 { Some(func) } else { None },
+            Some(func),
             None, // fuzzed_contracts for invariant tests
         )?;
 
@@ -399,7 +400,10 @@ impl FuzzedExecutor {
         let mut runner = self.runner.clone();
         // TODO: Add sync interval parameters for corpus sync
         'stop: while shared_state.should_continue() {
-            let input = if let Some(failure) = self.persisted_failure.take() {
+            // Only the master worker replays the persisted failure, if any.
+            let input = if worker_id == 0
+                && let Some(failure) = self.persisted_failure.take()
+            {
                 failure.calldata
             } else {
                 if let Some(progress) = progress {
@@ -413,6 +417,7 @@ impl FuzzedExecutor {
                 }
 
                 worker.runs += 1;
+                shared_state.increment_runs();
 
                 match corpus.new_input(&mut runner, &state, func) {
                     Ok(input) => input,
