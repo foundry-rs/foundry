@@ -34,23 +34,15 @@ impl RemoveArgs {
         let (root, mut paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
 
         // Canonicalize paths to ensure consistent path separators for git submodule config lookup
-        // Git always uses forward slashes in submodule config keys, even on Windows
         paths = paths
             .into_iter()
             .map(|path| {
                 dunce::canonicalize(root.join(&path))
                     .ok()
                     .and_then(|canonical| {
-                        canonical.strip_prefix(&root).ok().map(|p| {
-                            // Convert path separators to forward slashes for git config
-                            // compatibility
-                            PathBuf::from(p.to_string_lossy().replace('\\', "/"))
-                        })
+                        canonical.strip_prefix(&root).ok().map(|p| p.to_path_buf())
                     })
-                    .unwrap_or_else(|| {
-                        // Fallback: ensure forward slashes even if canonicalization fails
-                        PathBuf::from(path.to_string_lossy().replace('\\', "/"))
-                    })
+                    .unwrap_or(path)
             })
             .collect();
 
