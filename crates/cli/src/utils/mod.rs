@@ -719,10 +719,12 @@ ignore them in the `.gitignore` file."
 
     /// Get the URL of a submodule from git config
     pub fn submodule_url(self, path: impl AsRef<OsStr>) -> Result<Option<String>> {
-        // Git always uses forward slashes in submodule config keys, even on Windows
-        let path_str = path.as_ref().to_string_lossy().replace('\\', "/");
         self.cmd()
-            .args(["config", "--get", &format!("submodule.{path_str}.url")])
+            .args([
+                "config",
+                "--get",
+                &format!("submodule.{}.url", path.as_ref().to_string_lossy()),
+            ])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
     }
