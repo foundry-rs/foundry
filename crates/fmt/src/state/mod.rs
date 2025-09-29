@@ -120,7 +120,6 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
-    debug: bool,
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -204,7 +203,6 @@ impl<'sess> State<'sess, '_> {
         comments: Comments,
     ) -> Self {
         Self {
-            debug: false,
             s: pp::Printer::new(
                 config.line_length,
                 if matches!(config.style, IndentStyle::Tab) {
@@ -369,20 +367,27 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut prev_needs_space) = (0, false);
+            let (mut size, mut first, mut prev_needs_space) = (0, true, false);
+
             for line in snip.lines() {
+                let line = line.trim();
+
                 if prev_needs_space {
-                    // Previous line ended with a bracket and config with bracket spacing.
-                    // Previous line ended with ',' a hardbreak or a space are required.
-                    // Previous line ended with ';' a hardbreak is required.
                     size += 1;
+                } else if !first
+                    && let Some(c) = line.chars().next()
+                    && matches!(c, '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^')
+                {
+                    // if the line starts with an operator, a space or a line break are required.
+                    size += 1
                 }
+                first = false;
 
                 // trim spaces before and after mixed comments
                 let mut search = line;
                 loop {
                     if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
-                        size += lhs.trim().len() + 2;
+                        size += lhs.trim_end().len() + 2;
                         search = comment;
                     } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
                         size += comment.len() + 2;
@@ -393,10 +398,15 @@ impl State<'_, '_> {
                     }
                 }
 
-                prev_needs_space = (self.config.bracket_spacing
-                    && (line.ends_with('(') || line.ends_with('{')))
-                    || line.ends_with(',')
-                    || line.ends_with(';');
+                // Next line requires a line break if this one:
+                // - ends with a bracket and fmt config forces bracket spacing.
+                // - ends with ',' a line break or a space are required.
+                // - ends with ';' a line break is required.
+                prev_needs_space = match line.chars().next_back() {
+                    Some('(') | Some('{') => self.config.bracket_spacing,
+                    Some(',') | Some(';') => true,
+                    _ => false,
+                };
             }
             return size;
         }
