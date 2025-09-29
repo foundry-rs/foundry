@@ -367,7 +367,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     stmt.span,
                 );
             }
-            StmtKind::For { body, .. } => {
+            StmtKind::For(yul::StmtFor { body, .. }) => {
                 self.push_stmt(body.span);
             }
             StmtKind::Switch(switch) => {

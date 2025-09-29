@@ -43,18 +43,18 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
                 self.s.offset(self.ind);
                 self.ibox(0);
-                self.print_yul_expr_call(expr_call, span);
+                self.print_yul_expr(expr_call);
                 self.end();
                 self.end();
             }
-            yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call, span),
+            yul::StmtKind::Expr(expr_call) => self.print_yul_expr(expr_call),
             yul::StmtKind::If(expr, stmts) => {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
                 self.print_yul_block(stmts, span, false);
             }
-            yul::StmtKind::For { init, cond, step, body } => {
+            yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
 
                 self.word("for ");
