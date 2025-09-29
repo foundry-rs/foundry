@@ -129,6 +129,7 @@ pub(super) struct State<'sess, 'ast> {
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
+    has_crlf: bool,
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
     named_call_expr: bool,
@@ -183,16 +184,13 @@ pub(super) enum Separator {
 }
 
 impl Separator {
-    fn print(&self, p: &mut pp::Printer, sm: &SourceMap, cursor: &mut SourcePos) {
+    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos, is_at_crlf: bool) {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
-        let is_at_crlf = sm
-            .span_to_snippet(cursor.span(cursor.pos + 1))
-            .is_ok_and(|snip| matches!(snip.as_str(), "\r"));
 
         cursor.advance(if is_at_crlf { 2 } else { 1 });
     }
@@ -221,6 +219,7 @@ impl<'sess> State<'sess, '_> {
             config,
             inline_config,
             cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
+            has_crlf: false,
             contract: None,
             single_line_stmt: None,
             named_call_expr: false,
@@ -232,10 +231,23 @@ impl<'sess> State<'sess, '_> {
         }
     }
 
+    /// Checks a span of the source for a carriage return (`\r`) to determine if the file
+    /// uses CRLF line endings.
+    ///
+    /// If a `\r` is found, `self.has_crlf` is set to `true`. This is intended to be
+    /// called once at the beginning of the formatting process for efficiency.
+    fn check_crlf(&mut self, span: Span) {
+        if let Ok(snip) = self.sm.span_to_snippet(span)
+            && snip.contains('\r')
+        {
+            self.has_crlf = true;
+        }
+    }
+
+    /// Checks if the cursor is currently positioned at the start of a CRLF sequence (`\r\n`).
+    /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
-        self.sm
-            .span_to_snippet(self.cursor.span(self.cursor.pos + 1))
-            .is_ok_and(|snip| matches!(snip.as_str(), "\r"))
+        self.has_crlf && self.char_at(self.cursor.pos) == '\r'
     }
 
     fn space_left(&self) -> usize {
@@ -357,11 +369,12 @@ impl State<'_, '_> {
             return;
         }
 
-        sep.print(&mut self.s, self.sm, &mut self.cursor);
+        self.print_sep_unhandled(sep);
     }
 
     fn print_sep_unhandled(&mut self, sep: Separator) {
-        sep.print(&mut self.s, self.sm, &mut self.cursor);
+        let is_at_crlf = self.is_at_crlf();
+        sep.print(&mut self.s, &mut self.cursor, is_at_crlf);
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {

@@ -25,6 +25,11 @@ macro_rules! get_span {
 /// Language-specific pretty printing: Solidity.
 impl<'ast> State<'_, 'ast> {
     pub(crate) fn print_source_unit(&mut self, source_unit: &'ast ast::SourceUnit<'ast>) {
+        // Figure out if the cursor needs to check for CR (`\r`).
+        if let Some(item) = source_unit.items.first() {
+            self.check_crlf(item.span.to(source_unit.items.last().unwrap().span));
+        }
+
         let mut items = source_unit.items.iter().peekable();
         let mut is_first = true;
         while let Some(item) = items.next() {
