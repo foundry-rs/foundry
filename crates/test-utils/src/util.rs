@@ -429,7 +429,7 @@ pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     if recursive {
         cmd.args(["--recursive", "--shallow-submodules"]);
     } else {
-        cmd.args(["--depth", "1", "--no-recurse-submodules"]);
+        cmd.args(["--depth=1", "--no-checkout", "--filter=blob:none", "--no-recurse-submodules"]);
     }
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
