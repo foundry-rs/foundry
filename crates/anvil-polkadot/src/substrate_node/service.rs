@@ -8,7 +8,10 @@ use polkadot_sdk::{
     sc_executor::WasmExecutor,
     sc_network_types::{self, multiaddr::Multiaddr},
     sc_rpc_api::DenyUnsafe,
-    sc_service::{self, Configuration, RpcHandlers, TaskManager, error::Error as ServiceError},
+    sc_service::{
+        self, Configuration, RpcHandlers, SpawnTaskHandle, TaskManager,
+        error::Error as ServiceError,
+    },
     sc_transaction_pool::{self, TransactionPoolWrapper},
     sc_utils::mpsc::tracing_unbounded,
     sp_io,
@@ -27,8 +30,9 @@ pub type Backend = sc_service::TFullBackend<Block>;
 pub type TransactionPoolHandle = sc_transaction_pool::TransactionPoolHandle<Block, FullClient>;
 type SelectChain = sc_consensus::LongestChain<Backend, Block>;
 
+#[derive(Clone)]
 pub struct Service {
-    pub task_manager: TaskManager,
+    pub spawn_handle: SpawnTaskHandle,
     pub client: Arc<FullClient>,
     pub backend: Arc<Backend>,
     pub tx_pool: Arc<TransactionPoolHandle>,
@@ -37,7 +41,10 @@ pub struct Service {
 }
 
 /// Builds a new service for a full client.
-pub fn new(anvil_config: &AnvilNodeConfig, config: Configuration) -> Result<Service, ServiceError> {
+pub fn new(
+    anvil_config: &AnvilNodeConfig,
+    config: Configuration,
+) -> Result<(Service, TaskManager), ServiceError> {
     let (client, backend, keystore_container, mut task_manager) =
         sc_service::new_full_parts::<Block, RuntimeApi, _>(
             &config,
@@ -124,14 +131,17 @@ pub fn new(anvil_config: &AnvilNodeConfig, config: Configuration) -> Result<Serv
         authorship_future,
     );
 
-    Ok(Service {
+    Ok((
+        Service {
+            spawn_handle: task_manager.spawn_handle(),
+            client,
+            backend,
+            tx_pool: transaction_pool,
+            rpc_handlers,
+            mining_engine,
+        },
         task_manager,
-        client,
-        backend,
-        tx_pool: transaction_pool,
-        rpc_handlers,
-        mining_engine,
-    })
+    ))
 }
 
 fn spawn_rpc_server(

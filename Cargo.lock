@@ -1219,6 +1219,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "sqlx",
  "substrate-runtime",
  "subxt",
  "subxt-signer",
@@ -3979,7 +3980,7 @@ checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

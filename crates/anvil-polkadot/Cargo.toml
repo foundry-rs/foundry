@@ -132,6 +132,7 @@ parity-scale-codec = "3.7.5"
 subxt = "0.43.0"
 subxt-signer = "0.43.0"
 tokio-stream = "0.1.17"
+sqlx = "0.8.6"
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }

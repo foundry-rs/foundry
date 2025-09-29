@@ -4,7 +4,8 @@ use anvil_rpc::response::ResponseResult;
 use futures::channel::{mpsc, oneshot};
 use server::ApiServer;
 
-mod error;
+pub mod error;
+pub mod revive_conversions;
 mod server;
 
 pub type ApiHandle = mpsc::Sender<ApiRequest>;
@@ -17,10 +18,13 @@ pub struct ApiRequest {
 pub fn spawn(substrate_service: &Service, logging_manager: LoggingManager) -> ApiHandle {
     let (api_handle, receiver) = mpsc::channel(100);
 
-    let api_server = ApiServer::new(substrate_service, receiver, logging_manager);
-
-    let spawn_handle = substrate_service.task_manager.spawn_essential_handle();
-    spawn_handle.spawn("anvil-api-server", "anvil", api_server.run());
+    let service = substrate_service.clone();
+    substrate_service.spawn_handle.spawn("anvil-api-server", "anvil", async move {
+        let api_server = ApiServer::new(service, receiver, logging_manager)
+            .await
+            .unwrap_or_else(|err| panic!("Failed to spawn the API server: {err}"));
+        api_server.run().await;
+    });
 
     api_handle
 }
