@@ -177,7 +177,12 @@ impl<'a> Linker<'a> {
         let libs_to_deploy = libs_to_deploy
             .into_par_iter()
             .map(|(id, _)| {
-                Ok(self.link(id, &libraries)?.get_bytecode_bytes().unwrap().into_owned())
+                let linked_contract = self.link(id, &libraries)?;
+                let bytecode = linked_contract.get_bytecode_bytes()
+                    .ok_or_else(|| LinkerError::LinkingFailed { 
+                        artifact: id.source.to_string_lossy().into() 
+                    })?;
+                Ok(bytecode.into_owned())
             })
             .collect::<Result<Vec<_>, LinkerError>>()?;
 
@@ -207,10 +212,17 @@ impl<'a> Linker<'a> {
             })
             .map(|id| {
                 // Link library with provided libs and extract bytecode object (possibly unlinked).
-                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
-                (id, bytecode)
+                let linked_contract = self.link(id, &libraries)
+                    .map_err(|_| LinkerError::LinkingFailed { 
+                        artifact: id.source.to_string_lossy().into() 
+                    })?;
+                let bytecode = linked_contract.bytecode
+                    .ok_or_else(|| LinkerError::LinkingFailed { 
+                        artifact: id.source.to_string_lossy().into() 
+                    })?;
+                Ok((id, bytecode))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, LinkerError>>()?;
 
         let mut libs_to_deploy = Vec::new();
 
@@ -224,11 +236,14 @@ impl<'a> Linker<'a> {
                 .find(|(_, (_, bytecode))| !bytecode.object.is_unlinked());
 
             // If we haven't found any deployable library, it means we have a cyclic dependency.
-            let Some((index, &(id, _))) = deployable else {
+            let Some((index, _)) = deployable else {
                 return Err(LinkerError::CyclicDependency);
             };
-            let (_, bytecode) = needed_libraries.swap_remove(index);
-            let code = bytecode.bytes().unwrap();
+            let (id, bytecode) = needed_libraries.swap_remove(index);
+            let code = bytecode.bytes()
+                .ok_or_else(|| LinkerError::LinkingFailed { 
+                    artifact: id.source.to_string_lossy().into() 
+                })?;
             let address = sender.create2_from_code(salt, code);
             libs_to_deploy.push(code.clone());
 
