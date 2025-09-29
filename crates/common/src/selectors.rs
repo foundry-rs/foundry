@@ -7,7 +7,7 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Context;
 use itertools::Itertools;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     sync::{
@@ -19,7 +19,6 @@ use std::{
 
 const BASE_URL: &str = "https://sourcify.dev/server";
 const SELECTOR_LOOKUP_URL: &str = "https://sourcify.dev/server/signature-database/v1/lookup";
-const SELECTOR_IMPORT_URL: &str = "https://sourcify.dev/server/signature-database/v1/import";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -66,24 +65,6 @@ impl SourcifyClient {
             .await
             .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
-            .await
-            .inspect_err(|err| self.on_reqwest_err(err))
-    }
-
-    /// Sends a new post request
-    async fn post_json<T: Serialize + std::fmt::Debug, R: DeserializeOwned>(
-        &self,
-        url: &str,
-        body: &T,
-    ) -> reqwest::Result<R> {
-        trace!(%url, body=?serde_json::to_string(body), "POST");
-        self.inner
-            .post(url)
-            .json(body)
-            .send()
-            .await
-            .inspect_err(|err| self.on_reqwest_err(err))?
-            .json()
             .await
             .inspect_err(|err| self.on_reqwest_err(err))
     }
@@ -280,42 +261,6 @@ impl SourcifyClient {
         }
         Ok(possible_info)
     }
-
-    /// uploads selectors to Sourcify using the given data
-    pub async fn import_selectors(
-        &self,
-        data: SelectorImportData,
-    ) -> eyre::Result<SelectorImportResponse> {
-        self.ensure_not_spurious()?;
-
-        let request = match data {
-            SelectorImportData::Abi(abis) => {
-                let functions_and_errors: SourcifySignatures = abis
-                    .iter()
-                    .flat_map(|abi| {
-                        abi.functions()
-                            .map(|func| func.signature())
-                            .chain(abi.errors().map(|error| error.signature()))
-                            .collect::<Vec<_>>()
-                    })
-                    .collect();
-
-                let events = abis
-                    .iter()
-                    .flat_map(|abi| abi.events().map(|event| event.signature()))
-                    .collect::<Vec<_>>();
-
-                SelectorImportRequest { function: functions_and_errors, event: events }
-            }
-            SelectorImportData::Raw(raw) => {
-                let function_and_error =
-                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
-                SelectorImportRequest { function: function_and_error, event: raw.event }
-            }
-        };
-
-        Ok(self.post_json(SELECTOR_IMPORT_URL, &request).await?)
-    }
 }
 
 pub enum SelectorOrSig {
@@ -445,61 +390,6 @@ impl RawSelectorImportData {
     pub fn is_empty(&self) -> bool {
         self.function.is_empty() && self.event.is_empty() && self.error.is_empty()
     }
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum SelectorImportData {
-    Abi(Vec<JsonAbi>),
-    Raw(RawSelectorImportData),
-}
-
-#[derive(Debug, Default, Serialize)]
-struct SelectorImportRequest {
-    function: SourcifySignatures,
-    event: SourcifySignatures,
-}
-
-#[derive(Debug, Deserialize)]
-struct SelectorImportEffect {
-    imported: HashMap<String, String>,
-    duplicated: HashMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SelectorImportResult {
-    function: SelectorImportEffect,
-    event: SelectorImportEffect,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SelectorImportResponse {
-    result: SelectorImportResult,
-}
-
-impl SelectorImportResponse {
-    /// Print info about the functions which were uploaded or already known
-    pub fn describe(&self) {
-        self.result.function.imported.iter().for_each(|(k, v)| {
-            let _ = sh_println!("Imported: Function {k}: {v}");
-        });
-        self.result.event.imported.iter().for_each(|(k, v)| {
-            let _ = sh_println!("Imported: Event {k}: {v}");
-        });
-        self.result.function.duplicated.iter().for_each(|(k, v)| {
-            let _ = sh_println!("Duplicated: Function {k}: {v}");
-        });
-        self.result.event.duplicated.iter().for_each(|(k, v)| {
-            let _ = sh_println!("Duplicated: Event {k}: {v}");
-        });
-
-        let _ = sh_println!("Selectors successfully uploaded to Sourcify");
-    }
-}
-
-/// uploads selectors to Sourcify using the given data
-pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
-    SourcifyClient::new()?.import_selectors(data).await
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

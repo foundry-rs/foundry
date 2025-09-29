@@ -19,9 +19,8 @@ use foundry_common::{
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
     fs,
     selectors::{
-        ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
-        decode_function_selector, decode_selectors, import_selectors, parse_signatures,
-        pretty_calldata,
+        SelectorKind, decode_calldata, decode_event_topic, decode_function_selector,
+        decode_selectors, pretty_calldata,
     },
     shell, stdin,
 };
@@ -594,15 +593,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
-        CastSubcommand::UploadSignature { signatures } => {
-            let signatures = stdin::unwrap_vec(signatures)?;
-            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
-            if !abis.is_empty() {
-                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
-            }
-            if !signatures.is_empty() {
-                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
-            }
+        CastSubcommand::UploadSignature { .. } => {
+            sh_warn!(
+                "Selector uploading is deprecated and is currently a no-op, as the upstream API has been removed."
+            )?;
+            sh_warn!("To upload selectors in the future, verify your contracts with Sourcify.")?;
         }
 
         // ENS

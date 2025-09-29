@@ -1,19 +1,22 @@
-use foundry_test_utils::util::OutputExt;
-use std::path::Path;
-
-casttest!(error_decode_with_sourcify, |prj, cmd| {
-    prj.clear_cache();
-    cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
-ValueTooHigh(uint256,uint256)
-101
-100
+casttest!(
+    #[ignore = "selector missing upstream"]
+    error_decode_with_sourcify,
+    |prj, cmd| {
+        prj.clear_cache();
+        cmd.args(["decode-error",
+            "0xcf47918100000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000100000000"
+        ]).assert_success().stdout_eq(str![[r#" InsufficientBalance(uint256,uint256)
+256
+4294967296 [4.294e9]
 
 "#]]);
-});
+    }
+);
 
 casttest!(fourbyte, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
+_____$_$__$___$$$___$$___$__$$(address,uint256)
 
 "#]]);
 });
@@ -27,107 +30,48 @@ For more information, try '--help'.
 "#]]);
 });
 
-casttest!(fourbyte_calldata, |_prj, cmd| {
-    cmd.args(["4byte-calldata", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "selector missing upstream"]
+    fourbyte_calldata,
+    |_prj, cmd| {
+        cmd.args(["4byte-calldata",
+            "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"
+        ]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
 31802608249 [3.18e10]
 
 "#]]);
-});
+    }
+);
 
 casttest!(fourbyte_calldata_only_selector, |_prj, cmd| {
     cmd.args(["4byte-calldata", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
 transfer(address,uint256)
+_____$_$__$___$$$___$$___$__$$(address,uint256)
 
 "#]]);
 });
 
 casttest!(fourbyte_calldata_alias, |_prj, cmd| {
-    cmd.args(["4byte-decode", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
+    cmd
+        .stdin(b"1\n")
+        .args(["4byte-decode", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
-0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
+2) "_____$_$__$___$$$___$$___$__$$(address,uint256)"
+Select a function signature by number: 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
 31802608249 [3.18e10]
 
 "#]]);
 });
 
 casttest!(fourbyte_event, |_prj, cmd| {
-    cmd.args(["4byte-event", "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"])
+    cmd.args(["4byte-event", "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"])
         .assert_success()
         .stdout_eq(str![[r#"
-updateAuthority(address,uint8)
+Transfer(address,address,uint256)
 
 "#]]);
-});
-
-casttest!(fourbyte_event_2, |_prj, cmd| {
-    cmd.args(["4byte-event", "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-canCall(address,address,bytes4)
-
-"#]]);
-});
-
-casttest!(upload_signatures, |_prj, cmd| {
-    // test no prefix is accepted as function
-    let output = cmd
-        .args(["upload-signature", "transfer(address,uint256)"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
-
-    // test event prefix
-    cmd.args(["upload-signature", "event Transfer(address,uint256)"]);
-    let output = cmd.assert_success().get_output().stdout_lossy();
-    assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
-
-    // test error prefix
-    cmd.args(["upload-signature", "error ERC20InsufficientBalance(address,uint256,uint256)"]);
-    let output = cmd.assert_success().get_output().stdout_lossy();
-    assert!(
-        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
-        "{}",
-        output
-    ); // Custom error is interpreted as function
-
-    // test multiple sigs
-    cmd.args([
-        "upload-signature",
-        "event Transfer(address,uint256)",
-        "transfer(address,uint256)",
-        "approve(address,uint256)",
-    ]);
-    let output = cmd.assert_success().get_output().stdout_lossy();
-    assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
-    assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
-    assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
-
-    // test abi
-    cmd.args([
-        "upload-signature",
-        "event Transfer(address,uint256)",
-        "transfer(address,uint256)",
-        "error ERC20InsufficientBalance(address,uint256,uint256)",
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/ERC20Artifact.json")
-            .as_os_str()
-            .to_str()
-            .unwrap(),
-    ]);
-    let output = cmd.assert_success().get_output().stdout_lossy();
-    assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
-    assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
-    assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
-    assert!(output.contains("Function decimals(): 0x313ce567"), "{}", output);
-    assert!(output.contains("Function allowance(address,address): 0xdd62ed3e"), "{}", output);
-    assert!(
-        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
-        "{}",
-        output
-    );
 });
 
 // tests cast can decode event with provided signature
@@ -148,7 +92,7 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 });
 
 // tests cast can decode event with Sourcify API
-casttest!(event_decode_with_sourcify, |prj, cmd| {
+casttest!(event_decode, |prj, cmd| {
     prj.clear_cache();
     cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
 BaseCurrencySet(address,uint256)

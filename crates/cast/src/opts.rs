@@ -742,7 +742,7 @@ pub enum CastSubcommand {
         topic: Option<B256>,
     },
 
-    /// Upload the given signatures to <https://docs.sourcify.dev/docs/api/>.
+    /// DEPRECATED: Upload the given signatures to <https://docs.sourcify.dev/docs/api/>.
     ///
     /// Example inputs:
     /// - "transfer(address,uint256)"
