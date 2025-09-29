@@ -108,12 +108,11 @@ impl EtherscanIdentifier {
         address: Address,
         metadata: &Metadata,
     ) -> IdentifiedAddress<'static> {
-        let label = metadata.contract_name.clone();
         let abi = metadata.abi().ok().map(Cow::Owned);
         IdentifiedAddress {
             address,
-            label: Some(label.clone()),
-            contract: Some(label),
+            label: Some(metadata.contract_name.clone()),
+            contract: Some(metadata.contract_name.clone()),
             abi,
             artifact_id: None,
         }
