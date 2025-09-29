@@ -65,9 +65,10 @@ impl<'ast> State<'_, 'ast> {
             out: &mut String,
             config: config::NumberUnderscore,
             string: &str,
+            is_dec: bool,
             reversed: bool,
         ) {
-            if !config.is_thousands() || string.len() < 5 {
+            if !config.is_thousands() || !is_dec || string.len() < 5 {
                 out.push_str(string);
                 return;
             }
@@ -114,12 +115,12 @@ impl<'ast> State<'_, 'ast> {
         if val.is_empty() {
             out.push('0');
         } else {
-            add_underscores(&mut out, config, val, false);
+            add_underscores(&mut out, config, val, is_dec, false);
         }
         if source.contains('.') {
             out.push('.');
             if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, true);
+                add_underscores(&mut out, config, fract, is_dec, true);
             } else {
                 out.push('0');
             }
@@ -127,7 +128,7 @@ impl<'ast> State<'_, 'ast> {
         if !exp.is_empty() {
             out.push('e');
             out.push_str(exp_sign);
-            add_underscores(&mut out, config, exp, false);
+            add_underscores(&mut out, config, exp, is_dec, false);
         }
 
         self.word(out);
@@ -362,15 +363,12 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        let is_single_without_cmnts = if values.len() == 1 && !format.break_single {
-            let span = get_span(&values[0]);
-            // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
-            // comments in the child expression, and those don't matter.
-            self.peek_comment_before(span.map_or(pos_hi, |s| s.lo())).is_none()
-                && self.peek_comment_between(span.map_or(pos_hi, |s| s.hi()), pos_hi).is_none()
-        } else {
-            false
-        };
+        let first = get_span(&values[0]);
+        // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
+        // comments in the child expression, and those don't matter.
+        let has_comments = self.peek_comment_before(first.map_or(pos_hi, |s| s.lo())).is_some()
+            || self.peek_comment_between(first.map_or(pos_hi, |s| s.hi()), pos_hi).is_some();
+        let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
 
         let skip_first_break = if format.with_delimiters || format.is_inline() {
             self.s.cbox(if format.no_ind { 0 } else { self.ind });
@@ -393,7 +391,7 @@ impl<'ast> State<'_, 'ast> {
             format.print_break(true, values.len(), &mut self.s);
         }
 
-        if format.is_compact() {
+        if format.is_compact() && !(format.breaks_with_comments() && has_comments) {
             self.s.cbox(0);
         }
 
@@ -453,7 +451,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        if format.is_compact() {
+        if format.is_compact() && !(format.breaks_with_comments() && has_comments) {
             self.end();
         }
         if !skip_last_break {
@@ -515,6 +513,9 @@ impl<'ast> State<'_, 'ast> {
             self.print_empty_block(block_format, pos_hi);
             return;
         }
+
+        // update block depth
+        self.block_depth += 1;
 
         // Print multiline block comments.
         let block_lo = get_block_span(&block[0]).lo();
@@ -626,6 +627,9 @@ impl<'ast> State<'_, 'ast> {
         if block_format.with_braces() {
             self.print_word("}");
         }
+
+        // restore block depth
+        self.block_depth -= 1;
     }
 
     fn print_single_line_block<T: Debug>(
@@ -764,6 +768,10 @@ impl ListFormat {
 
     pub(crate) fn has_indentation(&self) -> bool {
         !self.no_ind
+    }
+
+    pub(crate) fn breaks_with_comments(&self) -> bool {
+        self.breaks_cmnts
     }
 
     // -- BUILDER METHODS ------------------------------------------------------

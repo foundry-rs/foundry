@@ -311,6 +311,9 @@ impl<'ast> State<'_, 'ast> {
         self.print_word("{");
         self.end();
         if !body.is_empty() {
+            // update block depth
+            self.block_depth += 1;
+
             self.print_sep(Separator::Hardbreak);
             if self.config.contract_new_lines {
                 self.hardbreak();
@@ -345,6 +348,9 @@ impl<'ast> State<'_, 'ast> {
             if self.config.contract_new_lines {
                 self.hardbreak_if_nonempty();
             }
+
+            // restore block depth
+            self.block_depth -= 1;
         } else {
             if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
                 self.zerobreak();
@@ -544,10 +550,6 @@ impl<'ast> State<'_, 'ast> {
 
         // Print fn body
         if let Some(body) = body {
-            // update cache
-            let cache = self.fn_body;
-            self.fn_body = true;
-
             if self.handle_span(self.cursor.span(body_span.lo()), false) {
                 // Print spacing if necessary. Updates cursor.
             } else {
@@ -589,9 +591,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word("}");
                 self.cursor.advance_to(body_span.hi(), true);
             }
-
-            // restore cache
-            self.fn_body = cache;
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
@@ -601,7 +600,6 @@ impl<'ast> State<'_, 'ast> {
             self.neverbreak();
             self.print_word(";");
         }
-        self.fn_body = false;
 
         if let Some(cmnt) = self.peek_trailing_comment(body_span.hi(), None) {
             if cmnt.is_doc {
@@ -823,7 +821,17 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_expr(init);
             } else {
-                if pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false) {
+                let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &init.kind {
+                    let callee_size = get_callee_head_size(call_expr);
+                    callee_size + pre_init_size > init_space_left
+                        && callee_size + self.config.tab_width < init_space_left
+                } else {
+                    false
+                };
+
+                if (pre_init_size + 1 >= init_space_left && !is_call_chain(&init.kind, false))
+                    || callee_doesnt_fit
+                {
                     self.s.ibox(self.ind);
                 } else {
                     self.s.ibox(0);
@@ -835,7 +843,9 @@ impl<'ast> State<'_, 'ast> {
                     // delegate breakpoints to `self.commasep(..)`
                     if !self.is_bol_or_only_ind() {
                         let init_size = self.estimate_size(init.span);
-                        if init_size + pre_init_size + 1 >= init_space_left
+                        if callee_doesnt_fit {
+                            self.print_sep(Separator::Space);
+                        } else if init_size + pre_init_size + 1 >= init_space_left
                             && init_size + self.config.tab_width < init_space_left
                             && !self.has_comment_between(init.span.lo(), init.span.hi())
                         {
@@ -1236,9 +1246,8 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.add_precall(lhs_size);
 
         let is_simple_rhs = matches!(rhs.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-        let is_chain = is_call_chain(&rhs.kind, false);
 
-        if (is_chain && overflows && fits_alone) || is_simple_rhs {
+        if (overflows && fits_alone) || is_simple_rhs {
             self.s.ibox(self.ind)
         } else {
             self.s.ibox(0)
@@ -1257,7 +1266,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(rhs);
                 self.end();
             }
-            _ if (is_chain && overflows && fits_alone) || (is_simple_rhs && overflows) => {
+            _ if overflows && (fits_alone || is_simple_rhs) => {
                 self.print_sep(Separator::Space);
                 self.print_expr(rhs);
             }
@@ -1560,6 +1569,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.call_stack.push(CallContext::nested(callee_size));
+
         // Clear the binary expression cache before the call.
         let cache = self.binary_expr.take();
 
@@ -1875,14 +1885,28 @@ impl<'ast> State<'_, 'ast> {
         let mut current_else = els_opt.as_deref();
         while let Some(els) = current_else {
             if self.ends_with('}') {
-                match self.print_comments(els.span.lo(), CommentConfig::skip_ws().mixed_no_break())
-                {
-                    Some(cmnt) => {
-                        if cmnt.is_mixed() {
-                            self.hardbreak();
-                        }
+                // If there are comments with line breaks, don't add spaces to mixed comments
+                if self.has_comment_before_with(els.span.lo(), |cmnt| !cmnt.style.is_mixed()) {
+                    // If last comment is miced, ensure line break
+                    if self
+                        .print_comments(els.span.lo(), CommentConfig::skip_ws().mixed_no_break())
+                        .is_some_and(|cmnt| cmnt.is_mixed())
+                    {
+                        self.hardbreak();
                     }
-                    None => self.nbsp(),
+                }
+                // Otherwise, ensure a non-breaking space is added
+                else if self
+                    .print_comments(
+                        els.span.lo(),
+                        CommentConfig::skip_ws()
+                            .mixed_no_break()
+                            .mixed_prev_space()
+                            .mixed_post_nbsp(),
+                    )
+                    .is_none()
+                {
+                    self.nbsp();
                 }
             } else {
                 self.hardbreak_if_not_bol();

@@ -273,6 +273,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Artifact(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
+        CastSubcommand::B2EPayload(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             sh_println!("{}", pretty_calldata(&calldata, offline).await?)?;
@@ -728,17 +729,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
-        }
-        CastSubcommand::GenerateFigSpec => {
-            generate(
-                foundry_cli::clap::Shell::Fig,
-                &mut CastArgs::command(),
-                "cast",
-                &mut std::io::stdout(),
-            );
-            sh_eprintln!(
-                "[deprecated] `cast generate-fig-spec` is deprecated; use `cast completions fig`"
-            )?;
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {

@@ -6,7 +6,7 @@ use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     Project, ProjectCompileOutput, SolcConfig,
-    artifacts::{EvmVersion, Libraries, Settings},
+    artifacts::{EvmVersion, Settings},
     compilers::multi::MultiCompiler,
 };
 use foundry_config::{
@@ -58,11 +58,7 @@ impl ForgeTestProfile {
 
     /// Configures the solc settings for the test profile.
     pub fn solc_config(&self) -> SolcConfig {
-        let libs =
-            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
-
-        let mut settings =
-            Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
+        let mut settings = Settings::default();
 
         if matches!(self, Self::Paris) {
             settings.evm_version = Some(EvmVersion::Paris);
@@ -86,9 +82,6 @@ impl ForgeTestProfile {
         config.src = self.root().join(self.to_string());
         config.out = self.root().join("out").join(self.to_string());
         config.cache_path = self.root().join("cache").join(self.to_string());
-        config.libraries = vec![
-            "fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
-        ];
 
         config.prompt_timeout = 0;
 

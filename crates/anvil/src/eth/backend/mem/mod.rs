@@ -42,7 +42,9 @@ use alloy_consensus::{
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
-    eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    eip1559::BaseFeeParams,
+    eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
+    eip7840::BlobParams,
     eip7910::SystemContract,
 };
 use alloy_evm::{
@@ -3279,6 +3281,29 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    pub fn get_blob_sidecars_by_block_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlobTransactionSidecar>> {
+        if let Some(full_block) = self.get_full_block(block_id) {
+            let sidecar = full_block
+                .into_transactions_iter()
+                .map(TypedTransaction::try_from)
+                .filter_map(|typed_tx_result| {
+                    typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
+                })
+                .fold(BlobTransactionSidecar::default(), |mut acc, sidecar| {
+                    acc.blobs.extend(sidecar.blobs);
+                    acc.commitments.extend(sidecar.commitments);
+                    acc.proofs.extend(sidecar.proofs);
+                    acc
+                });
+            Ok(Some(sidecar))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
