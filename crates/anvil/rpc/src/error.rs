@@ -84,7 +84,7 @@ pub enum ErrorCode {
     InvalidParams,
     /// internal call error
     InternalError,
-    /// Failed to send transaction, See also <https://github.com/MetaMask/eth-rpc-errors/blob/main/src/error-constants.ts>
+    /// Failed to send transaction, See also <https://github.com/MetaMask/rpc-errors/blob/main/src/error-constants.ts>
     TransactionRejected,
     /// Custom geth error code, <https://github.com/vapory-legacy/wiki/blob/master/JSON-RPC-Error-Codes-Improvement-Proposal.md>
     ExecutionError,
