@@ -25,9 +25,21 @@ fn main() {
     let config = foundry_config::Config::load().unwrap();
     let project = config.solar_project().unwrap();
     let mut output = if let Some(ref path) = path {
-        ProjectCompiler::new().files([path.to_path_buf()]).compile(&project).unwrap()
+        match ProjectCompiler::new().files([path.to_path_buf()]).compile(&project) {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("Compilation failed: {}", e);
+                std::process::exit(1);
+            }
+        }
     } else {
-        ProjectCompiler::new().compile(&project).unwrap()
+        match ProjectCompiler::new().compile(&project) {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("Compilation failed: {}", e);
+                std::process::exit(1);
+            }
+        }
     };
     let compiler = output.parser_mut().solc_mut().compiler_mut();
 
