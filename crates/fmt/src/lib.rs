@@ -217,7 +217,15 @@ fn format_once(
 
         let gcx = c.gcx();
         let (_, source) = gcx.get_ast_source(&file.name).unwrap();
-        Ok(format_ast(gcx, source, config).expect("unable to format AST"))
+        match format_ast(gcx, source, config) {
+            Some(formatted) => Ok(formatted),
+            None => {
+                // AST is not available, likely due to parsing errors
+                // Return an error instead of panicking to prevent VS Code from clearing the file
+                let msg = "Failed to format: AST is not available, likely due to syntax errors in the source code";
+                Err(c.sess().dcx.err(msg).emit())
+            }
+        }
     });
 
     let diagnostics = compiler.sess().dcx.emitted_diagnostics().unwrap();
