@@ -1925,6 +1925,27 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/5866>
+forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+    cmd.git_init();
+
+    let toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+
+    # Custom sections for other tools
+    [external.scopelint]
+    some_flag = 1
+
+    [external.forge_deploy]
+    another_setting = 123";
+
+    fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10550>
 forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
     cmd.git_init();

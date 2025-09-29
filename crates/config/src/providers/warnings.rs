@@ -49,6 +49,7 @@ impl<P: Provider> WarningsProvider<P> {
             data.keys()
                 .filter(|k| {
                     **k != Config::PROFILE_SECTION
+                        && **k != Config::EXTERNAL_SECTION
                         && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
