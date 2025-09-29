@@ -95,28 +95,6 @@ impl CallStack {
     pub(crate) fn is_chain(&self) -> bool {
         self.last().is_some_and(|call| call.is_chained())
     }
-
-    /// Calculates the total size of the call sequence so far.
-    pub(crate) fn size(&self) -> usize {
-        let Some((first, rest)) = self.split_first() else {
-            return 0;
-        };
-
-        // The first call only adds its name and an opening parenthesis.
-        let first_size = first.size + 1;
-
-        // For all subsequent chainned calls, add the `.` separator.
-        let rest_size: usize = rest.iter().fold(0, |acc, call| {
-            let separator = if matches!(call.kind, CallContextKind::Chained) { 1 } else { 0 };
-            acc + separator + call.size + 1
-        });
-
-        first_size + rest_size
-    }
-
-    pub(crate) fn precall_size(&self) -> usize {
-        self.precall_size
-    }
 }
 
 pub(super) struct State<'sess, 'ast> {
@@ -479,11 +457,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { current_ind: self.ind, ..Default::default() }
-    }
-
-    fn cmnt_config_skip_ws(&self) -> CommentConfig {
-        CommentConfig { current_ind: self.ind, skip_blanks: Some(Skip::All), ..Default::default() }
+        CommentConfig { ..Default::default() }
     }
 
     fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
@@ -967,14 +941,12 @@ enum Skip {
     All,
     Leading { resettable: bool },
     Trailing,
-    LeadingNoReset,
 }
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct CommentConfig {
     // Config: all
     skip_blanks: Option<Skip>,
-    current_ind: isize,
     offset: isize,
 
     // Config: isolated comments
@@ -1009,11 +981,6 @@ impl CommentConfig {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break = true;
-        self
-    }
-
-    pub(crate) fn iso_no_break(mut self) -> Self {
-        self.iso_no_break = true;
         self
     }
 

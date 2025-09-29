@@ -4148,13 +4148,13 @@ version = "1.4.0"
 dependencies = [
  "foundry-common",
  "foundry-config",
+ "foundry-test-utils",
  "itertools 0.14.0",
  "similar",
  "similar-asserts",
  "snapbox",
  "solar-compiler",
  "toml 0.9.7",
- "tracing",
  "tracing-subscriber 0.3.20",
 ]
 
