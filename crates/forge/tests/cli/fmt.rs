@@ -33,7 +33,7 @@ Formatted [..]/src/FmtTest.sol
 
 "#]]);
     assert_data_eq!(
-        std::fs::read_to_string(&prj.root().join("src/FmtTest.sol")).unwrap(),
+        std::fs::read_to_string(prj.root().join("src/FmtTest.sol")).unwrap(),
         FORMATTED,
     );
 });
