@@ -124,7 +124,7 @@ impl FmtArgs {
                 .raw
                 .par_iter()
                 .filter_map(|source_unit| {
-                    let path = source_unit.file.name.as_real()?;
+                    let path = source_unit.file.name.as_real();
                     let original = source_unit.file.src.as_str();
                     let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
 
@@ -132,26 +132,33 @@ impl FmtArgs {
                         return None;
                     }
 
-                    if self.check {
-                        let name =
-                            path.strip_prefix(&config.root).unwrap_or(path).display().to_string();
+                    if self.check || path.is_none() {
+                        let name = match path {
+                            Some(path) => path
+                                .strip_prefix(&config.root)
+                                .unwrap_or(path)
+                                .display()
+                                .to_string(),
+                            None => "stdin".to_string(),
+                        };
                         let summary =
                             format_diff_summary(&name, &TextDiff::from_lines(original, &formatted));
                         Some(Ok(summary))
-                    } else {
+                    } else if let Some(path) = path {
                         match fs::write(path, formatted) {
                             Ok(()) => {}
                             Err(e) => return Some(Err(e.into())),
                         };
                         let _ = sh_println!("Formatted {}", path.display());
                         None
+                    } else {
+                        unreachable!()
                     }
                 })
                 .collect::<Result<_>>()?;
 
             if !diffs.is_empty() {
                 // This block is only reached in --check mode when files need formatting.
-                debug_assert!(self.check);
                 let mut stdout = io::stdout().lock();
                 for (i, diff) in diffs.iter().enumerate() {
                     if i > 0 {
