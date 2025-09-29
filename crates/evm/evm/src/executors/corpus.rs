@@ -770,7 +770,6 @@ impl WorkerCorpus {
             };
 
             if timestamp <= self.last_sync_timestamp {
-                // TODO: Delete synced file
                 continue;
             }
 

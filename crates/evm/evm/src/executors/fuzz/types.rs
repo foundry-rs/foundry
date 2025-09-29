@@ -1,9 +1,9 @@
 use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU32, Ordering},
-};
+        Arc, OnceLock,
+        atomic::{AtomicU32, Ordering},
+    };
 
-use crate::executors::{FailFast, FuzzTestTimer, RawCallResult, corpus::WorkerCorpus};
+use crate::executors::{FailFast, FuzzTestTimer, RawCallResult};
 use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_common::evm::Breakpoints;
 use foundry_evm_coverage::HitMaps;
@@ -127,6 +127,10 @@ impl SharedFuzzState {
     pub fn total_rejects(&self) -> u32 {
         self.total_rejects.load(Ordering::Relaxed)
     }
+
+    pub fn failed_worked_id(&self) -> Option<u32> {
+        self.found_failure.get().copied()
+    }
 }
 
 #[derive(Default)]
@@ -138,7 +142,7 @@ pub struct FuzzWorker {
     /// Gas usage for all cases this worker ran
     pub gas_by_case: Vec<(u64, u64)>,
     /// Counterexample if this worker found one
-    pub counterexample: Option<(Bytes, RawCallResult)>,
+    pub counterexample: (Bytes, RawCallResult),
     /// Traces collected by this worker (up to limit)
     pub traces: Vec<SparsedTraceArena>,
     /// Last breakpoints from this worker
@@ -155,6 +159,10 @@ pub struct FuzzWorker {
     pub rejects: u32,
     /// Failure reason if this worker failed
     pub failure: Option<TestCaseError>,
+    /// Last run timestamp in milliseconds
+    ///
+    /// Used to identify which worker ran last and collect its traces and call breakpoints
+    pub last_run_timestamp: u128,
 }
 
 impl FuzzWorker {

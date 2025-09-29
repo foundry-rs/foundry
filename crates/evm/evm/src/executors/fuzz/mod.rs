@@ -1,5 +1,5 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+    Executor, FailFast, RawCallResult,
     corpus::WorkerCorpus,
     fuzz::types::{FuzzWorker, SharedFuzzState},
 };
@@ -7,7 +7,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
 use eyre::Result;
-use foundry_common::{evm::Breakpoints, sh_println};
+use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
@@ -25,7 +25,7 @@ use proptest::{
     strategy::Strategy,
     test_runner::{TestCaseError, TestRunner},
 };
-use serde_json::json;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -110,199 +110,40 @@ impl FuzzedExecutor {
         fail_fast: &FailFast,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let mut test_data = FuzzTestData::default();
-        let state = self.build_fuzz_state(deployed_libs);
-        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strategy = proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
-        ]
-        .prop_map(move |calldata| BasicTxDetails {
-            sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata },
-        });
-        // We want to collect at least one trace which will be displayed to user.
-        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+        let shared_state = Arc::new(SharedFuzzState::new(
+            self.config.runs,
+            self.config.timeout,
+            fail_fast.clone(),
+        ));
 
-        let mut corpus_manager = WorkerCorpus::new(
-            0, // Id of the Master
-            self.config.corpus.clone(),
-            strategy.boxed(),
-            Some(&self.executor),
-            Some(func),
-            None,
-        )?;
+        // TODO: Determine the number of workers
+        let num_workers = rayon::current_num_threads() as u32;
+        let persisted_failure = self.persisted_failure.take();
+        let workers = (0..num_workers)
+            .into_par_iter()
+            .map(|worker_id| {
+                self.run_worker(
+                    worker_id,
+                    num_workers as usize,
+                    func,
+                    fuzz_fixtures,
+                    deployed_libs,
+                    address,
+                    rd,
+                    shared_state.clone(),
+                    progress,
+                    if worker_id == 0 { persisted_failure.clone() } else { None },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        // Start timer for this fuzz test.
-        let timer = FuzzTestTimer::new(self.config.timeout);
-        let mut last_metrics_report = Instant::now();
-        let max_runs = self.config.runs;
-        let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
-                return false;
-            }
-
-            if timer.is_enabled() { !timer.is_timed_out() } else { runs < max_runs }
-        };
-
-        'stop: while continue_campaign(test_data.runs) {
-            // If counterexample recorded, replay it first, without incrementing runs.
-            let input = if let Some(failure) = self.persisted_failure.take() {
-                failure.calldata
-            } else {
-                // If running with progress, then increment current run.
-                if let Some(progress) = progress {
-                    progress.inc(1);
-                    // Display metrics in progress bar.
-                    if self.config.corpus.collect_edge_coverage() {
-                        progress.set_message(format!("{}", &corpus_manager.metrics));
-                    }
-                } else if self.config.corpus.collect_edge_coverage()
-                    && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
-                {
-                    // Display metrics inline.
-                    let metrics = json!({
-                        "timestamp": SystemTime::now()
-                            .duration_since(UNIX_EPOCH)?
-                            .as_secs(),
-                        "test": func.name,
-                        "metrics": &corpus_manager.metrics,
-                    });
-                    let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
-                    last_metrics_report = Instant::now();
-                };
-
-                test_data.runs += 1;
-
-                match corpus_manager.new_input(&mut self.runner, &state, func) {
-                    Ok(input) => input,
-                    Err(err) => {
-                        test_data.failure = Some(TestCaseError::fail(format!(
-                            "failed to generate fuzzed input: {err}"
-                        )));
-                        break 'stop;
-                    }
-                }
-            };
-
-            match self.single_fuzz(address, input, &mut corpus_manager) {
-                Ok(fuzz_outcome) => match fuzz_outcome {
-                    FuzzOutcome::Case(case) => {
-                        test_data.gas_by_case.push((case.case.gas, case.case.stipend));
-
-                        if test_data.first_case.is_none() {
-                            test_data.first_case.replace(case.case);
-                        }
-
-                        if let Some(call_traces) = case.traces {
-                            if test_data.traces.len() == max_traces_to_collect {
-                                test_data.traces.pop();
-                            }
-                            test_data.traces.push(call_traces);
-                            test_data.breakpoints.replace(case.breakpoints);
-                        }
-
-                        if self.config.show_logs {
-                            test_data.logs.extend(case.logs);
-                        }
-
-                        HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
-                        test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
-                    }
-                    FuzzOutcome::CounterExample(CounterExampleOutcome {
-                        exit_reason: status,
-                        counterexample: outcome,
-                        ..
-                    }) => {
-                        let reason = rd.maybe_decode(&outcome.1.result, status);
-                        test_data.logs.extend(outcome.1.logs.clone());
-                        test_data.counterexample = outcome;
-                        test_data.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
-                        break 'stop;
-                    }
-                },
-                Err(err) => {
-                    match err {
-                        TestCaseError::Fail(_) => {
-                            test_data.failure = Some(err);
-                            break 'stop;
-                        }
-                        TestCaseError::Reject(_) => {
-                            // Apply max rejects only if configured, otherwise silently discard run.
-                            if self.config.max_test_rejects > 0 {
-                                test_data.rejects += 1;
-                                if test_data.rejects >= self.config.max_test_rejects {
-                                    test_data.failure = Some(err);
-                                    break 'stop;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let (calldata, call) = test_data.counterexample;
-        let mut traces = test_data.traces;
-        let (last_run_traces, last_run_breakpoints) = if test_data.failure.is_none() {
-            (traces.pop(), test_data.breakpoints)
-        } else {
-            (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
-        };
-
-        let mut result = FuzzTestResult {
-            first_case: test_data.first_case.unwrap_or_default(),
-            gas_by_case: test_data.gas_by_case,
-            success: test_data.failure.is_none(),
-            skipped: false,
-            reason: None,
-            counterexample: None,
-            logs: test_data.logs,
-            labels: call.labels,
-            traces: last_run_traces,
-            breakpoints: last_run_breakpoints,
-            gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            line_coverage: test_data.coverage,
-            deprecated_cheatcodes: test_data.deprecated_cheatcodes,
-            failed_corpus_replays: corpus_manager.failed_replays,
-        };
-
-        match test_data.failure {
-            Some(TestCaseError::Fail(reason)) => {
-                let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data).unwrap_or_default()
-                } else {
-                    vec![]
-                };
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
-            }
-            Some(TestCaseError::Reject(reason)) => {
-                let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-            }
-            None => {}
-        }
-
-        if let Some(reason) = &result.reason
-            && let Some(reason) = SkipReason::decode_self(reason)
-        {
-            result.skipped = true;
-            result.reason = reason.0;
-        }
-
-        state.log_stats();
-
-        Ok(result)
+        Ok(self.aggregate_results(workers, func, shared_state))
     }
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
-        &mut self,
+        &self,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
@@ -362,8 +203,95 @@ impl FuzzedExecutor {
         }
     }
 
+    fn aggregate_results(
+        &self,
+        workers: Vec<FuzzWorker>,
+        func: &Function,
+        shared_state: Arc<SharedFuzzState>,
+    ) -> FuzzTestResult {
+        let mut result = FuzzTestResult::default();
+
+        // Find the worker with the lowest global run in FuzzWorker.first_case.0
+        let first_case = workers
+            .iter()
+            // Get the worker_id, global_run number, and FuzzCase
+            .filter_map(|w| w.first_case.as_ref().map(|(run, case)| (w.worker_id, *run, case)))
+            .min_by_key(|(_, run, _)| *run);
+
+        result.first_case = first_case.map(|(_, _, fc)| fc.clone()).unwrap_or_default();
+        // TODO: Fix order of cases when aggregating
+        result.gas_by_case = workers.iter().flat_map(|w| w.gas_by_case.clone()).collect();
+
+        result.logs = workers.iter().flat_map(|w| w.logs.clone()).collect();
+        result.gas_report_traces =
+            workers.iter().flat_map(|w| w.traces.iter().map(|a| a.arena.clone())).collect();
+        result.line_coverage = workers.iter().fold(None, |mut acc, w| {
+            HitMaps::merge_opt(&mut acc, w.coverage.clone());
+            acc
+        });
+        result.deprecated_cheatcodes = workers.iter().fold(HashMap::default(), |mut acc, w| {
+            acc.extend(w.deprecated_cheatcodes.clone());
+            acc
+        });
+
+        let failed_worked_id = shared_state.failed_worked_id();
+        result.success = failed_worked_id.is_none();
+        if failed_worked_id.is_none()
+            && let Some(last_run) = workers.iter().max_by_key(|w| w.last_run_timestamp)
+        {
+            result.traces = last_run.traces.last().cloned();
+            result.breakpoints = last_run.breakpoints.clone();
+        }
+
+        let failed_worker =
+            failed_worked_id.and_then(|id| workers.into_iter().find(|w| w.worker_id == id));
+
+        if let Some(failed_worker) = failed_worker {
+            let (calldata, call) = failed_worker.counterexample;
+
+            result.labels = call.labels;
+            result.traces = call.traces.clone();
+            result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
+
+            match failed_worker.failure {
+                Some(TestCaseError::Fail(reason)) => {
+                    let reason = reason.to_string();
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
+                Some(TestCaseError::Reject(reason)) => {
+                    let reason = reason.to_string();
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                }
+                None => {}
+            }
+        };
+
+        if let Some(reason) = &result.reason
+            && let Some(reason) = SkipReason::decode_self(reason)
+        {
+            result.skipped = true;
+            result.reason = reason.0;
+        }
+
+        // TODO
+        result.failed_corpus_replays = 0;
+
+        // TODO: Logs stats from EvmFuzzState of all workers
+        // state.log_stats();
+
+        result
+    }
+
     fn run_worker(
-        &mut self,
+        &self,
         worker_id: u32,
         num_workers: usize,
         func: &Function,
@@ -373,6 +301,7 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         shared_state: Arc<SharedFuzzState>,
         progress: Option<&ProgressBar>,
+        mut persisted_failure: Option<BaseCounterExample>,
     ) -> Result<FuzzWorker> {
         // Prepare
         let state = self.build_fuzz_state(deployed_libs);
@@ -397,7 +326,8 @@ impl FuzzedExecutor {
         )?;
 
         let mut worker = FuzzWorker::new(worker_id);
-        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+        let max_traces_to_collect =
+            std::cmp::max(1, self.config.gas_report_samples as usize / num_workers) as usize;
 
         let mut runner = self.runner.clone();
 
@@ -409,7 +339,7 @@ impl FuzzedExecutor {
         'stop: while shared_state.should_continue() {
             // Only the master worker replays the persisted failure, if any.
             let input = if worker_id == 0
-                && let Some(failure) = self.persisted_failure.take()
+                && let Some(failure) = persisted_failure.take()
             {
                 failure.calldata
             } else {
@@ -447,6 +377,7 @@ impl FuzzedExecutor {
                 }
             };
 
+            worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             match self.single_fuzz(address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
@@ -479,7 +410,7 @@ impl FuzzedExecutor {
                     }) => {
                         let reason = rd.maybe_decode(&outcome.1.result, status);
                         worker.logs.extend(outcome.1.logs.clone());
-                        worker.counterexample = Some(outcome);
+                        worker.counterexample = outcome;
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);
                         break 'stop;
