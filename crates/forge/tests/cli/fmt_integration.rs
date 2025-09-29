@@ -25,5 +25,4 @@ fmt_test!(
     "e41f2b9b7ed677ca03ff7bd7221a4e2fdd55504f"
 );
 
-#[cfg(not(windows))]
 fmt_test!(fmt_0x_settler, "0xProject", "0x-settler", "a388c8251ab6c4bedce1641b31027d7b1136daef");

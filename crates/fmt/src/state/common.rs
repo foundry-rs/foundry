@@ -147,7 +147,7 @@ impl<'ast> State<'_, 'ast> {
         let quote = match self.config.quote_style {
             config::QuoteStyle::Double => '\"',
             config::QuoteStyle::Single => '\'',
-            config::QuoteStyle::Preserve => self.char_at(quote_pos),
+            config::QuoteStyle::Preserve => self.char_at(quote_pos).unwrap_or_default(),
         };
         debug_assert!(matches!(quote, '\"' | '\''), "{quote:?}");
         let s = solar::parse::interface::data_structures::fmt::from_fn(move |f| {
@@ -546,7 +546,7 @@ impl<'ast> State<'_, 'ast> {
                                 self.s.offset(offset);
                             }
                         } else if style.is_isolated() {
-                            Separator::Space.print(&mut self.s, &mut self.cursor);
+                            self.print_sep_unhandled(Separator::Space);
                             self.s.offset(offset);
                         }
                     }
@@ -555,7 +555,7 @@ impl<'ast> State<'_, 'ast> {
                             self.zerobreak();
                             self.s.offset(offset);
                         } else if self.cursor.enabled {
-                            Separator::Space.print(&mut self.s, &mut self.cursor);
+                            self.print_sep_unhandled(Separator::Space);
                             self.s.offset(offset);
                             self.cursor.advance_to(block_lo, true);
                         }
