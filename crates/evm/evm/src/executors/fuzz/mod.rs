@@ -33,6 +33,8 @@ use std::{
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
+/// Corpus syncs across workers every `SYNC_INTERVAL` runs.
+const SYNC_INTERVAL: u32 = 1000;
 
 /// Contains data collected during fuzz test runs.
 #[derive(Default)]
@@ -363,7 +365,7 @@ impl FuzzedExecutor {
     fn run_worker(
         &mut self,
         worker_id: u32,
-        num_workers: u32,
+        num_workers: usize,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
@@ -398,7 +400,12 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
         let mut runner = self.runner.clone();
-        // TODO: Add sync interval parameters for corpus sync
+
+        // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
+        // time.
+        let sync_offset = worker_id * 100;
+        let mut runs_since_sync = 0;
+        let sync_threshold = SYNC_INTERVAL + sync_offset;
         'stop: while shared_state.should_continue() {
             // Only the master worker replays the persisted failure, if any.
             let input = if worker_id == 0
@@ -418,6 +425,14 @@ impl FuzzedExecutor {
 
                 worker.runs += 1;
                 shared_state.increment_runs();
+
+                runs_since_sync += 1;
+                if runs_since_sync >= sync_threshold {
+                    let instance = Instant::now();
+                    corpus.sync(num_workers, &self.executor, Some(func), None)?;
+                    trace!("Worker {worker_id} finished corpus sync in {:?}", instance.elapsed());
+                    runs_since_sync = 0;
+                }
 
                 match corpus.new_input(&mut runner, &state, func) {
                     Ok(input) => input,
