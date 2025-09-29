@@ -766,10 +766,6 @@ impl ListFormat {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
-    pub(crate) fn has_indentation(&self) -> bool {
-        !self.no_ind
-    }
-
     pub(crate) fn breaks_with_comments(&self) -> bool {
         self.breaks_cmnts
     }
@@ -861,6 +857,7 @@ impl ListFormat {
 
 /// Formatting style for code blocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(dead_code)]
 pub(crate) enum BlockFormat {
     Regular,
     /// Attempts to fit all elements in one line, before breaking consistently. Flags whether to

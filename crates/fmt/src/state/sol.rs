@@ -2504,6 +2504,7 @@ impl MemberOrCallArgs {
 }
 
 #[derive(Debug, Clone)]
+#[expect(dead_code)]
 enum AttributeKind<'ast> {
     Visibility(ast::Visibility),
     StateMutability(ast::StateMutability),
@@ -2513,32 +2514,6 @@ enum AttributeKind<'ast> {
 }
 
 type AttributeCommentMap = HashMap<BytePos, (Vec<Comment>, Vec<Comment>, Vec<Comment>)>;
-
-impl<'ast> AttributeKind<'ast> {
-    fn is_visibility(&self) -> bool {
-        matches!(self, Self::Visibility(_))
-    }
-
-    fn is_state_mutability(&self) -> bool {
-        matches!(self, Self::StateMutability(_))
-    }
-
-    fn is_non_payable(&self) -> bool {
-        matches!(self, Self::StateMutability(ast::StateMutability::NonPayable))
-    }
-
-    fn is_virtual(&self) -> bool {
-        matches!(self, Self::Virtual)
-    }
-
-    fn is_override(&self) -> bool {
-        matches!(self, Self::Override(_))
-    }
-
-    fn is_modifier(&self) -> bool {
-        matches!(self, Self::Modifier(_))
-    }
-}
 
 #[derive(Debug, Clone)]
 struct AttributeInfo<'ast> {
@@ -2551,7 +2526,6 @@ struct AttributeCommentMapper<'ast> {
     limit_pos: BytePos,
     comments: Vec<Comment>,
     attributes: Vec<AttributeInfo<'ast>>,
-    empty_returns: bool,
 }
 
 impl<'ast> AttributeCommentMapper<'ast> {
@@ -2559,7 +2533,6 @@ impl<'ast> AttributeCommentMapper<'ast> {
         Self {
             comments: Vec::new(),
             attributes: Vec::new(),
-            empty_returns: returns.is_none(),
             limit_pos: returns.as_ref().map_or(body_pos, |ret| ret.span.lo()),
         }
     }
@@ -2717,32 +2690,6 @@ fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
-fn is_comp_op(op_kind: ast::BinOpKind) -> bool {
-    match op_kind {
-        ast::BinOpKind::BitOr
-        | ast::BinOpKind::BitXor
-        | ast::BinOpKind::BitAnd
-        | ast::BinOpKind::Shl
-        | ast::BinOpKind::Shr
-        | ast::BinOpKind::Sar
-        | ast::BinOpKind::Add
-        | ast::BinOpKind::Sub
-        | ast::BinOpKind::Mul
-        | ast::BinOpKind::Div
-        | ast::BinOpKind::Rem
-        | ast::BinOpKind::Pow => false,
-
-        ast::BinOpKind::Lt
-        | ast::BinOpKind::Le
-        | ast::BinOpKind::Gt
-        | ast::BinOpKind::Ge
-        | ast::BinOpKind::Eq
-        | ast::BinOpKind::Ne
-        | ast::BinOpKind::Or
-        | ast::BinOpKind::And => true,
-    }
-}
-
 fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     match expr_kind {
         ast::ExprKind::Binary(lhs, _, rhs) => {
@@ -2758,24 +2705,8 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     }
 }
 
-/// Traverses a nested Member/Call expression chain to find the lowest-level expression.
-fn get_chain_bottom<'a>(mut expr: &'a ast::Expr<'a>) -> &'a ast::Expr<'a> {
-    loop {
-        match &expr.kind {
-            ast::ExprKind::Member(child, ..) | ast::ExprKind::Call(child, ..) => {
-                expr = child;
-            }
-            _ => return expr,
-        }
-    }
-}
-
 fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
-}
-
-fn is_call_or_type(expr_kind: &ast::ExprKind<'_>) -> bool {
-    matches!(expr_kind, ast::ExprKind::Call(..) | ast::ExprKind::Type(..))
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
@@ -2783,17 +2714,6 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
         is_call_chain(&child.kind, false)
     } else {
         !must_have_child && is_call(expr_kind)
-    }
-}
-
-fn is_call_chain_traverse_bin_ops(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
-    match expr_kind {
-        ast::ExprKind::Binary(lhs, _, rhs) => {
-            is_call_chain_traverse_bin_ops(&lhs.kind, false)
-                || is_call_chain_traverse_bin_ops(&rhs.kind, false)
-        }
-        ast::ExprKind::Member(child, ..) => is_call_chain_traverse_bin_ops(&child.kind, false),
-        _ => !must_have_child && is_call(expr_kind),
     }
 }
 
