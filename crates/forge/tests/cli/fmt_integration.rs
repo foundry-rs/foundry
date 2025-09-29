@@ -2,7 +2,6 @@ use foundry_test_utils::util::ExtTester;
 
 /// Test `forge fmt` immutability.
 /// TODO: make sure original fmt is not changed after projects format and rev available.
-/// TODO: enable win test after <https://github.com/foundry-rs/foundry/issues/11841> fixed.
 macro_rules! fmt_test {
     ($name:ident, $org:expr, $repo:expr, $commit:expr) => {
         #[test]
