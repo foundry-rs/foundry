@@ -2482,8 +2482,7 @@ enum MemberOrCallArgs {
 impl MemberOrCallArgs {
     fn size(&self) -> usize {
         match self {
-            Self::CallArgs(size, ..) => *size,
-            Self::Member(size) => *size,
+            Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
@@ -2495,10 +2494,7 @@ impl MemberOrCallArgs {
     }
 
     fn has_comments(&self) -> bool {
-        match self {
-            Self::CallArgs(.., has_cmnts) => *has_cmnts,
-            Self::Member(..) => false,
-        }
+        matches!(self, Self::CallArgs(.., true))
     }
 }
 
