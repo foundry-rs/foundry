@@ -1,13 +1,9 @@
-use crate::{
-    Comments,
-    error::{ParserError, ParserResult},
-    solang_ext::SafeUnwrap,
-};
-use foundry_config::FormatterConfig;
+use crate::{Comments, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
 };
+use std::ops::Range;
 
 /// The parsed item.
 #[derive(Debug, PartialEq)]
@@ -81,11 +77,12 @@ impl ParseItem {
         self
     }
 
-    /// Set formatted code on the [ParseItem].
-    pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        self.code =
-            forge_fmt::format(source, config).into_result().map_err(ParserError::Formatter)?;
-        Ok(self)
+    /// Set the source code of this [ParseItem].
+    ///
+    /// The parameter should be the full source file where this parse item originated from.
+    pub fn with_code(mut self, source: &str) -> Self {
+        self.code = source[self.source.range()].to_string();
+        self
     }
 
     /// Format the item's filename.
@@ -158,5 +155,20 @@ impl ParseSource {
             }
             Self::Type(ty) => ty.name.name.to_owned(),
         }
+    }
+
+    /// Get the range of this item in the source file.
+    pub fn range(&self) -> Range<usize> {
+        match self {
+            Self::Contract(contract) => contract.loc,
+            Self::Variable(var) => var.loc,
+            Self::Event(event) => event.loc,
+            Self::Error(error) => error.loc,
+            Self::Struct(structure) => structure.loc,
+            Self::Enum(enumerable) => enumerable.loc,
+            Self::Function(func) => func.loc,
+            Self::Type(ty) => ty.loc,
+        }
+        .range()
     }
 }
