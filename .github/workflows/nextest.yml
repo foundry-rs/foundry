@@ -104,6 +104,8 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: nextest - List contents of ~/.foundry/cache
+        run: ls -R ~/.foundry/cache
       - name: Test
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
