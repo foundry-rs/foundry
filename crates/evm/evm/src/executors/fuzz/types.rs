@@ -1,7 +1,7 @@
 use std::sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU32, Ordering},
-    };
+    Arc, OnceLock,
+    atomic::{AtomicU32, Ordering},
+};
 
 use crate::executors::{FailFast, FuzzTestTimer, RawCallResult};
 use alloy_primitives::{Bytes, Log, map::HashMap};
@@ -77,6 +77,22 @@ impl SharedFuzzState {
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
             fail_fast,
+        }
+    }
+
+    pub fn try_increment_runs(&self) -> Option<u32> {
+        // If using timer, always increment
+        if self.timer.is_enabled() {
+            return Some(self.total_runs.fetch_add(1, Ordering::Relaxed) + 1);
+        }
+
+        let current = self.total_runs.load(Ordering::Relaxed);
+        // check run limit
+        if current + 1 < self.max_runs {
+            self.total_runs.fetch_add(1, Ordering::Relaxed);
+            Some(current + 1)
+        } else {
+            None
         }
     }
 

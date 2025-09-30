@@ -359,19 +359,6 @@ impl FuzzedExecutor {
             {
                 failure.calldata
             } else {
-                if let Some(progress) = progress {
-                    progress.inc(1);
-
-                    if self.config.corpus.collect_edge_coverage() {
-                        // TODO: Display Global Corpus Metrics
-                    }
-                } else if self.config.corpus.collect_edge_coverage() {
-                    // TODO: Display global corpus metrics since DURATION_BETWEEN_METRICS_REPORT
-                }
-
-                worker.runs += 1;
-                shared_state.increment_runs();
-
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
                     let instance = Instant::now();
@@ -397,6 +384,24 @@ impl FuzzedExecutor {
             match self.single_fuzz(address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
+                        // Only increment runs for successful non-rejected cases
+                        // Check if we should actually count this run
+                        if shared_state.try_increment_runs().is_none() {
+                            // We've exceeded the run limit, stop
+                            break 'stop;
+                        }
+                        worker.runs += 1;
+
+                        if let Some(progress) = progress {
+                            progress.inc(1);
+                            if self.config.corpus.collect_edge_coverage() {
+                                // TODO: Display Global Corpus Metrics
+                            }
+                        } else if self.config.corpus.collect_edge_coverage() {
+                            // TODO: Display global corpus metrics since
+                            // DURATION_BETWEEN_METRICS_REPORT
+                        }
+
                         worker.gas_by_case.push((case.case.gas, case.case.stipend));
 
                         if worker.first_case.is_none() {
@@ -424,6 +429,14 @@ impl FuzzedExecutor {
                         counterexample: outcome,
                         ..
                     }) => {
+                        // Count this as a run since we found a counterexample
+                        // We always count counterexamples regardless of run limit
+                        shared_state.increment_runs();
+                        worker.runs += 1;
+
+                        if let Some(progress) = progress {
+                            progress.inc(1);
+                        }
                         let reason = rd.maybe_decode(&outcome.1.result, status);
                         worker.logs.extend(outcome.1.logs.clone());
                         worker.counterexample = outcome;
