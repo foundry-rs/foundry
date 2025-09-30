@@ -5,7 +5,7 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
@@ -23,7 +23,7 @@ use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
     strategy::Strategy,
-    test_runner::{TestCaseError, TestRunner},
+    test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
@@ -329,7 +329,23 @@ impl FuzzedExecutor {
         let max_traces_to_collect =
             std::cmp::max(1, self.config.gas_report_samples as usize / num_workers) as usize;
 
-        let mut runner = self.runner.clone();
+        // For deterministic parallel fuzzing, derive a unique seed for each worker
+        let mut runner = if worker_id == 0 {
+            self.runner.clone()
+        } else if let Some(seed) = self.config.seed {
+            // Derive a worker-specific seed using keccak256(seed || worker_id)
+            let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
+            seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
+            seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
+            let worker_seed = U256::from_be_bytes(keccak256(&seed_data).0);
+
+            // Create a new TestRunner with the derived seed
+            trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
+            TestRunner::new_with_rng(self.runner.config().clone(), rng)
+        } else {
+            self.runner.clone()
+        };
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
