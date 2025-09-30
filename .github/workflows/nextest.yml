@@ -116,6 +116,6 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
-      - name: nextest - List contents of ~/.foundry/cache after exec
+      - name: nextest - List contents of ~/.foundry/cache after exec rerun
         if: runner.os == 'Linux'
         run: cat ~/.foundry/cache/signatures
