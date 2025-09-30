@@ -1265,9 +1265,6 @@ impl<'ast> State<'_, 'ast> {
         let total_size = lhs_size + rhs_size + 4; // 'lhs' + ' = ' + 'rhs' + ';'
         let overflows = total_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
-        println!("\n{}\n", self.sm.span_to_snippet(lhs.span.to(rhs.span)).unwrap());
-        println!("SPACE LEFT: {space_left}, LHS: {lhs_size}, RHS: {rhs_size}");
-        println!("OVERFLOWS: {overflows}, FITS: {fits_alone}\n\n-----------");
 
         self.call_stack.add_precall(lhs_size);
 
