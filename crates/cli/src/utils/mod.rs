@@ -149,8 +149,8 @@ where
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+    Ok(if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+        U256::from_str_radix(hex, 16)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
