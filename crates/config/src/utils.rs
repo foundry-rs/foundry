@@ -274,8 +274,8 @@ impl FromStr for Numeric {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.starts_with("0x") {
-            U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
+        if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            U256::from_str_radix(hex, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
