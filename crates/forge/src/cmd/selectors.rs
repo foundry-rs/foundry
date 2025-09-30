@@ -7,8 +7,7 @@ use foundry_cli::{
     utils::{FoundryPathExt, cache_local_signatures},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_target},
-    selectors::{SelectorImportData, import_selectors},
+    compile::{PathOrContractInfo, ProjectCompiler},
     shell,
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
@@ -32,7 +31,7 @@ pub enum SelectorsSubcommands {
         build: Box<BuildOpts>,
     },
 
-    /// Upload selectors to registry
+    /// DEPRECATED: Upload selectors to registry
     #[command(visible_alias = "up")]
     Upload {
         /// The name of the contract to upload selectors for.
@@ -100,77 +99,13 @@ impl SelectorsSubcommands {
                 let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 cache_local_signatures(&outcome)?;
             }
-            Self::Upload { contract, all, project_paths } => {
-                let build_args = BuildOpts {
-                    project_paths: project_paths.clone(),
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                let project = build_args.project()?;
-                let output = if let Some(contract_info) = &contract {
-                    let Some(contract_name) = contract_info.name() else {
-                        eyre::bail!("No contract name provided.")
-                    };
-
-                    let target_path = contract_info
-                        .path()
-                        .map(Ok)
-                        .unwrap_or_else(|| project.find_contract_path(contract_name))?;
-                    compile_target(&target_path, &project, false)?
-                } else {
-                    ProjectCompiler::new().compile(&project)?
-                };
-                let artifacts = if all {
-                    output
-                        .into_artifacts_with_files()
-                        .filter(|(file, _, _)| {
-                            let is_sources_path = file.starts_with(&project.paths.sources);
-                            let is_test = file.is_sol_test();
-
-                            is_sources_path && !is_test
-                        })
-                        .map(|(_, contract, artifact)| (contract, artifact))
-                        .collect()
-                } else {
-                    let contract_info = contract.unwrap();
-                    let contract = contract_info.name().unwrap().to_string();
-
-                    let found_artifact = if let Some(path) = contract_info.path() {
-                        output.find(project.root().join(path).as_path(), &contract)
-                    } else {
-                        output.find_first(&contract)
-                    };
-
-                    let artifact = found_artifact
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "Could not find artifact `{contract}` in the compiled artifacts"
-                            )
-                        })?
-                        .clone();
-                    vec![(contract, artifact)]
-                };
-
-                let mut artifacts = artifacts.into_iter().peekable();
-                while let Some((contract, artifact)) = artifacts.next() {
-                    let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
-                    if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue;
-                    }
-
-                    sh_println!("Uploading selectors for {contract}...")?;
-
-                    // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
-
-                    if artifacts.peek().is_some() {
-                        sh_println!()?
-                    }
-                }
+            Self::Upload { .. } => {
+                sh_warn!(
+                    "Selector uploading is deprecated and is currently a no-op, as the upstream API has been removed."
+                )?;
+                sh_warn!(
+                    "To upload selectors in the future, verify your contracts with Sourcify."
+                )?;
             }
             Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
