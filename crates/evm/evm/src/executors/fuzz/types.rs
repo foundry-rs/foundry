@@ -159,7 +159,9 @@ pub struct FuzzWorker {
     pub gas_by_case: Vec<(u64, u64)>,
     /// Counterexample if this worker found one
     pub counterexample: (Bytes, RawCallResult),
-    /// Traces collected by this worker (up to limit)
+    /// Traces collected by this worker
+    ///
+    /// Stores upto `max_traces_to_collect` which is `config.gas_report_samples / num_workers`
     pub traces: Vec<SparsedTraceArena>,
     /// Last breakpoints from this worker
     pub breakpoints: Option<Breakpoints>,

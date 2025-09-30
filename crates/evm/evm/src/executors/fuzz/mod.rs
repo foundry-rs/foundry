@@ -1,13 +1,12 @@
 use crate::executors::{
-    Executor, FailFast, RawCallResult,
+    Executor, FailFast, FuzzTestTimer,
     corpus::WorkerCorpus,
     fuzz::types::{FuzzWorker, SharedFuzzState},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, keccak256, map::HashMap};
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
@@ -19,7 +18,6 @@ use foundry_evm_fuzz::{
     FuzzFixtures, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
-use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
     strategy::Strategy,
@@ -35,33 +33,6 @@ mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
 const SYNC_INTERVAL: u32 = 1000;
-
-/// Contains data collected during fuzz test runs.
-#[derive(Default)]
-struct FuzzTestData {
-    // Stores the first fuzz case.
-    first_case: Option<FuzzCase>,
-    // Stored gas usage per fuzz case.
-    gas_by_case: Vec<(u64, u64)>,
-    // Stores the result and calldata of the last failed call, if any.
-    counterexample: (Bytes, RawCallResult),
-    // Stores up to `max_traces_to_collect` traces.
-    traces: Vec<SparsedTraceArena>,
-    // Stores breakpoints for the last fuzz case.
-    breakpoints: Option<Breakpoints>,
-    // Stores coverage information for all fuzz cases.
-    coverage: Option<HitMaps>,
-    // Stores logs for all fuzz cases
-    logs: Vec<Log>,
-    // Deprecated cheatcodes mapped to their replacements.
-    deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-    // Runs performed in fuzz test.
-    runs: u32,
-    // Current assume rejects of the fuzz run.
-    rejects: u32,
-    // Test failure.
-    failure: Option<TestCaseError>,
-}
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
 ///
@@ -338,7 +309,7 @@ impl FuzzedExecutor {
             let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
             seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
             seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
-            let worker_seed = U256::from_be_bytes(keccak256(&seed_data).0);
+            let worker_seed = U256::from_be_bytes(keccak256(seed_data).0);
 
             // Create a new TestRunner with the derived seed
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
@@ -353,7 +324,10 @@ impl FuzzedExecutor {
         let sync_offset = worker_id * 100;
         let mut runs_since_sync = 0;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
-        'stop: while shared_state.should_continue() {
+        // Create per-worker timer that scales down with number of workers
+        let worker_timeout = self.config.timeout.map(|t| t / num_workers as u32);
+        let worker_timer = FuzzTestTimer::new(worker_timeout);
+        'stop: while shared_state.should_continue() && !worker_timer.is_timed_out() {
             // Only the master worker replays the persisted failure, if any.
             let input = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
