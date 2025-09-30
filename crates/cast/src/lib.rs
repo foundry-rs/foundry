@@ -30,10 +30,10 @@ use foundry_common::{
     TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
+    flatten,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
-use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use foundry_evm_core::ic::decode_instructions;
 use futures::{FutureExt, StreamExt, future::Either};
@@ -2192,7 +2192,7 @@ impl SimpleCast {
         let project = etherscan_project(metadata, tmp.path())?;
         let target_path = project.find_contract_path(&metadata.contract_name)?;
 
-        let flattened = Flattener::new(project, &target_path)?.flatten();
+        let flattened = flatten(project, &target_path)?;
 
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
