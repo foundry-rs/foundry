@@ -89,3 +89,12 @@ Diff in stdin:
 
 "#]]);
 });
+
+// Test that original is returned if read from stdin and no diff.
+// <https://github.com/foundry-rs/foundry/issues/11871>
+forgetest!(fmt_stdin_original, |_prj, cmd| {
+    cmd.args(["fmt", "-"]);
+
+    cmd.stdin(FORMATTED.as_bytes());
+    cmd.assert_success().stdout_eq(FORMATTED.as_bytes());
+});
