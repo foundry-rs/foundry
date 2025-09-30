@@ -4414,6 +4414,7 @@ dependencies = [
  "indicatif 0.18.0",
  "itertools 0.14.0",
  "mimalloc",
+ "path-slash",
  "rayon",
  "regex",
  "rustls",

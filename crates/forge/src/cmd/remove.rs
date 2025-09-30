@@ -31,23 +31,8 @@ impl_figment_convert_basic!(RemoveArgs);
 impl RemoveArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let (root, mut paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
-
-        // Canonicalize paths to ensure consistent path separators for git submodule config lookup
-        paths = paths
-            .into_iter()
-            .map(|path| {
-                dunce::canonicalize(root.join(&path))
-                    .ok()
-                    .and_then(|canonical| {
-                        canonical.strip_prefix(&root).ok().map(|p| p.to_path_buf())
-                    })
-                    .unwrap_or(path)
-            })
-            .collect();
-
+        let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
-
         let git = Git::new(&root);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         let _synced = lockfile.sync(config.install_lib_dir())?;
