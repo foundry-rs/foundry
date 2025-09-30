@@ -15,9 +15,9 @@ CARGO_TARGET_DIR ?= target
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
 ifeq ($(OS),Windows_NT)
-    FEATURES ?= aws-kms gcp-kms cli asm-keccak
+    FEATURES ?= aws-kms gcp-kms turnkey cli asm-keccak
 else
-    FEATURES ?= jemalloc aws-kms gcp-kms cli asm-keccak
+    FEATURES ?= jemalloc aws-kms gcp-kms turnkey cli asm-keccak
 endif
 
 ##@ Help
@@ -47,7 +47,7 @@ build-%:
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
 	# Build x86_64-unknown-linux-gnu.
-	cargo build --target x86_64-unknown-linux-gnu --features "jemalloc aws-kms gcp-kms cli asm-keccak js-tracer" --profile "$(PROFILE)"
+	cargo build --target x86_64-unknown-linux-gnu --features "jemalloc aws-kms gcp-kms turnkey cli asm-keccak js-tracer" --profile "$(PROFILE)"
 	mkdir -p $(BIN_DIR)/amd64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
@@ -55,7 +55,7 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 
 	# Build aarch64-unknown-linux-gnu.
 	rustup target add aarch64-unknown-linux-gnu
-	RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --target aarch64-unknown-linux-gnu --features "aws-kms gcp-kms cli asm-keccak js-tracer" --profile "$(PROFILE)"
+	RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc" cargo build --target aarch64-unknown-linux-gnu --features "aws-kms gcp-kms turnkey cli asm-keccak js-tracer" --profile "$(PROFILE)"
 	mkdir -p $(BIN_DIR)/arm64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
