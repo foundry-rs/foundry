@@ -3,7 +3,7 @@
 //! Common utilities for building and using foundry's tools.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[expect(unused_extern_crates)] // Used by `ConsoleFmt`.
 extern crate self as foundry_common;
@@ -23,7 +23,6 @@ pub mod compile;
 pub mod constants;
 pub mod contracts;
 pub mod errors;
-pub mod evm;
 pub mod fs;
 pub mod iter;
 pub mod mapping_slots;

@@ -10,8 +10,9 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
+    core::Breakpoints,
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},

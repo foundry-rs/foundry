@@ -1925,30 +1925,23 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 "#]]);
 });
 
-// Test that EVM version configuration works and the incompatibility check is available
-forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
-    // Clear default contracts
-    prj.wipe_contracts();
+// <https://github.com/foundry-rs/foundry/issues/5866>
+forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+    cmd.git_init();
 
-    // Add a simple contract
-    prj.add_source(
-        "Simple.sol",
-        r#"
-pragma solidity ^0.8.5;
+    let toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
 
-contract Simple {
-    uint public value = 42;
-}
-"#,
-    );
+    # Custom sections for other tools
+    [external.scopelint]
+    some_flag = 1
 
-    prj.update_config(|config| {
-        config.evm_version = EvmVersion::Cancun;
-        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
-    });
+    [external.forge_deploy]
+    another_setting = 123";
 
-    let result = cmd.args(["build"]).assert_success();
-    let output = result.get_output();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
+    fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+
+"#]]);
 });

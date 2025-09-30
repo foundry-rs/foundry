@@ -2,7 +2,8 @@
 
 use crate::{DebugNode, Debugger, node::flatten_call_trace};
 use alloy_primitives::{Address, map::AddressHashMap};
-use foundry_common::{evm::Breakpoints, get_contract_name};
+use foundry_common::get_contract_name;
+use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{CallTraceArena, CallTraceDecoder, Traces, debug::ContractSources};
 
 /// Debugger builder.

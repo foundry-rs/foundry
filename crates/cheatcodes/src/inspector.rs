@@ -34,11 +34,10 @@ use alloy_rpc_types::{
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     SELECTOR_LEN, TransactionMaybeSigned,
-    evm::Breakpoints,
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    InspectorExt,
+    Breakpoints, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -1627,7 +1626,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast
+        if let Some(broadcast) = &mut self.broadcast
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
@@ -1644,7 +1643,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             ecx.tx.caller = broadcast.new_origin;
 
-            if curr_depth == broadcast.depth {
+            if curr_depth == broadcast.depth || broadcast.deploy_from_code {
+                // Reset deploy from code flag for upcoming calls;
+                broadcast.deploy_from_code = false;
+
                 input.set_caller(broadcast.new_origin);
 
                 // Ensure account is touched.
