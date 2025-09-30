@@ -287,18 +287,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_opening_paren(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_closing_paren(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn visit_newline(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn visit_using(&mut self, using: &mut Using) -> Result<(), Self::Error> {
         self.visit_source(using.loc)?;
         self.visit_stray_semicolon()?;

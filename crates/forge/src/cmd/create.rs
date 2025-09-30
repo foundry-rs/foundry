@@ -228,6 +228,8 @@ impl CreateArgs {
             compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
+            no_auto_detect: false,
+            use_solc: None,
             num_of_optimizations: None,
             etherscan: EtherscanOpts {
                 key: self.eth.etherscan.key.clone(),
@@ -418,6 +420,8 @@ impl CreateArgs {
             compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
+            no_auto_detect: false,
+            use_solc: None,
             num_of_optimizations,
             etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
             rpc: Default::default(),

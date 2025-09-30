@@ -54,8 +54,7 @@ contract SimpleComments {
 
         uint256 value;
         return /* a long block comment that exceeds line
-            width */
-            value;
+            width */ value;
         return /* a block comment that exceeds line width */
             value;
         return // a line comment that exceeds line width

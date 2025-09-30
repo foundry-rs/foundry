@@ -177,7 +177,7 @@ impl BindJsonArgs {
                     .source_map()
                     .new_source_file(path.clone(), source.content.as_str())
                 {
-                    target_files.insert(src_file.clone());
+                    target_files.insert(Arc::clone(&src_file));
                     pcx.add_file(src_file);
                 }
             }

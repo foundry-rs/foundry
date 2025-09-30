@@ -4,7 +4,7 @@ use eyre::Result;
 use foundry_common::{
     abi::{get_error, get_event, get_func},
     fs,
-    selectors::{OpenChainClient, SelectorKind},
+    selectors::{SelectorKind, SourcifyClient},
 };
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -147,7 +147,7 @@ impl SignaturesCache {
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `https://openchain.xyz` or a local cache.
+/// `https://sourcify.dev` or a local cache.
 #[derive(Clone, Debug)]
 pub struct SignaturesIdentifier(Arc<SignaturesIdentifierInner>);
 
@@ -157,8 +157,8 @@ struct SignaturesIdentifierInner {
     cache: RwLock<SignaturesCache>,
     /// Location where to save the signature cache.
     cache_path: Option<PathBuf>,
-    /// The OpenChain client to fetch signatures from. `None` if disabled on construction.
-    client: Option<OpenChainClient>,
+    /// The Sourcify client to fetch signatures from. `None` if disabled on construction.
+    client: Option<SourcifyClient>,
 }
 
 impl SignaturesIdentifier {
@@ -175,9 +175,9 @@ impl SignaturesIdentifier {
     /// Creates a new `SignaturesIdentifier`.
     ///
     /// - `cache_dir` is the cache directory to store the signatures.
-    /// - `offline` disables the OpenChain client.
+    /// - `offline` disables the Sourcify client.
     pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
-        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
+        let client = if !offline { Some(SourcifyClient::new()?) } else { None };
         let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
             let path = cache_dir.join("signatures");
             let cache = SignaturesCache::load(&path);
@@ -274,7 +274,10 @@ impl SignaturesIdentifier {
 
 impl SignaturesIdentifierInner {
     fn save(&self) {
-        if let Some(path) = &self.cache_path {
+        // We only identify new signatures if the client is enabled.
+        if let Some(path) = &self.cache_path
+            && self.client.is_some()
+        {
             self.cache
                 .try_read()
                 .expect("SignaturesIdentifier cache is locked while attempting to save")

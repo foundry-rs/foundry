@@ -13,7 +13,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, Transac
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
+    AccountInfo, BlockId, BlockNumberOrTag,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -1617,6 +1617,27 @@ async fn test_fork_get_account() {
     let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_get_account_info() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER - 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14353753764795095694u64),
+            nonce: 6689,
+            code: Default::default(),
+        }
+    );
 }
 
 fn assert_hardfork_config(

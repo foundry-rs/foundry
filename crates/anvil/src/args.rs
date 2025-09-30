@@ -33,12 +33,6 @@ pub fn run_command(args: Anvil) -> Result<()> {
                     &mut std::io::stdout(),
                 );
             }
-            AnvilSubcommand::GenerateFigSpec => clap_complete::generate(
-                clap_complete_fig::Fig,
-                &mut Anvil::command(),
-                "anvil",
-                &mut std::io::stdout(),
-            ),
         }
         return Ok(());
     }
@@ -77,7 +71,7 @@ mod tests {
         assert!(matches!(
             args.cmd,
             Some(AnvilSubcommand::Completions {
-                shell: foundry_common::clap::Shell::ClapCompleteShell(clap_complete::Shell::Bash)
+                shell: foundry_cli::clap::Shell::ClapCompleteShell(clap_complete::Shell::Bash)
             })
         ));
     }

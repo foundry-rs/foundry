@@ -583,6 +583,9 @@ Traces:
   [247] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
 
+Backtrace:
+  at CustomTypesTest.testErr (test/Contract.t.sol:[..]:[..])
+
 [PASS] testEvent() ([GAS])
 Traces:
   [1524] CustomTypesTest::testEvent()
@@ -2901,6 +2904,7 @@ Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
   [..] DebugTraceRecordingTest::test_start_stop_recording()
+...
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -2982,6 +2986,10 @@ Traces:
     │   └─ ← [Revert] assertion failed: 1 != 100
     └─ ← [Revert] assertion failed: 1 != 100
 
+Backtrace:
+  at VM.assertEq
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
+
 [PASS] test_increment_success() ([GAS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -3026,6 +3034,10 @@ Traces:
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
     └─ ← [Revert] assertion failed: 1 != 100
+
+Backtrace:
+  at VM.assertEq
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
 
 [PASS] test_increment_success() ([GAS])
 Logs:
@@ -3224,99 +3236,6 @@ Traces:
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
     │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
-...
-
-"#]]);
-});
-
-// <https://github.com/foundry-rs/foundry/issues/10068>
-forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
-    prj.add_source(
-        "CounterV1.sol",
-        r#"
-contract Counter {
-    uint256 public number;
-
-    function setNumberV1(uint256 newNumber) public {
-        number = newNumber;
-    }
-
-    function incrementV1() public {
-        number++;
-    }
-}
-    "#,
-    );
-
-    prj.add_source(
-        "CounterV2.sol",
-        r#"
-contract CounterV2 {
-    uint256 public number;
-
-    function setNumberV2(uint256 newNumber) public {
-        number = newNumber;
-    }
-
-    function incrementV2() public {
-        number++;
-    }
-}
-    "#,
-    );
-
-    // Upload Counter without path fails as there are multiple contracts with same name.
-    cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
-...
-Error: Multiple contracts found with the name `Counter`
-...
-
-"#]]);
-
-    // Upload without contract name should fail.
-    cmd.forge_fuse().args(["selectors", "upload", "src/Counter.sol"]).assert_failure().stderr_eq(
-        str![[r#"
-...
-Error: No contract name provided.
-...
-
-"#]],
-    );
-
-    // Upload single CounterV2.
-    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
-        r#"
-...
-Uploading selectors for CounterV2...
-...
-Selectors successfully uploaded to OpenChain
-...
-
-"#
-    ]]);
-
-    // Upload CounterV1 with path.
-    cmd.forge_fuse()
-        .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-Uploading selectors for Counter...
-...
-Selectors successfully uploaded to OpenChain
-...
-
-"#]]);
-
-    // Upload Counter with path.
-    cmd.forge_fuse()
-        .args(["selectors", "upload", "src/Counter.sol:Counter"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-Uploading selectors for Counter...
-...
-Selectors successfully uploaded to OpenChain
 ...
 
 "#]]);
@@ -3799,6 +3718,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
+Backtrace:
+  at NonContractCallRevertTest.test_non_contract_call_failure
+
 [FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
 Logs:
   test non contract (void) call failure
@@ -3808,6 +3730,9 @@ Traces:
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+Backtrace:
+  at NonContractCallRevertTest.test_non_contract_void_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
 
 [FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 Logs:
@@ -3820,6 +3745,10 @@ Traces:
     ├─ [145] Counter::random()
     │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
     └─ ← [Revert] EvmError: Revert
+
+Backtrace:
+  at Counter.random (src/Counter.sol:[..]:[..])
+  at NonContractCallRevertTest.test_non_supported_selector_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
 
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
@@ -3900,6 +3829,10 @@ Traces:
     │   │   └─ ← [Stop]
     │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
     └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+
+Backtrace:
+  at LibraryCaller.foobar
+  at NonContractDelegateCallRevertTest.test_unlinked_library_call_failure (test/NonContractDelegateCallRevertTest.t.sol:[..]:[..])
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 

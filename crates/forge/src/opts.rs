@@ -96,12 +96,8 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: foundry_common::clap::Shell,
+        shell: foundry_cli::clap::Shell,
     },
-
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
-    GenerateFigSpec,
 
     /// Remove the build artifacts and cache directories.
     #[command(visible_alias = "cl")]
@@ -144,7 +140,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "tr")]
     Tree(tree::TreeArgs),
 
-    /// Detects usage of unsafe cheat codes in a project and its dependencies.
+    /// DEPRECATED: Detects usage of unsafe cheat codes in a project and its dependencies.
     ///
     /// This is an alias for `forge lint --only-lint unsafe-cheatcode`.
     Geiger(geiger::GeigerArgs),
@@ -160,6 +156,7 @@ pub enum ForgeSubcommand {
     },
 
     /// Generate scaffold files.
+    #[command(hide = true)]
     Generate(generate::GenerateArgs),
 
     /// Compiler utilities.

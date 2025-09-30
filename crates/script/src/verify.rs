@@ -146,6 +146,8 @@ impl VerifyBundle {
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
+                    no_auto_detect: false,
+                    use_solc: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
                     rpc: Default::default(),

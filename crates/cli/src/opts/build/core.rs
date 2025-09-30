@@ -9,9 +9,9 @@ use foundry_compilers::{
     utils::canonicalized,
 };
 use foundry_config::{
-    Config, Remappings, figment,
+    Config, DenyLevel, Remappings,
     figment::{
-        Figment, Metadata, Profile, Provider,
+        self, Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
@@ -48,9 +48,26 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
-    /// Warnings will trigger a compiler error
-    #[arg(long, help_heading = "Compiler options")]
+    /// A compiler error will be triggered at the specified diagnostic level.
+    ///
+    /// Replaces the deprecated `--deny-warnings` flag.
+    ///
+    /// Possible values:
+    ///  - `never`: Do not treat any diagnostics as errors.
+    ///  - `warnings`: Treat warnings as errors.
+    ///  - `notes`: Treat both, warnings and notes, as errors.
+    #[arg(
+        long,
+        short = 'D',
+        help_heading = "Compiler options",
+        value_name = "LEVEL",
+        conflicts_with = "deny_warnings"
+    )]
     #[serde(skip)]
+    pub deny: Option<DenyLevel>,
+
+    /// Deprecated: use `--deny=warnings` instead.
+    #[arg(long = "deny-warnings", hide = true)]
     pub deny_warnings: bool,
 
     /// Do not auto-detect the `solc` version.
@@ -220,7 +237,10 @@ impl Provider for BuildOpts {
         }
 
         if self.deny_warnings {
-            dict.insert("deny_warnings".to_string(), true.into());
+            dict.insert("deny".to_string(), figment::value::Value::serialize(DenyLevel::Warnings)?);
+            _ = sh_warn!("`--deny-warnings` is being deprecated in favor of `--deny warnings`.");
+        } else if let Some(deny) = self.deny {
+            dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
 
         if self.via_ir {

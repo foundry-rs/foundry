@@ -9,6 +9,7 @@ use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
+use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -75,8 +76,9 @@ pub struct EvmOpts {
     /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Whether to enable Odyssey features.
-    pub odyssey: bool,
+    #[serde(flatten)]
+    /// Networks with enabled features.
+    pub networks: NetworkConfigs,
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
@@ -103,7 +105,7 @@ impl Default for EvmOpts {
             isolate: false,
             disable_block_gas_limit: false,
             enable_tx_gas_limit: false,
-            odyssey: false,
+            networks: NetworkConfigs::default(),
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }

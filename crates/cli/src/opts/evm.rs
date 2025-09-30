@@ -1,6 +1,6 @@
 //! CLI arguments for configuring the EVM settings.
 
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
@@ -13,10 +13,7 @@ use foundry_config::{
 };
 use serde::Serialize;
 
-use crate::shell;
-
-/// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = HashMap<char, (Address, usize)>;
+use foundry_common::shell;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -34,7 +31,7 @@ pub type Breakpoints = HashMap<char, (Address, usize)>;
 /// ```ignore
 /// use foundry_config::Config;
 /// use forge::executor::opts::EvmOpts;
-/// use foundry_common::evm::EvmArgs;
+/// use foundry_cli::opts::EvmArgs;
 /// # fn t(args: EvmArgs) {
 /// let figment = Config::figment_with_root(".").merge(args);
 /// let opts = figment.extract::<EvmOpts>().unwrap();
@@ -140,10 +137,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
+    /// Whether to enable Celo precompiles.
+    #[arg(long)]
     #[serde(skip)]
-    pub odyssey: bool,
+    pub celo: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -170,8 +167,8 @@ impl Provider for EvmArgs {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
-        if self.odyssey {
-            dict.insert("odyssey".to_string(), self.odyssey.into());
+        if self.celo {
+            dict.insert("celo".to_string(), self.celo.into());
         }
 
         if self.always_use_create_2_factory {
@@ -328,7 +325,7 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
-        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
+        let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "goerli"]);
         assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
     }
 
@@ -341,16 +338,16 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.memory_limit, Config::default().memory_limit);
 
-        let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
+        let env = EnvArgs::parse_from(["foundry-cli", "--memory-limit", "100"]);
         assert_eq!(env.memory_limit, Some(100));
     }
 
     #[test]
     fn test_chain_id() {
-        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "1"]);
+        let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "1"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
 
-        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
+        let env = EnvArgs::parse_from(["foundry-cli", "--chain-id", "mainnet"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
         let args = EvmArgs { env, ..Default::default() };
         let config = Config::from_provider(Config::figment().merge(args)).unwrap();

@@ -186,6 +186,10 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
     GetBlobByTransactionHash(TxHash),
 
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
+    GetBlobSidecarsByBlockId(BlockId),
+
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
 
@@ -679,14 +683,6 @@ pub enum EthRequest {
     /// Wallet
     #[serde(rename = "wallet_getCapabilities", with = "empty_params")]
     WalletGetCapabilities(()),
-
-    /// Wallet send_tx
-    #[serde(
-        rename = "wallet_sendTransaction",
-        alias = "odyssey_sendTransaction",
-        with = "sequence"
-    )]
-    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Add an address to the delegation capability of the wallet
     #[serde(rename = "anvil_addCapability", with = "sequence")]

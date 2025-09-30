@@ -7,7 +7,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 
 The `forge-lint` system operates by analyzing Solidity source code through a dual-pass system:
 
-1. **Parsing**: Solidity source files are parsed into an Abstract Syntax Tree (AST) using `solar-parse`. This AST represents the syntactic structure of the code.
+1. **Parsing**: Solidity source files are parsed into an Abstract Syntax Tree (AST) using `solar`. This AST represents the syntactic structure of the code.
 2. **HIR Generation**: The AST is then lowered into a High-level Intermediate Representation (HIR) that includes type information and semantic analysis.
 3. **Early Lint Passes**: The `EarlyLintVisitor` traverses the AST, invoking registered "early lint passes" (`EarlyLintPass` implementations) for syntax-level checks.
 4. **Late Lint Passes**: The `LateLintVisitor` traverses the HIR, invoking registered "late lint passes" (`LateLintPass` implementations) for semantic analysis.
@@ -133,5 +133,5 @@ The testing framework runs the linter on the `.sol` file and compares its standa
 - If you need to generate / bless (re-generate) the output files:
   ```sh
   // using the default cargo cmd for running tests
-  cargo test -p forge --test ui -- --bless
+  cargo bless-lints
   ```

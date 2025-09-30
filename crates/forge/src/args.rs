@@ -94,15 +94,6 @@ pub fn run_command(args: Forge) -> Result<()> {
             generate(shell, &mut Forge::command(), "forge", &mut std::io::stdout());
             Ok(())
         }
-        ForgeSubcommand::GenerateFigSpec => {
-            clap_complete::generate(
-                clap_complete_fig::Fig,
-                &mut Forge::command(),
-                "forge",
-                &mut std::io::stdout(),
-            );
-            Ok(())
-        }
         ForgeSubcommand::Clean { root } => {
             let config = utils::load_config_with_root(root.as_deref())?;
             let project = config.project()?;

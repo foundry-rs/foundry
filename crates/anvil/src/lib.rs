@@ -1,7 +1,7 @@
 //! Anvil is a fast local Ethereum development node.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::{
     eth::{
@@ -55,7 +55,7 @@ pub use alloy_hardforks::EthereumHardfork;
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{PrecompileFactory, inject_precompiles};
+pub use evm::{PrecompileFactory, inject_custom_precompiles};
 
 /// support for polling filters
 pub mod filter;

@@ -1,5 +1,7 @@
 name: CodeQL
 
+permissions: {}
+
 on:
   push:
     branches: ["master"]
@@ -18,10 +20,9 @@ jobs:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
-      packages: read
-      actions: read
       contents: read
+      security-events: write
+      actions: read
 
     strategy:
       fail-fast: false
@@ -33,6 +34,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3

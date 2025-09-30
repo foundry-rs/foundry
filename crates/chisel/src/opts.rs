@@ -1,9 +1,6 @@
 use clap::{Parser, Subcommand};
-use foundry_cli::opts::{BuildOpts, GlobalArgs};
-use foundry_common::{
-    evm::EvmArgs,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_cli::opts::{BuildOpts, EvmArgs, GlobalArgs};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::path::PathBuf;
 
 foundry_config::impl_figment_convert!(Chisel, build, evm);

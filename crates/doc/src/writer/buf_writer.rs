@@ -89,6 +89,24 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::Italic(text))
     }
 
+    /// Writes dev content to the buffer, handling markdown lists properly.
+    /// If the content contains markdown lists, it formats them correctly.
+    /// Otherwise, it writes the content in italics.
+    pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(content) = trimmed.strip_prefix("- ") {
+                writeln!(self.buf, "- *{content}*")?;
+            } else if !trimmed.is_empty() {
+                writeln!(self.buf, "{}", Markdown::Italic(trimmed))?;
+            } else {
+                writeln!(self.buf)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Writes bold text to the buffer formatted as [Markdown::Bold].
     pub fn write_bold(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Bold(text))
@@ -294,5 +312,54 @@ impl BufWriter {
     /// Finish and return underlying buffer.
     pub fn finish(self) -> String {
         self.buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_dev_content_with_list() {
+        let mut writer = BufWriter::default();
+        let content = "This function will revert if:\n- Any of the Coolers are not owned by the caller.\n- Any of the Coolers have not been created by the CoolerFactory.\n- A duplicate Cooler is provided.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content with list");
+        let result = writer.finish();
+
+        // Check that the first line is italicized
+        assert!(result.contains("*This function will revert if:*"));
+        // Check that list items are properly formatted
+        assert!(result.contains("- *Any of the Coolers are not owned by the caller.*"));
+        assert!(
+            result.contains("- *Any of the Coolers have not been created by the CoolerFactory.*")
+        );
+        assert!(result.contains("- *A duplicate Cooler is provided.*"));
+    }
+
+    #[test]
+    fn test_write_dev_content_without_list() {
+        let mut writer = BufWriter::default();
+        let content = "This is a simple dev comment without any lists.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content without list");
+        let result = writer.finish();
+
+        // Check that the entire content is italicized
+        assert!(result.contains("*This is a simple dev comment without any lists.*"));
+    }
+
+    #[test]
+    fn test_write_dev_content_empty_lines() {
+        let mut writer = BufWriter::default();
+        let content = "This function will revert if:\n\n- First item.\n\n- Second item.";
+
+        writer.write_dev_content(content).expect("Failed to write dev content with empty lines");
+        let result = writer.finish();
+
+        // Check that empty lines are preserved
+        assert!(result.contains("*This function will revert if:*"));
+        assert!(result.contains("- *First item.*"));
+        assert!(result.contains("- *Second item.*"));
     }
 }

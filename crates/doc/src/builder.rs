@@ -1,12 +1,11 @@
 use crate::{
     AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
-    document::DocumentContent, helpers::merge_toml_table,
+    document::DocumentContent, helpers::merge_toml_table, solang_ext::Visitable,
 };
 use alloy_primitives::map::HashMap;
 use eyre::{Context, Result};
-use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{DocConfig, filter::expand_globs};
+use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;

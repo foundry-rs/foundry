@@ -3,7 +3,7 @@
 //! Smart contract scripting.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate foundry_common;
@@ -26,13 +26,12 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, GlobalArgs},
+    opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
-    evm::{Breakpoints, EvmArgs},
     shell,
 };
 use foundry_compilers::ArtifactId;
@@ -45,6 +44,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
+    core::Breakpoints,
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
@@ -648,7 +648,7 @@ impl ScriptConfig {
             .inspectors(|stack| {
                 stack
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
-                    .odyssey(self.evm_opts.odyssey)
+                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.config.evm_spec_id())
@@ -782,10 +782,10 @@ mod tests {
 
         let config = r#"
                 [profile.default]
-                etherscan_api_key = "mumbai"
+                etherscan_api_key = "amoy"
 
                 [etherscan]
-                mumbai = { key = "https://etherscan-mumbai.com/" }
+                amoy = { key = "https://etherscan-amoy.com/" }
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -794,14 +794,14 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--etherscan-api-key",
-            "mumbai",
+            "amoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
 
         let config = args.load_config().unwrap();
-        let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
-        assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+        let amoy = config.get_etherscan_api_key(Some(NamedChain::PolygonAmoy.into()));
+        assert_eq!(amoy, Some("https://etherscan-amoy.com/".to_string()));
     }
 
     #[test]
@@ -813,7 +813,7 @@ mod tests {
                 [profile.default]
 
                 [rpc_endpoints]
-                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_CAN_EXTRACT_RPC_ALIAS}"
+                polygonAmoy = "https://polygon-amoy.g.alchemy.com/v2/${_CAN_EXTRACT_RPC_ALIAS}"
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -822,7 +822,7 @@ mod tests {
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
-            "polygonMumbai",
+            "polygonAmoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
@@ -835,10 +835,10 @@ mod tests {
             std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456");
         }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
-        assert_eq!(config.eth_rpc_url, Some("polygonMumbai".to_string()));
+        assert_eq!(config.eth_rpc_url, Some("polygonAmoy".to_string()));
         assert_eq!(
             evm_opts.fork_url,
-            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+            Some("https://polygon-amoy.g.alchemy.com/v2/123456".to_string())
         );
     }
 
@@ -851,10 +851,10 @@ mod tests {
             [profile.default]
 
             [rpc_endpoints]
-            mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+            amoy = "https://polygon-amoy.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
 
             [etherscan]
-            mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+            amoy = { key = "${_ETHERSCAN_API_KEY}", chain = 80002, url = "https://amoy.polygonscan.com/" }
         "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -863,9 +863,9 @@ mod tests {
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
-            "mumbai",
+            "amoy",
             "--etherscan-api-key",
-            "mumbai",
+            "amoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
@@ -877,18 +877,18 @@ mod tests {
             std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
         }
         unsafe {
-            std::env::set_var("_POLYSCAN_API_KEY", "polygonkey");
+            std::env::set_var("_ETHERSCAN_API_KEY", "etherscan_api_key");
         }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
-        assert_eq!(config.eth_rpc_url, Some("mumbai".to_string()));
+        assert_eq!(config.eth_rpc_url, Some("amoy".to_string()));
         assert_eq!(
             evm_opts.fork_url,
-            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+            Some("https://polygon-amoy.g.alchemy.com/v2/123456".to_string())
         );
-        let etherscan = config.get_etherscan_api_key(Some(80001u64.into()));
-        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        let etherscan = config.get_etherscan_api_key(Some(80002u64.into()));
+        assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
         let etherscan = config.get_etherscan_api_key(None);
-        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
     }
 
     #[test]
@@ -900,10 +900,10 @@ mod tests {
                 [profile.default]
 
                [rpc_endpoints]
-                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_SOLE_EXTRACT_RPC_ALIAS}"
+                amoy = "https://polygon-amoy.g.alchemy.com/v2/${_SOLE_EXTRACT_RPC_ALIAS}"
 
                 [etherscan]
-                mumbai = { key = "${_SOLE_POLYSCAN_API_KEY}" }
+                amoy = { key = "${_SOLE_ETHERSCAN_API_KEY}" }
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -912,7 +912,7 @@ mod tests {
             "foundry-cli",
             "DeployV1",
             "--rpc-url",
-            "mumbai",
+            "amoy",
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
@@ -924,17 +924,17 @@ mod tests {
             std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456");
         }
         unsafe {
-            std::env::set_var("_SOLE_POLYSCAN_API_KEY", "polygonkey");
+            std::env::set_var("_SOLE_ETHERSCAN_API_KEY", "etherscan_api_key");
         }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(
             evm_opts.fork_url,
-            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+            Some("https://polygon-amoy.g.alchemy.com/v2/123456".to_string())
         );
-        let etherscan = config.get_etherscan_api_key(Some(80001u64.into()));
-        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        let etherscan = config.get_etherscan_api_key(Some(80002u64.into()));
+        assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
         let etherscan = config.get_etherscan_api_key(None);
-        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        assert_eq!(etherscan, Some("etherscan_api_key".to_string()));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5923>

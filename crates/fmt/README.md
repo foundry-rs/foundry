@@ -6,71 +6,51 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 
 ## Architecture
 
-The formatter works in two steps:
+The formatter is built on top of [Solar](https://github.com/paradigmxyz/solar), and the architecture is based on a Wadler-style pretty-printing engine. The formatting process consists of two main steps:
 
-1. Parse Solidity source code with [solang](https://github.com/hyperledger-labs/solang) into the PT (Parse Tree)
-   (not the same as Abstract Syntax Tree, [see difference](https://stackoverflow.com/a/9864571)).
-2. Walk the PT and output new source code that's compliant with provided config and rule set.
+1.  **Parsing**: The Solidity source code is parsed using **`solar`** into an **Abstract Syntax Tree (AST)**. The AST is a tree representation of the code's syntactic structure.
+2.  **Printing**: The AST is traversed by a visitor, which generates a stream of abstract tokens that are then processed by a pretty-printing engine to produce the final formatted code.
 
-The technique for walking the tree is based on [Visitor Pattern](https://en.wikipedia.org/wiki/Visitor_pattern)
-and works as following:
+### The Pretty Printer (`pp`)
 
-1. Implement `Formatter` callback functions for each PT node type.
-   Every callback function should write formatted output for the current node
-   and call `Visitable::visit` function for child nodes delegating the output writing.
-1. Implement `Visitable` trait and its `visit` function for each PT node type. Every `visit` function should call
-   corresponding `Formatter`'s callback function.
+The core of the formatter is a pretty-printing engine inspired by Philip Wadler's algorithm, and adapted from the implementations in `rustc_ast_pretty` and `prettyplease`. Its goal is to produce an optimal and readable layout by making intelligent decisions about line breaks.
 
-### Output
+The process works like this:
 
-The formatted output is written into the output buffer in _chunks_. The `Chunk` struct holds the content to be written &
-metadata for it. This includes the comments surrounding the content as well as the `needs_space` flag specifying whether
-this _chunk_ needs a space. The flag overrides the default behavior of `Formatter::next_char_needs_space` method.
+1.  **AST to Abstract Tokens**: The formatter's `State` object walks the `solar` AST. Instead of directly writing strings, it translates the AST nodes into a stream of abstract formatting "commands" called `Token`s. This decouples the code's structure from the final text output. The primary tokens are:
+    *   **`String`**: An atomic, unbreakable piece of text, like a keyword (`function`), an identifier (`myVar`), or a literal (`42`).
+    *   **`Break`**: A potential line break. This is the core of the engine's flexibility. The `Printer` later decides whether to render a `Break` as a single space or as a newline with appropriate indentation.
+    *   **`Begin`/`End`**: These tokens define a logical group of tokens that should be formatted as a single unit. This allows the printer to decide how to format the entire group at once.
 
-The content gets written into the `FormatBuffer` which contains the information about the current indentation level,
-indentation length, current state as well as the other data determining the rules for writing the content.
-`FormatBuffer` implements the `std::fmt::Write` trait where it evaluates the current information and decides how the
-content should be written to the destination.
+2.  **Grouping and Breaking Strategy**: The `Begin` and `End` tokens create formatting "boxes" that guide the breaking strategy. There are two main types of boxes:
+    *   **Consistent Box (`cbox`)**: If *any* `Break` inside this box becomes a newline, then *all* `Break`s inside it must also become newlines. This is ideal for lists like function parameters or struct fields, ensuring they are either all on one line or neatly arranged with one item per line.
+    *   **Inconsistent Box (`ibox`)**: `Break`s within this box are independent. The printer can wrap a long line at any `Break` point without forcing other breaks in the same box to become newlines. This is useful for formatting long expressions or comments.
+
+3.  **The `Printer` Engine**: The `Printer` consumes this stream of tokens and makes the final decisions:
+    *   It maintains a buffer of tokens and tracks the remaining space on the current line based on the configured `line_length`.
+    *   When it encounters a `Begin` token for a group, it calculates whether the entire group could fit on the current line if all its `Break`s were spaces.
+    *   **If it fits**, all `Break`s in that group are rendered as spaces.
+    *   **If it doesn't fit**, `Break`s are rendered as newlines, and the indentation level is adjusted accordingly based on the box's rules (consistent or inconsistent).
+
+Crucially, this entire process is deterministic. Because the formatter completely rebuilds the code from the AST, it discards all original whitespace, line breaks, and other stylistic variations. This means that for a given AST and configuration, the output will always be identical. No matter how inconsistently the input code is formatted, the result is a single, canonical representation, ensuring predictability and consistency across any codebase.
+
+> **Debug Mode**: To visualize the debug output, and understand how the pretty-printer makes its decisions about boxes and breaks, see the [Debug](#debug) section in Testing.
 
 ### Comments
 
-The solang parser does not output comments as a type of parse tree node, but rather
-in a list alongside the parse tree with location information. It is therefore necessary
-to infer where to insert the comments and how to format them while traversing the parse tree.
+Comment handling is a critical aspect of the formatter, designed to preserve developer intent while restructuring the code.
 
-To handle this, the formatter pre-parses the comments and puts them into two categories:
-Prefix and Postfix comments. Prefix comments refer to the node directly after them, and
-postfix comments refer to the node before them. As an illustration:
+1.  **Categorization**: Comments are parsed and categorized by their position and style: `Isolated` (on its own line), `Mixed` (on a line with code), and `Trailing` (at the end of a line).
 
-```solidity
-// This is a prefix comment
-/* This is also a prefix comment */
-uint variable = 1 + 2; /* this is postfix */ // this is postfix too
-    // and this is a postfix comment on the next line
-```
+2.  **Blank Line Handling**: Blank lines in the source code are treated as a special `BlankLine` comment type, allowing the formatter to preserve vertical spacing that separates logical blocks of code. However, to maintain a clean and consistent vertical rhythm, any sequence of multiple blank lines is collapsed into a single blank line. This prevents excessive empty space in the formatted output.
 
-To insert the comments into the appropriate areas, strings get converted to chunks
-before being written to the buffer. A chunk is any string that cannot be split by
-whitespace. A chunk also carries with it the surrounding comment information. Thereby
-when writing the chunk the comments can be added before and after the chunk as well
-as any whitespace surrounding.
+3.  **Integration with Printing**: During the AST traversal, the formatter queries for comments that appear before the current code element. These comments, including blank lines, are then strategically inserted into the `Printer`'s token stream. The formatter inserts `Break` tokens around comments to ensure they are correctly spaced from the surrounding code, and emits one or two `hardbreak`s for blank lines to maintain the original vertical rhythm.
 
-To construct a chunk, the string and the location of the string is given to the
-Formatter and the pre-parsed comments before the start and end of the string are
-associated with that string. The source code can then further be chunked before the
-chunks are written to the buffer.
-
-To write the chunk, first the comments associated with the start of the chunk get
-written to the buffer. Then the Formatter checks if any whitespace is needed between
-what's been written to the buffer and what's in the chunk and inserts it where appropriate.
-If the chunk content fits on the same line, it will be written directly to the buffer,
-otherwise it will be written on the next line. Finally, any associated postfix
-comments also get written.
+This approach allows the formatter to respect both the syntactic structure of the code and the developer's textual annotations and spacing, producing a clean, readable, and intentional layout.
 
 ### Example
 
-Source code
-
+**Source Code**
 ```solidity
 pragma   solidity ^0.8.10 ;
 contract  HelloWorld {
@@ -79,23 +59,37 @@ contract  HelloWorld {
 }
 
 
+
 event    Greet( string  indexed  name) ;
 ```
 
-Parse Tree (simplified)
-
+**Abstract Syntax Tree (AST) (simplified)**
 ```text
 SourceUnit
- | PragmaDirective("solidity", "^0.8.10")
- | ContractDefinition("HelloWorld")
-    | VariableDefinition("string", "message", null, ["public"])
-    | FunctionDefinition("constructor")
-       | Parameter("string", "initMessage", ["memory"])
- | EventDefinition("string", "Greet", ["indexed"], ["name"])
+ ├─ PragmaDirective("solidity", "^0.8.10")
+ ├─ ItemContract("HelloWorld")
+ │   ├─ VariableDefinition { name: "message", ty: "string", visibility: "public" }
+ │   └─ ItemFunction {
+ │         kind: Constructor,
+ │         header: FunctionHeader {
+ │            parameters: [
+ │               VariableDefinition { name: "initMessage", ty: "string", data_location: "memory" }
+ │            ]
+ │         },
+ │         body: Block {
+ │            stmts: [
+ │               Stmt { kind: Expr(Assign {lhs: Ident("message"), rhs: Ident("initMessage")}) }
+ │            ]
+ │         }
+ │      }
+ └─ ItemEvent { name: "Greet", parameters: [
+       VariableDefinition { name: "name", ty: "string", indexed: true }
+    ] }
 ```
 
-Formatted source code that was reconstructed from the Parse Tree
 
+**Formatted Source Code**
+The code is reconstructed from the AST using the pretty-printer.
 ```solidity
 pragma solidity ^0.8.10;
 
@@ -112,75 +106,61 @@ event Greet(string indexed name);
 
 ### Configuration
 
-The formatter supports multiple configuration options defined in `FormatterConfig`.
+The formatter supports multiple configuration options defined in `foundry.toml`.
 
-| Option                       | Default          | Description                                                                                                                                                 |
-| ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| line_length                  | 120              | Maximum line length where formatter will try to wrap the line                                                                                               |
-| tab_width                    | 4                | Number of spaces per indentation level                                                                                                                      |
-| bracket_spacing              | false            | Print spaces between brackets                                                                                                                               |
-| int_types                    | long             | Style of uint/int256 types. Available options: `long`, `short`, `preserve`                                                                                  |
-| multiline_func_header        | attributes_first | Style of multiline function header in case it doesn't fit. Available options: `params_first`, `params_first_multi`, `attributes_first`, `all`, `all_params` |
-| quote_style                  | double           | Style of quotation marks. Available options: `double`, `single`, `preserve`                                                                                 |
-| number_underscore            | preserve         | Style of underscores in number literals. Available options: `preserve`, `remove`, `thousands`                                                               |
-| hex_underscore               | remove           | Style of underscores in hex literals. Available options: `preserve`, `remove`, `bytes`                                                                      |
-| single_line_statement_blocks | preserve         | Style of single line blocks in statements. Available options: `single`, `multi`, `preserve`                                                                 |
-| override_spacing             | false            | Print space in state variable, function and modifier `override` attribute                                                                                   |
-| wrap_comments                | false            | Wrap comments on `line_length` reached                                                                                                                      |
-| ignore                       | []               | Globs to ignore                                                                                                                                             |
-| contract_new_lines           | false            | Add new line at start and end of contract declarations                                                                                                      |
-| sort_imports                 | false            | Sort import statements alphabetically in groups                                                                                                             |
-| style                        | space            | Configures if spaces or tabs should be used for indents. `tab_width` will be ignored if set to `tab`. Available options: `space`, `tab`                     |
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `line_length` | `120` | Maximum line length where the formatter will try to wrap the line. |
+| `tab_width` | `4` | Number of spaces per indentation level. Ignored if `style` is `tab`. |
+| `style` | `space` | The style of indentation. Options: `space`, `tab`. |
+| `bracket_spacing` | `false` | Print spaces between brackets. |
+| `int_types` | `long` | Style for `uint256`/`int256` types. Options: `long`, `short`, `preserve`. |
+| `multiline_func_header` | `attributes_first` | The style of multiline function headers. Options: `attributes_first`, `params_first`, `params_first_multi`, `all`, `all_params`. |
+| `quote_style` | `double` | The style of quotation marks. Options: `double`, `single`, `preserve`. |
+| `number_underscore` | `preserve` | The style of underscores in number literals. Options: `preserve`, `remove`, `thousands`. |
+| `hex_underscore` | `remove` | The style of underscores in hex literals. Options: `preserve`, `remove`, `bytes`. |
+| `single_line_statement_blocks` | `preserve` | The style of single-line blocks in statements. Options: `preserve`, `single`, `multi`. |
+| `override_spacing` | `false` | Print a space in the `override` attribute. |
+| `wrap_comments` | `false` | Wrap comments when `line_length` is reached. |
+| `ignore` | `[]` | Globs to ignore. |
+| `contract_new_lines` | `false` | Add a new line at the start and end of contract declarations. |
+| `sort_imports` | `false` | Sort import statements alphabetically in groups. A group is a set of imports separated by a newline. |
+| `pow_no_space` | `false` | Suppress spaces around the power operator (`**`). |
 
-### Disable Line
 
-The formatter can be disabled on specific lines by adding a comment `// forgefmt: disable-next-line`, like this:
+### Inline Configuration
 
+The formatter can be instructed to skip specific sections of code using inline comments. While the tool supports fine-grained control, it is generally more robust and efficient to disable formatting for entire AST items or statements.
+
+This approach is preferred because it allows the formatter to treat the entire disabled item as a single, opaque unit. It can simply copy the original source text for that item's span instead of partially formatting a line, switching to copy mode, and then resuming formatting. This leads to more predictable output and avoids potential edge cases with complex, partially-disabled statements.
+
+#### Disable Line
+
+These directives are best used when they apply to a complete, self-contained AST statement, as shown below. In this case, `uint x = 100;` is a full statement, making it a good candidate for a line-based disable.
+
+To disable the next line:
 ```solidity
 // forgefmt: disable-next-line
 uint x = 100;
 ```
 
-Alternatively, the comment can also be placed at the end of the line. In this case, you'd have to use `disable-line`
-instead:
-
+To disable the current line:
 ```solidity
 uint x = 100; // forgefmt: disable-line
 ```
+#### Disable Block
 
-### Disable Block
-
-The formatter can be disabled for a section of code by adding a comment `// forgefmt: disable-start` before and a
-comment `// forgefmt: disable-end` after, like this:
+This is the recommended approach for complex, multi-line constructs where you want to preserve specific formatting. In the example below, the entire `function` definition is disabled. This is preferable to trying to disable individual lines within the signature, because lines like `uint256 b /* a comment that goes inside the comma */,` do not correspond to a complete AST item or statement on their own. Disabling the whole item is cleaner and more aligned with the code's structure.
 
 ```solidity
 // forgefmt: disable-start
-uint x = 100;
-uint y = 101;
+function fnWithManyArguments(
+    uint a,
+    uint256 b /* a comment that goes inside the comma */,
+    uint256      c
+) external returns (bool) {
 // forgefmt: disable-end
 ```
-
-### Testing
-
-Tests reside under the `fmt/testdata` folder and specify the malformatted & expected Solidity code. The source code file
-is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are
-needed for tests covering available configuration options.
-
-The default configuration values can be overridden from within the expected file by adding a comment in the format
-`// config: {config_entry} = {config_value}`. For example:
-
-```solidity
-// config: line_length = 160
-```
-
-The `test_directory` macro is used to specify a new folder with source files for the test suite. Each test suite has the
-following process:
-
-1. Preparse comments with config values
-2. Parse and compare the AST for source & expected files.
-   - The `AstEq` trait defines the comparison rules for the AST nodes
-3. Format the source file and assert the equality of the output with the expected file.
-4. Format the expected files and assert the idempotency of the formatting operation.
 
 ## Contributing
 
@@ -190,34 +170,70 @@ Guidelines for contributing to `forge fmt`:
 
 ### Opening an issue
 
-1. Create a short concise title describing an issue.
-   - Bad Title Examples
-     ```text
-     Forge fmt does not work
-     Forge fmt breaks
-     Forge fmt unexpected behavior
-     ```
-   - Good Title Examples
-     ```text
-     Forge fmt postfix comment misplaced
-     Forge fmt does not inline short yul blocks
-     ```
-2. Fill in the issue template fields that include foundry version, platform & component info.
-3. Provide the code snippets showing the current & expected behaviors.
-4. If it's a feature request, specify why this feature is needed.
-5. Besides the default label (`T-Bug` for bugs or `T-feature` for features), add `C-forge` and `Cmd-forge-fmt` labels.
+1.  Create a short, concise title describing the issue.
+    *   **Bad**: `Forge fmt does not work`
+    *   **Good**: `bug(forge-fmt): misplaces postfix comment on if-statement`
+2.  Fill in the issue template fields, including Foundry version, platform, and component info.
+3.  Provide code snippets showing the current and expected behaviors.
+4.  If it's a feature request, explain why the feature is needed.
+5.  Add the `C-forge` and `Cmd-forge-fmt` labels.
 
-### Fixing A Bug
+### Fixing a Bug or Developing a Feature
 
-1. Specify an issue that is being addressed in the PR description.
-2. Add a note on the solution in the PR description.
-3. Make sure the PR includes the acceptance test(s).
+1.  Specify the issue being addressed in the PR description.
+2.  Add a note on your solution in the PR description.
+3.  Ensure the PR includes comprehensive acceptance tests under `fmt/testdata/`, covering:
+    *   The specific case being fixed/added.
+    *   Behavior with different kinds of comments (isolated, mixed, trailing).
+    *   If it's a new config value, tests covering all available options.
 
-### Developing A Feature
+### Testing
 
-1. Specify an issue that is being addressed in the PR description.
-2. Add a note on the solution in the PR description.
-3. Provide the test coverage for the new feature. These should include:
-   - Adding malformatted & expected solidity code under `fmt/testdata/$dir/`
-   - Testing the behavior of pre and postfix comments
-   - If it's a new config value, tests covering **all** available options
+Tests are located in the `fmt/testdata` folder. Each test consists of an `original.sol` file and one or more expected output files, named `*.fmt.sol`.
+
+The default configuration can be overridden from within an expected output file by adding a comment in the format `// config: {config_key} = {config_value}`. For example:
+```solidity
+// config: line_length = 160
+```
+
+The testing process for each test suite is as follows:
+1.  Read `original.sol` and the corresponding `*.fmt.sol` expected output.
+2.  Parse any `// config:` comments from the expected file to create a test-specific configuration.
+3.  Format `original.sol` and assert that the output matches the content of `*.fmt.sol`.
+4.  To ensure **idempotency**, format the content of `*.fmt.sol` again and assert that the output does not change.
+
+### Debug
+
+The formatter includes a debug mode that provides visual insight into the pretty-printer's decision-making process. This is invaluable for troubleshooting complex formatting issues and understanding how the boxes and breaks described in [The Pretty Printer](#the-pretty-printer-pp) section work.
+
+To enable it, run the formatter with the `FMT_DEBUG` environment variable set:
+```sh
+FMT_DEBUG=1 cargo test -p forge-fmt --test formatter Repros
+```
+
+When enabled, the output will be annotated with special characters representing the printer's internal state:
+
+*   **Boxes**:
+    *   `«` and `»`: Mark the start and end of a **consistent** box (`cbox`).
+    *   `‹` and `›`: Mark the start and end of an **inconsistent** box (`ibox`).
+
+*   **Breaks**:
+    *   `·`: Represents a `Break` token, which could be a space or a newline.
+
+For example, running debug mode on the `HelloWorld` contract from earlier would produce an output like this:
+
+```text
+pragma solidity ^0.8.10;·
+·
+«‹«contract HelloWorld »{›·
+‹‹    string· public· message››;·
+·
+«    constructor«(«‹‹string memory initMessage››»)» {»·
+«‹        message = ·initMessage›·;·
+»    }·
+»}·
+·
+event Greet(««‹‹string indexed name››»»);·
+```
+
+This annotated output allows you to see exactly how the printer is grouping tokens and where it considers inserting a space or a newline. This makes it much easier to diagnose why a certain layout is being produced.

@@ -229,7 +229,7 @@ fn find_mismatch_in_settings(
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.unwrap(),
+            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -312,7 +312,7 @@ pub async fn get_tracing_executor(
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (env, fork, _chain, is_odyssey) =
+    let (env, fork, _chain, networks) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
@@ -320,7 +320,7 @@ pub async fn get_tracing_executor(
         fork,
         Some(fork_config.evm_version),
         TraceMode::Call,
-        is_odyssey,
+        networks,
         create2_deployer,
         None,
     )?;

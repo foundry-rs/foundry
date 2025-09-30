@@ -17,6 +17,9 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, U256, address};
 use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
 
+/// Label of the Celo transfer precompile to display in traces.
+pub const CELO_TRANSFER_LABEL: &str = "CELO_TRANSFER_PRECOMPILE";
+
 /// Address of the Celo transfer precompile.
 pub const CELO_TRANSFER_ADDRESS: Address = address!("0x00000000000000000000000000000000000000fd");
 

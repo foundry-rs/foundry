@@ -1,6 +1,6 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use eyre::{Result, eyre};
+use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::BuildOpts,
@@ -115,7 +115,7 @@ impl BuildArgs {
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
             self.lint(&project, &config, self.paths.as_deref(), &mut output)
-                .map_err(|err| eyre!("Lint failed: {err}"))?;
+                .wrap_err("Lint failed")?;
         }
 
         Ok(output)
@@ -175,7 +175,7 @@ impl BuildArgs {
 
             if !input_files.is_empty() {
                 let compiler = output.parser_mut().solc_mut().compiler_mut();
-                linter.lint(&input_files, compiler)?;
+                linter.lint(&input_files, config.deny, compiler)?;
             }
         }
 

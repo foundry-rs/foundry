@@ -19,6 +19,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
+solar.workspace = true
 alloy-primitives.workspace = true
 
 derive_more.workspace = true
