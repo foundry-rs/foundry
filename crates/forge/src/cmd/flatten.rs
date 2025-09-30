@@ -53,8 +53,7 @@ impl FlattenArgs {
             Ok(flattener) => Ok(flattener.flatten()),
             Err(FlattenerError::Compilation(_)) => {
                 // Fallback to the old flattening implementation if we couldn't compile the target
-                // successfully. This would be the case if the target has invalid
-                // syntax. (e.g. Solang)
+                // successfully. This would be the case if the target has invalid syntax.
                 project.paths.with_language::<SolcLanguage>().flatten(&target_path)
             }
             Err(FlattenerError::Other(err)) => Err(err),

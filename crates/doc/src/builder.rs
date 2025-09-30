@@ -127,10 +127,7 @@ impl DocBuilder {
         let documents = combined_sources
             .par_iter()
             .enumerate()
-            .map(|(i, (path, from_library))| {
-                let path = *path;
-                let from_library = *from_library;
-
+            .map(|(i, &(path, from_library))| {
                 // Read and parse source file
                 let source = fs::read_to_string(path)?;
 

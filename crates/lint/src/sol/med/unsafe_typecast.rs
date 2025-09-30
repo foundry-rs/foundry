@@ -114,7 +114,7 @@ fn infer_source_types(
             LitKind::Address(_) => track(ElementaryType::Address(false)),
             LitKind::Bool(_) => track(ElementaryType::Bool),
             // Unnecessary to check numbers as assigning literal values that cannot fit into a type
-            // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
+            // throws a compiler error. Reference: <https://docs.soliditylang.org/en/latest/types.html>
             _ => None,
         },
 
