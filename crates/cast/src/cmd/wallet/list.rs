@@ -23,10 +23,16 @@ pub struct ListArgs {
     trezor: bool,
 
     /// List accounts from AWS KMS.
+    ///
+    /// Ensure either one of AWS_KMS_KEY_IDS (comma-separated) or AWS_KMS_KEY_ID environment variables are set.
     #[arg(long, hide = !cfg!(feature = "aws-kms"))]
     aws: bool,
 
     /// List accounts from Google Cloud KMS.
+    ///
+    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION, GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
+    ///
+    /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, hide = !cfg!(feature = "gcp-kms"))]
     gcp: bool,
 
