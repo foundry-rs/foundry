@@ -528,7 +528,9 @@ impl TestArgs {
         // Avoid using etherscan and sourcify for gas report as we decode more traces and this will
         // be expensive.
         if !self.gas_report {
-            identifier = identifier.with_sourcify().with_etherscan(&config, remote_chain_id)?;
+            identifier = identifier
+                .with_sourcify(remote_chain_id)
+                .with_etherscan(&config, remote_chain_id)?;
         }
 
         // Build the trace decoder.

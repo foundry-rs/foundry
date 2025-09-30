@@ -1,20 +1,25 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_json_abi::JsonAbi;
+use foundry_config::Chain;
 use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 /// A trace identifier that uses Sourcify to identify contract ABIs.
-pub struct SourcifyIdentifier;
+pub struct SourcifyIdentifier {
+    chain_id: u64,
+}
 
 impl SourcifyIdentifier {
-    pub fn new() -> Self {
-        Self
+    /// Creates a new Sourcify identifier for the given chain.
+    pub fn new(chain: Option<Chain>) -> Self {
+        let chain_id = chain.map(|c| c.id()).unwrap_or(1);
+        Self { chain_id }
     }
 }
 
 impl Default for SourcifyIdentifier {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -31,8 +36,10 @@ impl TraceIdentifier for SourcifyIdentifier {
 
             // Try to get ABI from Sourcify using APIv2
             let abi = foundry_common::block_on(async {
-                let url =
-                    format!("https://sourcify.dev/server/v2/contract/1/{address}?fields=abi");
+                let url = format!(
+                    "https://sourcify.dev/server/v2/contract/{}/{}?fields=abi",
+                    self.chain_id, address
+                );
 
                 let response = client.get(&url).send().await.ok()?;
                 let json: serde_json::Value = response.json().await.ok()?;
@@ -58,22 +65,29 @@ impl TraceIdentifier for SourcifyIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::NamedChain;
 
     #[test]
     fn test_sourcify_identifier_creation() {
-        let _identifier = SourcifyIdentifier::new();
-        // Test that creation doesn't panic
+        let identifier = SourcifyIdentifier::new(None);
+        assert_eq!(identifier.chain_id, 1); // Default to mainnet
+    }
+
+    #[test]
+    fn test_sourcify_identifier_with_chain() {
+        let identifier = SourcifyIdentifier::new(Some(NamedChain::Polygon.into()));
+        assert_eq!(identifier.chain_id, 137); // Polygon chain ID
     }
 
     #[test]
     fn test_sourcify_identifier_default() {
-        let _identifier = SourcifyIdentifier::new(); // Use new() instead of default() for unit structs
-        // Test that creation doesn't panic
+        let identifier = SourcifyIdentifier::default();
+        assert_eq!(identifier.chain_id, 1); // Default to mainnet
     }
 
     #[test]
     fn test_empty_nodes() {
-        let mut identifier = SourcifyIdentifier::new();
+        let mut identifier = SourcifyIdentifier::default();
         let nodes: Vec<&CallTraceNode> = vec![];
         let result = identifier.identify_addresses(&nodes);
         assert!(result.is_empty());

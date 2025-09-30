@@ -181,10 +181,10 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_sourcify().with_etherscan(
-            &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id().await,
-        )?;
+        let remote_chain_id = session_config.evm_opts.get_remote_chain_id().await;
+        let mut identifier = TraceIdentifiers::new()
+            .with_sourcify(remote_chain_id)
+            .with_etherscan(&session_config.foundry_config, remote_chain_id)?;
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &mut identifier);

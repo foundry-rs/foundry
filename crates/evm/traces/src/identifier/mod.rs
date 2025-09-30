@@ -105,8 +105,8 @@ impl<'a> TraceIdentifiers<'a> {
     }
 
     /// Sets the sourcify identifier.
-    pub fn with_sourcify(mut self) -> Self {
-        self.sourcify = Some(SourcifyIdentifier::new());
+    pub fn with_sourcify(mut self, chain: Option<Chain>) -> Self {
+        self.sourcify = Some(SourcifyIdentifier::new(chain));
         self
     }
 
