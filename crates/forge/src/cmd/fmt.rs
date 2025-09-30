@@ -127,12 +127,19 @@ impl FmtArgs {
                     let path = source_unit.file.name.as_real();
                     let original = source_unit.file.src.as_str();
                     let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
+                    let from_stdin = path.is_none();
+
+                    // Return formatted code when read from stdin without check or raw switch.
+                    // <https://github.com/foundry-rs/foundry/issues/11871>
+                    if from_stdin && !self.check && !self.raw {
+                        return Some(Ok(formatted));
+                    }
 
                     if original == formatted {
                         return None;
                     }
 
-                    if self.check || path.is_none() {
+                    if self.check || from_stdin {
                         let summary = if self.raw {
                             formatted
                         } else {
