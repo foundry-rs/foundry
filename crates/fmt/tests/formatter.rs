@@ -1,4 +1,5 @@
 use forge_fmt::FormatterConfig;
+use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
 use solar::sema::Compiler;
 use std::{
@@ -6,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[track_caller]
 fn format(source: &str, path: &Path, fmt_config: Arc<FormatterConfig>) -> String {
@@ -26,20 +26,12 @@ fn assert_eof(content: &str) {
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
 }
 
-fn enable_tracing() {
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_test_writer()
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
-}
-
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
 
 fn test_directory(base_name: &str) {
-    enable_tracing();
+    init_tracing();
     let dir = tests_dir().join(base_name);
     let mut original = fs::read_to_string(dir.join("original.sol")).unwrap();
     if cfg!(windows) {

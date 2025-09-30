@@ -20,7 +20,7 @@ use std::{
     fs::{self, File},
     io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
-    process::{ChildStdin, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::{
         Arc, LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -147,7 +147,7 @@ impl ExtTester {
         self
     }
 
-    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
+    pub fn setup_forge_prj(&self, recursive: bool) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Export vyper and forge in test command - workaround for snekmate venom tests.
@@ -170,7 +170,7 @@ impl ExtTester {
         // Clone the external repository.
         let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
         let root = prj.root().to_str().unwrap();
-        clone_remote(&repo_url, root);
+        clone_remote(&repo_url, root, recursive);
 
         // Checkout the revision.
         if self.rev.is_empty() {
@@ -224,7 +224,7 @@ impl ExtTester {
             return;
         }
 
-        let (prj, mut test_cmd) = self.setup_forge_prj();
+        let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
         self.run_install_commands(prj.root().to_str().unwrap());
@@ -423,9 +423,14 @@ pub fn get_vyper() -> Vyper {
 }
 
 /// Clones a remote repository into the specified directory. Panics if the command fails.
-pub fn clone_remote(repo_url: &str, target_dir: &str) {
+pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone"]);
+    if recursive {
+        cmd.args(["--recursive", "--shallow-submodules"]);
+    } else {
+        cmd.args(["--depth=1", "--no-checkout", "--filter=blob:none", "--no-recurse-submodules"]);
+    }
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
@@ -784,7 +789,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -799,7 +804,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -897,7 +902,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    stdin: Option<Vec<u8>>,
     /// If true, command output is redacted.
     redact_output: bool,
 }
@@ -949,8 +954,9 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
-        self.stdin_fun = Some(Box::new(fun));
+    /// Set the stdin bytes for the next command.
+    pub fn stdin(&mut self, stdin: impl Into<Vec<u8>>) -> &mut Self {
+        self.stdin = Some(stdin.into());
         self
     }
 
@@ -1130,8 +1136,8 @@ impl TestCommand {
         test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
-        if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap());
+        if let Some(bytes) = self.stdin.take() {
+            child.stdin.take().unwrap().write_all(&bytes)?;
         }
         child.wait_with_output()
     }

@@ -1,7 +1,7 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
@@ -30,12 +30,12 @@ use foundry_common::{
     TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
+    flatten,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
-use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::ic::decode_instructions;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -2192,7 +2192,7 @@ impl SimpleCast {
         let project = etherscan_project(metadata, tmp.path())?;
         let target_path = project.find_contract_path(&metadata.contract_name)?;
 
-        let flattened = Flattener::new(project, &target_path)?.flatten();
+        let flattened = flatten(project, &target_path)?;
 
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;

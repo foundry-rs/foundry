@@ -418,7 +418,7 @@ forgetest!(multiple_setups, |prj, cmd| {
     prj.add_source(
         "MultipleSetupsTest.t.sol",
         r#"
-    
+
 import "./test.sol";
 
 contract MultipleSetup is DSTest {

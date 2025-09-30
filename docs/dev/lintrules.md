@@ -133,5 +133,5 @@ The testing framework runs the linter on the `.sol` file and compares its standa
 - If you need to generate / bless (re-generate) the output files:
   ```sh
   // using the default cargo cmd for running tests
-  cargo test -p forge --test ui -- --bless
+  cargo bless-lints
   ```

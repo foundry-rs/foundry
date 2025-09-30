@@ -53,7 +53,7 @@ pub struct ProjectCompiler {
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
     ignore_eip_3860: bool,
 
-    /// Extra files to include, that are not necessarily in the project's source dir.
+    /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
     /// Whether to compile with dynamic linking tests and scripts.

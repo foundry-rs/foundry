@@ -94,7 +94,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = self.test.execute_tests().await?;
+        let outcome = self.test.compile_and_run().await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 

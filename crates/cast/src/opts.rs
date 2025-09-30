@@ -1,9 +1,10 @@
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
-    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
-    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
-    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
+    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
+    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, estimate::EstimateArgs,
+    find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -594,7 +595,7 @@ pub enum CastSubcommand {
     /// Decode event data.
     #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
-        /// The event signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
+        /// The event signature. If none provided then tries to decode from local cache or <https://docs.sourcify.dev/docs/api/>.
         #[arg(long, visible_alias = "event-sig")]
         sig: Option<String>,
         /// The event data to decode.
@@ -604,7 +605,7 @@ pub enum CastSubcommand {
     /// Decode custom error data.
     #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
     DecodeError {
-        /// The error signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
+        /// The error signature. If none provided then tries to decode from local cache or <https://docs.sourcify.dev/docs/api/>.
         #[arg(long, visible_alias = "error-sig")]
         sig: Option<String>,
         /// The error data to decode.
@@ -719,21 +720,21 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the function signatures for the given selector from <https://openchain.xyz>.
+    /// Get the function signatures for the given selector from <https://docs.sourcify.dev/docs/api/>.
     #[command(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
         selector: Option<Selector>,
     },
 
-    /// Decode ABI-encoded calldata using <https://openchain.xyz>.
+    /// Decode ABI-encoded calldata using <https://docs.sourcify.dev/docs/api/>.
     #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4c", "4bc"])]
     FourByteCalldata {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
 
-    /// Get the event signature for a given topic 0 from <https://openchain.xyz>.
+    /// Get the event signature for a given topic 0 from <https://docs.sourcify.dev/docs/api/>.
     #[command(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
     FourByteEvent {
         /// Topic 0
@@ -741,7 +742,7 @@ pub enum CastSubcommand {
         topic: Option<B256>,
     },
 
-    /// Upload the given signatures to <https://openchain.xyz>.
+    /// DEPRECATED: Upload the given signatures to <https://docs.sourcify.dev/docs/api/>.
     ///
     /// Example inputs:
     /// - "transfer(address,uint256)"
@@ -759,13 +760,13 @@ pub enum CastSubcommand {
 
     /// Pretty print calldata.
     ///
-    /// Tries to decode the calldata using <https://openchain.xyz> unless --offline is passed.
+    /// Tries to decode the calldata using <https://docs.sourcify.dev/docs/api/> unless --offline is passed.
     #[command(visible_alias = "pc")]
     PrettyCalldata {
         /// The calldata.
         calldata: Option<String>,
 
-        /// Skip the <https://openchain.xyz> lookup.
+        /// Skip the <https://docs.sourcify.dev/docs/api/> lookup.
         #[arg(long, short)]
         offline: bool,
     },
@@ -1054,6 +1055,10 @@ pub enum CastSubcommand {
     #[command(visible_alias = "bi")]
     Bind(BindArgs),
 
+    /// Convert Beacon payload to execution payload.
+    #[command(visible_alias = "b2e")]
+    B2EPayload(B2EPayloadArgs),
+
     /// Get the selector for a function.
     #[command(visible_alias = "si")]
     Sig {
@@ -1078,10 +1083,6 @@ pub enum CastSubcommand {
         #[arg(value_enum)]
         shell: foundry_cli::clap::Shell,
     },
-
-    /// Generate Fig autocompletion spec. Deprecated: use `cast completions fig` instead.
-    #[command(visible_alias = "fig", hide = true)]
-    GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.
     #[command(visible_alias = "r")]
@@ -1125,7 +1126,7 @@ pub enum CastSubcommand {
         /// The hex-encoded bytecode.
         bytecode: Option<String>,
 
-        /// Resolve the function signatures for the extracted selectors using <https://openchain.xyz>
+        /// Resolve the function signatures for the extracted selectors using <https://docs.sourcify.dev/docs/api/>
         #[arg(long, short)]
         resolve: bool,
     },

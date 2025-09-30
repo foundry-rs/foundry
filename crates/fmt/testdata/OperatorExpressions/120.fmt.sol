@@ -49,8 +49,8 @@ function test_nested() {
         "string mismatch"
     );
 
-    state.zeroForOne = IERC20(Currency.unwrap(state.poolKey1.currency0))
-        == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
+    state.zeroForOne =
+        IERC20(Currency.unwrap(state.poolKey1.currency0)) == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
 
     coreAddresses.evc == address(0) && coreAddresses.protocolConfig == address(0)
         && coreAddresses.sequenceRegistry == address(0) && coreAddresses.balanceTracker == address(0)
