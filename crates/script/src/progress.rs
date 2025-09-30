@@ -1,4 +1,4 @@
-use crate::receipts::{TxStatus, PendingReceiptError, check_tx_status, format_receipt};
+use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
     B256,
@@ -214,12 +214,18 @@ impl ScriptProgress {
                 Err(err) => {
                     // Check if this is a retry error for pending receipts
                     if err.downcast_ref::<PendingReceiptError>().is_some() {
-                        // We've already retried several times with sleep, but the receipt is still pending
+                        // We've already retried several times with sleep, but the receipt is still
+                        // pending
                         discarded_transactions = true;
                         deployment_sequence.remove_pending(tx_hash);
-                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &err.to_string())?;
+                        seq_progress
+                            .inner
+                            .write()
+                            .finish_tx_spinner_with_msg(tx_hash, &err.to_string())?;
                     } else {
-                        errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
+                        errors.push(format!(
+                            "Failure on receiving a receipt for {tx_hash:?}:\n{err}"
+                        ));
                         seq_progress.inner.write().finish_tx_spinner(tx_hash);
                     }
                 }
@@ -227,8 +233,10 @@ impl ScriptProgress {
                     // We want to remove it from pending so it will be re-broadcast.
                     deployment_sequence.remove_pending(tx_hash);
                     discarded_transactions = true;
-                    
-                    let msg = format!("Transaction {tx_hash:?} dropped from the mempool. It will be retried when using --resume.");
+
+                    let msg = format!(
+                        "Transaction {tx_hash:?} dropped from the mempool. It will be retried when using --resume."
+                    );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }
                 Ok(TxStatus::Success(receipt)) => {
@@ -258,18 +266,20 @@ impl ScriptProgress {
         // print any errors
         if !errors.is_empty() {
             let mut error_msg = errors.join("\n");
-            
+
             // Add information about using --resume if necessary
             if !deployment_sequence.pending.is_empty() || discarded_transactions {
                 error_msg += r#"
 
 Add `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC."#;
             }
-            
+
             eyre::bail!(error_msg);
         } else if discarded_transactions {
             // If we have discarded transactions but no errors, still inform the user
-            sh_warn!("Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.")?;
+            sh_warn!(
+                "Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions."
+            )?;
         }
 
         Ok(())
