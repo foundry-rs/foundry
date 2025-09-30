@@ -35,7 +35,7 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::ic::decode_instructions;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
