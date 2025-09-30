@@ -116,9 +116,10 @@ impl FuzzedExecutor {
             fail_fast.clone(),
         ));
 
-        // TODO: Determine the number of workers
-        let num_workers = rayon::current_num_threads() as u32;
+        // Use single worker for deterministic behavior when replaying persisted failures
         let persisted_failure = self.persisted_failure.take();
+        let num_workers =
+            if persisted_failure.is_some() { 1 } else { rayon::current_num_threads() as u32 };
         let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {

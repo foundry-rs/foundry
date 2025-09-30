@@ -88,7 +88,7 @@ impl SharedFuzzState {
 
         let current = self.total_runs.load(Ordering::Relaxed);
         // check run limit
-        if current + 1 < self.max_runs {
+        if current < self.max_runs {
             self.total_runs.fetch_add(1, Ordering::Relaxed);
             Some(current + 1)
         } else {
