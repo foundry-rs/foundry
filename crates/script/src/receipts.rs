@@ -8,7 +8,9 @@ use std::time::Duration;
 
 /// Marker error type for pending receipts
 #[derive(Debug, thiserror::Error)]
-#[error("Received a pending receipt for {tx_hash}, but transaction is still known to the node, retrying")]
+#[error(
+    "Received a pending receipt for {tx_hash}, but transaction is still known to the node, retrying"
+)]
 pub struct PendingReceiptError {
     pub tx_hash: TxHash,
 }
@@ -46,8 +48,10 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => {
                     // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number.is_none() || receipt.block_hash.is_none() || receipt.transaction_index.is_none();
-                    
+                    let is_pending = receipt.block_number.is_none()
+                        || receipt.block_hash.is_none()
+                        || receipt.transaction_index.is_none();
+
                     if !is_pending {
                         return Ok(receipt.into());
                     }
