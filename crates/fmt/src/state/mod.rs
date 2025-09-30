@@ -135,7 +135,7 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: Option<BinOpGroup>,
     return_bin_expr: bool,
     var_init: bool,
-    fn_body: bool,
+    block_depth: usize,
     call_stack: CallStack,
 }
 
@@ -223,7 +223,7 @@ impl<'sess> State<'sess, '_> {
             binary_expr: None,
             return_bin_expr: false,
             var_init: false,
-            fn_body: false,
+            block_depth: 0,
             call_stack: CallStack::default(),
         }
     }
@@ -231,10 +231,7 @@ impl<'sess> State<'sess, '_> {
     fn space_left(&self) -> usize {
         std::cmp::min(
             self.s.space_left(),
-            self.config
-                .line_length
-                .saturating_sub(if self.fn_body { self.config.tab_width } else { 0 })
-                .saturating_sub(if self.contract.is_some() { self.config.tab_width } else { 0 }),
+            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
         )
     }
 
@@ -370,16 +367,46 @@ impl State<'_, '_> {
 
     fn estimate_size(&self, span: Span) -> usize {
         if let Ok(snip) = self.sm.span_to_snippet(span) {
-            let (mut size, mut first_line) = (0, true);
-            for line in snip.lines() {
-                size += line.trim().len();
+            let (mut size, mut first, mut prev_needs_space) = (0, true, false);
 
-                // Subsequent lines require either a hardbreak or a space.
-                if first_line {
-                    first_line = false;
-                } else {
+            for line in snip.lines() {
+                let line = line.trim();
+
+                if prev_needs_space {
                     size += 1;
+                } else if !first
+                    && let Some(c) = line.chars().next()
+                    && matches!(c, '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^')
+                {
+                    // if the line starts with an operator, a space or a line break are required.
+                    size += 1
                 }
+                first = false;
+
+                // trim spaces before and after mixed comments
+                let mut search = line;
+                loop {
+                    if let Some((lhs, comment)) = search.split_once(r#"/*"#) {
+                        size += lhs.trim_end().len() + 2;
+                        search = comment;
+                    } else if let Some((comment, rhs)) = search.split_once(r#"*/"#) {
+                        size += comment.len() + 2;
+                        search = rhs;
+                    } else {
+                        size += search.trim().len();
+                        break;
+                    }
+                }
+
+                // Next line requires a line break if this one:
+                // - ends with a bracket and fmt config forces bracket spacing.
+                // - ends with ',' a line break or a space are required.
+                // - ends with ';' a line break is required.
+                prev_needs_space = match line.chars().next_back() {
+                    Some('(') | Some('{') => self.config.bracket_spacing,
+                    Some(',') | Some(';') => true,
+                    _ => false,
+                };
             }
             return size;
         }
@@ -813,6 +840,13 @@ impl<'sess> State<'sess, '_> {
         'sess: 'b,
     {
         self.comments.iter().take_while(|c| c.pos() < pos).find(|c| !c.style.is_blank())
+    }
+
+    fn has_comment_before_with<F>(&self, pos: BytePos, f: F) -> bool
+    where
+        F: FnMut(&Comment) -> bool,
+    {
+        self.comments.iter().take_while(|c| c.pos() < pos).any(f)
     }
 
     fn peek_comment_between<'b>(&'b self, pos_lo: BytePos, pos_hi: BytePos) -> Option<&'b Comment>

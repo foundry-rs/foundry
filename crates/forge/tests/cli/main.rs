@@ -35,4 +35,5 @@ mod version;
 
 mod ext_integration;
 mod fmt;
+mod fmt_integration;
 mod test_optimizer;

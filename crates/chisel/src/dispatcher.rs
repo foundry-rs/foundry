@@ -464,7 +464,8 @@ impl ChiselDispatcher {
             .into_iter()
             .next()
             .ok_or_else(|| eyre::eyre!("No ABI found for address {address} on Etherscan"))?;
-        let code = foundry_cli::utils::abi_to_solidity(&abi, &name)?;
+        let code = forge_fmt::format(&abi.to_sol(&name, None), FormatterConfig::default())
+            .into_result()?;
         self.source_mut().add_global_code(&code);
         sh_println!("Added {address}'s interface to source as `{name}`")
     }

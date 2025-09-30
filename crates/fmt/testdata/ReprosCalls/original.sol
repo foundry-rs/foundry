@@ -80,3 +80,57 @@ function returnLongBinaryOp() returns (bytes32) {
     return
         bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
+
+contract Orchestrator {
+    function test() public {
+        uint256 globalBuyAmount =
+            Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(
+            state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount
+        );
+
+        {
+            u.executionData =
+                _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
+            u.executionData = _transferExecution(
+                address(paymentToken), address(0xabcd), 1 ether
+            );
+        }
+
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)),
+            buyToken: IERC20(address(0)),
+            minAmountOut: 0
+        });
+        ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
+            recipient: payable(address(0)), buyToken: IERC20(address(0)), minAmountOut: 0
+        });
+
+        ISignatureTransfer.PermitTransferFrom memory permit =
+            defaultERC20PermitTransfer(address(fromToken()), amount(), 0 /* nonce */);
+        ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
+            address(fromToken()), amount(), 0 /* nonce */
+        );
+
+        // https://github.com/foundry-rs/foundry/issues/11834
+        CurrenciesOutOfOrderOrEqual.selector.revertWith(
+            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1)
+        );
+
+        nestedStruct.withCalls.thatCause.aBreak(param1, param2, param3 // long line
+        );
+
+        // https://github.com/foundry-rs/foundry/issues/11835
+        feeGrowthInside0X128 =
+            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128
+            - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/11834
+    function test_ffi_fuzz_addLiquidity_defaultPool(
+            IPoolManager.ModifyLiquidityParams memory paramSeed
+    ) public {
+        a = 1;
+    }
+}

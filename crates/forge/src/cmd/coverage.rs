@@ -1,12 +1,9 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
-use crate::{
-    MultiContractRunnerBuilder,
-    coverage::{
-        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-        DebugReporter, ItemAnchor, LcovReporter,
-        analysis::{SourceAnalysis, SourceFiles},
-        anchors::find_anchors,
-    },
+use crate::coverage::{
+    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+    DebugReporter, ItemAnchor, LcovReporter,
+    analysis::{SourceAnalysis, SourceFiles},
+    anchors::find_anchors,
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
@@ -16,17 +13,13 @@ use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
-    compilers::multi::MultiCompiler,
 };
 use foundry_config::Config;
 use foundry_evm::opts::EvmOpts;
 use foundry_evm_core::ic::IcPcMap;
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -105,7 +98,7 @@ impl CoverageArgs {
         let report = self.prepare(&project.paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&output, report, Arc::new(config), evm_opts).await
+        self.collect(project.root(), &output, report, config, evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -251,29 +244,18 @@ impl CoverageArgs {
     #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
+        project_root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Arc<Config>,
+        config: Config,
         evm_opts: EvmOpts,
     ) -> Result<()> {
-        let verbosity = evm_opts.verbosity;
-
-        // Build the contract runner
-        let env = evm_opts.evm_env().await?;
-        let runner = MultiContractRunnerBuilder::new(config.clone())
-            .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .set_coverage(true)
-            .build::<MultiCompiler>(output, env, evm_opts)?;
-
-        let known_contracts = runner.known_contracts.clone();
-
         let filter = self.test.filter(&config)?;
-        let outcome = self.test.run_tests(runner, config, verbosity, &filter, output).await?;
-
+        let outcome =
+            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
         outcome.ensure_ok(false)?;
+
+        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {
