@@ -94,9 +94,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.foundry/cache
-            ~/.config/.foundry/cache
-          key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
+            ${{ runner.os == 'Windows' && format('{0}\\.foundry\\cache', env.USERPROFILE) || '~/.foundry/cache' }}
+            ${{ runner.os == 'Windows' && format('{0}\\.config\\.foundry\\cache', env.USERPROFILE) || '~/.config/.foundry/cache' }}
+          key: rpc-cache-${{ runner.os }}-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
+          restore-keys: |
+            rpc-cache-${{ runner.os }}-
+            rpc-cache-
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
@@ -105,6 +108,7 @@ jobs:
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
       - name: nextest - List contents of ~/.foundry/cache
+        if: runner.os == 'Linux'
         run: cat ~/.foundry/cache/signatures
       - name: Test
         env:
@@ -112,5 +116,6 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
-      - name: nextest - List contents of ~/.foundry/cache after tests exec
+      - name: nextest - List contents of ~/.foundry/cache after exec
+        if: runner.os == 'Linux'
         run: cat ~/.foundry/cache/signatures
