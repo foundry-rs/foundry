@@ -20,7 +20,7 @@ use std::{
     fs::{self, File},
     io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
-    process::{ChildStdin, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::{
         Arc, LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -789,7 +789,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -804,7 +804,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -902,7 +902,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    stdin: Option<Vec<u8>>,
     /// If true, command output is redacted.
     redact_output: bool,
 }
@@ -954,8 +954,9 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
-        self.stdin_fun = Some(Box::new(fun));
+    /// Set the stdin bytes for the next command.
+    pub fn stdin(&mut self, stdin: impl Into<Vec<u8>>) -> &mut Self {
+        self.stdin = Some(stdin.into());
         self
     }
 
@@ -1135,8 +1136,8 @@ impl TestCommand {
         test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
-        if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap());
+        if let Some(bytes) = self.stdin.take() {
+            child.stdin.take().unwrap().write_all(&bytes)?;
         }
         child.wait_with_output()
     }

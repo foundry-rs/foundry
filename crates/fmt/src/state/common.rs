@@ -147,7 +147,7 @@ impl<'ast> State<'_, 'ast> {
         let quote = match self.config.quote_style {
             config::QuoteStyle::Double => '\"',
             config::QuoteStyle::Single => '\'',
-            config::QuoteStyle::Preserve => self.char_at(quote_pos),
+            config::QuoteStyle::Preserve => self.char_at(quote_pos).unwrap_or_default(),
         };
         debug_assert!(matches!(quote, '\"' | '\''), "{quote:?}");
         let s = solar::parse::interface::data_structures::fmt::from_fn(move |f| {
@@ -546,7 +546,7 @@ impl<'ast> State<'_, 'ast> {
                                 self.s.offset(offset);
                             }
                         } else if style.is_isolated() {
-                            Separator::Space.print(&mut self.s, &mut self.cursor);
+                            self.print_sep_unhandled(Separator::Space);
                             self.s.offset(offset);
                         }
                     }
@@ -555,7 +555,7 @@ impl<'ast> State<'_, 'ast> {
                             self.zerobreak();
                             self.s.offset(offset);
                         } else if self.cursor.enabled {
-                            Separator::Space.print(&mut self.s, &mut self.cursor);
+                            self.print_sep_unhandled(Separator::Space);
                             self.s.offset(offset);
                             self.cursor.advance_to(block_lo, true);
                         }
@@ -766,10 +766,6 @@ impl ListFormat {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
-    pub(crate) fn has_indentation(&self) -> bool {
-        !self.no_ind
-    }
-
     pub(crate) fn breaks_with_comments(&self) -> bool {
         self.breaks_cmnts
     }
@@ -861,6 +857,7 @@ impl ListFormat {
 
 /// Formatting style for code blocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(dead_code)]
 pub(crate) enum BlockFormat {
     Regular,
     /// Attempts to fit all elements in one line, before breaking consistently. Flags whether to

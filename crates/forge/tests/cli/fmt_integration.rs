@@ -2,7 +2,6 @@ use foundry_test_utils::util::ExtTester;
 
 /// Test `forge fmt` immutability.
 /// TODO: make sure original fmt is not changed after projects format and rev available.
-/// TODO: enable win test after <https://github.com/foundry-rs/foundry/issues/11841> fixed.
 macro_rules! fmt_test {
     ($name:ident, $org:expr, $repo:expr, $commit:expr) => {
         #[test]
@@ -25,5 +24,4 @@ fmt_test!(
     "e41f2b9b7ed677ca03ff7bd7221a4e2fdd55504f"
 );
 
-#[cfg(not(windows))]
 fmt_test!(fmt_0x_settler, "0xProject", "0x-settler", "a388c8251ab6c4bedce1641b31027d7b1136daef");

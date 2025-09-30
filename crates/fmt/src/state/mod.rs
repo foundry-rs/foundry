@@ -95,28 +95,6 @@ impl CallStack {
     pub(crate) fn is_chain(&self) -> bool {
         self.last().is_some_and(|call| call.is_chained())
     }
-
-    /// Calculates the total size of the call sequence so far.
-    pub(crate) fn size(&self) -> usize {
-        let Some((first, rest)) = self.split_first() else {
-            return 0;
-        };
-
-        // The first call only adds its name and an opening parenthesis.
-        let first_size = first.size + 1;
-
-        // For all subsequent chainned calls, add the `.` separator.
-        let rest_size: usize = rest.iter().fold(0, |acc, call| {
-            let separator = if matches!(call.kind, CallContextKind::Chained) { 1 } else { 0 };
-            acc + separator + call.size + 1
-        });
-
-        first_size + rest_size
-    }
-
-    pub(crate) fn precall_size(&self) -> usize {
-        self.precall_size
-    }
 }
 
 pub(super) struct State<'sess, 'ast> {
@@ -129,6 +107,7 @@ pub(super) struct State<'sess, 'ast> {
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
+    has_crlf: bool,
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
     named_call_expr: bool,
@@ -170,6 +149,10 @@ impl SourcePos {
         self.enabled = enabled;
     }
 
+    pub(super) fn next_line(&mut self, is_at_crlf: bool) {
+        self.pos += if is_at_crlf { 2 } else { 1 };
+    }
+
     pub(super) fn span(&self, to: BytePos) -> Span {
         Span::new(self.pos, to)
     }
@@ -183,14 +166,15 @@ pub(super) enum Separator {
 }
 
 impl Separator {
-    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos) {
+    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos, is_at_crlf: bool) {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
-        cursor.advance(1);
+
+        cursor.next_line(is_at_crlf);
     }
 }
 
@@ -217,6 +201,7 @@ impl<'sess> State<'sess, '_> {
             config,
             inline_config,
             cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
+            has_crlf: false,
             contract: None,
             single_line_stmt: None,
             named_call_expr: false,
@@ -226,6 +211,25 @@ impl<'sess> State<'sess, '_> {
             block_depth: 0,
             call_stack: CallStack::default(),
         }
+    }
+
+    /// Checks a span of the source for a carriage return (`\r`) to determine if the file
+    /// uses CRLF line endings.
+    ///
+    /// If a `\r` is found, `self.has_crlf` is set to `true`. This is intended to be
+    /// called once at the beginning of the formatting process for efficiency.
+    fn check_crlf(&mut self, span: Span) {
+        if let Ok(snip) = self.sm.span_to_snippet(span)
+            && snip.contains('\r')
+        {
+            self.has_crlf = true;
+        }
+    }
+
+    /// Checks if the cursor is currently positioned at the start of a CRLF sequence (`\r\n`).
+    /// The check is only meaningful if `self.has_crlf` is true.
+    fn is_at_crlf(&self) -> bool {
+        self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
     fn space_left(&self) -> usize {
@@ -272,9 +276,9 @@ impl<'sess> State<'sess, '_> {
 
 /// Span to source.
 impl State<'_, '_> {
-    fn char_at(&self, pos: BytePos) -> char {
+    fn char_at(&self, pos: BytePos) -> Option<char> {
         let res = self.sm.lookup_byte_offset(pos);
-        res.sf.src[res.pos.to_usize()..].chars().next().unwrap()
+        res.sf.src.get(res.pos.to_usize()..)?.chars().next()
     }
 
     fn print_span(&mut self, span: Span) {
@@ -340,11 +344,19 @@ impl State<'_, '_> {
     }
 
     fn print_sep(&mut self, sep: Separator) {
-        if self.handle_span(self.cursor.span(self.cursor.pos + BytePos(1)), true) {
+        if self.handle_span(
+            self.cursor.span(self.cursor.pos + if self.is_at_crlf() { 2 } else { 1 }),
+            true,
+        ) {
             return;
         }
 
-        sep.print(&mut self.s, &mut self.cursor);
+        self.print_sep_unhandled(sep);
+    }
+
+    fn print_sep_unhandled(&mut self, sep: Separator) {
+        let is_at_crlf = self.is_at_crlf();
+        sep.print(&mut self.s, &mut self.cursor, is_at_crlf);
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
@@ -445,11 +457,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { current_ind: self.ind, ..Default::default() }
-    }
-
-    fn cmnt_config_skip_ws(&self) -> CommentConfig {
-        CommentConfig { current_ind: self.ind, skip_blanks: Some(Skip::All), ..Default::default() }
+        CommentConfig { ..Default::default() }
     }
 
     fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
@@ -698,7 +706,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(1);
+                                this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
@@ -732,7 +740,7 @@ impl<'sess> State<'sess, '_> {
                         let hb = |this: &mut Self| {
                             this.hardbreak();
                             if pos.is_last {
-                                this.cursor.advance(1);
+                                this.cursor.next_line(this.is_at_crlf());
                             }
                         };
                         if line.is_empty() {
@@ -808,7 +816,7 @@ impl<'sess> State<'sess, '_> {
                 // Pre-requisite: ensure that blank links are printed at the beginning of new line.
                 if !self.last_token_is_break() && !self.is_bol_or_only_ind() {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(1);
+                    self.cursor.next_line(self.is_at_crlf());
                 }
 
                 // We need to do at least one, possibly two hardbreaks.
@@ -820,10 +828,10 @@ impl<'sess> State<'sess, '_> {
                 };
                 if twice {
                     config.hardbreak(&mut self.s);
-                    self.cursor.advance(1);
+                    self.cursor.next_line(self.is_at_crlf());
                 }
                 config.hardbreak(&mut self.s);
-                self.cursor.advance(1);
+                self.cursor.next_line(self.is_at_crlf());
             }
         }
     }
@@ -933,14 +941,12 @@ enum Skip {
     All,
     Leading { resettable: bool },
     Trailing,
-    LeadingNoReset,
 }
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct CommentConfig {
     // Config: all
     skip_blanks: Option<Skip>,
-    current_ind: isize,
     offset: isize,
 
     // Config: isolated comments
@@ -975,11 +981,6 @@ impl CommentConfig {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break = true;
-        self
-    }
-
-    pub(crate) fn iso_no_break(mut self) -> Self {
-        self.iso_no_break = true;
         self
     }
 
