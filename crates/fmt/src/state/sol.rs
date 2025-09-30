@@ -18,8 +18,8 @@ use std::{collections::HashMap, fmt::Debug};
 
 #[rustfmt::skip]
 macro_rules! get_span {
-    () => { |value| Some(value.span) };
-    (()) => { |value| Some(value.span()) };
+    () => { |value| value.span };
+    (()) => { |value| value.span() };
 }
 
 /// Language-specific pretty printing: Solidity.
@@ -1217,11 +1217,13 @@ impl<'ast> State<'_, 'ast> {
                 span.lo(),
                 span.hi(),
                 |this, expr| {
-                    if let Some(expr) = expr {
+                    if let Some(expr) = expr.data.as_ref() {
                         this.print_expr(expr);
+                    } else {
+                        this.print_comments(var.span.hi(), CommentConfig::skip_ws().no_breaks());
                     }
                 },
-                |e| e.as_deref().map(|e| e.span),
+                |e| if let Some(expr) = e.as_ref().data { expr.span } else { e.span },
                 ListFormat::compact().break_single(is_binary_expr(&expr.kind)),
             ),
             ast::ExprKind::TypeCall(ty) => {
@@ -1669,7 +1671,7 @@ impl<'ast> State<'_, 'ast> {
                 s.print_expr(arg.value);
                 s.end();
             },
-            |arg| Some(arg.name.span.until(arg.value.span)),
+            |arg| arg.name.span.until(arg.value.span),
             list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
         );
         self.word("}");
@@ -1797,7 +1799,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_multi_decl_stmt(
         &mut self,
         span: Span,
-        vars: &'ast [Option<ast::VariableDefinition<'ast>>],
+        vars: &'ast [ast::Spanned<Option<ast::VariableDefinition<'ast>>>],
         init_expr: &'ast ast::Expr<'ast>,
     ) {
         let space_left = self.space_left();
@@ -1809,13 +1811,13 @@ impl<'ast> State<'_, 'ast> {
             span.lo(),
             init_expr.span.lo(),
             |this, var| {
-                // NOTE(rusowsky): unless we add more spans to solar, it is not possible to print
-                // comments between the commas of unhandled vars
-                if let Some(var) = var {
+                if let Some(var) = var.as_ref().data {
                     this.print_var(var, true);
+                } else {
+                    this.print_comments(var.span.hi(), CommentConfig::skip_ws().no_breaks());
                 }
             },
-            |v| v.as_ref().map(|v| v.span),
+            |v| if let Some(var) = v.as_ref().data { var.span } else { v.span },
             ListFormat::consistent(),
         );
         self.end();
@@ -1824,7 +1826,7 @@ impl<'ast> State<'_, 'ast> {
         // '(' + var + ', ' + var + ')' + ' ='
         let vars_size = vars
             .iter()
-            .fold(0, |acc, v| acc + v.as_ref().map_or(0, |v| self.estimate_size(v.span)) + 2)
+            .fold(0, |acc, v| acc + v.data.as_ref().map_or(0, |v| self.estimate_size(v.span)) + 2)
             + 2;
         self.call_stack.add_precall(vars_size);
 

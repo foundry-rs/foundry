@@ -9144,8 +9144,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bacae15e3ff9a01747580d0ee9816ff6a51fa26f190cdc51b46263d555f7333b"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9161,8 +9160,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbf8d32cb292fcb5aab4158bd3215f7e3515424acfe780e54283bd520abf395a"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -9177,8 +9175,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4f0368370d4e7bc45586dfa545867f6685c1d8ec46a29843031f0563c88e4ff"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "colorchoice",
  "strum 0.27.2",
@@ -9187,8 +9184,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e246a9af3cc34b40e7612b600a5495f70768bdd365f9fa338d64afb33a59a96b"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9202,8 +9198,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77e2e4dec38bc1940946f8d303260920f57022dc5a558a3786c3b83e121c23c6"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "annotate-snippets 0.12.4",
  "anstream",
@@ -9211,7 +9206,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9222,7 +9217,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9230,8 +9225,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b3d7b35daa205064e7965584b3144b73b38acce2257c21d01e351b8f8812d7"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9241,13 +9235,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54766e7b5696cdfad50c0ea325035dd106ed2377635f1eb45db3043b6d117373"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.4",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9263,8 +9256,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979354fd20a7ee6229d66d49a3c3ca1e37be0e780b5b6aa864109c327142b529"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
