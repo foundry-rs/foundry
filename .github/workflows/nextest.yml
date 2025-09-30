@@ -105,10 +105,12 @@ jobs:
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
       - name: nextest - List contents of ~/.foundry/cache
-        run: ls -R ~/.foundry/cache
+        run: cat ~/.foundry/cache/signatures
       - name: Test
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
+      - name: nextest - List contents of ~/.foundry/cache after tests exec
+        run: cat ~/.foundry/cache/signatures
