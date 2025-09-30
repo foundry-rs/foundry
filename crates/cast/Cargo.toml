@@ -27,7 +27,6 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
-foundry-evm-core.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 forge-fmt.workspace = true

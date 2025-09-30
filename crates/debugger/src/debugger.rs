@@ -3,7 +3,7 @@
 use crate::{DebugNode, DebuggerBuilder, ExitReason, tui::TUI};
 use alloy_primitives::map::AddressHashMap;
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
+use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
 use std::path::Path;
 

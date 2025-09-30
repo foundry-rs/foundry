@@ -4,7 +4,7 @@ use alloy_evm::{
     precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
 
-use foundry_evm_core::either_evm::EitherEvm;
+use foundry_evm::core::either_evm::EitherEvm;
 use op_revm::OpContext;
 use revm::{Inspector, precompile::Precompile};
 use std::fmt::Debug;
@@ -41,7 +41,7 @@ mod tests {
     use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
-    use foundry_evm_core::either_evm::EitherEvm;
+    use foundry_evm::core::either_evm::EitherEvm;
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};

@@ -23,7 +23,6 @@ pub mod compile;
 pub mod constants;
 pub mod contracts;
 pub mod errors;
-pub mod evm;
 pub mod fs;
 pub mod iter;
 pub mod mapping_slots;

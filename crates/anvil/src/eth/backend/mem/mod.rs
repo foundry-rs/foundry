@@ -99,6 +99,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::{
@@ -107,7 +108,6 @@ use foundry_evm::{
     },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{

@@ -34,11 +34,10 @@ use alloy_rpc_types::{
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     SELECTOR_LEN, TransactionMaybeSigned,
-    evm::Breakpoints,
     mapping_slots::{MappingSlots, step as mapping_step},
 };
 use foundry_evm_core::{
-    InspectorExt,
+    Breakpoints, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},

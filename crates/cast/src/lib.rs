@@ -35,7 +35,7 @@ use foundry_common::{
     fs, get_pretty_tx_receipt_attr, shell,
 };
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::ic::decode_instructions;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;

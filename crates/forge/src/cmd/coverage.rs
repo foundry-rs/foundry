@@ -15,8 +15,7 @@ use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
 };
 use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
-use foundry_evm_core::ic::IcPcMap;
+use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::path::{Path, PathBuf};

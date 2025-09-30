@@ -32,7 +32,6 @@ use foundry_cli::{
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
-    evm::Breakpoints,
     shell,
 };
 use foundry_compilers::ArtifactId;
@@ -45,6 +44,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
+    core::Breakpoints,
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
