@@ -208,13 +208,15 @@ pub struct MultiWalletOpts {
 
     /// Use AWS Key Management Service.
     ///
-    /// Ensure either one of AWS_KMS_KEY_IDS (comma-separated) or AWS_KMS_KEY_ID environment variables are set.
+    /// Ensure either one of AWS_KMS_KEY_IDS (comma-separated) or AWS_KMS_KEY_ID environment
+    /// variables are set.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 
     /// Use Google Cloud Key Management Service.
     ///
-    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION, GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
+    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION,
+    /// GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
     ///
     /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
