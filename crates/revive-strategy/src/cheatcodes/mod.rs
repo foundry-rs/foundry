@@ -11,7 +11,10 @@ use foundry_cheatcodes::{
     Broadcast, BroadcastableTransactions, CheatcodeInspectorStrategy,
     CheatcodeInspectorStrategyContext, CheatcodeInspectorStrategyRunner, CheatsConfig, CheatsCtxt,
     CommonCreateInput, DealRecord, Ecx, EvmCheatcodeInspectorStrategyRunner, Result,
-    Vm::{dealCall, getNonce_0Call, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall, warpCall},
+    Vm::{
+        dealCall, getNonce_0Call, loadCall, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall,
+        warpCall,
+    },
 };
 use foundry_common::sh_err;
 use foundry_compilers::resolc::dual_compiled_contracts::DualCompiledContracts;
@@ -245,6 +248,22 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
                 set_timestamp(newTimestamp, ccx.ecx);
 
                 Ok(Default::default())
+            }
+            t if using_pvm && is::<loadCall>(t) => {
+                tracing::info!(cheatcode = ?cheatcode.as_debug() , using_pvm = ?using_pvm);
+                let &loadCall { target, slot } = cheatcode.as_any().downcast_ref().unwrap();
+                let target_address_h160 = H160::from_slice(target.as_slice());
+                let storage_value = execute_with_externalities(|externalities| {
+                    externalities.execute_with(|| {
+                        Pallet::<Runtime>::get_storage(target_address_h160, slot.into())
+                    })
+                });
+                let result = storage_value
+                    .ok()
+                    .flatten()
+                    .map(|b| B256::from_slice(&b))
+                    .unwrap_or(B256::ZERO);
+                Ok(result.abi_encode())
             }
             // Not custom, just invoke the default behavior
             _ => cheatcode.dyn_apply(ccx, executor),

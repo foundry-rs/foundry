@@ -1,6 +1,6 @@
 //! Anvil is a fast local Ethereum development node.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::{
     api_server::ApiHandle,

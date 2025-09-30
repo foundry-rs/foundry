@@ -4,11 +4,7 @@
 
 use frame_support::{runtime, traits::FindAuthor, weights::constants::WEIGHT_REF_TIME_PER_SECOND};
 use pallet_revive::AccountId32Mapper;
-use polkadot_sdk::{
-    polkadot_sdk_frame::{log, runtime::prelude::*},
-    sp_runtime::AccountId32,
-    *,
-};
+use polkadot_sdk::{polkadot_sdk_frame::runtime::prelude::*, sp_runtime::AccountId32, *};
 
 pub type Balance = u128;
 pub type AccountId = pallet_revive::AccountId32Mapper<Runtime>;
