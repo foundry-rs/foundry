@@ -4642,6 +4642,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
+ "snapbox",
  "solar-compiler",
  "soldeer-core",
  "tempfile",
