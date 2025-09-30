@@ -42,6 +42,7 @@ futures.workspace = true
 indicatif.workspace = true
 itertools.workspace = true
 mimalloc = { workspace = true, optional = true }
+path-slash.workspace = true
 rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
