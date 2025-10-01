@@ -890,7 +890,7 @@ impl WorkerCorpus {
 
     /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
     /// of other workers.
-    fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
+    fn distribute(&mut self, num_workers: u32) -> eyre::Result<()> {
         if self.id != 0 || self.worker_dir.is_none() {
             return Ok(());
         }
@@ -945,7 +945,7 @@ impl WorkerCorpus {
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
     pub fn sync(
         &mut self,
-        num_workers: usize,
+        num_workers: u32,
         executor: &Executor,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,

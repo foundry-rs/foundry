@@ -258,6 +258,9 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
+        // Set the number of threads in fuzz config.
+        config.fuzz.threads = config.threads;
+
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings

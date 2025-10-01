@@ -89,14 +89,12 @@ impl FuzzedExecutor {
 
         // Use single worker for deterministic behavior when replaying persisted failures
         let persisted_failure = self.persisted_failure.take();
-        let num_workers =
-            if persisted_failure.is_some() { 1 } else { rayon::current_num_threads() as u32 };
-        let workers = (0..num_workers)
+        let num_workers = self.num_workers();
+        let workers = (0..num_workers as u32)
             .into_par_iter()
             .map(|worker_id| {
                 self.run_worker(
                     worker_id,
-                    num_workers as usize,
                     func,
                     fuzz_fixtures,
                     deployed_libs,
@@ -265,7 +263,6 @@ impl FuzzedExecutor {
     fn run_worker(
         &self,
         worker_id: u32,
-        num_workers: usize,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
@@ -298,8 +295,8 @@ impl FuzzedExecutor {
         )?;
 
         let mut worker = FuzzWorker::new(worker_id);
-        let max_traces_to_collect =
-            std::cmp::max(1, self.config.gas_report_samples as usize / num_workers) as usize;
+        let num_workers = self.num_workers();
+        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples / num_workers);
 
         // Calculate worker-specific run limit when not using timer
         let worker_runs = if self.config.timeout.is_some() {
@@ -307,8 +304,8 @@ impl FuzzedExecutor {
             u32::MAX
         } else {
             // Distribute runs evenly across workers, with worker 0 handling any remainder
-            let base_runs = self.config.runs / num_workers as u32;
-            let remainder = self.config.runs % num_workers as u32;
+            let base_runs = self.config.runs / num_workers;
+            let remainder = self.config.runs % num_workers;
             if worker_id == 0 { base_runs + remainder } else { base_runs }
         };
 
@@ -401,7 +398,7 @@ impl FuzzedExecutor {
                         }
 
                         if let Some(call_traces) = case.traces {
-                            if worker.traces.len() == max_traces_to_collect {
+                            if worker.traces.len() == max_traces_to_collect as usize {
                                 worker.traces.pop();
                             }
                             worker.traces.push(call_traces);
@@ -473,6 +470,17 @@ impl FuzzedExecutor {
                 self.config.dictionary,
                 deployed_libs,
             )
+        }
+    }
+
+    /// Determines the number of workers to run
+    fn num_workers(&self) -> u32 {
+        if self.persisted_failure.is_some() {
+            1
+        } else if let Some(threads) = self.config.threads {
+            threads as u32
+        } else {
+            rayon::current_num_threads() as u32
         }
     }
 }
