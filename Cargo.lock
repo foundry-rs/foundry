@@ -4513,8 +4513,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.19.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c7fb5a0607073afcecd346d9ef91c1d80f4396122ff3bb4b057950dd87adf5f"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=main#c2b754e8b31e9f18201f6548d608fa96df780a81"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4545,8 +4544,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.19.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368b0790f179b145112bb6aff960cc49d5ae229ee00466afcf30e59d16615b7a"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=main#c2b754e8b31e9f18201f6548d608fa96df780a81"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4555,8 +4553,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.19.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efc783e3c9a2ea290e774d7f0b3e0bbb7b4b1ec4079339416d8009c6420b9792"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=main#c2b754e8b31e9f18201f6548d608fa96df780a81"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4576,8 +4573,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.19.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65e68d9cefbd8d80c12457bae42a914bad3cbdb6959acea38d515ab277fa57a9"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=main#c2b754e8b31e9f18201f6548d608fa96df780a81"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4591,8 +4587,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.19.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f46ea0c05447997dfa471033b97781f0c9d1b2df426c6473b3c3b9134eadac"
+source = "git+https://github.com/foundry-rs/compilers.git?branch=main#c2b754e8b31e9f18201f6548d608fa96df780a81"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5509,7 +5504,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5763,7 +5758,7 @@ checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "arbitrary",
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -7686,7 +7681,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.16",
  "tokio",
  "tracing",
@@ -7723,7 +7718,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -9219,7 +9214,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9560,7 +9555,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
