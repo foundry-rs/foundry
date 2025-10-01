@@ -129,9 +129,9 @@ impl FmtArgs {
                     let formatted = forge_fmt::format_ast(gcx, source_unit, fmt_config.clone())?;
                     let from_stdin = path.is_none();
 
-                    // Return formatted code when read from stdin without check or raw switch.
+                    // Return formatted code when read from stdin and raw enabled.
                     // <https://github.com/foundry-rs/foundry/issues/11871>
-                    if from_stdin && !self.check && !self.raw {
+                    if from_stdin && self.raw {
                         return Some(Ok(formatted));
                     }
 
