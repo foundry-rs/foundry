@@ -360,7 +360,7 @@ impl State<'_, '_> {
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
-        if self.handle_span(ident.span, false) {
+        if self.handle_span(ident.span, true) {
             return;
         }
 
