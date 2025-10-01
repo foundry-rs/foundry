@@ -4,7 +4,7 @@ use eyre::Result;
 use foundry_common::{
     abi::{get_error, get_event, get_func},
     fs,
-    selectors::{SelectorKind, SourcifyClient},
+    selectors::{OpenChainClient, SelectorKind},
 };
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -147,7 +147,7 @@ impl SignaturesCache {
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `https://sourcify.dev` or a local cache.
+/// `https://openchain.xyz` or a local cache.
 #[derive(Clone, Debug)]
 pub struct SignaturesIdentifier(Arc<SignaturesIdentifierInner>);
 
@@ -157,8 +157,8 @@ struct SignaturesIdentifierInner {
     cache: RwLock<SignaturesCache>,
     /// Location where to save the signature cache.
     cache_path: Option<PathBuf>,
-    /// The Sourcify client to fetch signatures from. `None` if disabled on construction.
-    client: Option<SourcifyClient>,
+    /// The OpenChain client to fetch signatures from. `None` if disabled on construction.
+    client: Option<OpenChainClient>,
 }
 
 impl SignaturesIdentifier {
@@ -175,9 +175,9 @@ impl SignaturesIdentifier {
     /// Creates a new `SignaturesIdentifier`.
     ///
     /// - `cache_dir` is the cache directory to store the signatures.
-    /// - `offline` disables the Sourcify client.
+    /// - `offline` disables the OpenChain client.
     pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
-        let client = if !offline { Some(SourcifyClient::new()?) } else { None };
+        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
         let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
             let path = cache_dir.join("signatures");
             let cache = SignaturesCache::load(&path);
