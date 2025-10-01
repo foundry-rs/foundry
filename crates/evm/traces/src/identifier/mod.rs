@@ -16,6 +16,7 @@ mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
 
 /// An address identified by a [`TraceIdentifier`].
+#[derive(Debug)]
 pub struct IdentifiedAddress<'a> {
     /// The address.
     pub address: Address,

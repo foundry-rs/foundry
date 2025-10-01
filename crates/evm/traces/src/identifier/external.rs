@@ -40,7 +40,6 @@ impl ExternalIdentifier {
 
         let config = match config.get_etherscan_config_with_chain(chain) {
             Ok(Some(config)) => {
-                trace!(target: "traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
                 chain = config.chain;
                 Some(config)
             }
@@ -55,9 +54,17 @@ impl ExternalIdentifier {
         };
 
         let mut fetchers = Vec::<Arc<dyn ExternalFetcherT>>::new();
-        fetchers.push(Arc::new(SourcifyFetcher::new(chain.unwrap_or_default())));
+        if let Some(chain) = chain {
+            trace!(target: "traces::external", ?chain, "using sourcify identifier");
+            fetchers.push(Arc::new(SourcifyFetcher::new(chain)));
+        }
         if let Some(config) = config {
+            trace!(target: "traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
             fetchers.push(Arc::new(EtherscanFetcher::new(config.into_client()?)));
+        }
+        if fetchers.is_empty() {
+            trace!(target: "traces::external", "no fetchers enabled");
+            return Ok(None);
         }
 
         Ok(Some(Self { fetchers, contracts: Default::default() }))
@@ -141,11 +148,10 @@ impl TraceIdentifier for ExternalIdentifier {
         if to_fetch.is_empty() {
             return identities;
         }
+        trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
 
-        let fetchers = self
-            .fetchers
-            .iter()
-            .map(|fetcher| ExternalFetcher::new(fetcher.clone(), Duration::from_secs(1), 5));
+        let fetchers =
+            self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
         let fetched_identities = foundry_common::block_on(
             futures::stream::select_all(fetchers)
                 .map(|(address, value)| {
@@ -164,6 +170,7 @@ impl TraceIdentifier for ExternalIdentifier {
                 })
                 .collect::<Vec<IdentifiedAddress<'_>>>(),
         );
+        trace!(target: "traces::external", "fetched {} addresses", fetched_identities.len());
 
         identities.extend(fetched_identities);
         identities
@@ -192,13 +199,13 @@ struct ExternalFetcher {
 }
 
 impl ExternalFetcher {
-    fn new(fetcher: Arc<dyn ExternalFetcherT>, timeout: Duration, concurrency: usize) -> Self {
+    fn new(fetcher: Arc<dyn ExternalFetcherT>, to_fetch: &[Address]) -> Self {
         Self {
-            fetcher,
-            timeout,
+            timeout: fetcher.timeout(),
             backoff: None,
-            concurrency,
-            queue: Vec::new(),
+            concurrency: fetcher.concurrency(),
+            fetcher,
+            queue: to_fetch.to_vec(),
             in_progress: FuturesUnordered::new(),
         }
     }
@@ -288,6 +295,8 @@ enum FetcherKind {
 #[async_trait::async_trait]
 trait ExternalFetcherT: Send + Sync {
     fn kind(&self) -> FetcherKind;
+    fn timeout(&self) -> Duration;
+    fn concurrency(&self) -> usize;
     fn invalid_api_key(&self) -> &AtomicBool;
     async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError>;
 }
@@ -307,6 +316,14 @@ impl EtherscanFetcher {
 impl ExternalFetcherT for EtherscanFetcher {
     fn kind(&self) -> FetcherKind {
         FetcherKind::Etherscan
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+
+    fn concurrency(&self) -> usize {
+        5
     }
 
     fn invalid_api_key(&self) -> &AtomicBool {
@@ -340,6 +357,14 @@ impl ExternalFetcherT for SourcifyFetcher {
         FetcherKind::Sourcify
     }
 
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+
+    fn concurrency(&self) -> usize {
+        5
+    }
+
     fn invalid_api_key(&self) -> &AtomicBool {
         &self.invalid_api_key
     }
@@ -349,6 +374,8 @@ impl ExternalFetcherT for SourcifyFetcher {
         let url = format!("{url}/{address}?fields=abi,compilation,proxyResolution", url = self.url);
         let response = self.client.get(url).send().await?;
         let code = response.status();
+        let response: SourcifyResponse = response.json().await?;
+        trace!(target: "traces::external", "Sourcify response: {response:#?}");
         match code.as_u16() {
             // Not verified.
             404 => return Ok(None),
@@ -356,7 +383,6 @@ impl ExternalFetcherT for SourcifyFetcher {
             429 => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
-        let response: SourcifyResponse = response.json().await?;
         match response {
             SourcifyResponse::Success(metadata) => Ok(Some(metadata.into())),
             SourcifyResponse::Error(error) => Err(EtherscanError::Unknown(format!("{error:#?}"))),
