@@ -10,9 +10,13 @@ use crate::{
 };
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
-use solar::parse::{
-    ast::{self, Span},
-    interface::BytePos,
+use solar::{
+    ast::BoxSlice,
+    interface::SpannedOption,
+    parse::{
+        ast::{self, Span},
+        interface::BytePos,
+    },
 };
 use std::{collections::HashMap, fmt::Debug};
 
@@ -686,7 +690,10 @@ impl<'ast> State<'_, 'ast> {
         // 1. exactly matches the name of a base contract as declared in the `contract is`;
         // this does not account for inheritance;
         let is_contract_base = self.contract.is_some_and(|contract| {
-            contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
+            contract
+                .bases
+                .iter()
+                .any(|contract_base| contract_base.name.to_string() == modifier.name.to_string())
         });
         // 2. assume that title case names in constructors are bases.
         // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
@@ -1216,14 +1223,17 @@ impl<'ast> State<'_, 'ast> {
                 exprs,
                 span.lo(),
                 span.hi(),
-                |this, expr| {
-                    if let Some(expr) = expr.data.as_ref() {
-                        this.print_expr(expr);
-                    } else {
-                        this.print_comments(var.span.hi(), CommentConfig::skip_ws().no_breaks());
+                |this, expr| match expr.as_ref() {
+                    SpannedOption::Some(expr) => this.print_expr(expr),
+                    SpannedOption::None(span) => {
+                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
                     }
                 },
-                |e| if let Some(expr) = e.as_ref().data { expr.span } else { e.span },
+                |expr| match expr.as_ref() {
+                    SpannedOption::Some(expr) => expr.span,
+                    // Manually handled by printing the comment when `None`
+                    SpannedOption::None(..) => Span::DUMMY,
+                },
                 ListFormat::compact().break_single(is_binary_expr(&expr.kind)),
             ),
             ast::ExprKind::TypeCall(ty) => {
@@ -1799,7 +1809,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_multi_decl_stmt(
         &mut self,
         span: Span,
-        vars: &'ast [ast::Spanned<Option<ast::VariableDefinition<'ast>>>],
+        vars: &'ast BoxSlice<'ast, SpannedOption<ast::VariableDefinition<'ast>>>,
         init_expr: &'ast ast::Expr<'ast>,
     ) {
         let space_left = self.space_left();
@@ -1810,24 +1820,26 @@ impl<'ast> State<'_, 'ast> {
             vars,
             span.lo(),
             init_expr.span.lo(),
-            |this, var| {
-                if let Some(var) = var.as_ref().data {
-                    this.print_var(var, true);
-                } else {
-                    this.print_comments(var.span.hi(), CommentConfig::skip_ws().no_breaks());
+            |this, var| match var {
+                SpannedOption::Some(var) => this.print_var(var, true),
+                SpannedOption::None(span) => {
+                    this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
                 }
             },
-            |v| if let Some(var) = v.as_ref().data { var.span } else { v.span },
+            |var| match var {
+                SpannedOption::Some(var) => var.span,
+                // Manually handled by printing the comment when `None`
+                SpannedOption::None(..) => Span::DUMMY,
+            },
             ListFormat::consistent(),
         );
         self.end();
         self.word(" =");
 
         // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars
-            .iter()
-            .fold(0, |acc, v| acc + v.data.as_ref().map_or(0, |v| self.estimate_size(v.span)) + 2)
-            + 2;
+        let vars_size = vars.iter().fold(0, |acc, var| {
+            acc + var.as_ref().map(|v| self.estimate_size(v.span)).unwrap_or(0) + 2
+        }) + 2;
         self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width

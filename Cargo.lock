@@ -3570,7 +3570,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3829,7 +3829,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7728,7 +7728,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.0",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8439,7 +8439,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9144,7 +9144,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9160,7 +9160,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -9175,7 +9175,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "colorchoice",
  "strum 0.27.2",
@@ -9184,7 +9184,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9198,7 +9198,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "annotate-snippets 0.12.4",
  "anstream",
@@ -9206,7 +9206,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9225,7 +9225,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9235,12 +9235,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.4",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9256,7 +9256,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.7"
-source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#839be245874a5de86d2c7a9332eabdbdf28c9602"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -9555,7 +9555,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -9663,7 +9663,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9683,7 +9683,7 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2111ef44dae28680ae9752bb89409e7310ca33a8c621ebe7b106cf5c928b3ac0"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10927,7 +10927,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
