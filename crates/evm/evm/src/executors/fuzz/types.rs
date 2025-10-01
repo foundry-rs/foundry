@@ -88,7 +88,7 @@ impl SharedFuzzState {
 
         // Simple atomic increment with check
         let current = self.total_runs.fetch_add(1, Ordering::Relaxed);
-        
+
         if current < self.max_runs {
             Some(current + 1)
         } else {

@@ -1,5 +1,5 @@
 use crate::executors::{
-    Executor, FailFast, FuzzTestTimer,
+    Executor, FailFast,
     corpus::WorkerCorpus,
     fuzz::types::{FuzzWorker, SharedFuzzState},
 };
@@ -301,22 +301,38 @@ impl FuzzedExecutor {
         let max_traces_to_collect =
             std::cmp::max(1, self.config.gas_report_samples as usize / num_workers) as usize;
 
-        // For deterministic parallel fuzzing, derive a unique seed for each worker
-        let mut runner = if worker_id == 0 {
-            self.runner.clone()
-        } else if let Some(seed) = self.config.seed {
-            // Derive a worker-specific seed using keccak256(seed || worker_id)
-            let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
-            seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
-            seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
-            let worker_seed = U256::from_be_bytes(keccak256(seed_data).0);
+        // Calculate worker-specific run limit when not using timer
+        let worker_runs = if self.config.timeout.is_some() {
+            // When using timer, workers run as many as possible
+            u32::MAX
+        } else {
+            // Distribute runs evenly across workers, with worker 0 handling any remainder
+            let base_runs = self.config.runs / num_workers as u32;
+            let remainder = self.config.runs % num_workers as u32;
+            if worker_id == 0 { base_runs + remainder } else { base_runs }
+        };
 
-            // Create a new TestRunner with the derived seed
+        let mut runner_config = self.runner.config().clone();
+        // Set the runner cases to worker_runs
+        runner_config.cases = worker_runs;
+
+        let mut runner = if let Some(seed) = self.config.seed {
+            // For deterministic parallel fuzzing, derive a unique seed for each worker
+            let worker_seed = if worker_id == 0 {
+                // Master worker uses the provided seed as is.
+                seed
+            } else {
+                // Derive a worker-specific seed using keccak256(seed || worker_id)
+                let mut seed_data = [0u8; 36]; // 32 bytes for seed + 4 bytes for worker_id
+                seed_data[..32].copy_from_slice(&seed.to_be_bytes::<32>());
+                seed_data[32..36].copy_from_slice(&worker_id.to_be_bytes());
+                U256::from_be_bytes(keccak256(seed_data).0)
+            };
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
-            TestRunner::new_with_rng(self.runner.config().clone(), rng)
+            TestRunner::new_with_rng(runner_config, rng)
         } else {
-            self.runner.clone()
+            TestRunner::new(runner_config)
         };
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
@@ -324,7 +340,10 @@ impl FuzzedExecutor {
         let sync_offset = worker_id * 100;
         let mut runs_since_sync = 0;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
-        'stop: while shared_state.should_continue() {
+        // Continue while:
+        // 1. Global state allows (not timed out, not at global limit, no failure found)
+        // 2. Worker hasn't reached its specific run limit
+        'stop: while shared_state.should_continue() && worker.runs < worker_runs {
             // Only the master worker replays the persisted failure, if any.
             let input = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
