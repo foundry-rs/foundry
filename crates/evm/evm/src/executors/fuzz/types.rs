@@ -86,12 +86,14 @@ impl SharedFuzzState {
             return Some(self.total_runs.fetch_add(1, Ordering::Relaxed) + 1);
         }
 
-        let current = self.total_runs.load(Ordering::Relaxed);
-        // check run limit
+        // Simple atomic increment with check
+        let current = self.total_runs.fetch_add(1, Ordering::Relaxed);
+        
         if current < self.max_runs {
-            self.total_runs.fetch_add(1, Ordering::Relaxed);
             Some(current + 1)
         } else {
+            // We went over the limit, decrement back
+            self.total_runs.fetch_sub(1, Ordering::Relaxed);
             None
         }
     }
