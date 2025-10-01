@@ -9139,7 +9139,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9155,7 +9155,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -9170,7 +9170,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "colorchoice",
  "strum 0.27.2",
@@ -9179,7 +9179,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9193,7 +9193,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "annotate-snippets 0.12.4",
  "anstream",
@@ -9201,7 +9201,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -9212,7 +9212,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -9220,7 +9220,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9230,12 +9230,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.4",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9251,7 +9251,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.7"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#b55326288bffd954303ec050125510d69211dbab"
+source = "git+https://github.com/0xrusowsky/solar.git?branch=rusowsky%2Fspanned-commasep#4c5a9e45ac402212c3001ae0ab5c3c51d92b9697"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
