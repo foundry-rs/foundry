@@ -11,7 +11,7 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
 };
 use foundry_config::Config;
@@ -191,6 +191,15 @@ impl CoverageArgs {
         // Collect source files.
         let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
+            // Filter out vyper sources.
+            if path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+            {
+                continue;
+            }
+
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out libs dependencies and tests.
