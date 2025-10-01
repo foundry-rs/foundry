@@ -717,8 +717,8 @@ mod tests {
     fn favored_sets_false_and_metrics_decrement_when_ratio_lt_threshold() {
         let (mut manager, uuid) = new_manager_with_single_corpus();
         let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        corpus.total_mutations = 10;
-        corpus.new_finds_produced = 9; // high ratio now, but we will only increment mutations
+        corpus.total_mutations = 9;
+        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored
         corpus.is_favored = true; // start as favored
 
         manager.metrics.favored_items = 1;
