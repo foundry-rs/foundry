@@ -110,8 +110,13 @@ impl<P: Provider> WarningsProvider<P> {
                         let is_not_allowed = !allowed_keys.contains(key)
                             && !allowed_keys.contains(&key.to_snake_case());
                         let is_not_reserved = key != "extends" && key != Self::WARNINGS_KEY;
+                        let is_not_backward_compatible = key != "solc_version";
 
-                        if is_not_deprecated && is_not_allowed && is_not_reserved {
+                        if is_not_deprecated
+                            && is_not_allowed
+                            && is_not_reserved
+                            && is_not_backward_compatible
+                        {
                             out.push(Warning::UnknownKey {
                                 key: key.clone(),
                                 profile: profile.clone(),
