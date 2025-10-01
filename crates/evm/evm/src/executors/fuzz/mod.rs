@@ -249,7 +249,6 @@ impl FuzzedExecutor {
             result.breakpoints = last_worker.breakpoints.clone();
         }
 
-        // Now consume workers vector for owned data
         for mut worker in workers {
             result.gas_by_case.append(&mut worker.gas_by_case);
             result.logs.append(&mut worker.logs);
