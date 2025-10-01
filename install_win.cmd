@@ -48,10 +48,23 @@ if not exist "%FOUNDRY_BIN%" mkdir "%FOUNDRY_BIN%" >nul 2>&1
 
 echo Checking for existing Foundry installation...
 echo.
+set CURRENT_VERSION=
 if exist "%FOUNDRY_BIN%\forge.exe" (
     echo Found existing Foundry installation. Checking version...
     echo.
-    "%FOUNDRY_BIN%\forge.exe" --version >nul 2>&1
+    for /f "tokens=2 delims= " %%v in ('"%FOUNDRY_BIN%\forge.exe" --version 2^>nul ^| findstr /C:"forge"') do set CURRENT_VERSION=%%v
+    if not "!CURRENT_VERSION!"=="" (
+        echo Current version: !CURRENT_VERSION!
+        echo.
+        if "!CURRENT_VERSION!"=="!FOUNDRY_VERSION!" (
+            echo Foundry !FOUNDRY_VERSION! is already installed and up to date.
+            echo.
+            echo No installation needed.
+            goto :skip_foundry
+        )
+        echo Newer version available: !FOUNDRY_VERSION!
+        echo.
+    )
     echo Removing old version...
     echo.
     if exist "%FOUNDRY_BIN%\anvil.exe" del /F /Q "%FOUNDRY_BIN%\anvil.exe" >nul 2>&1
