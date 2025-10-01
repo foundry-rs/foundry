@@ -24,12 +24,12 @@ use foundry_config::{
 };
 use foundry_evm::{
     Env,
+    core::env::AsEnvMut,
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
 };
-use foundry_evm_core::env::AsEnvMut;
 
 use crate::utils::apply_chain_and_block_specific_env_changes;
 

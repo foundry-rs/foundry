@@ -13,7 +13,8 @@ use alloy_primitives::{
     Address, Bytes, Log,
     map::{AddressHashMap, HashMap},
 };
-use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
+use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_evm_core::Breakpoints;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use itertools::Itertools;

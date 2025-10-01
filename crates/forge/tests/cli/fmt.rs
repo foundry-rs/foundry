@@ -44,7 +44,12 @@ forgetest!(fmt_stdin, |_prj, cmd| {
     cmd.stdin(UNFORMATTED.as_bytes());
     cmd.assert_success().stdout_eq(FORMATTED);
 
+    // stdin with `--raw` returns formatted code
     cmd.stdin(FORMATTED.as_bytes());
+    cmd.assert_success().stdout_eq(FORMATTED);
+
+    // stdin with `--check` and without `--raw`returns diff
+    cmd.forge_fuse().args(["fmt", "-", "--check"]);
     cmd.assert_success().stdout_eq("");
 });
 
@@ -88,4 +93,13 @@ Diff in stdin:
     10   |+}
 
 "#]]);
+});
+
+// Test that original is returned if read from stdin and no diff.
+// <https://github.com/foundry-rs/foundry/issues/11871>
+forgetest!(fmt_stdin_original, |_prj, cmd| {
+    cmd.args(["fmt", "-", "--raw"]);
+
+    cmd.stdin(FORMATTED.as_bytes());
+    cmd.assert_success().stdout_eq(FORMATTED.as_bytes());
 });

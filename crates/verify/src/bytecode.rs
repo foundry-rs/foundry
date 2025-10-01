@@ -26,8 +26,9 @@ use foundry_cli::{
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use foundry_evm_core::AsEnvMut;
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, utils::configure_tx_req_env,
+};
 use revm::state::AccountInfo;
 use std::path::PathBuf;
 
