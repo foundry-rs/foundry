@@ -56,7 +56,6 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
             echo.
             if "!CURRENT_VERSION_TAG!"=="!FOUNDRY_VERSION!" (
                 echo Foundry !FOUNDRY_VERSION! is already installed and up to date.
-                echo.
                 goto :skip_foundry
             )
             echo Upgrading from !CURRENT_VERSION_TAG! to !FOUNDRY_VERSION!...
