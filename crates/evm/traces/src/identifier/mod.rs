@@ -54,6 +54,10 @@ impl Default for TraceIdentifiers<'_> {
 
 impl TraceIdentifier for TraceIdentifiers<'_> {
     fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        if nodes.is_empty() {
+            return Vec::new();
+        }
+
         let mut identities = Vec::with_capacity(nodes.len());
         if let Some(local) = &mut self.local {
             identities.extend(local.identify_addresses(nodes));

@@ -28,7 +28,7 @@ use tokio::time::{Duration, Interval};
 pub struct ExternalIdentifier {
     fetchers: Vec<Arc<dyn ExternalFetcherT>>,
     /// Cached contracts.
-    contracts: HashMap<Address, (FetcherKind, Metadata)>,
+    contracts: HashMap<Address, (FetcherKind, Option<Metadata>)>,
 }
 
 impl ExternalIdentifier {
@@ -44,26 +44,26 @@ impl ExternalIdentifier {
                 Some(config)
             }
             Ok(None) => {
-                warn!(target: "traces::external", "etherscan config not found");
+                warn!(target: "evm::traces::external", "etherscan config not found");
                 None
             }
             Err(err) => {
-                warn!(target: "traces::external", ?err, "failed to get etherscan config");
+                warn!(target: "evm::traces::external", ?err, "failed to get etherscan config");
                 None
             }
         };
 
         let mut fetchers = Vec::<Arc<dyn ExternalFetcherT>>::new();
         if let Some(chain) = chain {
-            trace!(target: "traces::external", ?chain, "using sourcify identifier");
+            debug!(target: "evm::traces::external", ?chain, "using sourcify identifier");
             fetchers.push(Arc::new(SourcifyFetcher::new(chain)));
         }
         if let Some(config) = config {
-            trace!(target: "traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
+            debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
             fetchers.push(Arc::new(EtherscanFetcher::new(config.into_client()?)));
         }
         if fetchers.is_empty() {
-            trace!(target: "traces::external", "no fetchers enabled");
+            debug!(target: "evm::traces::external", "no fetchers enabled");
             return Ok(None);
         }
 
@@ -77,8 +77,11 @@ impl ExternalIdentifier {
             .contracts
             .iter()
             // filter out vyper files
-            .filter(|(_, (_, metadata))| !metadata.is_vyper())
+            .filter(|(_, (_, metadata))| {
+                metadata.as_ref().is_some_and(|metadata| !metadata.is_vyper())
+            })
             .map(|(address, (_, metadata))| async move {
+                let metadata = metadata.as_ref().unwrap();
                 sh_println!("Compiling: {} {address}", metadata.contract_name)?;
                 let root = tempfile::tempdir()?;
                 let root_path = root.path();
@@ -139,7 +142,11 @@ impl TraceIdentifier for ExternalIdentifier {
         for &node in nodes {
             let address = node.trace.address;
             if let Some((_, metadata)) = self.contracts.get(&address) {
-                identities.push(self.identify_from_metadata(address, metadata));
+                if let Some(metadata) = metadata {
+                    identities.push(self.identify_from_metadata(address, metadata));
+                } else {
+                    // Do nothing. We know that this contract was not verified.
+                }
             } else {
                 to_fetch.push(address);
             }
@@ -154,11 +161,19 @@ impl TraceIdentifier for ExternalIdentifier {
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
         let fetched_identities = foundry_common::block_on(
             futures::stream::select_all(fetchers)
-                .map(|(address, value)| {
-                    let addr = self.identify_from_metadata(address, &value.1);
+                .filter_map(|(address, value)| {
+                    let addr = value
+                        .1
+                        .as_ref()
+                        .map(|metadata| self.identify_from_metadata(address, metadata));
                     match self.contracts.entry(address) {
                         Entry::Occupied(mut occupied_entry) => {
-                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan) {
+                            // Override if:
+                            // - new is from Etherscan and old is not
+                            // - new is Some and old is None, meaning verified only in one source
+                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
+                                || value.1.is_none()
+                            {
                                 occupied_entry.insert(value);
                             }
                         }
@@ -166,11 +181,11 @@ impl TraceIdentifier for ExternalIdentifier {
                             vacant_entry.insert(value);
                         }
                     }
-                    addr
+                    async move { addr }
                 })
                 .collect::<Vec<IdentifiedAddress<'_>>>(),
         );
-        trace!(target: "traces::external", "fetched {} addresses", fetched_identities.len());
+        trace!(target: "evm::traces::external", "fetched {} addresses: {fetched_identities:#?}", fetched_identities.len());
 
         identities.extend(fetched_identities);
         identities
@@ -215,7 +230,7 @@ impl ExternalFetcher {
             let Some(addr) = self.queue.pop() else { break };
             let fetcher = Arc::clone(&self.fetcher);
             self.in_progress.push(Box::pin(async move {
-                trace!(target: "traces::external", ?addr, "fetching info");
+                trace!(target: "evm::traces::external", ?addr, "fetching info");
                 let res = fetcher.fetch(addr).await;
                 (addr, res)
             }));
@@ -224,10 +239,14 @@ impl ExternalFetcher {
 }
 
 impl Stream for ExternalFetcher {
-    type Item = (Address, (FetcherKind, Metadata));
+    type Item = (Address, (FetcherKind, Option<Metadata>));
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
+
+        let _guard =
+            info_span!("evm::traces::external", kind=?pin.fetcher.kind(), "ExternalFetcher")
+                .entered();
 
         if pin.fetcher.invalid_api_key().load(Ordering::Relaxed) {
             return Poll::Ready(None);
@@ -251,29 +270,30 @@ impl Stream for ExternalFetcher {
                     made_progress_this_iter = true;
                     match res {
                         Ok(metadata) => {
-                            if let Some(metadata) = metadata {
-                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), metadata))));
-                            }
+                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), metadata))));
+                        }
+                        Err(EtherscanError::ContractCodeNotVerified(_)) => {
+                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
-                            warn!(target: "traces::external", "rate limit exceeded on attempt");
+                            warn!(target: "evm::traces::external", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);
                         }
                         Err(EtherscanError::InvalidApiKey) => {
-                            warn!(target: "traces::external", "invalid api key");
+                            warn!(target: "evm::traces::external", "invalid api key");
                             // mark key as invalid
                             pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
                             return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
-                            warn!(target: "traces::external", "blocked by cloudflare");
+                            warn!(target: "evm::traces::external", "blocked by cloudflare");
                             // mark key as invalid
                             pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
                             return Poll::Ready(None);
                         }
                         Err(err) => {
-                            warn!(target: "traces::external", ?err, "could not get info");
+                            warn!(target: "evm::traces::external", ?err, "could not get info");
                         }
                     }
                 }
@@ -370,16 +390,15 @@ impl ExternalFetcherT for SourcifyFetcher {
     }
 
     async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
-        // abi,metadata,creationBytecode.onchainBytecode,deployment.blockNumber,compilation
-        let url = format!("{url}/{address}?fields=abi,compilation,proxyResolution", url = self.url);
+        let url = format!("{url}/{address}?fields=abi,compilation", url = self.url);
         let response = self.client.get(url).send().await?;
         let code = response.status();
         let response: SourcifyResponse = response.json().await?;
-        trace!(target: "traces::external", "Sourcify response: {response:#?}");
+        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match code.as_u16() {
             // Not verified.
-            404 => return Ok(None),
-            // Rate limited.
+            404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
+            // Too many requests.
             429 => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
