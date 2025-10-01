@@ -324,10 +324,7 @@ impl FuzzedExecutor {
         let sync_offset = worker_id * 100;
         let mut runs_since_sync = 0;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
-        // Create per-worker timer that scales down with number of workers
-        let worker_timeout = self.config.timeout.map(|t| t / num_workers as u32);
-        let worker_timer = FuzzTestTimer::new(worker_timeout);
-        'stop: while shared_state.should_continue() && !worker_timer.is_timed_out() {
+        'stop: while shared_state.should_continue() {
             // Only the master worker replays the persisted failure, if any.
             let input = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
