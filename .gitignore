@@ -11,7 +11,7 @@ CLAUDE.md
 .env
 node_modules
 dist
-bin
+/bin
 _
 *.tgz
 .zed
