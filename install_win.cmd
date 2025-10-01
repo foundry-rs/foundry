@@ -44,20 +44,20 @@ set FOUNDRY_BIN=%FOUNDRY_DIR%\bin
 set FOUNDRY_TEMP=%TEMP%\foundry_install_%RANDOM%_%RANDOM%
 
 echo Creating Foundry directory...
-if not exist "%FOUNDRY_BIN%" mkdir "%FOUNDRY_BIN%"
+if not exist "%FOUNDRY_BIN%" mkdir "%FOUNDRY_BIN%" >nul 2>&1
 
 echo Checking for existing Foundry installation...
 echo.
 if exist "%FOUNDRY_BIN%\forge.exe" (
     echo Found existing Foundry installation. Checking version...
     echo.
-    "%FOUNDRY_BIN%\forge.exe" --version 2>nul
+    "%FOUNDRY_BIN%\forge.exe" --version >nul 2>&1
     echo Removing old version...
     echo.
-    if exist "%FOUNDRY_BIN%\anvil.exe" del /F /Q "%FOUNDRY_BIN%\anvil.exe"
-    if exist "%FOUNDRY_BIN%\cast.exe" del /F /Q "%FOUNDRY_BIN%\cast.exe"
-    if exist "%FOUNDRY_BIN%\chisel.exe" del /F /Q "%FOUNDRY_BIN%\chisel.exe"
-    if exist "%FOUNDRY_BIN%\forge.exe" del /F /Q "%FOUNDRY_BIN%\forge.exe"
+    if exist "%FOUNDRY_BIN%\anvil.exe" del /F /Q "%FOUNDRY_BIN%\anvil.exe" >nul 2>&1
+    if exist "%FOUNDRY_BIN%\cast.exe" del /F /Q "%FOUNDRY_BIN%\cast.exe" >nul 2>&1
+    if exist "%FOUNDRY_BIN%\chisel.exe" del /F /Q "%FOUNDRY_BIN%\chisel.exe" >nul 2>&1
+    if exist "%FOUNDRY_BIN%\forge.exe" del /F /Q "%FOUNDRY_BIN%\forge.exe" >nul 2>&1
     echo Old version removed.
     echo.
 ) else (
@@ -67,7 +67,7 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
 
 echo Downloading Foundry !FOUNDRY_VERSION!...
 echo.
-curl -L -o "%FOUNDRY_TEMP%.zip" "!FOUNDRY_URL!"
+curl -L -o "%FOUNDRY_TEMP%.zip" "!FOUNDRY_URL!" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to download Foundry.  Error code: %errorlevel%
     goto :skip_foundry
@@ -75,7 +75,7 @@ if %errorlevel% neq 0 (
 
 echo Extracting Foundry...
 echo.
-powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force"
+powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to extract Foundry archive.
     goto :cleanup_foundry
@@ -83,22 +83,22 @@ if %errorlevel% neq 0 (
 
 echo Installing Foundry executables...
 echo.
-copy /Y "%FOUNDRY_TEMP%\anvil.exe" "%FOUNDRY_BIN%\" >nul
+copy /Y "%FOUNDRY_TEMP%\anvil.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install anvil.exe. Error code: %errorlevel%
     goto :cleanup_foundry
 )
-copy /Y "%FOUNDRY_TEMP%\cast.exe" "%FOUNDRY_BIN%\" >nul
+copy /Y "%FOUNDRY_TEMP%\cast.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install cast.exe. Error code: %errorlevel%
     goto :cleanup_foundry
 )
-copy /Y "%FOUNDRY_TEMP%\chisel.exe" "%FOUNDRY_BIN%\" >nul
+copy /Y "%FOUNDRY_TEMP%\chisel.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install chisel.exe. Error code: %errorlevel%
     goto :cleanup_foundry
 )
-copy /Y "%FOUNDRY_TEMP%\forge.exe" "%FOUNDRY_BIN%\" >nul
+copy /Y "%FOUNDRY_TEMP%\forge.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install forge.exe. Error code: %errorlevel%
     goto :cleanup_foundry
@@ -115,7 +115,7 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
 
 echo Adding Foundry to User PATH permanently...
 echo.
-powershell -Command "$path = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($path -notlike '*%FOUNDRY_BIN%*') { [Environment]::SetEnvironmentVariable('Path', $path + ';%FOUNDRY_BIN%', 'User'); Write-Host 'Foundry added to User PATH permanently' } else { Write-Host 'Foundry already in User PATH' }"
+powershell -Command "$path = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($path -notlike '*%FOUNDRY_BIN%*') { [Environment]::SetEnvironmentVariable('Path', $path + ';%FOUNDRY_BIN%', 'User'); Write-Host 'Foundry added to User PATH permanently' } else { Write-Host 'Foundry already in User PATH' }" >nul 2>&1
 
 echo Setting PATH for current session...
 echo.
@@ -129,8 +129,8 @@ echo Note: You may need to restart your terminal or IDE to use Foundry commands.
 echo.
 
 :cleanup_foundry
-if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip"
-if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%"
+if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
+if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
 
 echo Installation complete!
 
