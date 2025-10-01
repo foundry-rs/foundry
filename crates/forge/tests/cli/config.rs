@@ -1953,6 +1953,7 @@ forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
     let faulty_toml = r"[profile.default]
     src = 'src'
     out = 'out'
+    solc_version = '0.8.18'
     foo = 'unknown'
 
     [profile.another]
