@@ -9,11 +9,8 @@ use std::borrow::Cow;
 mod local;
 pub use local::LocalTraceIdentifier;
 
-mod etherscan;
-pub use etherscan::EtherscanIdentifier;
-
-mod sourcify;
-pub use sourcify::SourcifyIdentifier;
+mod external;
+pub use external::ExternalIdentifier;
 
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
@@ -44,8 +41,8 @@ pub trait TraceIdentifier {
 pub struct TraceIdentifiers<'a> {
     /// The local trace identifier.
     pub local: Option<LocalTraceIdentifier<'a>>,
-    /// The optional Etherscan trace identifier.
-    pub etherscan: Option<EtherscanIdentifier>,
+    /// The optional external trace identifier.
+    pub external: Option<ExternalIdentifier>,
 }
 
 impl Default for TraceIdentifiers<'_> {
@@ -63,8 +60,8 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
                 return identities;
             }
         }
-        if let Some(etherscan) = &mut self.etherscan {
-            identities.extend(etherscan.identify_addresses(nodes));
+        if let Some(external) = &mut self.external {
+            identities.extend(external.identify_addresses(nodes));
         }
         identities
     }
@@ -73,7 +70,7 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
 impl<'a> TraceIdentifiers<'a> {
     /// Creates a new, empty instance.
     pub const fn new() -> Self {
-        Self { local: None, etherscan: None }
+        Self { local: None, external: None }
     }
 
     /// Sets the local identifier.
@@ -93,14 +90,14 @@ impl<'a> TraceIdentifiers<'a> {
         self
     }
 
-    /// Sets the etherscan identifier.
-    pub fn with_etherscan(mut self, config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
-        self.etherscan = EtherscanIdentifier::new(config, chain)?;
+    /// Sets the external identifier.
+    pub fn with_external(mut self, config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
+        self.external = ExternalIdentifier::new(config, chain)?;
         Ok(self)
     }
 
     /// Returns `true` if there are no set identifiers.
     pub fn is_empty(&self) -> bool {
-        self.local.is_none() && self.etherscan.is_none()
+        self.local.is_none() && self.external.is_none()
     }
 }

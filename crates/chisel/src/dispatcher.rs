@@ -181,7 +181,7 @@ impl ChiselDispatcher {
             )?)
             .build();
 
-        let mut identifier = TraceIdentifiers::new().with_etherscan(
+        let mut identifier = TraceIdentifiers::new().with_external(
             &session_config.foundry_config,
             session_config.evm_opts.get_remote_chain_id().await,
         )?;

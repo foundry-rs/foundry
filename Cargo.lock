@@ -4816,6 +4816,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
+ "async-trait",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
