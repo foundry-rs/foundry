@@ -42,6 +42,7 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: test - List contents of ~/.foundry/cache
+        if: runner.os == 'Linux'
         run: ls -R ~/.foundry/cache
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items

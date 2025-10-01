@@ -99,7 +99,6 @@ jobs:
           key: rpc-cache-${{ runner.os }}-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
           restore-keys: |
             rpc-cache-${{ runner.os }}-
-            rpc-cache-
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
@@ -107,6 +106,9 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "<>"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: test - List contents of ~/.foundry/cache before
+        if: runner.os == 'Linux'
+        run: ls -R ~/.foundry/cache
       - name: nextest - List contents of ~/.foundry/cache
         if: runner.os == 'Linux'
         run: cat ~/.foundry/cache/signatures
