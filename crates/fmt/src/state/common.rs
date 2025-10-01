@@ -443,6 +443,8 @@ impl<'ast> State<'_, 'ast> {
             if let Some(next_span) = next_span
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
+                // Don't add breaks for uninformed items
+                && next_span != Span::DUMMY
             {
                 format.print_break(false, values.len(), &mut self.s);
             }
