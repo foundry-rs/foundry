@@ -44,6 +44,7 @@ set FOUNDRY_BIN=%FOUNDRY_DIR%\bin
 set FOUNDRY_TEMP=%TEMP%\foundry_install_%RANDOM%_%RANDOM%
 
 echo Creating Foundry directory...
+echo.
 if not exist "%FOUNDRY_BIN%" mkdir "%FOUNDRY_BIN%" >nul 2>&1
 
 echo Checking for existing Foundry installation...
@@ -52,18 +53,28 @@ set CURRENT_VERSION=
 if exist "%FOUNDRY_BIN%\forge.exe" (
     echo Found existing Foundry installation. Checking version...
     echo.
-    for /f "tokens=2 delims= " %%v in ('"%FOUNDRY_BIN%\forge.exe" --version 2^>nul ^| findstr /C:"forge"') do set CURRENT_VERSION=%%v
-    if not "!CURRENT_VERSION!"=="" (
-        echo Current version: !CURRENT_VERSION!
-        echo.
-        if "!CURRENT_VERSION!"=="!FOUNDRY_VERSION!" (
-            echo Foundry !FOUNDRY_VERSION! is already installed and up to date.
+    set "VERSION_TEMP=%TEMP%\foundry_version_%RANDOM%.txt"
+    "%FOUNDRY_BIN%\forge.exe" --version > "!VERSION_TEMP!" 2>&1
+    if %errorlevel% equ 0 (
+        for /f "tokens=3 delims= " %%v in ('findstr /C:"forge Version:" "!VERSION_TEMP!"') do set CURRENT_VERSION=%%v
+        del /F /Q "!VERSION_TEMP!" >nul 2>&1
+        if not "!CURRENT_VERSION!"=="" (
+            REM Extract version tag (e.g., v1.3.6 from 1.3.6-v1.3.6)
+            for /f "tokens=2 delims=-" %%t in ("!CURRENT_VERSION!") do set CURRENT_VERSION_TAG=%%t
+            if "!CURRENT_VERSION_TAG!"=="" set CURRENT_VERSION_TAG=!CURRENT_VERSION!
+            echo Current version: !CURRENT_VERSION_TAG!
             echo.
-            echo No installation needed.
-            goto :skip_foundry
+            if "!CURRENT_VERSION_TAG!"=="!FOUNDRY_VERSION!" (
+                echo Foundry !FOUNDRY_VERSION! is already installed and up to date.
+                echo.
+                echo No installation needed.
+                goto :skip_foundry
+            )
+            echo Newer version available: !FOUNDRY_VERSION!
+            echo.
         )
-        echo Newer version available: !FOUNDRY_VERSION!
-        echo.
+    ) else (
+        if exist "!VERSION_TEMP!" del /F /Q "!VERSION_TEMP!" >nul 2>&1
     )
     echo Removing old version...
     echo.
