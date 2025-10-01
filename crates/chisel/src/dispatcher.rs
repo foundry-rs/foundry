@@ -21,7 +21,6 @@ use foundry_evm::{
     },
 };
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
     sema::ast::Base,
@@ -53,18 +52,6 @@ pub const CHISEL_CHAR: &str = "⚒️";
 pub struct ChiselDispatcher {
     pub session: ChiselSession,
     pub helper: SolidityHelper,
-}
-
-/// A response from the Etherscan API's `getabi` action
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EtherscanABIResponse {
-    /// The status of the response
-    /// "1" = success | "0" = failure
-    pub status: String,
-    /// The message supplied by the API
-    pub message: String,
-    /// The result returned by the API. Will be `None` if the request failed.
-    pub result: Option<String>,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
