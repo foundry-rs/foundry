@@ -1,6 +1,9 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
-use alloy_primitives::{Address, map::HashMap};
+use alloy_primitives::{
+    Address,
+    map::{Entry, HashMap},
+};
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
@@ -25,7 +28,7 @@ use tokio::time::{Duration, Interval};
 pub struct ExternalIdentifier {
     fetchers: Vec<Arc<dyn ExternalFetcherT>>,
     /// Cached contracts.
-    contracts: HashMap<Address, Metadata>,
+    contracts: HashMap<Address, (FetcherKind, Metadata)>,
 }
 
 impl ExternalIdentifier {
@@ -67,8 +70,8 @@ impl ExternalIdentifier {
             .contracts
             .iter()
             // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| async move {
+            .filter(|(_, (_, metadata))| !metadata.is_vyper())
+            .map(|(address, (_, metadata))| async move {
                 sh_println!("Compiling: {} {address}", metadata.contract_name)?;
                 let root = tempfile::tempdir()?;
                 let root_path = root.path();
@@ -128,7 +131,7 @@ impl TraceIdentifier for ExternalIdentifier {
         // Check cache first.
         for &node in nodes {
             let address = node.trace.address;
-            if let Some(metadata) = self.contracts.get(&address) {
+            if let Some((_, metadata)) = self.contracts.get(&address) {
                 identities.push(self.identify_from_metadata(address, metadata));
             } else {
                 to_fetch.push(address);
@@ -145,9 +148,18 @@ impl TraceIdentifier for ExternalIdentifier {
             .map(|fetcher| ExternalFetcher::new(fetcher.clone(), Duration::from_secs(1), 5));
         let fetched_identities = foundry_common::block_on(
             futures::stream::select_all(fetchers)
-                .map(|(address, metadata)| {
-                    let addr = self.identify_from_metadata(address, &metadata);
-                    self.contracts.insert(address, metadata);
+                .map(|(address, value)| {
+                    let addr = self.identify_from_metadata(address, &value.1);
+                    match self.contracts.entry(address) {
+                        Entry::Occupied(mut occupied_entry) => {
+                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan) {
+                                occupied_entry.insert(value);
+                            }
+                        }
+                        Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(value);
+                        }
+                    }
                     addr
                 })
                 .collect::<Vec<IdentifiedAddress<'_>>>(),
@@ -205,7 +217,7 @@ impl ExternalFetcher {
 }
 
 impl Stream for ExternalFetcher {
-    type Item = (Address, Metadata);
+    type Item = (Address, (FetcherKind, Metadata));
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -233,7 +245,7 @@ impl Stream for ExternalFetcher {
                     match res {
                         Ok(metadata) => {
                             if let Some(metadata) = metadata {
-                                return Poll::Ready(Some((addr, metadata)));
+                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), metadata))));
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -267,10 +279,16 @@ impl Stream for ExternalFetcher {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetcherKind {
+    Etherscan,
+    Sourcify,
+}
+
 #[async_trait::async_trait]
 trait ExternalFetcherT: Send + Sync {
+    fn kind(&self) -> FetcherKind;
     fn invalid_api_key(&self) -> &AtomicBool;
-
     async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError>;
 }
 
@@ -287,6 +305,10 @@ impl EtherscanFetcher {
 
 #[async_trait::async_trait]
 impl ExternalFetcherT for EtherscanFetcher {
+    fn kind(&self) -> FetcherKind {
+        FetcherKind::Etherscan
+    }
+
     fn invalid_api_key(&self) -> &AtomicBool {
         &self.invalid_api_key
     }
@@ -314,6 +336,10 @@ impl SourcifyFetcher {
 
 #[async_trait::async_trait]
 impl ExternalFetcherT for SourcifyFetcher {
+    fn kind(&self) -> FetcherKind {
+        FetcherKind::Sourcify
+    }
+
     fn invalid_api_key(&self) -> &AtomicBool {
         &self.invalid_api_key
     }
