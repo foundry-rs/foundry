@@ -1838,7 +1838,7 @@ impl<'ast> State<'_, 'ast> {
 
         // '(' + var + ', ' + var + ')' + ' ='
         let vars_size = vars.iter().fold(0, |acc, var| {
-            acc + var.as_ref().map(|v| self.estimate_size(v.span)).unwrap_or(0) + 2
+            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
         }) + 2;
         self.call_stack.add_precall(vars_size);
 
