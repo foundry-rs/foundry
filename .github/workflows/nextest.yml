@@ -118,7 +118,7 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
-      - name: test - List contents of ~/.foundry/cache after
+      - name: test - List contents of ~/.foundry/cache after rerun
         if: runner.os == 'Linux'
         run: ls -R ~/.foundry/cache || echo "No cache dir"
       - name: nextest - List contents of ~/.foundry/cache after exec rerun
