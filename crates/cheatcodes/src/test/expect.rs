@@ -1094,8 +1094,12 @@ fn decode_event(
         return None;
     }
     let t0 = topics[0]; // event sig
-    // Try to identify the event
-    let event = foundry_common::block_on(identifier.identify_event(t0))?;
+    // Try to identify the event - detect if we're in a Tokio runtime and use appropriate method
+    let event = if tokio::runtime::Handle::try_current().is_ok() {
+        foundry_common::block_on(identifier.identify_event(t0))?
+    } else {
+        identifier.identify_event_sync(t0)?
+    };
 
     // Check if event already has indexed information from signatures
     let has_indexed_info = event.inputs.iter().any(|p| p.indexed);
