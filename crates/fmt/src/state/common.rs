@@ -529,8 +529,10 @@ impl<'ast> State<'_, 'ast> {
             BlockFormat::NoBraces(Some(offset)) => {
                 let enabled =
                     !self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)))
-                        && !self.handle_span(self.cursor.span(block_lo), false);
-                match self.peek_comment_before(block_lo).map(|cmnt| (cmnt.span, cmnt.style)) {
+                        && !self.handle_span(self.cursor.span(block_lo), true);
+                match self.peek_comment().and_then(|cmnt| {
+                    if cmnt.span.hi() < block_lo { Some((cmnt.span, cmnt.style)) } else { None }
+                }) {
                     Some((span, style)) => {
                         if enabled {
                             // Inline config is not disabled and span not handled
@@ -538,9 +540,10 @@ impl<'ast> State<'_, 'ast> {
                                 self.cursor.advance_to(span.lo(), true);
                                 self.break_offset(SIZE_INFINITY as usize, offset);
                             }
-                            if let Some(cmnt) = self
-                                .print_comments(block_lo, CommentConfig::default().offset(offset))
-                                && !cmnt.is_mixed()
+                            if let Some(cmnt) = self.print_comments(
+                                block_lo,
+                                CommentConfig::skip_leading_ws(false).offset(offset),
+                            ) && !cmnt.is_mixed()
                                 && !cmnt.is_blank()
                             {
                                 self.s.offset(offset);
