@@ -17,8 +17,8 @@ use std::{
     time::Duration,
 };
 
-const BASE_URL: &str = "https://sourcify.dev/server";
-const SELECTOR_LOOKUP_URL: &str = "https://sourcify.dev/server/signature-database/v1/lookup";
+const BASE_URL: &str = "https://api.4byte.sourcify.dev";
+const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
