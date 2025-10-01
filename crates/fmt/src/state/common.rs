@@ -444,7 +444,7 @@ impl<'ast> State<'_, 'ast> {
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
             {
-                if next_span.is_dummy() && format.with_space {
+                if next_span.is_dummy() && !matches!(format.kind, ListFormatKind::AlwaysBreak) {
                     // Don't add spaces between uninformed items (commas)
                     self.zerobreak();
                 } else {
