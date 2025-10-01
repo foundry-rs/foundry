@@ -5,7 +5,7 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, keccak256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, keccak256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
@@ -90,7 +90,7 @@ impl FuzzedExecutor {
         // Use single worker for deterministic behavior when replaying persisted failures
         let persisted_failure = self.persisted_failure.take();
         let num_workers = self.num_workers();
-        let workers = (0..num_workers as u32)
+        let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
                 self.run_worker(
@@ -173,52 +173,24 @@ impl FuzzedExecutor {
         }
     }
 
+    /// Aggregates the results from all workers
     fn aggregate_results(
         &self,
-        workers: Vec<FuzzWorker>,
+        mut workers: Vec<FuzzWorker>,
         func: &Function,
         shared_state: Arc<SharedFuzzState>,
     ) -> FuzzTestResult {
         let mut result = FuzzTestResult::default();
 
-        // Find the worker with the lowest global run in FuzzWorker.first_case.0
-        let first_case = workers
-            .iter()
-            // Get the worker_id, global_run number, and FuzzCase
-            .filter_map(|w| w.first_case.as_ref().map(|(run, case)| (w.worker_id, *run, case)))
-            .min_by_key(|(_, run, _)| *run);
-
-        result.first_case = first_case.map(|(_, _, fc)| fc.clone()).unwrap_or_default();
-        // TODO: Fix order of cases when aggregating
-        result.gas_by_case = workers.iter().flat_map(|w| w.gas_by_case.clone()).collect();
-
-        result.logs = workers.iter().flat_map(|w| w.logs.clone()).collect();
-        result.gas_report_traces =
-            workers.iter().flat_map(|w| w.traces.iter().map(|a| a.arena.clone())).collect();
-        result.line_coverage = workers.iter().fold(None, |mut acc, w| {
-            HitMaps::merge_opt(&mut acc, w.coverage.clone());
-            acc
-        });
-        result.deprecated_cheatcodes = workers.iter().fold(HashMap::default(), |mut acc, w| {
-            acc.extend(w.deprecated_cheatcodes.clone());
-            acc
+        // Extract failed worker first if it exists
+        let failed_worker = shared_state.failed_worked_id().and_then(|id| {
+            workers.iter().position(|w| w.worker_id == id).map(|idx| workers.swap_remove(idx))
         });
 
-        let failed_worked_id = shared_state.failed_worked_id();
-        result.success = failed_worked_id.is_none();
-        if failed_worked_id.is_none()
-            && let Some(last_run) = workers.iter().max_by_key(|w| w.last_run_timestamp)
-        {
-            result.traces = last_run.traces.last().cloned();
-            result.breakpoints = last_run.breakpoints.clone();
-        }
-
-        let failed_worker =
-            failed_worked_id.and_then(|id| workers.into_iter().find(|w| w.worker_id == id));
-
+        // Process failure first if exists
         if let Some(failed_worker) = failed_worker {
+            result.success = false;
             let (calldata, call) = failed_worker.counterexample;
-
             result.labels = call.labels;
             result.traces = call.traces.clone();
             result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
@@ -242,8 +214,54 @@ impl FuzzedExecutor {
                 }
                 None => {}
             }
-        };
+        } else {
+            result.success = true;
+        }
 
+        // Single pass aggregation for remaining workers
+        let mut first_case_candidate: Option<(u32, FuzzCase)> = None;
+        let mut last_run_worker: Option<&FuzzWorker> = None;
+        let mut last_run_timestamp = 0u128;
+
+        for worker in &workers {
+            // Track first case (compare without cloning)
+            if let Some((run, case)) = &worker.first_case
+                && first_case_candidate.as_ref().is_none_or(|(r, _)| run < r)
+            {
+                first_case_candidate = Some((*run, case.clone()));
+            }
+
+            // Track last run worker (keep reference, no clone)
+            if worker.last_run_timestamp > last_run_timestamp {
+                last_run_timestamp = worker.last_run_timestamp;
+                last_run_worker = Some(worker);
+            }
+        }
+
+        // Set first case
+        result.first_case = first_case_candidate.map(|(_, case)| case).unwrap_or_default();
+
+        // If no failure, set traces and breakpoints from last run
+        if result.success
+            && let Some(last_worker) = last_run_worker
+        {
+            result.traces = last_worker.traces.last().cloned();
+            result.breakpoints = last_worker.breakpoints.clone();
+        }
+
+        // Now consume workers vector for owned data
+        for mut worker in workers {
+            result.gas_by_case.append(&mut worker.gas_by_case);
+            result.logs.append(&mut worker.logs);
+            result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
+
+            // Merge coverage
+            HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
+
+            result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
+        }
+
+        // Check for skip reason
         if let Some(reason) = &result.reason
             && let Some(reason) = SkipReason::decode_self(reason)
         {
