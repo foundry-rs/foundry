@@ -108,16 +108,19 @@ jobs:
           git config --global url."https://github.com/".insteadOf "git@github.com:"
       - name: test - List contents of ~/.foundry/cache before
         if: runner.os == 'Linux'
-        run: ls -R ~/.foundry/cache
+        run: ls -R ~/.foundry/cache || echo "No cache dir"
       - name: nextest - List contents of ~/.foundry/cache
         if: runner.os == 'Linux'
-        run: cat ~/.foundry/cache/signatures
+        run: cat ~/.foundry/cache/signatures || echo "No signatures"
       - name: Test
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
         run: cargo nextest run ${{ matrix.flags }}
+      - name: test - List contents of ~/.foundry/cache after
+        if: runner.os == 'Linux'
+        run: ls -R ~/.foundry/cache || echo "No cache dir"
       - name: nextest - List contents of ~/.foundry/cache after exec rerun
         if: runner.os == 'Linux'
-        run: cat ~/.foundry/cache/signatures
+        run: cat ~/.foundry/cache/signatures || echo "No signatures"
