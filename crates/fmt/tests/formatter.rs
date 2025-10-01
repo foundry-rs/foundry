@@ -221,4 +221,5 @@ fmt_tests! {
     WhileStatement,
     Yul,
     YulStrings,
+    Aaaa,
 }
