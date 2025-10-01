@@ -33,7 +33,6 @@ impl RemoveArgs {
         let config = self.load_config()?;
         let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
-
         let git = Git::new(&root);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         let _synced = lockfile.sync(config.install_lib_dir())?;

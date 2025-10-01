@@ -1,7 +1,6 @@
 //! The parser module.
 
 use crate::solang_ext::{Visitable, Visitor};
-use foundry_config::FormatterConfig;
 use itertools::Itertools;
 use solang_parser::{
     doccomment::{DocComment, parse_doccomments},
@@ -38,8 +37,6 @@ pub struct Parser {
     items: Vec<ParseItem>,
     /// Source file.
     source: String,
-    /// The formatter config.
-    fmt: FormatterConfig,
 }
 
 /// [Parser] context.
@@ -55,12 +52,6 @@ impl Parser {
     /// Create a new instance of [Parser].
     pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
         Self { comments, source, ..Default::default() }
-    }
-
-    /// Set formatter config on the [Parser]
-    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
-        self.fmt = fmt;
-        self
     }
 
     /// Return the parsed items. Consumes the parser.
@@ -102,7 +93,7 @@ impl Parser {
     /// Create new [ParseItem] with comments and formatted code.
     fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
-        ParseItem::new(source).with_comments(docs).with_code(&self.source, self.fmt.clone())
+        Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source))
     }
 
     /// Parse the doc comments from the current start location.
