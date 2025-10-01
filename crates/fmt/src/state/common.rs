@@ -212,7 +212,7 @@ impl<'ast> State<'_, 'ast> {
         format: ListFormat,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span> + Copy,
+        S: FnMut(&T) -> Span,
     {
         if self.handle_span(Span::new(pos_lo, pos_hi), true) {
             return;
@@ -232,26 +232,24 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // Format single-item inline lists directly without boxes
-        self.print_inside_parens(|state| match get_span(&values[0]) {
-            Some(span) => {
-                state.s.cbox(state.ind);
-                let mut skip_break = true;
-                if state.peek_comment_before(span.hi()).is_some() {
-                    state.hardbreak();
-                    skip_break = false;
-                }
-
-                state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
-                print(state, &values[0]);
-
-                if !state.print_trailing_comment(span.hi(), None) && skip_break {
-                    state.neverbreak();
-                } else {
-                    state.break_offset_if_not_bol(0, -state.ind, false);
-                }
-                state.end();
+        self.print_inside_parens(|state| {
+            let span = get_span(&values[0]);
+            state.s.cbox(state.ind);
+            let mut skip_break = true;
+            if state.peek_comment_before(span.hi()).is_some() {
+                state.hardbreak();
+                skip_break = false;
             }
-            None => print(state, &values[0]),
+
+            state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
+            print(state, &values[0]);
+
+            if !state.print_trailing_comment(span.hi(), None) && skip_break {
+                state.neverbreak();
+            } else {
+                state.break_offset_if_not_bol(0, -state.ind, false);
+            }
+            state.end();
         });
     }
 
@@ -263,7 +261,7 @@ impl<'ast> State<'_, 'ast> {
         get_span: S,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Span,
     {
         if self.handle_span(span, false) {
             return;
@@ -281,9 +279,9 @@ impl<'ast> State<'_, 'ast> {
         format: ListFormat,
     ) -> bool
     where
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Span,
     {
-        let Some(span) = values.first().and_then(&mut get_span) else {
+        let Some(span) = values.first().map(&mut get_span) else {
             return false;
         };
 
@@ -357,7 +355,7 @@ impl<'ast> State<'_, 'ast> {
         format: ListFormat,
     ) where
         P: FnMut(&mut Self, &'a T),
-        S: FnMut(&T) -> Option<Span>,
+        S: FnMut(&T) -> Span,
     {
         if values.is_empty() {
             return;
@@ -366,8 +364,8 @@ impl<'ast> State<'_, 'ast> {
         let first = get_span(&values[0]);
         // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
         // comments in the child expression, and those don't matter.
-        let has_comments = self.peek_comment_before(first.map_or(pos_hi, |s| s.lo())).is_some()
-            || self.peek_comment_between(first.map_or(pos_hi, |s| s.hi()), pos_hi).is_some();
+        let has_comments = self.peek_comment_before(first.lo()).is_some()
+            || self.peek_comment_between(first.hi(), pos_hi).is_some();
         let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
 
         let skip_first_break = if format.with_delimiters || format.is_inline() {
@@ -399,10 +397,9 @@ impl<'ast> State<'_, 'ast> {
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
             let is_last = i == values.len() - 1;
-            if let Some(span) = get_span(value)
-                && self
-                    .print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
-                    .is_some_and(|cmnt| cmnt.is_mixed())
+            if self
+                .print_comments(get_span(value).lo(), CommentConfig::skip_ws().mixed_prev_space())
+                .is_some_and(|cmnt| cmnt.is_mixed())
                 && format.breaks_cmnts
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
@@ -414,7 +411,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_word(",");
             }
 
-            let next_span = if is_last { None } else { get_span(&values[i + 1]) };
+            let next_span = if is_last { None } else { Some(get_span(&values[i + 1])) };
             let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
 
             if !is_last
@@ -447,7 +444,12 @@ impl<'ast> State<'_, 'ast> {
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
             {
-                format.print_break(false, values.len(), &mut self.s);
+                if next_span.is_dummy() && !matches!(format.kind, ListFormatKind::AlwaysBreak) {
+                    // Don't add spaces between uninformed items (commas)
+                    self.zerobreak();
+                } else {
+                    format.print_break(false, values.len(), &mut self.s);
+                }
             }
         }
 

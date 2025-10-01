@@ -702,7 +702,9 @@ impl<'sess> State<'sess, '_> {
             }
             CommentStyle::Isolated => {
                 let Some(mut prefix) = cmnt.prefix() else { return };
-                config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                if !config.iso_no_break {
+                    config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                }
 
                 if self.config.wrap_comments {
                     // Merge and wrap comments

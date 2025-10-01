@@ -8,8 +8,8 @@ use solar::parse::ast::{self, Span, yul};
 
 #[rustfmt::skip]
 macro_rules! get_span {
-    () => { |value| Some(value.span) };
-    (()) => { |value| Some(value.span()) };
+    () => { |value| value.span };
+    (()) => { |value| value.span() };
 }
 
 /// Language-specific pretty printing: Yul.
@@ -43,18 +43,18 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
                 self.s.offset(self.ind);
                 self.ibox(0);
-                self.print_yul_expr_call(expr_call, span);
+                self.print_yul_expr(expr_call);
                 self.end();
                 self.end();
             }
-            yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call, span),
+            yul::StmtKind::Expr(expr_call) => self.print_yul_expr(expr_call),
             yul::StmtKind::If(expr, stmts) => {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
                 self.print_yul_block(stmts, span, false);
             }
-            yul::StmtKind::For { init, cond, step, body } => {
+            yul::StmtKind::For(yul::StmtFor { init, cond, step, body }) => {
                 self.ibox(0);
 
                 self.word("for ");
@@ -171,7 +171,17 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             yul::ExprKind::Path(path) => self.print_path(path, false),
-            yul::ExprKind::Call(call) => self.print_yul_expr_call(call, span),
+            yul::ExprKind::Call(yul::ExprCall { name, arguments }) => {
+                self.print_ident(name);
+                self.print_tuple(
+                    arguments,
+                    span.lo(),
+                    span.hi(),
+                    |s, arg| s.print_yul_expr(arg),
+                    get_span!(),
+                    ListFormat::consistent().break_single(true),
+                );
+            }
             yul::ExprKind::Lit(lit) => {
                 if matches!(&lit.kind, ast::LitKind::Address(_)) {
                     self.print_span_cold(lit.span);
@@ -180,19 +190,6 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
         }
-    }
-
-    fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>, span: Span) {
-        let yul::ExprCall { name, arguments } = expr;
-        self.print_ident(name);
-        self.print_tuple(
-            arguments,
-            span.lo(),
-            span.hi(),
-            |s, arg| s.print_yul_expr(arg),
-            get_span!(),
-            ListFormat::consistent().break_single(true),
-        );
     }
 
     pub(super) fn print_yul_block(
