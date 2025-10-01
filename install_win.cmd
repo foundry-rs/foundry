@@ -126,12 +126,12 @@ echo.
 echo Installation directory: %FOUNDRY_BIN%
 echo.
 echo Note: You may need to restart your terminal or IDE to use Foundry commands.
+echo.
 
 :cleanup_foundry
 if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip"
 if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%"
 
-echo.
 echo Installation complete!
 
 :skip_foundry
