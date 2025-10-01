@@ -19,6 +19,7 @@ set FOUNDRY_VERSION=
 for /f "delims=" %%i in ('curl -Ls -o nul -w "%%{url_effective}" https://github.com/foundry-rs/foundry/releases/latest') do set FOUNDRY_LATEST_URL=%%i
 if %errorlevel% neq 0 (
     echo ERROR: Failed to detect latest Foundry version. Cannot proceed with installation.
+    echo.
     echo Please check your internet connection and try again.
     goto :skip_foundry
 )
@@ -26,6 +27,7 @@ if %errorlevel% neq 0 (
 for %%a in ("!FOUNDRY_LATEST_URL!") do set FOUNDRY_VERSION=%%~nxa
 if "!FOUNDRY_VERSION!"=="" (
     echo ERROR: Failed to parse Foundry version from URL: !FOUNDRY_LATEST_URL!
+    echo.
     echo Cannot proceed with installation.
     goto :skip_foundry
 )
