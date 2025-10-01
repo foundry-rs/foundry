@@ -67,6 +67,11 @@ function Write-Err {
 function Test-CommandExists {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification='Test-CommandExists is more readable than Test-CommandExist')]
     param([string]$Command)
+    
+    if ([string]::IsNullOrWhiteSpace($Command)) {
+        return $false
+    }
+    
     $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
