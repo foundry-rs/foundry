@@ -12,6 +12,9 @@ pub use local::LocalTraceIdentifier;
 mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
+mod sourcify;
+pub use sourcify::SourcifyIdentifier;
+
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
 

@@ -4827,6 +4827,7 @@ dependencies = [
  "itertools 0.14.0",
  "memchr",
  "rayon",
+ "reqwest",
  "revm",
  "revm-inspectors",
  "serde",
