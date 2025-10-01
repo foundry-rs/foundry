@@ -183,6 +183,15 @@ function noBlanksLinesBeforeIdentifiers() public {
 	timelockController.grantRole(keccak256("EXECUTOR_ROLE"), address(0));
 }
 
+// https://github.com/foundry-rs/foundry/issues/11913
+function rustfmtBlankLinesInStmtBlocks() public {
+	if (someCondition) {
+		bar = true;
+
+		emit Foo(bar);
+	}
+}
+
 contract NestedCallsTest is Test {
 	string constant errMsg = "User provided message";
 	uint256 constant maxDecimals = 77;
