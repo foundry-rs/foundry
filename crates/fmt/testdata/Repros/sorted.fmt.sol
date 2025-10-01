@@ -178,6 +178,11 @@ function argListRepro(address tokenIn, uint256 amountIn, bool data) {
     );
 }
 
+// https://github.com/foundry-rs/foundry/issues/11905
+function noBlanksLinesBeforeIdentifiers() public {
+    timelockController.grantRole(keccak256("EXECUTOR_ROLE"), address(0));
+}
+
 contract NestedCallsTest is Test {
     string constant errMsg = "User provided message";
     uint256 constant maxDecimals = 77;
