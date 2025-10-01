@@ -191,6 +191,11 @@ impl CoverageArgs {
         // Collect source files.
         let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
+            // Filter out vyper sources.
+            if path.extension().is_some_and(|e| e.to_str() == Some("vy")) {
+                continue;
+            }
+
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out libs dependencies and tests.
