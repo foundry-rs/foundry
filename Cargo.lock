@@ -4367,6 +4367,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.16",
+ "tokio",
  "toml 0.9.7",
  "tracing",
  "walkdir",
