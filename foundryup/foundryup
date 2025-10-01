@@ -15,7 +15,7 @@ FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
 
-BINS=(forge cast anvil chisel)
+BINS=(forge cast anvil)
 HASH_NAMES=()
 HASH_VALUES=()
 
@@ -162,13 +162,13 @@ main() {
     # If `--force` is set, skip the SHA verification.
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = false ]; then
       # Check if the version is already installed by downloading the attestation file.
-      say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
+      say "checking if forge, cast, and anvil for $FOUNDRYUP_TAG version are already installed"
 
       # Create a temporary directory to store the attestation link and artifact.
       tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp_dir/attestation.txt"
       ensure download "$ATTESTATION_URL" "$tmp"
-      
+
       # Read the first line of the attestation file to get the artifact link.
       # The first line should contain the link to the attestation artifact.
       attestation_artifact_link="$(head -n1 "$tmp" | tr -d '\r')"
@@ -253,7 +253,7 @@ main() {
     fi
 
     # Download and extract the binaries archive
-    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    say "downloading forge, cast, and anvil for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp/foundry.zip"
@@ -281,7 +281,7 @@ main() {
     else
       say 'skipping manpage download: missing "tar"'
     fi
-    
+
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = true ]; then
       say "skipped SHA verification for downloaded binaries due to --force flag"
     else

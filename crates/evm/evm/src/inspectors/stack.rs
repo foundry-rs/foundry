@@ -1,6 +1,6 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
+    Cheatcodes, CheatsConfig, CustomPrintTracer, Fuzzer, LineCoverageCollector, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_evm::{Evm, eth::EthEvmContext};
 use alloy_primitives::{
@@ -60,8 +60,6 @@ pub struct InspectorStackBuilder {
     pub line_coverage: Option<bool>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
-    /// The chisel state inspector.
-    pub chisel_state: Option<usize>,
     /// Whether to enable call isolation.
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
@@ -113,13 +111,6 @@ impl InspectorStackBuilder {
     #[inline]
     pub fn fuzzer(mut self, fuzzer: Fuzzer) -> Self {
         self.fuzzer = Some(fuzzer);
-        self
-    }
-
-    /// Set the Chisel inspector.
-    #[inline]
-    pub fn chisel_state(mut self, final_pc: usize) -> Self {
-        self.chisel_state = Some(final_pc);
         self
     }
 
@@ -186,7 +177,6 @@ impl InspectorStackBuilder {
             logs,
             line_coverage,
             print,
-            chisel_state,
             enable_isolation,
             networks,
             wallets,
@@ -206,9 +196,6 @@ impl InspectorStackBuilder {
 
         if let Some(fuzzer) = fuzzer {
             stack.set_fuzzer(fuzzer);
-        }
-        if let Some(chisel_state) = chisel_state {
-            stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
@@ -263,7 +250,6 @@ pub struct InspectorData {
     pub line_coverage: Option<HitMaps>,
     pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Box<Cheatcodes>>,
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
 }
 
@@ -302,7 +288,6 @@ pub struct InspectorStackInner {
     // Inspectors.
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
-    pub chisel_state: Option<Box<ChiselState>>,
     pub edge_coverage: Option<Box<EdgeCovInspector>>,
     pub fuzzer: Option<Box<Fuzzer>>,
     pub line_coverage: Option<Box<LineCoverageCollector>>,
@@ -366,7 +351,7 @@ impl InspectorStack {
                     )*
                 };
             }
-            push!(cheatcodes, chisel_state, line_coverage, fuzzer, log_collector, printer, tracer);
+            push!(cheatcodes, line_coverage, fuzzer, log_collector, printer, tracer);
             if self.enable_isolation {
                 enabled.push("isolation");
             }
@@ -407,12 +392,6 @@ impl InspectorStack {
     #[inline]
     pub fn set_fuzzer(&mut self, fuzzer: Fuzzer) {
         self.fuzzer = Some(fuzzer.into());
-    }
-
-    /// Set the Chisel inspector.
-    #[inline]
-    pub fn set_chisel(&mut self, final_pc: usize) {
-        self.chisel_state = Some(ChiselState::new(final_pc).into());
     }
 
     /// Set whether to enable the line coverage collector.
@@ -495,7 +474,6 @@ impl InspectorStack {
             mut cheatcodes,
             inner:
                 InspectorStackInner {
-                    chisel_state,
                     line_coverage,
                     edge_coverage,
                     log_collector,
@@ -533,7 +511,6 @@ impl InspectorStack {
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
             edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
             cheatcodes,
-            chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
         }
     }
@@ -830,7 +807,6 @@ impl InspectorStackRefMut<'_> {
         call_inspectors!(
             [
                 // These are sorted in definition order.
-                &mut self.chisel_state,
                 &mut self.printer,
                 &mut self.revert_diag,
                 &mut self.tracer,

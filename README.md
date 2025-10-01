@@ -30,7 +30,6 @@ Foundry consists of:
 - [**Forge**](#forge): Build, test, fuzz, debug and deploy [Solidity][solidity] contracts, like Hardhat, Brownie, Ape.
 - [**Cast**](#cast): A Swiss Army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
 - [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
-- [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Docs][foundry-docs]!**
 
@@ -75,7 +74,7 @@ curl -L https://foundry.paradigm.xyz | bash
 
 Next, run `foundryup`.
 
-It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
+It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), and [`anvil`](#anvil).
 
 ```
 foundryup
@@ -242,53 +241,6 @@ cast block-number
 Run `anvil --help` to explore the full list of available features and their usage.
 
 More documentation can be found in the [anvil](https://getfoundry.sh/anvil/overview) section of the Foundry Docs.
-
-## Chisel
-
-Chisel is a fast, utilitarian, and verbose Solidity REPL.
-
-To use Chisel, simply type `chisel`.
-
-```sh
-chisel
-```
-
-From here, start writing Solidity code! Chisel will offer verbose feedback on each input.
-
-Create a variable `a` and query it:
-
-```console
-➜ uint256 a = 123;
-➜ a
-Type: uint256
-├ Hex: 0x7b
-├ Hex (full word): 0x000000000000000000000000000000000000000000000000000000000000007b
-└ Decimal: 123
-```
-
-Finally, run `!source` to see `a` was applied:
-
-```solidity
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.28;
-
-import {Vm} from "forge-std/Vm.sol";
-
-contract REPL {
-    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
-    /// @notice REPL contract entry point
-    function run() public {
-        uint256 a = 123;
-    }
-}
-```
-
----
-
-Run `chisel --help` to explore the full list of available features and their usage.
-
-More documentation can be found in the [chisel](https://getfoundry.sh/chisel/overview) section of the Foundry Docs.
 
 ## Configuration
 

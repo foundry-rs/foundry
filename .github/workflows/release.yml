@@ -183,7 +183,7 @@ jobs:
             cargo build "${flags[@]}"
           fi
 
-          bins=(anvil cast chisel forge)
+          bins=(anvil cast forge)
           for name in "${bins[@]}"; do
             bin="$OUT_DIR/$name$ext"
             printf '\n'
@@ -204,16 +204,16 @@ jobs:
         shell: bash
         run: |
           if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil
             printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil
             printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
           else
             cd "$OUT_DIR"
-            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
+            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
           fi
@@ -238,12 +238,10 @@ jobs:
           help2man -N $OUT_DIR/forge > forge.1
           help2man -N $OUT_DIR/cast > cast.1
           help2man -N $OUT_DIR/anvil > anvil.1
-          help2man -N $OUT_DIR/chisel > chisel.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1
-          gzip chisel.1
-          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
+          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz
           printf 'foundry_man=%s\n' "foundry_man_${VERSION_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Binaries attestation
@@ -253,7 +251,6 @@ jobs:
           subject-path: |
             ${{ env.anvil_bin_path }}
             ${{ env.cast_bin_path }}
-            ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
 
       - name: Record attestation URL
