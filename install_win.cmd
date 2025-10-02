@@ -211,9 +211,9 @@ call :cleanup
 if exist "%FOUNDRY_BACKUP%" rmdir /S /Q "%FOUNDRY_BACKUP%" >nul 2>&1
 
 echo.
-echo ========================================
+echo ==========================================================
 echo SUCCESS: Foundry !FOUNDRY_VERSION! installed successfully!
-echo ========================================
+echo ==========================================================
 echo.
 echo Installation directory: %FOUNDRY_BIN%
 echo.
