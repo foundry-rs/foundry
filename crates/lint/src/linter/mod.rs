@@ -254,7 +254,7 @@ impl Suggestion {
         self
     }
 
-    pub fn to_note(&self) -> Option<Vec<(DiagMsg, Style)>> {
+    fn to_note(&self) -> Option<Vec<(DiagMsg, Style)>> {
         if let SuggestionKind::Fix { .. } = &self.kind {
             return None;
         };
