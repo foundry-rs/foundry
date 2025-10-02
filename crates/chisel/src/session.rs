@@ -80,7 +80,7 @@ impl ChiselSession {
 
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
-                /// ID is already set - use the existing cache file.
+                // ID is already set - use the existing cache file.
                 let path = cache_dir.join(format!("chisel-{id}.json"));
                 path.to_string_lossy().into_owned()
             }
