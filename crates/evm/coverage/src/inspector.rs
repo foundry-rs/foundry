@@ -39,8 +39,9 @@ where
     CTX: ContextTr<Journal: JournalExt>,
 {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
-        get_or_insert_contract_hash(interpreter);
-        self.insert_map(interpreter);
+        let map = self.get_or_insert_map(interpreter);
+        // Reserve some space early to avoid reallocating too often.
+        map.reserve(8192.min(interpreter.bytecode.len()));
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
@@ -61,7 +62,7 @@ impl LineCoverageCollector {
     /// See comments on `current_map` for more details.
     #[inline]
     fn get_or_insert_map(&mut self, interpreter: &mut Interpreter) -> &mut HitMap {
-        let hash = get_or_insert_contract_hash(interpreter);
+        let hash = interpreter.bytecode.get_or_calculate_hash();
         if self.current_hash != *hash {
             self.insert_map(interpreter);
         }
@@ -81,18 +82,4 @@ impl LineCoverageCollector {
             .or_insert_with(|| HitMap::new(interpreter.bytecode.original_bytes()))
             .into();
     }
-}
-
-/// Helper function for extracting contract hash used to record coverage hit map.
-///
-/// If the contract hash is zero (contract not yet created but it's going to be created in current
-/// tx) then the hash is calculated from the bytecode.
-#[inline]
-fn get_or_insert_contract_hash(interpreter: &mut Interpreter) -> B256 {
-    // TODO: use just `get_or_calculate_hash`
-    interpreter
-        .bytecode
-        .hash()
-        .filter(|h| !h.is_zero())
-        .unwrap_or_else(|| interpreter.bytecode.regenerate_hash())
 }

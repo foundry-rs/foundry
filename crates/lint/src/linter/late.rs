@@ -1,5 +1,4 @@
-use solar_interface::data_structures::Never;
-use solar_sema::hir;
+use solar::{interface::data_structures::Never, sema::hir};
 use std::ops::ControlFlow;
 
 use super::LintContext;
@@ -9,98 +8,98 @@ use super::LintContext;
 pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_source(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _id: hir::SourceId,
     ) {
     }
     fn check_nested_item(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _id: &'hir hir::ItemId,
     ) {
     }
     fn check_nested_contract(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _id: &'hir hir::ContractId,
     ) {
     }
     fn check_nested_function(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _id: &'hir hir::FunctionId,
     ) {
     }
     fn check_nested_var(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _id: &'hir hir::VariableId,
     ) {
     }
     fn check_item(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _item: hir::Item<'hir, 'hir>,
     ) {
     }
     fn check_contract(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _contract: &'hir hir::Contract<'hir>,
     ) {
     }
     fn check_function(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _func: &'hir hir::Function<'hir>,
     ) {
     }
     fn check_modifier(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _mod: &'hir hir::Modifier<'hir>,
     ) {
     }
     fn check_var(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _var: &'hir hir::Variable<'hir>,
     ) {
     }
     fn check_expr(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _expr: &'hir hir::Expr<'hir>,
     ) {
     }
     fn check_call_args(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _args: &'hir hir::CallArgs<'hir>,
     ) {
     }
     fn check_stmt(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _stmt: &'hir hir::Stmt<'hir>,
     ) {
     }
     fn check_ty(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _hir: &'hir hir::Hir<'hir>,
         _ty: &'hir hir::Type<'hir>,
     ) {
@@ -109,7 +108,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
 
 /// Visitor struct for `LateLintPass`es
 pub struct LateLintVisitor<'a, 's, 'hir> {
-    ctx: &'a LintContext<'s>,
+    ctx: &'a LintContext<'s, 'a>,
     passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
     hir: &'hir hir::Hir<'hir>,
 }
@@ -119,7 +118,7 @@ where
     's: 'hir,
 {
     pub fn new(
-        ctx: &'a LintContext<'s>,
+        ctx: &'a LintContext<'s, 'a>,
         passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
         hir: &'hir hir::Hir<'hir>,
     ) -> Self {

@@ -35,18 +35,23 @@ pub struct FormatterConfig {
     pub contract_new_lines: bool,
     /// Sort import statements alphabetically in groups (a group is separated by a newline).
     pub sort_imports: bool,
+    /// Whether to suppress spaces around the power operator (`**`).
+    pub pow_no_space: bool,
+    /// Whether to compact call args in a single line when possible
+    pub call_compact_args: bool,
 }
 
-/// Style of uint/int256 types
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Style of integer types.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntTypes {
-    /// Print the explicit uint256 or int256
-    Long,
-    /// Print the implicit uint or int
-    Short,
-    /// Use the type defined in the source code
+    /// Use the type defined in the source code.
     Preserve,
+    /// Print the full length `uint256` or `int256`.
+    #[default]
+    Long,
+    /// Print the alias `uint` or `int`.
+    Short,
 }
 
 /// Style of underscores in number literals
@@ -54,9 +59,9 @@ pub enum IntTypes {
 #[serde(rename_all = "snake_case")]
 pub enum NumberUnderscore {
     /// Use the underscores defined in the source code
+    #[default]
     Preserve,
     /// Remove all underscores
-    #[default]
     Remove,
     /// Add an underscore every thousand, if greater than 9999
     /// e.g. 1000 -> 1000 and 10000 -> 10_000
@@ -96,63 +101,45 @@ pub enum HexUnderscore {
     Bytes,
 }
 
-impl HexUnderscore {
-    /// Returns true if the option is `Preserve`
-    #[inline]
-    pub fn is_preserve(self) -> bool {
-        matches!(self, Self::Preserve)
-    }
-
-    /// Returns true if the option is `Remove`
-    #[inline]
-    pub fn is_remove(self) -> bool {
-        matches!(self, Self::Remove)
-    }
-
-    /// Returns true if the option is `Remove`
-    #[inline]
-    pub fn is_bytes(self) -> bool {
-        matches!(self, Self::Bytes)
-    }
-}
-
 /// Style of string quotes
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuoteStyle {
-    /// Use double quotes where possible
-    Double,
-    /// Use single quotes where possible
-    Single,
-    /// Use quotation mark defined in the source code
+    /// Use quotation mark defined in the source code.
     Preserve,
+    /// Use double quotes where possible.
+    #[default]
+    Double,
+    /// Use single quotes where possible.
+    Single,
 }
 
 impl QuoteStyle {
-    /// Get associated quotation mark with option
-    pub fn quote(self) -> Option<char> {
+    /// Returns the associated quotation mark character.
+    pub const fn quote(self) -> Option<char> {
         match self {
+            Self::Preserve => None,
             Self::Double => Some('"'),
             Self::Single => Some('\''),
-            Self::Preserve => None,
         }
     }
 }
 
 /// Style of single line blocks in statements
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SingleLineBlockStyle {
+    /// Preserve the original style
+    #[default]
+    Preserve,
     /// Prefer single line block when possible
     Single,
     /// Always use multiline block
     Multi,
-    /// Preserve the original style
-    Preserve,
 }
 
 /// Style of function header in case it doesn't fit
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
     /// Write function parameters multiline first.
@@ -160,12 +147,27 @@ pub enum MultilineFuncHeaderStyle {
     /// Write function parameters multiline first when there is more than one param.
     ParamsFirstMulti,
     /// Write function attributes multiline first.
+    #[default]
     AttributesFirst,
     /// If function params or attrs are multiline.
     /// split the rest
     All,
     /// Same as `All` but writes function params multiline even when there is a single param.
     AllParams,
+}
+
+impl MultilineFuncHeaderStyle {
+    pub fn all(&self) -> bool {
+        matches!(self, Self::All | Self::AllParams)
+    }
+
+    pub fn params_first(&self) -> bool {
+        matches!(self, Self::ParamsFirst | Self::ParamsFirstMulti)
+    }
+
+    pub fn attrib_first(&self) -> bool {
+        matches!(self, Self::AttributesFirst)
+    }
 }
 
 /// Style of indent
@@ -184,17 +186,19 @@ impl Default for FormatterConfig {
             tab_width: 4,
             style: IndentStyle::Space,
             bracket_spacing: false,
-            int_types: IntTypes::Long,
-            multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,
-            quote_style: QuoteStyle::Double,
-            number_underscore: NumberUnderscore::Preserve,
-            hex_underscore: HexUnderscore::Remove,
-            single_line_statement_blocks: SingleLineBlockStyle::Preserve,
+            int_types: IntTypes::default(),
+            multiline_func_header: MultilineFuncHeaderStyle::default(),
+            quote_style: QuoteStyle::default(),
+            number_underscore: NumberUnderscore::default(),
+            hex_underscore: HexUnderscore::default(),
+            single_line_statement_blocks: SingleLineBlockStyle::default(),
             override_spacing: false,
             wrap_comments: false,
             ignore: vec![],
             contract_new_lines: false,
             sort_imports: false,
+            pow_no_space: false,
+            call_compact_args: true,
         }
     }
 }

@@ -3,12 +3,14 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar_ast::{self as ast, Span};
-use solar_sema::hir::{self, Res};
+use solar::{
+    ast::{self as ast, Span},
+    sema::hir::{self, Res},
+};
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
-    Severity::Gas,
+    Severity::CodeSize,
     "unwrapped-modifier-logic",
     "wrap modifier logic to reduce code size"
 );
@@ -16,7 +18,7 @@ declare_forge_lint!(
 impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     fn check_function(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -92,7 +94,7 @@ impl UnwrappedModifierLogic {
 
     fn get_snippet<'a>(
         &self,
-        ctx: &LintContext<'_>,
+        ctx: &LintContext,
         hir: &hir::Hir<'_>,
         func: &hir::Function<'_>,
         before: &'a [hir::Stmt<'a>],

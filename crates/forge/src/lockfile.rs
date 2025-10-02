@@ -1,14 +1,13 @@
 //! foundry.lock handler type.
 
-use std::{
-    collections::hash_map::Entry,
-    path::{Path, PathBuf},
-};
-
 use alloy_primitives::map::HashMap;
 use eyre::{OptionExt, Result};
 use foundry_cli::utils::Git;
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, hash_map::Entry},
+    path::{Path, PathBuf},
+};
 
 pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
@@ -137,7 +136,8 @@ impl<'a> Lockfile<'a> {
 
     /// Writes the lockfile to the project root.
     pub fn write(&self) -> Result<()> {
-        foundry_common::fs::write_pretty_json_file(&self.lockfile_path, &self.deps)?;
+        let ordered_deps: BTreeMap<_, _> = self.deps.clone().into_iter().collect();
+        foundry_common::fs::write_pretty_json_file(&self.lockfile_path, &ordered_deps)?;
         trace!(at= ?self.lockfile_path, "wrote lockfile");
 
         Ok(())
@@ -340,6 +340,8 @@ impl std::fmt::Display for DepIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn serde_dep_identifier() {
@@ -381,5 +383,61 @@ mod tests {
         assert_eq!(branch, branch_de);
         assert_eq!(tag, tag_de);
         assert_eq!(rev, rev_de);
+    }
+
+    #[test]
+    fn test_write_ordered_deps() {
+        let dir = tempdir().unwrap();
+        let mut lockfile = Lockfile::new(dir.path());
+        lockfile.insert(
+            PathBuf::from("z_dep"),
+            DepIdentifier::Rev { rev: "3".to_string(), r#override: false },
+        );
+        lockfile.insert(
+            PathBuf::from("a_dep"),
+            DepIdentifier::Rev { rev: "1".to_string(), r#override: false },
+        );
+        lockfile.insert(
+            PathBuf::from("c_dep"),
+            DepIdentifier::Rev { rev: "2".to_string(), r#override: false },
+        );
+        let _ = lockfile.write();
+        let contents = fs::read_to_string(lockfile.lockfile_path).unwrap();
+        let expected = r#"{
+  "a_dep": {
+    "rev": "1"
+  },
+  "c_dep": {
+    "rev": "2"
+  },
+  "z_dep": {
+    "rev": "3"
+  }
+}"#;
+        assert_eq!(contents.trim(), expected.trim());
+
+        let mut lockfile = Lockfile::new(dir.path());
+        lockfile.read().unwrap();
+        lockfile.insert(
+            PathBuf::from("x_dep"),
+            DepIdentifier::Rev { rev: "4".to_string(), r#override: false },
+        );
+        let _ = lockfile.write();
+        let contents = fs::read_to_string(lockfile.lockfile_path).unwrap();
+        let expected = r#"{
+  "a_dep": {
+    "rev": "1"
+  },
+  "c_dep": {
+    "rev": "2"
+  },
+  "x_dep": {
+    "rev": "4"
+  },
+  "z_dep": {
+    "rev": "3"
+  }
+}"#;
+        assert_eq!(contents.trim(), expected.trim());
     }
 }

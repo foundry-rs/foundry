@@ -1,7 +1,7 @@
 use crate::RepoConfig;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, process::Command};
+use std::{collections::HashMap, process::Command, thread};
 
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
@@ -131,7 +131,10 @@ impl BenchmarkResults {
         // System info
         output.push_str("## System Information\n\n");
         output.push_str(&format!("- **OS**: {}\n", std::env::consts::OS));
-        output.push_str(&format!("- **CPU**: {}\n", num_cpus::get()));
+        output.push_str(&format!(
+            "- **CPU**: {}\n",
+            thread::available_parallelism().map_or(1, |n| n.get())
+        ));
         output.push_str(&format!(
             "- **Rustc**: {}\n",
             get_rustc_version().unwrap_or_else(|_| "unknown".to_string())

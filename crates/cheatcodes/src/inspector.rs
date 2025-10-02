@@ -5,7 +5,6 @@ use crate::{
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess,
-        mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -33,9 +32,12 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned,
+    mapping_slots::{MappingSlots, step as mapping_step},
+};
 use foundry_evm_core::{
-    InspectorExt,
+    Breakpoints, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -69,7 +71,7 @@ use std::{
     io::BufReader,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 mod utils;
@@ -195,7 +197,6 @@ impl Clone for TestContext {
 
 impl TestContext {
     /// Clears the context.
-    #[inline]
     pub fn clear(&mut self) {
         self.opened_read_files.clear();
     }
@@ -496,7 +497,12 @@ pub struct Cheatcodes {
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
-    pub signatures_identifier: Option<SignaturesIdentifier>,
+    signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
+    /// Used to determine whether the broadcasted call has non-fixed gas limit.
+    /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
+    /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
+    /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
+    pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -551,7 +557,8 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
-            signatures_identifier: SignaturesIdentifier::new(true).ok(),
+            signatures_identifier: Default::default(),
+            dynamic_gas_limit_sequence: Default::default(),
         }
     }
 
@@ -575,6 +582,11 @@ impl Cheatcodes {
     /// Adds a delegation to the active delegations list.
     pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
         self.active_delegations.push(authorization);
+    }
+
+    /// Returns the signatures identifier.
+    pub fn signatures_identifier(&self) -> Option<&SignaturesIdentifier> {
+        self.signatures_identifier.get_or_init(|| SignaturesIdentifier::new(true).ok()).as_ref()
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -850,9 +862,18 @@ impl Cheatcodes {
                         });
                     }
 
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
-
+                    let (gas_seen, call_seen) =
+                        self.dynamic_gas_limit_sequence.take().unwrap_or_default();
+                    // Transaction has fixed gas limit if no GAS opcode seen before CALL opcode.
+                    let mut is_fixed_gas_limit = !(gas_seen && call_seen);
+                    // Additional check as transfers in forge scripts seem to be estimated at 2300
+                    // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
+                    if call.gas_limit < 21_000 {
+                        is_fixed_gas_limit = false;
+                    }
                     let input = TransactionInput::new(call.input.bytes(ecx));
+                    // Ensure account is touched.
+                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -933,12 +954,15 @@ impl Cheatcodes {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
             let old_balance;
+            let old_nonce;
             if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
+                old_nonce = acc.info.nonce;
             } else {
                 initialized = false;
                 old_balance = U256::ZERO;
+                old_nonce = 0;
             }
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
@@ -962,6 +986,8 @@ impl Cheatcodes {
                 initialized,
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
+                oldNonce: old_nonce,
+                newNonce: 0, // updated on call_end
                 value: call.call_value(),
                 data: call.input.bytes(ecx),
                 reverted: false,
@@ -1044,7 +1070,6 @@ impl Cheatcodes {
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
-    #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
@@ -1068,6 +1093,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         self.pc = interpreter.bytecode.pc();
+
+        if self.broadcast.is_some() {
+            self.record_gas_limit_opcode(interpreter);
+        }
 
         // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
@@ -1099,7 +1128,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping::step(mapping_slots, interpreter);
+            mapping_step(mapping_slots, interpreter);
         }
 
         // `snapshotGas*`: take a snapshot of the current gas.
@@ -1109,6 +1138,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        if self.broadcast.is_some() {
+            self.set_gas_limit_type(interpreter);
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1327,6 +1360,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
+                        call_access.newNonce = acc.info.nonce;
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
                     // current depth, or push them back onto the pending
@@ -1509,7 +1543,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _)| expected.count > 0 && !expected.found);
+            // For count=0 expectations, NOT being found is success, so mark them as found
+            for (expected, _) in &mut self.expected_emits {
+                if expected.count == 0 && !expected.found {
+                    expected.found = true;
+                }
+            }
+            self.expected_emits.retain(|(expected, _)| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
@@ -1586,7 +1626,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast
+        if let Some(broadcast) = &mut self.broadcast
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
@@ -1603,9 +1643,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             ecx.tx.caller = broadcast.new_origin;
 
-            if curr_depth == broadcast.depth {
+            if curr_depth == broadcast.depth || broadcast.deploy_from_code {
+                // Reset deploy from code flag for upcoming calls;
+                broadcast.deploy_from_code = false;
+
                 input.set_caller(broadcast.new_origin);
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
+
+                // Ensure account is touched.
+                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1616,7 +1661,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         value: Some(input.value()),
                         input: TransactionInput::new(input.init_code()),
                         nonce: Some(account.info.nonce),
-                        gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                         ..Default::default()
                     }
                     .into(),
@@ -1642,6 +1686,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 initialized: true,
                 oldBalance: U256::ZERO, // updated on create_end
                 newBalance: U256::ZERO, // updated on create_end
+                oldNonce: 0,            // new contract starts with nonce 0
+                newNonce: 1,            // updated on create_end (contracts start with nonce 1)
                 value: input.value(),
                 data: input.init_code(),
                 reverted: false,
@@ -1748,6 +1794,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             && let Ok(created_acc) = ecx.journaled_state.load_account(address)
                         {
                             create_access.newBalance = created_acc.info.balance;
+                            create_access.newNonce = created_acc.info.nonce;
                             create_access.deployedCode =
                                 created_acc.info.code.clone().unwrap_or_default().original_bytes();
                         }
@@ -1945,13 +1992,15 @@ impl Cheatcodes {
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 let Some(last) = account_accesses.last_mut() else { return };
 
-                // get previous balance and initialized status of the target account
+                // get previous balance, nonce and initialized status of the target account
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
-                let (initialized, old_balance) = ecx
+                let (initialized, old_balance, old_nonce) = ecx
                     .journaled_state
                     .load_account(target)
-                    .map(|account| (account.info.exists(), account.info.balance))
+                    .map(|account| {
+                        (account.info.exists(), account.info.balance, account.info.nonce)
+                    })
                     .unwrap_or_default();
 
                 // load balance of this account
@@ -1972,6 +2021,8 @@ impl Cheatcodes {
                     initialized,
                     oldBalance: old_balance,
                     newBalance: old_balance + value,
+                    oldNonce: old_nonce,
+                    newNonce: old_nonce, // nonce doesn't change on selfdestruct
                     value,
                     data: Bytes::new(),
                     reverted: false,
@@ -2059,12 +2110,15 @@ impl Cheatcodes {
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
                 let initialized;
                 let balance;
+                let nonce;
                 if let Ok(acc) = ecx.journaled_state.load_account(address) {
                     initialized = acc.info.exists();
                     balance = acc.info.balance;
+                    nonce = acc.info.nonce;
                 } else {
                     initialized = false;
                     balance = U256::ZERO;
+                    nonce = 0;
                 }
                 let curr_depth = ecx
                     .journaled_state
@@ -2082,6 +2136,8 @@ impl Cheatcodes {
                     initialized,
                     oldBalance: balance,
                     newBalance: balance,
+                    oldNonce: nonce,
+                    newNonce: nonce, // EXT* operations don't change nonce
                     value: U256::ZERO,
                     data: Bytes::new(),
                     reverted: false,
@@ -2273,6 +2329,40 @@ impl Cheatcodes {
             (REVERT, 0, 1, false),
         );
     }
+
+    #[cold]
+    fn record_gas_limit_opcode(&mut self, interpreter: &mut Interpreter) {
+        match interpreter.bytecode.opcode() {
+            // If current opcode is CREATE2 then set non-fixed gas limit.
+            op::CREATE2 => self.dynamic_gas_limit_sequence = Some((true, true)),
+            op::GAS => {
+                if self.dynamic_gas_limit_sequence.is_none() {
+                    // If current opcode is GAS then mark as seen.
+                    self.dynamic_gas_limit_sequence = Some((true, false));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cold]
+    fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
+        // Early exit in case we already determined is non-fixed gas limit.
+        if matches!(self.dynamic_gas_limit_sequence, Some((true, true))) {
+            return;
+        }
+
+        // Record CALL opcode if GAS opcode was seen.
+        if matches!(self.dynamic_gas_limit_sequence, Some((true, false)))
+            && interpreter.bytecode.opcode() == op::CALL
+        {
+            self.dynamic_gas_limit_sequence = Some((true, true));
+            return;
+        }
+
+        // Reset dynamic gas limit sequence if GAS opcode was not followed by a CALL opcode.
+        self.dynamic_gas_limit_sequence = None;
+    }
 }
 
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
@@ -2298,20 +2388,6 @@ fn disallowed_mem_write(
         Bytes::from(revert_string.into_bytes()),
         interpreter.gas,
     ));
-}
-
-// Determines if the gas limit on a given call was manually set in the script and should therefore
-// not be overwritten by later estimations
-fn check_if_fixed_gas_limit(ecx: &Ecx, call_gas_limit: u64) -> bool {
-    // If the gas limit was not set in the source code it is set to the estimated gas left at the
-    // time of the call, which should be rather close to configured gas limit.
-    // TODO: Find a way to reliably make this determination.
-    // For example by generating it in the compilation or EVM simulation process
-    ecx.tx.gas_limit > ecx.block.gas_limit &&
-        call_gas_limit <= ecx.block.gas_limit
-        // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
-        // gas too low" failure when simulated on chain
-        && call_gas_limit > 2300
 }
 
 /// Returns true if the kind of account access is a call.
@@ -2360,6 +2436,8 @@ fn append_storage_access(
                     // The remaining fields are defaults
                     oldBalance: U256::ZERO,
                     newBalance: U256::ZERO,
+                    oldNonce: 0,
+                    newNonce: 0,
                     value: U256::ZERO,
                     data: Bytes::new(),
                     deployedCode: Bytes::new(),
@@ -2380,7 +2458,7 @@ fn apply_dispatch(
     let cheat = calls_as_dyn_cheatcode(calls);
 
     let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheat.id()).entered();
-    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
+    trace!(target: "cheatcodes", ?cheat, "applying");
 
     if let spec::Status::Deprecated(replacement) = *cheat.status() {
         ccx.state.deprecated.insert(cheat.signature(), replacement);

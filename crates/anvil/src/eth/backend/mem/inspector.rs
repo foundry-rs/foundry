@@ -19,6 +19,7 @@ use revm::{
         interpreter::EthInterpreter,
     },
 };
+use revm_inspectors::transfer::TransferInspector;
 use std::sync::Arc;
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -28,6 +29,8 @@ pub struct AnvilInspector {
     pub tracer: Option<TracingInspector>,
     /// Collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
+    /// Collects all internal ETH transfers as ERC20 transfer events.
+    pub transfer: Option<TransferInspector>,
 }
 
 impl AnvilInspector {
@@ -79,6 +82,12 @@ impl AnvilInspector {
         self
     }
 
+    /// Configures the `Tracer` [`revm::Inspector`] with a transfer event collector
+    pub fn with_transfers(mut self) -> Self {
+        self.transfer = Some(TransferInspector::new(false).with_logs(true));
+        self
+    }
+
     /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
     pub fn with_trace_printer(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
@@ -103,8 +112,8 @@ fn print_traces(tracer: TracingInspector, decoder: Arc<CallTraceDecoder>) {
     });
 
     let traces = SparsedTraceArena { arena, ignored: Default::default() };
-    node_info!("Traces:");
-    node_info!("{}", render_trace_arena_inner(&traces, false, true));
+    let trace = render_trace_arena_inner(&traces, false, true);
+    node_info!(Traces = %format!("\n{}", trace));
 }
 
 impl<CTX> Inspector<CTX, EthInterpreter> for AnvilInspector
@@ -139,7 +148,7 @@ where
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.log_collector],
+            [&mut self.tracer, &mut self.log_collector, &mut self.transfer],
             |inspector| inspector.call(ecx, inputs).map(Some),
         );
         None
@@ -152,11 +161,11 @@ where
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer
-            && let Some(out) = tracer.create(ecx, inputs)
-        {
-            return Some(out);
-        }
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.transfer],
+            |inspector| inspector.create(ecx, inputs).map(Some),
+        );
         None
     }
 
@@ -166,11 +175,10 @@ where
         }
     }
 
-    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        if let Some(tracer) = &mut self.tracer {
-            <TracingInspector as Inspector<CTX>>::selfdestruct(tracer, contract, target, value);
-        }
+        call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
+            Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
+        });
     }
 }
 

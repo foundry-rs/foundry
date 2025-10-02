@@ -1,48 +1,61 @@
-use crate::executors::{Executor, FuzzTestTimer, RawCallResult};
+use crate::executors::{
+    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
+use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME, TEST_TIMEOUT},
+    Breakpoints,
+    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
+    BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
+    FuzzFixtures, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
-use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{cell::RefCell, collections::BTreeMap};
+use proptest::{
+    strategy::Strategy,
+    test_runner::{TestCaseError, TestRunner},
+};
+use serde_json::json;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
+use crate::executors::corpus::CorpusManager;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
 #[derive(Default)]
-pub struct FuzzTestData {
+struct FuzzTestData {
     // Stores the first fuzz case.
-    pub first_case: Option<FuzzCase>,
+    first_case: Option<FuzzCase>,
     // Stored gas usage per fuzz case.
-    pub gas_by_case: Vec<(u64, u64)>,
+    gas_by_case: Vec<(u64, u64)>,
     // Stores the result and calldata of the last failed call, if any.
-    pub counterexample: (Bytes, RawCallResult),
+    counterexample: (Bytes, RawCallResult),
     // Stores up to `max_traces_to_collect` traces.
-    pub traces: Vec<SparsedTraceArena>,
+    traces: Vec<SparsedTraceArena>,
     // Stores breakpoints for the last fuzz case.
-    pub breakpoints: Option<Breakpoints>,
+    breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
-    pub coverage: Option<HitMaps>,
+    coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
-    pub logs: Vec<Log>,
-    // Stores gas snapshots for all fuzz cases
-    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+    logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
-    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+    deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+    // Runs performed in fuzz test.
+    runs: u32,
+    // Current assume rejects of the fuzz run.
+    rejects: u32,
+    // Test failure.
+    failure: Option<TestCaseError>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -51,14 +64,16 @@ pub struct FuzzTestData {
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
 pub struct FuzzedExecutor {
-    /// The EVM executor
+    /// The EVM executor.
     executor: Executor,
     /// The fuzzer
     runner: TestRunner,
-    /// The account that calls tests
+    /// The account that calls tests.
     sender: Address,
-    /// The fuzz configuration
+    /// The fuzz configuration.
     config: FuzzConfig,
+    /// The persisted counterexample to be replayed, if any.
+    persisted_failure: Option<BaseCounterExample>,
 }
 
 impl FuzzedExecutor {
@@ -68,155 +83,203 @@ impl FuzzedExecutor {
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,
+        persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        Self { executor, runner, sender, config }
+        Self { executor, runner, sender, config, persisted_failure }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
     /// If `should_fail` is set to `true`, then it will stop only when there's a success
     /// test case.
     ///
-    /// Returns a list of all the consumed gas and calldata of every fuzz case
+    /// Returns a list of all the consumed gas and calldata of every fuzz case.
+    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
-        &self,
+        &mut self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
-    ) -> FuzzTestResult {
+        fail_fast: &FailFast,
+    ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
-        let execution_data = RefCell::new(FuzzTestData::default());
+        let mut test_data = FuzzTestData::default();
         let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
-        ];
+        ]
+        .prop_map(move |calldata| BasicTxDetails {
+            sender: Default::default(),
+            call_details: CallDetails { target: Default::default(), calldata },
+        });
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
-        let show_logs = self.config.show_logs;
+
+        let mut corpus_manager = CorpusManager::new(
+            self.config.corpus.clone(),
+            strategy.boxed(),
+            &self.executor,
+            Some(func),
+            None,
+        )?;
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
-
-        let run_result = self.runner.clone().run(&strategy, |calldata| {
-            // Check if the timeout has been reached.
-            if timer.is_timed_out() {
-                return Err(TestCaseError::fail(TEST_TIMEOUT));
+        let mut last_metrics_report = Instant::now();
+        let max_runs = self.config.runs;
+        let continue_campaign = |runs: u32| {
+            if fail_fast.should_stop() {
+                return false;
             }
 
-            let fuzz_res = self.single_fuzz(address, calldata)?;
+            if timer.is_enabled() { !timer.is_timed_out() } else { runs < max_runs }
+        };
 
-            // If running with progress then increment current run.
-            if let Some(progress) = progress {
-                progress.inc(1);
+        'stop: while continue_campaign(test_data.runs) {
+            // If counterexample recorded, replay it first, without incrementing runs.
+            let input = if let Some(failure) = self.persisted_failure.take() {
+                failure.calldata
+            } else {
+                // If running with progress, then increment current run.
+                if let Some(progress) = progress {
+                    progress.inc(1);
+                    // Display metrics in progress bar.
+                    if self.config.corpus.collect_edge_coverage() {
+                        progress.set_message(format!("{}", &corpus_manager.metrics));
+                    }
+                } else if self.config.corpus.collect_edge_coverage()
+                    && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+                {
+                    // Display metrics inline.
+                    let metrics = json!({
+                        "timestamp": SystemTime::now()
+                            .duration_since(UNIX_EPOCH)?
+                            .as_secs(),
+                        "test": func.name,
+                        "metrics": &corpus_manager.metrics,
+                    });
+                    let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                    last_metrics_report = Instant::now();
+                };
+
+                test_data.runs += 1;
+
+                match corpus_manager.new_input(&mut self.runner, &state, func) {
+                    Ok(input) => input,
+                    Err(err) => {
+                        test_data.failure = Some(TestCaseError::fail(format!(
+                            "failed to generate fuzzed input: {err}"
+                        )));
+                        break 'stop;
+                    }
+                }
             };
 
-            match fuzz_res {
-                FuzzOutcome::Case(case) => {
-                    let mut data = execution_data.borrow_mut();
-                    data.gas_by_case.push((case.case.gas, case.case.stipend));
+            match self.single_fuzz(address, input, &mut corpus_manager) {
+                Ok(fuzz_outcome) => match fuzz_outcome {
+                    FuzzOutcome::Case(case) => {
+                        test_data.gas_by_case.push((case.case.gas, case.case.stipend));
 
-                    if data.first_case.is_none() {
-                        data.first_case.replace(case.case);
-                    }
-
-                    if let Some(call_traces) = case.traces {
-                        if data.traces.len() == max_traces_to_collect {
-                            data.traces.pop();
+                        if test_data.first_case.is_none() {
+                            test_data.first_case.replace(case.case);
                         }
-                        data.traces.push(call_traces);
-                        data.breakpoints.replace(case.breakpoints);
+
+                        if let Some(call_traces) = case.traces {
+                            if test_data.traces.len() == max_traces_to_collect {
+                                test_data.traces.pop();
+                            }
+                            test_data.traces.push(call_traces);
+                            test_data.breakpoints.replace(case.breakpoints);
+                        }
+
+                        if self.config.show_logs {
+                            test_data.logs.extend(case.logs);
+                        }
+
+                        HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
+                        test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
-
-                    if show_logs {
-                        data.logs.extend(case.logs);
+                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+                        exit_reason: status,
+                        counterexample: outcome,
+                        ..
+                    }) => {
+                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        test_data.logs.extend(outcome.1.logs.clone());
+                        test_data.counterexample = outcome;
+                        test_data.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        break 'stop;
                     }
-
-                    HitMaps::merge_opt(&mut data.coverage, case.coverage);
-
-                    data.deprecated_cheatcodes = case.deprecated_cheatcodes;
-
-                    Ok(())
-                }
-                FuzzOutcome::CounterExample(CounterExampleOutcome {
-                    exit_reason: status,
-                    counterexample: outcome,
-                    ..
-                }) => {
-                    // We cannot use the calldata returned by the test runner in `TestError::Fail`,
-                    // since that input represents the last run case, which may not correspond with
-                    // our failure - when a fuzz case fails, proptest will try to run at least one
-                    // more case to find a minimal failure case.
-                    let reason = rd.maybe_decode(&outcome.1.result, status);
-                    execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
-                    execution_data.borrow_mut().counterexample = outcome;
-                    // HACK: we have to use an empty string here to denote `None`.
-                    Err(TestCaseError::fail(reason.unwrap_or_default()))
+                },
+                Err(err) => {
+                    match err {
+                        TestCaseError::Fail(_) => {
+                            test_data.failure = Some(err);
+                            break 'stop;
+                        }
+                        TestCaseError::Reject(_) => {
+                            // Discard run and apply max rejects if configured.
+                            test_data.runs -= 1;
+                            if self.config.max_test_rejects > 0 {
+                                test_data.rejects += 1;
+                                if test_data.rejects >= self.config.max_test_rejects {
+                                    test_data.failure = Some(err);
+                                    break 'stop;
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        });
+        }
 
-        let fuzz_result = execution_data.into_inner();
-        let (calldata, call) = fuzz_result.counterexample;
-
-        let mut traces = fuzz_result.traces;
-        let (last_run_traces, last_run_breakpoints) = if run_result.is_ok() {
-            (traces.pop(), fuzz_result.breakpoints)
+        let (calldata, call) = test_data.counterexample;
+        let mut traces = test_data.traces;
+        let (last_run_traces, last_run_breakpoints) = if test_data.failure.is_none() {
+            (traces.pop(), test_data.breakpoints)
         } else {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
         let mut result = FuzzTestResult {
-            first_case: fuzz_result.first_case.unwrap_or_default(),
-            gas_by_case: fuzz_result.gas_by_case,
-            success: run_result.is_ok(),
+            first_case: test_data.first_case.unwrap_or_default(),
+            gas_by_case: test_data.gas_by_case,
+            success: test_data.failure.is_none(),
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: fuzz_result.logs,
+            logs: test_data.logs,
             labels: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            line_coverage: fuzz_result.coverage,
-            deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
+            line_coverage: test_data.coverage,
+            deprecated_cheatcodes: test_data.deprecated_cheatcodes,
+            failed_corpus_replays: corpus_manager.failed_replays(),
         };
 
-        match run_result {
-            Ok(()) => {}
-            Err(TestError::Abort(reason)) => {
-                let msg = reason.message();
-                // Currently the only operation that can trigger proptest global rejects is the
-                // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
-                // aborts due to too many global rejects, making the error message more actionable.
-                result.reason = if msg == "Too many global rejects" {
-                    let error = FuzzError::TooManyRejects(self.runner.config().max_global_rejects);
-                    Some(error.to_string())
-                } else {
-                    Some(msg.to_string())
-                };
-            }
-            Err(TestError::Fail(reason, _)) => {
+        match test_data.failure {
+            Some(TestCaseError::Fail(reason)) => {
                 let reason = reason.to_string();
-                if reason == TEST_TIMEOUT {
-                    // If the reason is a timeout, we consider the fuzz test successful.
-                    result.success = true;
+                result.reason = (!reason.is_empty()).then_some(reason);
+                let args = if let Some(data) = calldata.get(4..) {
+                    func.abi_decode_input(data).unwrap_or_default()
                 } else {
-                    result.reason = (!reason.is_empty()).then_some(reason);
-                    let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data).unwrap_or_default()
-                    } else {
-                        vec![]
-                    };
-
-                    result.counterexample = Some(CounterExample::Single(
-                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                    ));
-                }
+                    vec![]
+                };
+                result.counterexample = Some(CounterExample::Single(
+                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                ));
             }
+            Some(TestCaseError::Reject(reason)) => {
+                let reason = reason.to_string();
+                result.reason = (!reason.is_empty()).then_some(reason);
+            }
+            None => {}
         }
 
         if let Some(reason) = &result.reason
@@ -228,24 +291,35 @@ impl FuzzedExecutor {
 
         state.log_stats();
 
-        result
+        Ok(result)
     }
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
-    pub fn single_fuzz(
-        &self,
+    fn single_fuzz(
+        &mut self,
         address: Address,
-        calldata: alloy_primitives::Bytes,
+        calldata: Bytes,
+        coverage_metrics: &mut CorpusManager,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        coverage_metrics.process_inputs(
+            &[BasicTxDetails {
+                sender: self.sender,
+                call_details: CallDetails { target: address, calldata: calldata.clone() },
+            }],
+            new_coverage,
+        );
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
-            return Err(TestCaseError::reject(FuzzError::AssumeReject));
+            return Err(TestCaseError::reject(FuzzError::TooManyRejects(
+                self.config.max_test_rejects,
+            )));
         }
 
         let (breakpoints, deprecated_cheatcodes) =

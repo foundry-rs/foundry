@@ -340,9 +340,9 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
-            node.trace.decoded = self.decode_function(&node.trace).await;
+            node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
-                log.decoded = self.decode_event(&log.raw_log).await;
+                log.decoded = Some(Box::new(self.decode_event(&log.raw_log).await));
             }
 
             if let Some(debug) = self.debug_identifier.as_ref()

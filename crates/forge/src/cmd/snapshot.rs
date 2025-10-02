@@ -94,7 +94,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = self.test.execute_tests().await?;
+        let outcome = self.test.compile_and_run().await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -225,6 +225,7 @@ impl FromStr for GasSnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         median_gas: med.as_str().parse().unwrap(),
                                         mean_gas: avg.as_str().parse().unwrap(),
+                                        failed_corpus_replays: 0,
                                     },
                                 })
                         } else {
@@ -471,7 +472,12 @@ mod tests {
             GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
+                gas_used: TestKindReport::Fuzz {
+                    runs: 256,
+                    median_gas: 200,
+                    mean_gas: 100,
+                    failed_corpus_replays: 0
+                }
             }
         );
     }

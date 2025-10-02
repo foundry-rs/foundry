@@ -1,7 +1,7 @@
 // config: style = "tab"
 contract CounterTest is Test {
 	/**
-	 * @dev Initializes the contract by setting a `name` and a `symbol` to the token collection.
+	 *	@dev Initializes the contract by setting a `name` and a `symbol` to the token collection.
 	 */
 	constructor(string memory name_, string memory symbol_) {
 		_name = name_;
@@ -9,7 +9,7 @@ contract CounterTest is Test {
 	}
 
 	/**
-	 * @dev See {IERC721-balanceOf}.
+	 *	@dev See {IERC721-balanceOf}.
 	 */
 	function test_Increment() public {
 		counter.increment();
@@ -17,7 +17,7 @@ contract CounterTest is Test {
 	}
 
 	/**
-	 * @dev See {IERC165-supportsInterface}.
+	 *	@dev See {IERC165-supportsInterface}.
 	 */
 	function test_Increment() public {
 		counter.increment();

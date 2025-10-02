@@ -8,6 +8,7 @@ use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, utils::evm_spec_id};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
 use revm::{primitives::hardfork::SpecId, state::Bytecode};
 use std::ops::{Deref, DerefMut};
@@ -23,7 +24,7 @@ impl TracingExecutor {
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
-        odyssey: bool,
+        networks: NetworkConfigs,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
     ) -> eyre::Result<Self> {
@@ -32,9 +33,9 @@ impl TracingExecutor {
         // tracing will be enabled only for the targeted transaction
         let mut executor = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
+                stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
             })
-            .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
+            .spec_id(evm_spec_id(version.unwrap_or_default()))
             .build(env, db);
 
         // Apply the state overrides.
@@ -76,17 +77,19 @@ impl TracingExecutor {
 
     /// uses the fork block number from the config
     pub async fn get_fork_material(
-        config: &Config,
+        config: &mut Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, bool)> {
+    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, NetworkConfigs)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
         let env = evm_opts.evm_env().await?;
 
         let fork = evm_opts.get_fork(config, env.clone());
+        let networks = evm_opts.networks.with_chain_id(env.evm_env.cfg_env.chain_id);
+        config.labels.extend(networks.precompiles_label());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.odyssey))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await, networks))
     }
 }
 

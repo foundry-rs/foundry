@@ -225,7 +225,7 @@ impl Cheatcode for eth_getLogsCall {
         let Self { fromBlock, toBlock, target, topics } = self;
         let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
         else {
-            bail!("blocks in block range must be less than 2^64 - 1")
+            bail!("blocks in block range must be less than 2^64")
         };
 
         if topics.len() > 4 {

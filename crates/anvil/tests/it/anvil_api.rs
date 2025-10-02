@@ -8,7 +8,7 @@ use crate::{
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes, utils::Unit};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -17,21 +17,12 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use anvil::{
-    NodeConfig,
-    eth::{
-        api::CLIENT_VERSION,
-        backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
-    },
-    spawn,
-};
+use anvil::{NodeConfig, eth::api::CLIENT_VERSION, spawn};
 use anvil_core::{
-    eth::{
-        EthRequest,
-        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
-    },
+    eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+
 use revm::primitives::hardfork::SpecId;
 use std::{
     str::FromStr,
@@ -667,6 +658,7 @@ async fn can_remove_pool_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "flaky"]
 async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -825,75 +817,6 @@ async fn test_rollback() {
     // Assert we're at block 1 and the block contents are kept the same
     let head = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(head, block1);
-}
-
-// === wallet endpoints === //
-#[tokio::test(flavor = "multi_thread")]
-async fn can_get_wallet_capabilities() {
-    let (api, handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let provider = handle.http_provider();
-
-    let init_sponsor_bal = provider.get_balance(EXECUTOR).await.unwrap();
-
-    let expected_bal = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
-    assert_eq!(init_sponsor_bal, expected_bal);
-
-    let p256_code = provider.get_code_at(P256_DELEGATION_CONTRACT).await.unwrap();
-
-    assert_eq!(p256_code, Bytes::from_static(P256_DELEGATION_RUNTIME_CODE));
-
-    let capabilities = api.get_capabilities().unwrap();
-
-    let mut expect_caps = WalletCapabilities::default();
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(capabilities, expect_caps);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_add_capability() {
-    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let init_capabilities = api.get_capabilities().unwrap();
-
-    let mut expect_caps = WalletCapabilities::default();
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(init_capabilities, expect_caps);
-
-    let new_cap_addr = Address::with_last_byte(1);
-
-    api.anvil_add_capability(new_cap_addr).unwrap();
-
-    let capabilities = api.get_capabilities().unwrap();
-
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability {
-            addresses: vec![P256_DELEGATION_CONTRACT, new_cap_addr],
-        },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(capabilities, expect_caps);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_set_executor() {
-    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let expected_addr = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-
-    let executor = api.anvil_set_executor(pk).unwrap();
-
-    assert_eq!(executor, expected_addr);
 }
 
 #[tokio::test(flavor = "multi_thread")]

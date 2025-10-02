@@ -15,7 +15,6 @@ use yansi::Paint;
 ///     1234124124 -> 1.23e9
 ///     10000000 -> 1e7
 /// ```
-#[inline]
 pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool, sign: Sign) -> String {
     let stringified = value.to_string();
     let exponent = stringified.len() - 1;

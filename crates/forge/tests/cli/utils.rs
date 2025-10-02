@@ -89,12 +89,12 @@ impl EnvExternalities {
         })
     }
 
-    pub fn mumbai() -> Option<Self> {
+    pub fn amoy() -> Option<Self> {
         Some(Self {
-            chain: NamedChain::PolygonMumbai,
-            rpc: network_rpc_key("mumbai")?,
-            pk: network_private_key("mumbai")?,
-            etherscan: etherscan_key(NamedChain::PolygonMumbai)?,
+            chain: NamedChain::PolygonAmoy,
+            rpc: network_rpc_key("amoy")?,
+            pk: network_private_key("amoy")?,
+            etherscan: etherscan_key(NamedChain::PolygonAmoy)?,
             verifier: "etherscan".to_string(),
         })
     }

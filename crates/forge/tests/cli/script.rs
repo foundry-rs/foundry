@@ -20,10 +20,9 @@ forgetest_init!(
     #[ignore]
     can_use_fork_cheat_codes_in_script,
     |prj, cmd| {
-        let script = prj
-            .add_source(
-                "Foo",
-                r#"
+        let script = prj.add_source(
+            "Foo",
+            r#"
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -35,8 +34,7 @@ contract ContractScript is Script {
     }
 }
    "#,
-            )
-            .unwrap();
+        );
 
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
@@ -46,10 +44,9 @@ contract ContractScript is Script {
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external {
@@ -57,8 +54,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -75,10 +71,9 @@ Script ran successfully.
 
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external {
@@ -86,8 +81,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[
         r#"
@@ -104,10 +98,9 @@ Script ran successfully.
 
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function myFunction() external {
@@ -115,8 +108,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
         str![[r#"
@@ -146,7 +138,7 @@ contract FailingScript is Script {
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
     // set up command
     cmd.arg("script").arg(script);
@@ -162,7 +154,7 @@ Error: script failed: failed
 // <https://github.com/foundry-rs/foundry/issues/2508>
 forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let script = prj.add_source("FailingScript", FAILING_SCRIPT).unwrap();
+    let script = prj.add_source("FailingScript", FAILING_SCRIPT);
 
     // set up command
     cmd.arg("script").arg(script).arg("--json");
@@ -177,10 +169,9 @@ Error: script failed: failed
 // Tests that the manually specified gas limit is used when using the --unlocked option
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let deploy_script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -196,8 +187,7 @@ contract DeployScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -278,10 +268,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Tests that the manually specified gas limit is used.
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    let deploy_script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let deploy_script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -297,8 +286,7 @@ contract DeployScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -383,10 +371,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -397,8 +384,7 @@ contract Demo {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script")
         .arg(script)
@@ -422,12 +408,44 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that the run command can run functions with arguments without specifying the signature
+// <https://github.com/foundry-rs/foundry/issues/11240>
+forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+    );
+
+    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
+});
+
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -435,8 +453,7 @@ contract Demo {
         return (255, 3);
     }
 }"#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -458,10 +475,9 @@ result: uint256 255
 forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     // This example script would fail in on-chain simulation
-    let deploy_script = prj
-        .add_source(
-            "DeployScript",
-            r#"
+    let deploy_script = prj.add_source(
+        "DeployScript",
+        r#"
 import "forge-std/Script.sol";
 
 contract HashChecker {
@@ -486,8 +502,7 @@ contract DeployScript is Script {
         hashChecker = new HashChecker();
     }
 }"#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -571,7 +586,7 @@ contract RunScript is Script {
 }"#
     .replace("CONTRACT_ADDRESS", contract_address);
 
-    let run_script = prj.add_source("RunScript", &run_code).unwrap();
+    let run_script = prj.add_source("RunScript", &run_code);
     let run_contract = run_script.display().to_string() + ":RunScript";
 
     cmd.forge_fuse()
@@ -1131,8 +1146,7 @@ contract Script0 is Script {
   }
 }
    "#,
-            )
-            .unwrap();
+            );
 
     cmd
         .forge_fuse()
@@ -1220,10 +1234,9 @@ Warning: Target directory is not empty, but `--force` was specified
 "#]]);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-        .add_script(
-            "Counter.s.sol",
-            r#"
+    let script = prj.add_script(
+        "Counter.s.sol",
+        r#"
 import "forge-std/Script.sol";
 
 contract A {
@@ -1259,8 +1272,7 @@ contract Script0 is Script {
   }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd
         .forge_fuse()
@@ -1330,10 +1342,9 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // checks that skipping build
 forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -1341,8 +1352,7 @@ contract Demo {
         return (255, 3);
     }
 }"#,
-        )
-        .unwrap();
+    );
     cmd.arg("script")
         .arg(script)
         .args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT])
@@ -1393,10 +1403,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "ScriptTxOrigin.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptTxOrigin.s.sol",
+        r#"
 import { Script } from "forge-std/Script.sol";
 
 contract ScriptTxOrigin is Script {
@@ -1444,8 +1453,7 @@ contract ContractC {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse()
         .arg("script")
@@ -1481,10 +1489,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "ScriptTxOrigin.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptTxOrigin.s.sol",
+        r#"
 import {Script, console} from "forge-std/Script.sol";
 
 contract Contract {
@@ -1517,8 +1524,7 @@ contract NestedCreate is Script {
   }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse()
         .arg("script")
@@ -1543,18 +1549,16 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "ScriptWithInterface.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptWithInterface.s.sol",
+        r#"
 contract Script {
   function run() external {}
 }
 
 interface Interface {}
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1567,10 +1571,9 @@ Script ran successfully.
 });
 
 forgetest_async!(assert_can_detect_unlinked_target_with_libraries, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "ScriptWithExtLib.s.sol",
-            r#"
+    let script = prj.add_script(
+        "ScriptWithExtLib.s.sol",
+        r#"
 library Lib {
     function f() public {}
 }
@@ -1581,8 +1584,7 @@ contract Script {
     }
 }
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1622,8 +1624,7 @@ import "./B.sol";
 contract ScriptA {{}}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "B.sol",
@@ -1640,8 +1641,7 @@ contract ScriptB is Script {{
 }}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "C.sol",
@@ -1653,8 +1653,7 @@ import "./B.sol";
 contract ScriptC {{}}
 "#
         ),
-    )
-    .unwrap();
+    );
 
     let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
     tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
@@ -1684,18 +1683,16 @@ forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
 });
 
 forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
-    let script = prj
-        .add_script(
-            "Script.s.sol",
-            r#"
+    let script = prj.add_script(
+        "Script.s.sol",
+        r#"
 contract Script {
     function run() external {}
 
     function run(address,uint256) external {}
 }
             "#,
-        )
-        .unwrap();
+    );
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
@@ -1721,10 +1718,9 @@ Warning: Target directory is not empty, but `--force` was specified
 
 "#]]);
 
-    let script = prj
-        .add_script(
-            "CustomErrorScript.s.sol",
-            r#"
+    let script = prj.add_script(
+        "CustomErrorScript.s.sol",
+        r#"
 import { Script } from "forge-std/Script.sol";
 
 contract ContractWithCustomError {
@@ -1743,8 +1739,7 @@ contract CustomErrorScript is Script {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
@@ -1768,8 +1763,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let node_config = NodeConfig::test().with_base_fee(Some(0));
     let (_api, handle) = spawn(node_config).await;
@@ -1899,8 +1893,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -1934,8 +1927,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -1976,8 +1968,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -2051,8 +2042,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2094,8 +2084,7 @@ contract SimpleScript is Script {
 }
    "#
         .replace("<url>", &url),
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2199,8 +2188,7 @@ contract SimpleScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2254,24 +2242,22 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    let script = prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
-    function run() public {
+    function run() public view {
         address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }
 }"#,
-        )
-        .unwrap();
+    );
     cmd.arg("script")
         .arg(script)
         .args([
@@ -2314,8 +2300,7 @@ contract WalletScript is Script {
         }
     }
 }"#,
-        )
-        .unwrap();
+        );
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -2357,8 +2342,7 @@ contract SimpleScript is Script {
     }
 }
             "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
     cmd.assert_success().stdout_eq(str![[r#"
@@ -2420,8 +2404,7 @@ contract ContractScript is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.arg("script")
         .args([
             "ContractScript",
@@ -2456,8 +2439,7 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     let rpc_url = next_http_archive_rpc_url();
 
@@ -2510,8 +2492,7 @@ contract DryRunTest is Script {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script")
         .args([
@@ -2661,8 +2642,7 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
 Error: script failed: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
@@ -2699,8 +2679,7 @@ forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "script",
@@ -2749,8 +2728,7 @@ contract EIP7702Script is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+        );
 
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -2819,16 +2797,16 @@ Simulated On-chain Traces:
   [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
     └─ ← [Return] 481 bytes of code
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
-  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
 
@@ -2883,8 +2861,7 @@ contract BatchCallDelegation {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_script(
             "BatchCallDelegationScript.s.sol",
@@ -2930,8 +2907,7 @@ contract BatchCallDelegationScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+        );
 
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (api, handle) = spawn(node_config).await;
@@ -3028,8 +3004,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "Factory.sol",
         r#"
@@ -3041,12 +3016,10 @@ contract Factory {
     }
 }
    "#,
-    )
-    .unwrap();
-    let deploy_script = prj
-        .add_script(
-            "Factory.s.sol",
-            r#"
+    );
+    let deploy_script = prj.add_script(
+        "Factory.s.sol",
+        r#"
 import "forge-std/Script.sol";
 import {Factory} from "../src/Factory.sol";
 import {Counter} from "../src/Counter.sol";
@@ -3067,8 +3040,7 @@ contract FactoryScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    );
 
     let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -3100,4 +3072,191 @@ contract FactoryScript is Script {
         .first()
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    );
+
+    let deploy_script = prj.add_script(
+        "Counter.s.sol",
+        &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11855>
+forgetest_async!(can_broadcast_from_deploy_code_cheatcode, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Counter.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        address addr1 = vm.deployCode("src/Counter.sol:Counter");
+        Counter(addr1).increment();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/Counter.s.sol:CounterScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "-vvvv",
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] CounterScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   │   └─ ← [Return] 481 bytes of code
+    │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
+    ├─ [..] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 481 bytes of code
+
+  [..] Counter::increment()
+    └─ ← [Stop]
+
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
 });

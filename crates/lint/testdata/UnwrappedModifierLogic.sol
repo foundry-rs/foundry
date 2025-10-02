@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.18;
 
 library Lib {
     function onlyOwner(address sender) internal {}
 }
 
 contract C {
-    function onlyOwner() public {}
+    function onlyOwner(address sender) public {}
 }
 
 /**

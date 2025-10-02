@@ -108,10 +108,9 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
         cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
             r#"
-Removing 'forge-std' in [..], (url: [..], tag: None)
+Removing 'forge-std' in [..], (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
 
 "#
         ]]);
@@ -434,8 +433,7 @@ import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-        )
-        .unwrap();
+        );
 
         // build and check output
         cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
@@ -451,7 +449,7 @@ Compiler run successful!
 async fn uni_v4_core_sync_foundry_lock() {
     let (prj, mut cmd) =
         ExtTester::new("Uniswap", "v4-core", "e50237c43811bd9b526eff40f26772152a42daba")
-            .setup_forge_prj();
+            .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -505,7 +503,7 @@ async fn oz_contracts_sync_foundry_lock() {
         "openzeppelin-contracts",
         "840c974028316f3c8172c1b8e5ed67ad95e255ca",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -562,7 +560,7 @@ async fn correctly_sync_dep_with_multiple_version() {
         "sync-lockfile-multi-version-dep",
         "1ca47e73a168e54f8f7761862dbd0c603856c5c8",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -590,3 +588,42 @@ async fn correctly_sync_dep_with_multiple_version() {
     assert!(matches!(solday_v_245, DepIdentifier::Rev { .. }));
     assert_eq!(solday_v_245.rev(), submod_solday_v_245.rev());
 }
+
+forgetest_init!(sync_on_forge_update, |prj, cmd| {
+    let git = Git::new(prj.root());
+
+    let submodules = git.submodules().unwrap();
+    assert!(submodules.0.iter().any(|s| s.rev() == FORGE_STD_REVISION));
+
+    let mut lockfile = Lockfile::new(prj.root());
+    lockfile.read().unwrap();
+
+    let forge_std = lockfile.get(&PathBuf::from("lib/forge-std")).unwrap();
+    assert!(forge_std.rev() == FORGE_STD_REVISION);
+
+    // cd into the forge-std submodule and reset the master branch
+    let forge_std_path = prj.root().join("lib/forge-std");
+    let git = Git::new(&forge_std_path);
+    git.checkout(false, "master").unwrap();
+    // Get the master head commit
+    let origin_master_head = git.head().unwrap();
+    // Reset the master branch to HEAD~1
+    git.reset(true, "HEAD~1").unwrap();
+    let local_master_head = git.head().unwrap();
+    assert_ne!(origin_master_head, local_master_head, "Master head should have changed");
+    // Now checkout back to the release tag
+    git.checkout(false, forge_std.name()).unwrap();
+    assert!(git.head().unwrap() == forge_std.rev(), "Forge std should be at the release tag");
+
+    let expected_output = format!(
+        r#"Updated dep at 'lib/forge-std', (from: tag={}@{}, to: branch=master@{})
+"#,
+        forge_std.name(),
+        forge_std.rev(),
+        origin_master_head
+    );
+    cmd.forge_fuse()
+        .args(["update", "foundry-rs/forge-std@master"])
+        .assert_success()
+        .stdout_eq(expected_output);
+});

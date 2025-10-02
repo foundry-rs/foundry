@@ -969,15 +969,31 @@ requestsHash         {}",
         size.pretty(),
         state_root.pretty(),
         timestamp.pretty(),
-        chrono::DateTime::from_timestamp(*timestamp as i64, 0)
-            .expect("block timestamp in range")
-            .to_rfc2822(),
+        fmt_timestamp(*timestamp),
         withdrawals_root.pretty(),
         total_difficulty.pretty(),
         blob_gas_used.pretty(),
         excess_blob_gas.pretty(),
         requests_hash.pretty(),
     )
+}
+
+/// Formats the timestamp to string
+///
+/// Assumes timestamp is seconds, but handles millis if it is too large
+fn fmt_timestamp(timestamp: u64) -> String {
+    // Tue Jan 19 2038 03:14:07 GMT+0000
+    if timestamp > 2147483647 {
+        // assume this is in millis, incorrectly set to millis by a node
+        chrono::DateTime::from_timestamp_millis(timestamp as i64)
+            .expect("block timestamp in range")
+            .to_rfc3339()
+    } else {
+        // assume this is still in seconds
+        chrono::DateTime::from_timestamp(timestamp as i64, 0)
+            .expect("block timestamp in range")
+            .to_rfc2822()
+    }
 }
 
 #[cfg(test)]
@@ -987,6 +1003,17 @@ mod tests {
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
+
+    #[test]
+    fn format_date_time() {
+        // Fri Aug 29 2025 08:05:38 GMT+0000
+        let timestamp = 1756454738u64;
+
+        let datetime = fmt_timestamp(timestamp);
+        assert_eq!(datetime, "Fri, 29 Aug 2025 08:05:38 +0000");
+        let datetime = fmt_timestamp(timestamp * 1000);
+        assert_eq!(datetime, "2025-08-29T08:05:38+00:00");
+    }
 
     #[test]
     fn can_format_bytes32() {

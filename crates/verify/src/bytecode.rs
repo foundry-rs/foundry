@@ -26,8 +26,9 @@ use foundry_cli::{
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use foundry_evm_core::AsEnvMut;
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, utils::configure_tx_req_env,
+};
 use revm::state::AccountInfo;
 use std::path::PathBuf;
 
@@ -108,10 +109,6 @@ impl figment::Provider for VerifyBytecodeArgs {
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
-        }
-
-        if let Some(api_version) = &self.verifier.verifier_api_version {
-            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(block) = &self.block {

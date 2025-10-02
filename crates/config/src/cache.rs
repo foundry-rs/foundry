@@ -281,7 +281,7 @@ mod tests {
                     block_explorer: 4230000,
                 },
                 ChainCache {
-                    name: "mumbai".to_string(),
+                    name: "amoy".to_string(),
                     blocks: vec![("1".to_string(), 1), ("2".to_string(), 2)],
                     block_explorer: 0,
                 },
@@ -301,7 +301,7 @@ mod tests {
                 - Block Explorer (4.2 MB)\n\n\t\
                 - Block 1 (1.0 kB)\n\t\
                 - Block 2 (2.0 MB)\n\
-            - mumbai (3.0 B)\n\t\
+            - amoy (3.0 B)\n\t\
                 - Block Explorer (0.0 B)\n\n\t\
                 - Block 1 (1.0 B)\n\t\
                 - Block 2 (2.0 B)\n";

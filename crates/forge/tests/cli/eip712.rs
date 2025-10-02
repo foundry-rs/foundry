@@ -1,10 +1,9 @@
 use foundry_config::fs_permissions::PathPermission;
 
 forgetest!(test_eip712, |prj, cmd| {
-    let path = prj
-        .add_source(
-            "Structs",
-            r#"
+    let path = prj.add_test(
+        "Structs.sol",
+        r#"
 library Structs {
     struct Foo {
         Bar bar;
@@ -51,12 +50,20 @@ library Structs2 {
         Structs.Rec rec;
     }
 }
+
+contract DummyTest {
+    function testDummy() public pure {
+        revert("test");
+    }
+}
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
  - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
@@ -149,13 +156,32 @@ Structs.sol > Structs2 > FooBar:
 
 "#]],
     );
+
+    // Testing `solar_project` doesn't mess up cache.
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Structs.sol:DummyTest
+[FAIL: test] testDummy() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Structs.sol:DummyTest
+[FAIL: test] testDummy() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
 });
 
 forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
-    let path = prj
-        .add_source(
-            "FreeStandingStructs.sol",
-            r#"
+    let path = prj.add_source(
+        "FreeStandingStructs.sol",
+        r#"
 // free-standing struct (outside a contract and lib)
 struct FreeStanding {
     uint256 id;
@@ -174,11 +200,13 @@ library InsideLibrary {
     }
 }
 "#,
-        )
-        .unwrap();
+    );
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
  - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
@@ -213,8 +241,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -243,8 +270,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["bind-json"]).assert_success();
 
@@ -295,8 +321,7 @@ contract Eip712Structs {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source("Eip712Cheat.sol", r#"
 import "./test.sol";
@@ -341,8 +366,7 @@ contract Eip712Test is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // cheatcode by type definition can run without bindings
     cmd.forge_fuse()
@@ -482,8 +506,7 @@ contract Eip712HashStructDomainTest is DSTest {
     }
 }
 "#,
-        )
-        .unwrap();
+        );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
 });
@@ -530,8 +553,7 @@ library PermitHash {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "Eip712Transaction.sol",
@@ -586,8 +608,7 @@ library TransactionHash {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
@@ -714,8 +735,7 @@ contract Eip712HashStructTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args(["test", "--mc", "Eip712HashStructTest", "-vv"])
@@ -760,8 +780,97 @@ contract Eip712HashTypedDataTest is DSTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
+});
+
+// repro: <https://github.com/foundry-rs/foundry/issues/11366>
+forgetest!(test_eip712_hash_typed_data_repro, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashTypedData.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+contract CounterStrike {
+    bytes32 public constant ATTACK_TYPEHASH = keccak256("Attack(address player,uint128 x,uint128 y,uint40 shootTime)");
+    bytes32 public constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)");
+    string public constant PROTOCOL_NAME = "CounterStrike";
+}
+
+contract CounterStrike_Test is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    struct EIP712Domain {
+        string name;
+        uint256 chainId;
+        address verifyingContract;
+    }
+
+    struct Attack {
+        address player;
+        uint128 x;
+        uint128 y;
+        uint40 shootTime;
+    }
+
+    string constant SCHEMA_EIP712_DOMAIN = "EIP712Domain(string name,uint256 chainId,address verifyingContract)";
+    string constant SCHEMA_ATTACK = "Attack(address player,uint128 x,uint128 y,uint40 shootTime)";
+
+    CounterStrike public counterStrike;
+    address public player;
+    uint256 public playerPrivateKey;
+    uint128 public x = 10_000e18;
+    uint128 public y = 20_000e18;
+    uint40 public shootTime = 12_345_678;
+
+    function setUp() public {
+        counterStrike = new CounterStrike();
+    }
+
+    function test_Attack() public view {
+        string memory domainJson = vm.serializeJsonType(
+            SCHEMA_EIP712_DOMAIN,
+            abi.encode(
+                EIP712Domain({
+                    name: counterStrike.PROTOCOL_NAME(),
+                    chainId: block.chainid,
+                    verifyingContract: address(counterStrike)
+                })
+            )
+        );
+        string memory messageJson = vm.serializeJsonType(
+            SCHEMA_ATTACK, abi.encode(Attack({ player: player, x: x, y: y, shootTime: shootTime }))
+        );
+
+        string memory typesJson = string.concat(
+            '{"EIP712Domain":[{"name":"name","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Attack":[{"name":"player","type":"address"},{"name":"x","type":"uint128"},{"name":"y","type":"uint128"},{"name":"shootTime","type":"uint40"}]}'
+        );
+        string memory primaryType = '"Attack"';
+        string memory typedDataJson = string.concat(
+            '{"types":',
+            typesJson,
+            ',"primaryType":',
+            primaryType,
+            ',"domain":',
+            domainJson,
+            ',"message":',
+            messageJson,
+            "}"
+        );
+
+        bytes32 digest = vm.eip712HashTypedData(typedDataJson);
+        console.logBytes32(digest);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
 });

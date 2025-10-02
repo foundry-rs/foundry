@@ -22,7 +22,6 @@ tokio = { workspace = true, features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 rayon.workspace = true
 clap = { version = "4", features = ["derive"] }
-num_cpus = "1.17"
 once_cell = "1.21"
 
 [dev-dependencies]

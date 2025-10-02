@@ -30,6 +30,16 @@ pub struct GlobalArgs {
     #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
     json: bool,
 
+    /// Format log messages as Markdown.
+    #[arg(
+        help_heading = "Display options",
+        global = true,
+        long,
+        alias = "markdown",
+        conflicts_with = "json"
+    )]
+    md: bool,
+
     /// The color of the log messages.
     #[arg(help_heading = "Display options", global = true, long, value_enum)]
     color: Option<ColorChoice>,
@@ -68,9 +78,12 @@ impl GlobalArgs {
             false => OutputMode::Normal,
         };
         let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
-        let format = match self.json {
-            true => OutputFormat::Json,
-            false => OutputFormat::Text,
+        let format = if self.json {
+            OutputFormat::Json
+        } else if self.md {
+            OutputFormat::Markdown
+        } else {
+            OutputFormat::Text
         };
 
         Shell::new_with(format, mode, color, self.verbosity)

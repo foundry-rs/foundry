@@ -26,10 +26,10 @@ harness = false
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-evm-core.workspace = true
+foundry-evm-networks.workspace = true
 foundry-linking.workspace = true
 
 comfy-table.workspace = true
@@ -65,8 +65,7 @@ alloy-transport.workspace = true
 revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
-clap_complete_fig = "4"
+clap_complete.workspace = true
 dunce.workspace = true
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
@@ -76,13 +75,11 @@ regex = { workspace = true, default-features = false }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
-solang-parser.workspace = true
-solar-parse.workspace = true
-solar-sema.workspace = true
+solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml_edit = "0.23"
+toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"
@@ -112,9 +109,7 @@ mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
 similar-asserts.workspace = true
-svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
-    "rustls",
-] }
+svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true

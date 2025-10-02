@@ -17,8 +17,7 @@ forgetest!(test_fail_deprecation, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "DeprecationTestFail"]).assert_failure().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -36,7 +35,7 @@ forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
     prj.insert_vm();
     let expect_revert_failure_tests = include_str!("../fixtures/ExpectRevertFailures.t.sol");
 
-    prj.add_source("ExpectRevertFailures.sol", expect_revert_failure_tests).unwrap();
+    prj.add_source("ExpectRevertFailures.sol", expect_revert_failure_tests);
 
     cmd.forge_fuse()
         .args(["test", "--mc", "ExpectRevertFailureTest"])
@@ -108,7 +107,7 @@ forgetest!(expect_call_tests_should_fail, |prj, cmd| {
 
     let expect_call_failure_tests = include_str!("../fixtures/ExpectCallFailures.t.sol");
 
-    prj.add_source("ExpectCallFailures.sol", expect_call_failure_tests).unwrap();
+    prj.add_source("ExpectCallFailures.sol", expect_call_failure_tests);
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectCallFailureTest"]).assert_failure().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -165,7 +164,7 @@ forgetest!(expect_create_tests_should_fail, |prj, cmd| {
 
     let expect_create_failures = include_str!("../fixtures/ExpectCreateFailures.t.sol");
 
-    prj.add_source("ExpectCreateFailures.t.sol", expect_create_failures).unwrap();
+    prj.add_source("ExpectCreateFailures.t.sol", expect_create_failures);
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectCreateFailureTest"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -189,7 +188,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitFailures.t.sol");
 
-    prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
+    prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
 
     cmd.forge_fuse().arg("build").assert_success();
 
@@ -223,8 +222,8 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
 [FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
-[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmit() ([GAS])
-[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
+[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmit() ([GAS])
+[FAIL: log emitted 1 time, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -238,8 +237,8 @@ forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
     let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
 
-    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src).unwrap();
-    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests).unwrap();
+    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src);
+    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests);
 
     cmd.forge_fuse().arg("build").assert_success();
 
@@ -270,7 +269,7 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
 
     let mem_safety_failure_tests = include_str!("../fixtures/MemSafetyFailures.t.sol");
 
-    prj.add_source("MemSafetyFailures.sol", mem_safety_failure_tests).unwrap();
+    prj.add_source("MemSafetyFailures.sol", mem_safety_failure_tests);
 
     cmd.forge_fuse().args(["test", "--mc", "MemSafetyFailureTest"]).assert_failure().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -321,8 +320,7 @@ forgetest!(ds_style_test_failing, |prj, cmd| {
             }
         }
         "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "DSStyleTest", "-vv"]).assert_failure().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -367,8 +365,7 @@ contract FailingSetupTest is DSTest {
     }
 }
         "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "FailingSetupTest"]).assert_failure().stdout_eq(str![[
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -402,8 +399,7 @@ contract MultipleAfterInvariant is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "MultipleAfterInvariant"]).assert_failure().stdout_eq(str![[
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -436,8 +432,7 @@ contract MultipleSetup is DSTest {
 }
 
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "MultipleSetup"]).assert_failure().stdout_eq(str![[
         r#"[COMPILING_FILES] with [SOLC_VERSION]
@@ -482,8 +477,7 @@ forgetest!(emit_diff_anonymous, |prj, cmd| {
         }
     }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mc", "EmitDiffAnonymousTest"]).assert_failure().stdout_eq(
         str![[r#"[COMPILING_FILES] with [SOLC_VERSION]

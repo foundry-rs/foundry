@@ -12,7 +12,16 @@ contract ForStatement {
         uint256 veryLongVariableName = 1000;
         for (
             uint256 i3;
-            i3 < 10 && veryLongVariableName > 999 && veryLongVariableName < 1001;
+            i3 < 10 && veryLongVariableName > 999
+                && veryLongVariableName < 1001;
+            i3++
+        ) {
+            i3++;
+        }
+
+        for (
+            uint256 i3;
+            i3 < 10 && veryLongVariableName > 900 && veryLongVariableName < 999;
             i3++
         ) {
             i3++;

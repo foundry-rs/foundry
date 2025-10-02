@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -49,7 +49,11 @@ pub struct StorageArgs {
 
     /// The storage slot number. If not provided, it gets the full storage layout.
     #[arg(value_parser = parse_slot)]
-    slot: Option<B256>,
+    base_slot: Option<B256>,
+
+    /// The storage offset from the base slot. If not provided, it is assumed to be zero.
+    #[arg(value_parser = str::parse::<U256>, default_value_t = U256::ZERO)]
+    offset: U256,
 
     /// The known proxy address. If provided, the storage layout is retrieved from this address.
     #[arg(long,value_parser = NameOrAddress::from_str)]
@@ -69,6 +73,10 @@ pub struct StorageArgs {
 
     #[command(flatten)]
     build: BuildOpts,
+
+    /// Specify the solc version to compile with. Overrides detected version.
+    #[arg(long, value_parser = Version::parse)]
+    solc_version: Option<Version>,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -91,14 +99,22 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let config = self.load_config()?;
 
-        let Self { address, slot, block, build, .. } = self;
+        let Self { address, base_slot, offset, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
         // Slot was provided, perform a simple RPC call
-        if let Some(slot) = slot {
+        if let Some(slot) = base_slot {
             let cast = Cast::new(provider);
-            sh_println!("{}", cast.storage(address, slot, block).await?)?;
+            sh_println!(
+                "{}",
+                cast.storage(
+                    address,
+                    (Into::<U256>::into(slot).saturating_add(offset)).into(),
+                    block
+                )
+                .await?
+            )?;
             return Ok(());
         }
 
@@ -138,9 +154,8 @@ impl StorageArgs {
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_version = config.get_etherscan_api_version(Some(chain));
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new_with_api_version(chain, api_key, api_version)?;
+        let client = Client::new(chain, api_key)?;
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
         } else {
@@ -151,9 +166,6 @@ impl StorageArgs {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
         }
 
-        let version = metadata.compiler_version()?;
-        let auto_detect = version < MIN_SOLC;
-
         // Create a new temp project
         // TODO: Cache instead of using a temp directory: metadata from Etherscan won't change
         let root = tempfile::tempdir()?;
@@ -161,11 +173,24 @@ impl StorageArgs {
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
-        project.compiler = if auto_detect {
+        // Decide on compiler to use (user override -> metadata -> autodetect)
+        let meta_version = metadata.compiler_version()?;
+        let mut auto_detect = false;
+        let desired = if let Some(user_version) = self.solc_version {
+            if user_version < MIN_SOLC {
+                sh_warn!(
+                    "The provided --solc-version is {user_version} while the minimum version for \
+                     storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                )?;
+            }
+            SolcCompiler::Specific(Solc::find_or_install(&user_version)?)
+        } else if meta_version < MIN_SOLC {
+            auto_detect = true;
             SolcCompiler::AutoDetect
         } else {
-            SolcCompiler::Specific(Solc::find_or_install(&version)?)
+            SolcCompiler::Specific(Solc::find_or_install(&meta_version)?)
         };
+        project.compiler.solc = Some(desired);
 
         // Compile
         let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
@@ -175,13 +200,14 @@ impl StorageArgs {
                 .find(|(name, _)| name == &metadata.contract_name)
                 .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
 
-            if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
+            if auto_detect && is_storage_layout_empty(&artifact.storage_layout) {
                 // try recompiling with the minimum version
                 sh_warn!(
-                    "The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                    "The requested contract was compiled with {meta_version} while the minimum version \
+                     for storage layouts is {MIN_SOLC} and as a result the output may be empty.",
                 )?;
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
-                project.compiler = SolcCompiler::Specific(solc);
+                project.compiler.solc = Some(SolcCompiler::Specific(solc));
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
@@ -301,7 +327,11 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     }
 
     let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
 
     table.set_header(vec![
         Cell::new("Name"),
@@ -373,5 +403,11 @@ mod tests {
 
         let key = config.get_etherscan_api_key(None).unwrap();
         assert_eq!(key, "dummykey".to_string());
+    }
+
+    #[test]
+    fn parse_solc_version_arg() {
+        let args = StorageArgs::parse_from(["foundry-cli", "addr.eth", "--solc-version", "0.8.10"]);
+        assert_eq!(args.solc_version, Some(Version::parse("0.8.10").unwrap()));
     }
 }

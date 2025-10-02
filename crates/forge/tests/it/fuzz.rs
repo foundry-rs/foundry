@@ -150,10 +150,10 @@ async fn test_persist_fuzz_failure() {
         assert_eq!(initial_calldata, new_calldata, "run {i}");
     }
 
-    // write new failure in different file
-    let new_calldata = match run_fail!(|config| {
-        config.fuzz.failure_persist_file = Some("failure1".to_string());
-    }) {
+    // write new failure in different dir.
+    let persist_dir = tempfile::tempdir().unwrap().keep();
+    let new_calldata = match run_fail!(|config| config.fuzz.failure_persist_dir = Some(persist_dir))
+    {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
     };
@@ -179,8 +179,7 @@ contract FuzzerDict {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "FuzzerDictTest.t.sol",
@@ -206,8 +205,7 @@ contract FuzzerDictTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Test that immutable address is used as fuzzed input, causing test to fail.
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "testImmutableOwner"]).assert_failure();
@@ -233,8 +231,7 @@ contract InlineMaxRejectsTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -261,8 +258,7 @@ contract FuzzTimeoutTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -293,8 +289,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "CounterTest.t.sol",
@@ -320,8 +315,7 @@ contract CounterTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Tests should not fail as revert happens in Counter contract.
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
@@ -350,8 +344,7 @@ contract Counter {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
     cmd.assert_failure().stdout_eq(str![[r#"
@@ -364,6 +357,37 @@ Ran 2 tests for test/CounterTest.t.sol:CounterTest
 [FAIL: EvmError: Revert; [..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
+
+"#]]);
+});
+
+// Test 256 runs regardless number of test rejects.
+// <https://github.com/foundry-rs/foundry/issues/9054>
+forgetest_init!(test_fuzz_runs_with_rejects, |prj, cmd| {
+    prj.add_test(
+        "FuzzWithRejectsTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzWithRejectsTest is Test {
+    function testFuzzWithRejects(uint256 x) public pure {
+        vm.assume(x < 1_000_000);
+    }
+}
+   "#,
+    );
+
+    // Tests should not fail as revert happens in Counter contract.
+    cmd.args(["test", "--mc", "FuzzWithRejectsTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzWithRejectsTest.t.sol:FuzzWithRejectsTest
+[PASS] testFuzzWithRejects(uint256) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });

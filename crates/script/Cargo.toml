@@ -23,14 +23,13 @@ foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
-foundry-block-explorers.workspace = true
 forge-script-sequence.workspace = true
 
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 tracing.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
@@ -43,7 +42,7 @@ yansi.workspace = true
 revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
-dialoguer = { version = "0.11", default-features = false }
+dialoguer.workspace = true
 indicatif.workspace = true
 
 alloy-signer.workspace = true
