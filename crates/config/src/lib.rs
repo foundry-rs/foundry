@@ -6322,4 +6322,23 @@ mod tests {
             Ok(())
         });
     }
+
+    #[test]
+    fn warns_on_unknown_keys_in_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                unknown_key_xyz = 123
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(cfg.warnings.iter().any(
+                |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
+            ));
+            Ok(())
+        });
+    }
 }

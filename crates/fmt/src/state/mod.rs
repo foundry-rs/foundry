@@ -360,7 +360,7 @@ impl State<'_, '_> {
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
-        if self.handle_span(ident.span, false) {
+        if self.handle_span(ident.span, true) {
             return;
         }
 
@@ -386,12 +386,17 @@ impl State<'_, '_> {
 
                 if prev_needs_space {
                     size += 1;
-                } else if !first
-                    && let Some(c) = line.chars().next()
-                    && matches!(c, '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^')
-                {
-                    // if the line starts with an operator, a space or a line break are required.
-                    size += 1
+                } else if !first && let Some(char) = line.chars().next() {
+                    // A line break or a space are required if this line:
+                    // - starts with an operator.
+                    // - starts with a bracket and fmt config forces bracket spacing.
+                    match char {
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' => {
+                            size += 1
+                        }
+                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        _ => (),
+                    }
                 }
                 first = false;
 
@@ -415,7 +420,7 @@ impl State<'_, '_> {
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('(') | Some('{') => self.config.bracket_spacing,
+                    Some('[') | Some('(') | Some('{') => self.config.bracket_spacing,
                     Some(',') | Some(';') => true,
                     _ => false,
                 };
@@ -697,7 +702,9 @@ impl<'sess> State<'sess, '_> {
             }
             CommentStyle::Isolated => {
                 let Some(mut prefix) = cmnt.prefix() else { return };
-                config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                if !config.iso_no_break {
+                    config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                }
 
                 if self.config.wrap_comments {
                     // Merge and wrap comments
