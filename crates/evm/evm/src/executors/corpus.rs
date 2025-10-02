@@ -1101,7 +1101,7 @@ mod tests {
         dir
     }
 
-    fn new_manager_with_single_corpus() -> (CorpusManager, Uuid) {
+    fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
         let tx_gen = Just(basic_tx()).boxed();
         let config = FuzzCorpusConfig {
             corpus_dir: Some(temp_corpus_dir()),
@@ -1115,15 +1115,24 @@ mod tests {
         let corpus = CorpusEntry::from_tx_seq(&tx_seq);
         let seed_uuid = corpus.uuid;
 
-        let manager = CorpusManager {
+        // Create worker dir
+        let worker_dir = temp_corpus_dir().join("worker0");
+        let _ = fs::create_dir_all(&worker_dir);
+
+        let manager = WorkerCorpus {
+            id: 0,
             tx_generator: tx_gen,
             mutation_generator: Just(MutationType::Repeat).boxed(),
-            config,
+            config: config.into(),
             in_memory_corpus: vec![corpus],
             current_mutated: Some(seed_uuid),
             failed_replays: 0,
             history_map: vec![0u8; COVERAGE_MAP_SIZE],
             metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(temp_corpus_dir().join("worker0")),
+            last_sync_metrics: CorpusMetrics::default(),
         };
 
         (manager, seed_uuid)
@@ -1213,15 +1222,24 @@ mod tests {
         non_favored.is_favored = false;
         let non_favored_uuid = non_favored.uuid;
 
-        let mut manager = CorpusManager {
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker0");
+        fs::create_dir_all(&worker_subdir).unwrap();
+
+        let mut manager = WorkerCorpus {
+            id: 0,
             tx_generator: tx_gen,
             mutation_generator: Just(MutationType::Repeat).boxed(),
-            config,
+            config: config.into(),
             in_memory_corpus: vec![favored, non_favored],
             current_mutated: None,
             failed_replays: 0,
             history_map: vec![0u8; COVERAGE_MAP_SIZE],
             metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
         };
 
         // First eviction should remove the non-favored one
