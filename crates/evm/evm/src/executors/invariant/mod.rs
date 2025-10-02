@@ -2,7 +2,10 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256, map::HashMap};
+use alloy_primitives::{
+    Address, Bytes, FixedBytes, Selector, U256,
+    map::{AddressMap, HashMap},
+};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -598,6 +601,15 @@ impl<'a> InvariantExecutor<'a> {
             ));
         }
 
+        // If any of the targeted contracts have the storage layout enabled then we can sample
+        // mapping values. To accomplish, we need to record the mapping storage slots and keys.
+        let fuzz_state =
+            if targeted_contracts.targets.lock().iter().any(|(_, t)| t.storage_layout.is_some()) {
+                fuzz_state.with_mapping_slots(AddressMap::default())
+            } else {
+                fuzz_state
+            };
+
         self.executor.inspector_mut().set_fuzzer(Fuzzer {
             call_generator,
             fuzz_state: fuzz_state.clone(),
@@ -622,8 +634,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         let corpus_manager = CorpusManager::new(
-            &self.config.corpus,
-            &invariant_contract.invariant_function.name,
+            self.config.corpus.clone(),
             strategy.boxed(),
             &self.executor,
             None,

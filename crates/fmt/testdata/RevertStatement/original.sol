@@ -6,17 +6,17 @@ contract RevertStatement {
     }
 
     function test(string memory message) external {
-        revert ( ) ; 
+        revert ( ) ;
 
         revert ( /* comment1 */ );
- 
-            revert 
+
+            revert
     (
 
         )
             ;
 
-           // comment2    
+           // comment2
     revert (
             // comment3
         );
@@ -24,7 +24,7 @@ contract RevertStatement {
 
         revert (  message );
 
-            revert ( 
+            revert (
                     // comment4
                 message // comment5 /* comment6 */
             );
@@ -35,7 +35,7 @@ contract RevertStatement {
 
         revert TestError(0, false, message);
         revert TestError(0, false, someVeryLongFunctionNameToGetDynamicErrorMessageString());
-     
+
         revert /* comment13 */ /* comment14 */ TestError /* comment15 */(1234567890, false, message);
 
 

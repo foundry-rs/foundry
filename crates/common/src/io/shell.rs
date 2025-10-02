@@ -43,41 +43,13 @@ pub fn is_json() -> bool {
     Shell::get().is_json()
 }
 
+/// Returns whether the output format is [`OutputFormat::Markdown`].
+pub fn is_markdown() -> bool {
+    Shell::get().is_markdown()
+}
+
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
-
-/// Terminal width.
-pub enum TtyWidth {
-    /// Not a terminal, or could not determine size.
-    NoTty,
-    /// A known width.
-    Known(usize),
-    /// A guess at the width.
-    Guess(usize),
-}
-
-impl TtyWidth {
-    /// Returns the width of the terminal from the environment, if known.
-    pub fn get() -> Self {
-        // use stderr
-        #[cfg(unix)]
-        let opt = terminal_size::terminal_size_of(std::io::stderr());
-        #[cfg(not(unix))]
-        let opt = terminal_size::terminal_size();
-        match opt {
-            Some((w, _)) => Self::Known(w.0 as usize),
-            None => Self::NoTty,
-        }
-    }
-
-    /// Returns the width used by progress bars for the tty.
-    pub fn progress_max_width(&self) -> Option<usize> {
-        match *self {
-            Self::NoTty => None,
-            Self::Known(width) | Self::Guess(width) => Some(width),
-        }
-    }
-}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 /// The requested output mode.
@@ -109,6 +81,8 @@ pub enum OutputFormat {
     Text,
     /// JSON output.
     Json,
+    /// Plain text with markdown tables.
+    Markdown,
 }
 
 impl OutputFormat {
@@ -120,6 +94,11 @@ impl OutputFormat {
     /// Returns true if the output format is `Json`.
     pub fn is_json(self) -> bool {
         self == Self::Json
+    }
+
+    /// Returns true if the output format is `Markdown`.
+    pub fn is_markdown(self) -> bool {
+        self == Self::Markdown
     }
 }
 
@@ -264,6 +243,11 @@ impl Shell {
         self.output_format.is_json()
     }
 
+    /// Returns `true` if the output format is Markdown.
+    pub fn is_markdown(&self) -> bool {
+        self.output_format.is_markdown()
+    }
+
     /// Returns `true` if the verbosity level is `Quiet`.
     pub fn is_quiet(&self) -> bool {
         self.output_mode.is_quiet()
@@ -277,14 +261,6 @@ impl Shell {
     /// Returns `true` if the `needs_clear` flag is unset.
     pub fn is_cleared(&self) -> bool {
         !self.needs_clear()
-    }
-
-    /// Returns the width of the terminal in spaces, if any.
-    pub fn err_width(&self) -> TtyWidth {
-        match self.output {
-            ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
-            _ => TtyWidth::NoTty,
-        }
     }
 
     /// Gets the output format of the shell.

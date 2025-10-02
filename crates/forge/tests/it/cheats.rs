@@ -3,21 +3,21 @@ use crate::{
     config::*,
     test_helpers::{
         ForgeTestData, ForgeTestProfile, RE_PATH_SEPARATOR, TEST_DATA_DEFAULT,
-        TEST_DATA_MULTI_VERSION, TEST_DATA_PARIS, get_compiled,
+        TEST_DATA_MULTI_VERSION, TEST_DATA_PARIS,
     },
 };
 use alloy_primitives::U256;
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{FsPermissions, fs_permissions::PathPermission};
-use foundry_test_utils::{Filter, init_tracing};
+use foundry_test_utils::{Filter, init_tracing, util::get_compiled};
 
 /// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode or
 /// specific seed.
 async fn test_cheats_local(test_data: &ForgeTestData) {
     let mut filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
         .exclude_paths("Fork")
-        .exclude_contracts("(Isolated|WithSeed|StateDiffStorageLayoutTest)");
+        .exclude_contracts("(Isolated|WithSeed|StateDiff|GetStorageSlotsTest)");
 
     // Exclude FFI tests on Windows because no `echo`, and file tests that expect certain file paths
     if cfg!(windows) {
@@ -25,7 +25,9 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
     }
 
     if cfg!(feature = "isolate-by-default") {
-        filter = filter.exclude_contracts("(LastCallGasDefaultTest|MockFunctionTest|WithSeed)");
+        filter = filter.exclude_contracts(
+            "(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount)",
+        );
     }
 
     let runner = test_data.runner_with(|config| {
@@ -38,7 +40,7 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
 /// Executes subset of all cheat code tests in isolation mode.
 async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
     let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
-        .exclude_contracts("StateDiffStorageLayoutTest");
+        .exclude_contracts("(StateDiff|GetStorageSlotsTest)");
 
     let runner = test_data.runner_with(|config| {
         config.isolate = true;
@@ -76,8 +78,11 @@ async fn test_state_diff_storage_layout() {
         let output = get_compiled(&mut project);
         ForgeTestData { project, output, config: config.into(), profile }
     };
-    let filter =
-        Filter::new(".*", "StateDiffStorageLayoutTest", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
+    let filter = Filter::new(
+        ".*",
+        "(StateDiff|GetStorageSlotsTest)",
+        &format!(".*cheats{RE_PATH_SEPARATOR}*"),
+    );
 
     let runner = test_data.runner_with(|config| {
         config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);

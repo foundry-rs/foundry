@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::BuildOpts;
-use foundry_config::impl_figment_convert;
+use foundry_config::{DenyLevel, impl_figment_convert};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge geiger`.
@@ -41,17 +41,17 @@ impl GeigerArgs {
         }
 
         sh_warn!(
-            "`forge geiger` is just an alias for `forge lint --only-lint unsafe-cheatcode`\n"
+            "`forge geiger` is deprecated, as it is just an alias for `forge lint --only-lint unsafe-cheatcode`\n"
         )?;
 
         // Convert geiger command to lint command with specific lint filter
-        let lint_args = crate::cmd::lint::LintArgs {
+        let mut lint_args = crate::cmd::lint::LintArgs {
             paths: self.paths,
             severity: None,
             lint: Some(vec!["unsafe-cheatcode".to_string()]),
-            json: false,
             build: self.build,
         };
+        lint_args.build.deny = Some(DenyLevel::Notes);
 
         // Run the lint command with the geiger-specific configuration
         lint_args.run()

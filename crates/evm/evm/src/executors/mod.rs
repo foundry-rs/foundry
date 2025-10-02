@@ -492,6 +492,22 @@ impl Executor {
         self.transact_with_env(env)
     }
 
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization last.
+    pub fn transact_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        env.tx.set_signed_authorization(authorization_list);
+        env.tx.tx_type = 4;
+        self.transact_with_env(env)
+    }
+
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.
@@ -854,7 +870,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
 }
 
@@ -1115,7 +1131,7 @@ impl FuzzTestTimer {
 }
 
 /// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FailFast {
     /// Shared atomic flag set to `true` when a failure occurs.
     /// None if fail-fast is disabled.

@@ -4,8 +4,9 @@ mod late;
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
 
+use foundry_common::comments::inline_config::InlineConfig;
 use foundry_compilers::Language;
-use foundry_config::lint::Severity;
+use foundry_config::{DenyLevel, lint::Severity};
 use solar::{
     interface::{
         Session, Span,
@@ -14,8 +15,6 @@ use solar::{
     sema::Compiler,
 };
 use std::path::PathBuf;
-
-use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files.
@@ -27,21 +26,14 @@ pub trait Linter: Send + Sync {
     /// The [`Lint`] type.
     type Lint: Lint;
 
-    /// Build a solar [`Compiler`] from the given linter config.
-    fn init(&self) -> Compiler {
-        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
-        self.configure(&mut compiler);
-        compiler
-    }
-
-    /// Configure a solar [`Compiler`] from the given linter config.
-    fn configure(&self, compiler: &mut Compiler);
-
     /// Run all lints.
     ///
     /// The `compiler` should have already been configured with all the sources necessary,
     /// as well as having performed parsing and lowering.
-    fn lint(&self, input: &[PathBuf], compiler: &mut Compiler);
+    ///
+    /// Should return an error based on the configured [`DenyLevel`] and the emitted diagnostics.
+    fn lint(&self, input: &[PathBuf], deny: DenyLevel, compiler: &mut Compiler)
+    -> eyre::Result<()>;
 }
 
 pub trait Lint {
@@ -54,12 +46,13 @@ pub trait Lint {
 pub struct LintContext<'s, 'c> {
     sess: &'s Session,
     with_description: bool,
+    with_json_emitter: bool,
     pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
 }
 
 pub struct LinterConfig<'s> {
-    pub inline: InlineConfig,
+    pub inline: &'s InlineConfig<Vec<String>>,
     pub mixed_case_exceptions: &'s [String],
 }
 
@@ -67,10 +60,11 @@ impl<'s, 'c> LintContext<'s, 'c> {
     pub fn new(
         sess: &'s Session,
         with_description: bool,
+        with_json_emitter: bool,
         config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
     ) -> Self {
-        Self { sess, with_description, config, active_lints }
+        Self { sess, with_description, with_json_emitter, config, active_lints }
     }
 
     pub fn session(&self) -> &'s Session {
@@ -87,18 +81,24 @@ impl<'s, 'c> LintContext<'s, 'c> {
 
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag.help(lint.help());
+        } else {
+            diag = diag.help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -108,7 +108,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
     /// For Diff snippets, if no span is provided, it will use the lint's span.
     /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        if self.config.inline.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
@@ -131,14 +131,21 @@ impl<'s, 'c> LintContext<'s, 'c> {
         };
 
         let desc = if self.with_description { lint.description() } else { "" };
-        let diag: DiagBuilder<'_, ()> = self
+        let mut diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
-            .span(MultiSpan::from_span(span))
-            .highlighted_note(snippet.to_note(self))
-            .help(lint.help());
+            .span(MultiSpan::from_span(span));
+
+        // Avoid ANSI characters when using a JSON emitter
+        if self.with_json_emitter {
+            diag = diag
+                .note(snippet.to_note(self).iter().map(|l| l.0.as_str()).collect::<String>())
+                .help(lint.help());
+        } else {
+            diag = diag.highlighted_note(snippet.to_note(self)).help(hyperlink(lint.help()));
+        }
 
         diag.emit();
     }
@@ -252,4 +259,9 @@ impl Snippet {
 
         &s[byte_offset..]
     }
+}
+
+/// Creates a hyperlink of the input url.
+fn hyperlink(url: &'static str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
 }

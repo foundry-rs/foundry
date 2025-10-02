@@ -1,5 +1,7 @@
 use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{LintSeverity, LinterConfig};
+use foundry_config::{DenyLevel, LintSeverity, LinterConfig};
+
+mod geiger;
 
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -23,48 +25,48 @@ contract ContractWithLints {
     }
     function FUNCTION_MIXED_CASE_INFO() public {}
 }
-    "#;
+"#;
 
 const OTHER_CONTRACT: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    // forge-lint: disable-next-line
-    import { ContractWithLints } from "./ContractWithLints.sol";
+// forge-lint: disable-next-line
+import { ContractWithLints } from "./ContractWithLints.sol";
 
-    contract OtherContractWithLints {
-        function functionMIXEDCaseInfo() public {}
-    }
-        "#;
+contract OtherContractWithLints {
+    function functionMIXEDCaseInfo() public {}
+}
+"#;
 
 const ONLY_IMPORTS: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    // forge-lint: disable-next-line
-    import { ContractWithLints } from "./ContractWithLints.sol";
+// forge-lint: disable-next-line
+import { ContractWithLints } from "./ContractWithLints.sol";
 
-    import { _PascalCaseInfo } from "./ContractWithLints.sol";
-    import "./ContractWithLints.sol";
-        "#;
+import { _PascalCaseInfo } from "./ContractWithLints.sol";
+import "./ContractWithLints.sol";
+"#;
 
 const COUNTER_A: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    contract CounterA {
-        uint256 public CounterA_Fail_Lint;
-    }
-        "#;
+contract CounterA {
+    uint256 public CounterA_Fail_Lint;
+}
+"#;
 
 const COUNTER_B: &str = r#"
-    // SPDX-License-Identifier: MIT
-    pragma solidity ^0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-    contract CounterB {
-        uint256 public CounterB_Fail_Lint;
-    }
-        "#;
+contract CounterB {
+    uint256 public CounterB_Fail_Lint;
+}
+"#;
 
 const COUNTER_WITH_CONST: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -83,7 +85,7 @@ contract Counter {
         number++;
     }
 }
-        "#;
+"#;
 
 const COUNTER_TEST_WITH_CONST: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -104,12 +106,12 @@ contract CounterTest {
     }
   }
 }
-        "#;
+"#;
 
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Check config for `severity` and `exclude`
     prj.update_config(|config| {
@@ -126,7 +128,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -136,8 +138,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 forgetest!(can_use_config_ignore, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContract", OTHER_CONTRACT);
 
     // Check config for `ignore`
     prj.update_config(|config| {
@@ -151,10 +153,10 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:18
+ [FILE]:9:14
   |
-9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+9 |     function functionMIXEDCaseInfo() public {}
+  |              ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -176,8 +178,8 @@ note[mixed-case-function]: function names should use mixedCase
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContract", OTHER_CONTRACT);
 
     // Check config for `ignore`
     prj.update_config(|config| {
@@ -194,8 +196,8 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
 
 forgetest!(can_override_config_severity, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override severity
     prj.update_config(|config| {
@@ -209,10 +211,10 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
- [FILE]:9:18
+ [FILE]:9:14
   |
-9 |         function functionMIXEDCaseInfo() public {}
-  |                  ---------------------
+9 |     function functionMIXEDCaseInfo() public {}
+  |              ^^^^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
 
@@ -222,8 +224,8 @@ note[mixed-case-function]: function names should use mixedCase
 
 forgetest!(can_override_config_path, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override excluded files
     prj.update_config(|config| {
@@ -240,7 +242,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -250,8 +252,8 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 
 forgetest!(can_override_config_lint, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
     // Override excluded lints
     prj.update_config(|config| {
@@ -269,7 +271,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
   [FILE]:13:26
    |
 13 |         uint256 result = 8 >> localValue;
-   |                          ---------------
+   |                          ^^^^^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
@@ -280,7 +282,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
     prj.update_config(|config| {
@@ -299,7 +301,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
-   |         -----------
+   |         ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
@@ -344,7 +346,7 @@ Warning (2018): Function state mutability can be restricted to pure
 
 forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
@@ -363,7 +365,7 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
 
 forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
@@ -392,7 +394,7 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
 
 forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
     prj.update_config(|config| {
@@ -446,27 +448,27 @@ Warning (2018): Function state mutability can be restricted to pure
 
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     cmd.arg("lint").assert_success();
 
     prj.wipe_contracts();
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
+    prj.add_source("ContractWithLints", CONTRACT);
     cmd.arg("lint").assert_success();
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11080>
 forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("ContractWithLints", CONTRACT).unwrap();
-    prj.add_source("OnlyImports", ONLY_IMPORTS).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
 note[unused-import]: unused imports should be removed
- [FILE]:8:14
+ [FILE]:8:10
   |
-8 |     import { _PascalCaseInfo } from "./ContractWithLints.sol";
-  |              ---------------
+8 | import { _PascalCaseInfo } from "./ContractWithLints.sol";
+  |          ^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
@@ -477,50 +479,37 @@ note[unused-import]: unused imports should be removed
 // <https://github.com/foundry-rs/foundry/issues/11234>
 forgetest!(can_lint_only_built_files, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("CounterAWithLints", COUNTER_A).unwrap();
-    prj.add_source("CounterBWithLints", COUNTER_B).unwrap();
+    prj.add_source("CounterAWithLints", COUNTER_A);
+    prj.add_source("CounterBWithLints", COUNTER_B);
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
-  |
-6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
+...
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
+...
+"#]]);
+
+    // Only contract CounterBWithLints that we build should be linted.
+    let args = ["build", "src/CounterBWithLints.sol"];
+    cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+ [FILE]:6:20
   |
-6 |         uint256 public Counter[..]_Fail_Lint;
-  |                        ------------------
+6 |     uint256 public CounterB_Fail_Lint;
+  |                    ^^^^^^^^^^^^^^^^^^
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
-    // Only contract CounterBWithLints that we build should be linted.
-    cmd.forge_fuse().args(["build", "src/CounterBWithLints.sol"]).assert_success().stderr_eq(str![
-        [r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:24
-  |
-6 |         uint256 public CounterB_Fail_Lint;
-  |                        ------------------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-
-"#]
-    ]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11392>
 forgetest!(can_lint_param_constants, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("Counter", COUNTER_WITH_CONST).unwrap();
-    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST).unwrap();
+    prj.add_source("Counter", COUNTER_WITH_CONST);
+    prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
     cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -528,6 +517,167 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11460>
+forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "UnwrappedModifierTest",
+        r#"
+        // SPDX-License-Identifier: MIT
+        pragma solidity ^0.8.0;
+
+        contract UnwrappedModifierTest {
+            mapping(address => bool) isOwner;
+
+            modifier onlyOwner() {
+                require(isOwner[msg.sender], "Not owner");
+                require(msg.sender != address(0), "Zero address");
+                _;
+            }
+
+            function doSomething() public onlyOwner {}
+        }
+            "#,
+    );
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::CodeSize],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
+    cmd.arg("lint").arg("--json").assert_json_stderr(true,
+        str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "wrap modifier logic to reduce code size",
+  "code": {
+    "code": "unwrapped-modifier-logic",
+    "explanation": null
+  },
+  "level": "note",
+  "spans": [
+    {
+      "file_name": "src/UnwrappedModifierTest.sol",
+      "byte_start": 183,
+      "byte_end": 192,
+      "line_start": 8,
+      "line_end": 8,
+      "column_start": 22,
+      "column_end": 31,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "            modifier onlyOwner() {",
+          "highlight_start": 22,
+          "highlight_end": 31
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null
+    }
+  ],
+  "children": [
+    {
+      "message": "wrap modifier logic to reduce code size\n\n- modifier onlyOwner() {\n-     require(isOwner[msg.sender], \"Not owner\");\n-     require(msg.sender != address(0), \"Zero address\");\n-     _;\n- }\n+ modifier onlyOwner() {\n+     _onlyOwner();\n+     _;\n+ }\n+ \n+ function _onlyOwner() internal {\n+     require(isOwner[msg.sender], \"Not owner\");\n+     require(msg.sender != address(0), \"Zero address\");\n+ }\n\n",
+      "code": null,
+      "level": "note",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    },
+    {
+      "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+      "code": null,
+      "level": "help",
+      "spans": [],
+      "children": [],
+      "rendered": null
+    }
+  ],
+  "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n  |\n8 |             modifier onlyOwner() {\n  |\n  = note: wrap modifier logic to reduce code size\n          \n          - modifier onlyOwner() {\n          -     require(isOwner[msg.sender], \"Not owner\");\n          -     require(msg.sender != address(0), \"Zero address\");\n          -     _;\n          - }\n          + modifier onlyOwner() {\n          +     _onlyOwner();\n          +     _;\n          + }\n          + \n          + function _onlyOwner() internal {\n          +     require(isOwner[msg.sender], \"Not owner\");\n          +     require(msg.sender != address(0), \"Zero address\");\n          + }\n          \n  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n\n --> [..]\n  |                      ^^^^^^^^^\n          \n"
+}
+"#]],
+);
+});
+
+forgetest!(can_fail_on_lints, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT);
+
+    // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------
+
+    cmd.forge_fuse().arg("lint").assert_success(); // DenyLevel::Never (default)
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Warnings;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Notes;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny warnings"]).assert_failure();
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
+
+    // usage of `--deny-warnings` flag works, but emits a warning
+    cmd.forge_fuse().args(["lint", "--deny-warnings"]).assert_failure().stderr_eq(str![[r#"
+Warning: `--deny-warnings` is being deprecated in favor of `--deny warnings`.
+...
+
+"#]]);
+
+    // usage of `deny_warnings` config works, but emits a warning
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[profile.default]
+deny_warnings = true
+"#,
+    );
+    cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[r#"
+Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+...
+
+"#]]);
+
+    // -- ONLY LINT LOW SEVERITIES [OUTPUT: NOTE] ------------------------------
+
+    prj.update_config(|config| {
+        config.deny_warnings = false;
+        config.deny = DenyLevel::Never;
+        config.lint.severity = vec![LintSeverity::Info, LintSeverity::Gas, LintSeverity::CodeSize];
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Warnings;
+    });
+    cmd.forge_fuse().arg("lint").assert_success();
+
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Notes;
+    });
+    cmd.forge_fuse().arg("lint").assert_failure();
+
+    // cmd flags can override config
+    prj.update_config(|config| {
+        config.deny = DenyLevel::Never;
+    });
+    cmd.forge_fuse().args(["lint", "--deny notes"]).assert_failure();
 });
 
 // ------------------------------------------------------------------------------------------------

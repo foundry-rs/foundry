@@ -103,7 +103,7 @@ impl BindJsonArgs {
     /// in most of the cases.
     fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
         let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar::parse::interface::Result<()> {
+        let result = sess.enter(|| -> solar::interface::Result<()> {
             sources.0.par_iter_mut().try_for_each(|(path, source)| {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
@@ -145,7 +145,7 @@ impl BindJsonArgs {
         let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
         let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+        sess.dcx.set_flags_mut(|flags| flags.track_diagnostics = false);
         let mut compiler = solar::sema::Compiler::new(sess);
 
         let mut structs_to_write = Vec::new();
@@ -177,7 +177,7 @@ impl BindJsonArgs {
                     .source_map()
                     .new_source_file(path.clone(), source.content.as_str())
                 {
-                    target_files.insert(src_file.stable_id);
+                    target_files.insert(Arc::clone(&src_file));
                     pcx.add_file(src_file);
                 }
             }
@@ -193,7 +193,7 @@ impl BindJsonArgs {
                     let def = hir.strukt(id);
                     let source = hir.source(def.source);
 
-                    if !target_files.contains(&source.file.stable_id) {
+                    if !target_files.contains(&source.file) {
                         continue;
                     }
 
@@ -426,7 +426,7 @@ impl PreprocessorVisitor {
 }
 
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    type BreakValue = solar::parse::interface::data_structures::Never;
+    type BreakValue = solar::interface::data_structures::Never;
 
     fn visit_item_function(
         &mut self,

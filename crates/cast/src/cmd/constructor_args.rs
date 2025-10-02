@@ -2,13 +2,12 @@ use super::{creation_code::fetch_creation_code_from_etherscan, interface::load_a
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
-use clap::{Parser, command};
+use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::abi::fetch_abi_from_etherscan;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(ConstructorArgsArgs, etherscan, rpc);
@@ -74,21 +73,27 @@ async fn parse_constructor_args(
     }
 
     let args_size = constructor.inputs.len() * 32;
+    if bytecode.len() < args_size {
+        return Err(eyre!(
+            "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
+            bytecode.len(),
+            args_size,
+            constructor.inputs.len()
+        ));
+    }
     let args_bytes = Bytes::from(bytecode[bytecode.len() - args_size..].to_vec());
 
     let display_args: Vec<String> = args_bytes
         .chunks(32)
         .enumerate()
-        .map(|(i, arg)| {
-            format_arg(&constructor.inputs[i].ty, arg).expect("Failed to format argument.")
-        })
-        .collect();
+        .map(|(i, arg)| format_arg(&constructor.inputs[i].ty, arg))
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(display_args)
 }
 
 fn format_arg(ty: &str, arg: &[u8]) -> Result<String> {
-    let arg_type: DynSolType = ty.parse().expect("Invalid ABI type.");
+    let arg_type: DynSolType = ty.parse()?;
     let decoded = arg_type.abi_decode(arg)?;
     let bytes = Bytes::from(arg.to_vec());
 

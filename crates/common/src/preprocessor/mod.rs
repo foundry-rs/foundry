@@ -1,3 +1,4 @@
+use crate::errors::convert_solar_errors;
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::SolcLanguage,
@@ -22,7 +23,7 @@ use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
 /// Returns the range of the given span in the source map.
 #[track_caller]
 fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
-    source_map.span_to_source(span).unwrap().1
+    source_map.span_to_range(span).unwrap()
 }
 
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
@@ -52,7 +53,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(paths.with_language_ref())
                 .into_compiler();
-        let _ = compiler.enter_mut(|compiler| -> solar::parse::interface::Result {
+        let _ = compiler.enter_mut(|compiler| -> solar::interface::Result {
             let mut pcx = compiler.parse();
 
             // Add the sources into the context.
@@ -97,8 +98,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         });
 
         // Warn if any diagnostics emitted during content parsing.
-        if let Err(err) = compiler.sess().emitted_errors().unwrap() {
-            warn!("failed preprocessing:\n{err}");
+        if let Err(err) = convert_solar_errors(compiler.dcx()) {
+            warn!(%err, "failed preprocessing");
         }
 
         Ok(())

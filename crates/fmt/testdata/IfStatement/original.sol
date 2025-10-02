@@ -15,9 +15,9 @@ function executeWithVeryVeryVeryLongNameAndSomeParameter(bool parameter) {}
 contract IfStatement {
 
     function test() external {
-        if(  true) 
+        if(  true)
     {
-            execute() ; 
+            execute() ;
         }
 
     bool condition; bool anotherLongCondition; bool andAnotherVeryVeryLongCondition ;
@@ -51,7 +51,7 @@ contract IfStatement {
           /* comment14 */ else { } // comment15
 
           if (
-            // comment16 
+            // comment16
             condition       /* comment17 */
         )
         {
@@ -115,5 +115,24 @@ contract IfStatement {
         else if (condition) execute();
         else
             executeElse();
+    }
+
+    function test_nestedBkocks() public {
+        if (accesses[i].account == address(simpleStorage)) {
+            for (uint256 j = 0; j < accesses[i].storageAccesses.length; j++) {
+                bytes32 slot = accesses[i].storageAccesses[j].slot;
+                if (slot == bytes32(uint256(0))) foundValueSlot = true;
+                if (slot == bytes32(uint256(1))) foundOwnerSlot = true;
+                if (slot == bytes32(uint256(2))) foundValuesSlot0 = true;
+                if (slot == bytes32(uint256(3))) foundValuesSlot1 = true;
+                if (slot == bytes32(uint256(4))) foundValuesSlot2 = true;
+            }
+        }
+    }
+
+    function test_emptyIfBlock() external {
+        if (block.number < 10) {} else {
+            revert();
+        }
     }
 }

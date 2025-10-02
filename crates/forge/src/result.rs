@@ -1,6 +1,7 @@
 //! Test outcomes.
 
 use crate::{
+    MultiContractRunner,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
@@ -9,8 +10,9 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
+    core::Breakpoints,
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
@@ -42,17 +44,23 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
+    /// The runner used to execute the tests.
+    pub runner: Option<MultiContractRunner>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
-    pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
+    pub fn new(
+        runner: Option<MultiContractRunner>,
+        results: BTreeMap<String, SuiteResult>,
+        allow_failure: bool,
+    ) -> Self {
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner }
     }
 
     /// Creates a new empty test outcome.
-    pub fn empty(allow_failure: bool) -> Self {
-        Self::new(BTreeMap::new(), allow_failure)
+    pub fn empty(runner: Option<MultiContractRunner>, allow_failure: bool) -> Self {
+        Self::new(runner, BTreeMap::new(), allow_failure)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -399,6 +407,8 @@ pub struct TestResult {
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
+    ///
+    /// These are cleared after the gas report is analyzed.
     #[serde(skip)]
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 
@@ -467,7 +477,7 @@ impl fmt::Display for TestResult {
                 } else {
                     s.push(']');
                 }
-                s.red().fmt(f)
+                s.red().wrap().fmt(f)
             }
         }
     }
@@ -684,6 +694,33 @@ impl TestResult {
         self.gas_report_traces = gas_report_traces;
     }
 
+    /// Returns the result for a table test. Merges table test execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn table_result(&mut self, result: FuzzTestResult) {
+        self.kind = TestKind::Table {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            runs: result.gas_by_case.len(),
+        };
+
+        // Record logs, labels, traces and merge coverages.
+        extend!(self, result, TraceKind::Execution);
+
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
+        };
+        self.reason = result.reason;
+        self.counterexample = result.counterexample;
+        self.duration = Duration::default();
+        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -724,6 +761,11 @@ pub enum TestKindReport {
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
     },
+    Table {
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
 }
 
 impl fmt::Display for TestKindReport {
@@ -752,6 +794,9 @@ impl fmt::Display for TestKindReport {
                     write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
                 }
             }
+            Self::Table { runs, mean_gas, median_gas } => {
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+            }
         }
     }
 }
@@ -762,7 +807,7 @@ impl TestKindReport {
         match *self {
             Self::Unit { gas } => gas,
             // We use the median for comparisons
-            Self::Fuzz { median_gas, .. } => median_gas,
+            Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
             Self::Invariant { .. } => 0,
         }
@@ -791,6 +836,8 @@ pub enum TestKind {
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
     },
+    /// A table test.
+    Table { runs: usize, mean_gas: u64, median_gas: u64 },
 }
 
 impl Default for TestKind {
@@ -820,6 +867,9 @@ impl TestKind {
                     metrics: HashMap::default(),
                     failed_corpus_replays: *failed_corpus_replays,
                 }
+            }
+            Self::Table { runs, mean_gas, median_gas } => {
+                TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
         }
     }

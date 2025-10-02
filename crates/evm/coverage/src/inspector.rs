@@ -39,8 +39,9 @@ where
     CTX: ContextTr<Journal: JournalExt>,
 {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
-        interpreter.bytecode.get_or_calculate_hash();
-        self.insert_map(interpreter);
+        let map = self.get_or_insert_map(interpreter);
+        // Reserve some space early to avoid reallocating too often.
+        map.reserve(8192.min(interpreter.bytecode.len()));
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {

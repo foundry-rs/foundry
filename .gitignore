@@ -1,5 +1,6 @@
 .DS_STORE
 /target*
+/*.sol
 out/
 snapshots/
 out.json
@@ -12,3 +13,10 @@ node_modules
 dist
 bin
 _
+*.tgz
+.zed
+.vercel
+.vite
+.wrangler
+build
+*.zip

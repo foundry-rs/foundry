@@ -1,9 +1,9 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use eyre::{Result, eyre};
+use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    opts::{BuildOpts, configure_pcx},
+    opts::BuildOpts,
     utils::{LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
@@ -103,7 +103,7 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
@@ -114,14 +114,20 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref())
-                .map_err(|err| eyre!("Lint failed: {err}"))?;
+            self.lint(&project, &config, self.paths.as_deref(), &mut output)
+                .wrap_err("Lint failed")?;
         }
 
         Ok(output)
     }
 
-    fn lint(&self, project: &Project, config: &Config, files: Option<&[PathBuf]>) -> Result<()> {
+    fn lint(
+        &self,
+        project: &Project,
+        config: &Config,
+        files: Option<&[PathBuf]>,
+        output: &mut ProjectCompileOutput,
+    ) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
@@ -168,15 +174,8 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
-                let mut compiler = linter.init();
-                compiler.enter_mut(|compiler| -> Result<()> {
-                    let mut pcx = compiler.parse();
-                    configure_pcx(&mut pcx, config, Some(project), Some(&input_files))?;
-                    pcx.parse();
-                    let _ = compiler.lower_asts();
-                    Ok(())
-                })?;
-                linter.lint(&input_files, &mut compiler);
+                let compiler = output.parser_mut().solc_mut().compiler_mut();
+                linter.lint(&input_files, config.deny, compiler)?;
             }
         }
 

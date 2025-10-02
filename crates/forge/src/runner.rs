@@ -2,8 +2,9 @@
 
 use crate::{
     MultiContractRunner, TestFilter,
-    fuzz::BaseCounterExample,
-    multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
+    coverage::HitMaps,
+    fuzz::{BaseCounterExample, FuzzTestResult},
+    multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{SuiteResult, TestResult, TestSetup},
 };
@@ -13,7 +14,7 @@ use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::Config;
+use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
@@ -369,7 +370,7 @@ impl<'a> ContractRunner<'a> {
             .contract
             .abi
             .functions()
-            .filter(|func| is_matching_test(func, filter))
+            .filter(|func| filter.matches_test_function(func))
             .collect::<Vec<_>>();
         debug!(
             "Found {} test functions out of {} in {:?}",
@@ -640,6 +641,8 @@ impl<'a> FunctionRunner<'a> {
             fixtures_len as u32,
         );
 
+        let mut result = FuzzTestResult::default();
+
         for i in 0..fixtures_len {
             if self.tcfg.fail_fast.should_stop() {
                 return self.result;
@@ -671,24 +674,33 @@ impl<'a> FunctionRunner<'a> {
                 }
             };
 
+            result.gas_by_case.push((raw_call_result.gas_used, raw_call_result.stipend));
+            result.logs.extend(raw_call_result.logs.clone());
+            result.labels.extend(raw_call_result.labels.clone());
+            HitMaps::merge_opt(&mut result.line_coverage, raw_call_result.line_coverage.clone());
+
             let is_success =
                 self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
             // Record counterexample if test fails.
             if !is_success {
-                self.result.counterexample =
+                result.counterexample =
                     Some(CounterExample::Single(BaseCounterExample::from_fuzz_call(
                         Bytes::from(func.abi_encode_input(&args).unwrap()),
                         args,
                         raw_call_result.traces.clone(),
                     )));
-                self.result.single_result(false, reason, raw_call_result);
+                result.reason = reason;
+                result.traces = raw_call_result.traces;
+                self.result.table_result(result);
                 return self.result;
             }
 
             // If it's the last iteration and all other runs succeeded, then use last call result
             // for logs and traces.
             if i == fixtures_len - 1 {
-                self.result.single_result(true, None, raw_call_result);
+                result.success = true;
+                result.traces = raw_call_result.traces;
+                self.result.table_result(result);
                 return self.result;
             }
         }
@@ -725,11 +737,18 @@ impl<'a> FunctionRunner<'a> {
         executor
             .inspector_mut()
             .collect_edge_coverage(invariant_config.corpus.collect_edge_coverage());
+        let mut config = invariant_config.clone();
+        let (failure_dir, failure_file) = test_paths(
+            &mut config.corpus,
+            invariant_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &func.name,
+        );
 
         let mut evm = InvariantExecutor::new(
             executor,
             runner,
-            invariant_config.clone(),
+            config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
@@ -739,12 +758,6 @@ impl<'a> FunctionRunner<'a> {
             call_after_invariant,
             abi: &self.cr.contract.abi,
         };
-
-        let (failure_dir, failure_file) = test_failure_paths(
-            invariant_config.failure_persist_dir.clone().unwrap(),
-            self.cr.name,
-            &invariant_contract.invariant_function.name,
-        );
         let show_solidity = invariant_config.show_solidity;
 
         // Try to replay recorded failure if any.
@@ -934,7 +947,13 @@ impl<'a> FunctionRunner<'a> {
         }
 
         let runner = self.fuzz_runner();
-        let fuzz_config = self.config.fuzz.clone();
+        let mut fuzz_config = self.config.fuzz.clone();
+        let (failure_dir, failure_file) = test_paths(
+            &mut fuzz_config.corpus,
+            fuzz_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &func.name,
+        );
 
         let progress = start_fuzz_progress(
             self.cr.progress,
@@ -942,12 +961,6 @@ impl<'a> FunctionRunner<'a> {
             &func.name,
             fuzz_config.timeout,
             fuzz_config.runs,
-        );
-
-        let (failure_dir, failure_file) = test_failure_paths(
-            fuzz_config.failure_persist_dir.clone().unwrap(),
-            self.cr.name,
-            &func.name,
         );
 
         let mut executor = self.executor.into_owned();
@@ -1105,14 +1118,18 @@ fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCoun
     )
 }
 
-/// Helper functions to return canonicalized test failure paths.
-fn test_failure_paths(
+/// Helper function to set test corpus dir and to compose persisted failure paths.
+fn test_paths(
+    corpus_config: &mut FuzzCorpusConfig,
     persist_dir: PathBuf,
     contract_name: &str,
-    invariant_name: &str,
+    test_name: &str,
 ) -> (PathBuf, PathBuf) {
-    let dir = persist_dir.join("failures").join(contract_name.split(':').next_back().unwrap());
-    let dir = canonicalized(dir);
-    let file = canonicalized(dir.join(invariant_name));
-    (dir, file)
+    let contract = contract_name.split(':').next_back().unwrap();
+    // Update config with corpus dir for current test.
+    corpus_config.with_test(contract, test_name);
+
+    let failures_dir = canonicalized(persist_dir.join("failures").join(contract));
+    let failure_file = canonicalized(failures_dir.join(test_name));
+    (failures_dir, failure_file)
 }

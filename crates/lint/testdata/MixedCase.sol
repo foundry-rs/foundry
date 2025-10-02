@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.18;
+
+interface IERC20 {
+    function decimals() external view returns(uint8);
+}
 
 contract MixedCaseTest {
     uint256 variableMixedCase;
@@ -68,8 +72,9 @@ contract MixedCaseTest {
 
     // SCREAMING_SNAKE_CASE is allowed for functions that are most likely constant getters
     function MAX_NUMBER() external view returns (uint256) {}
+    function CUSTOM_TYPE_RETURN() external view returns (IERC20) {}
     function HAS_PARAMS(address addr) external view returns (uint256) {} //~NOTE: function names should use mixedCase
     function HAS_NO_RETURN() external view {} //~NOTE: function names should use mixedCase
     function HAS_MORE_THAN_ONE_RETURN() external view returns (uint256, uint256) {} //~NOTE: function names should use mixedCase
-    function NOT_ELEMENTARY_RETURN() external view returns (uint256[]) {} //~NOTE: function names should use mixedCase
+    function NOT_ELEMENTARY_RETURN() external view returns (uint256[] memory) {} //~NOTE: function names should use mixedCase
 }

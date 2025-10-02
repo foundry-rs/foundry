@@ -1,48 +1,48 @@
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-13 |     struct _PascalCase {
-   |            -----------
+LL |     struct _PascalCase {
+   |            ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-17 |     struct pascalCase {
-   |            ----------
+LL |     struct pascalCase {
+   |            ^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-21 |     struct pascalcase {
-   |            ----------
+LL |     struct pascalcase {
+   |            ^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-25 |     struct pascal_case {
-   |            -----------
+LL |     struct pascal_case {
+   |            ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-29 |     struct PASCAL_CASE {
-   |            -----------
+LL |     struct PASCAL_CASE {
+   |            ^^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 
 note[pascal-case-struct]: structs should use PascalCase
   --> ROOT/testdata/StructPascalCase.sol:LL:CC
    |
-33 |     struct PASCALCASE {
-   |            ----------
+LL |     struct PASCALCASE {
+   |            ^^^^^^^^^^
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#pascal-case-struct
 

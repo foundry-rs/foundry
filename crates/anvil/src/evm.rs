@@ -4,7 +4,7 @@ use alloy_evm::{
     precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
 
-use foundry_evm_core::either_evm::EitherEvm;
+use foundry_evm::core::either_evm::EitherEvm;
 use op_revm::OpContext;
 use revm::{Inspector, precompile::Precompile};
 use std::fmt::Debug;
@@ -16,8 +16,8 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Precompile, u64)>;
 }
 
-/// Inject precompiles into the EVM dynamically.
-pub fn inject_precompiles<DB, I>(
+/// Inject custom precompiles into the EVM dynamically.
+pub fn inject_custom_precompiles<DB, I>(
     evm: &mut EitherEvm<DB, I, PrecompilesMap>,
     precompiles: Vec<(Precompile, u64)>,
 ) where
@@ -37,10 +37,12 @@ pub fn inject_precompiles<DB, I>(
 mod tests {
     use std::{borrow::Cow, convert::Infallible};
 
+    use crate::{PrecompileFactory, inject_custom_precompiles};
     use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
-    use foundry_evm_core::either_evm::EitherEvm;
+    use foundry_evm::core::either_evm::EitherEvm;
+    use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
@@ -56,8 +58,6 @@ mod tests {
         },
         primitives::hardfork::SpecId,
     };
-
-    use crate::{PrecompileFactory, inject_precompiles};
 
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
@@ -151,7 +151,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            is_optimism: true,
+            networks: NetworkConfigs::with_optimism(),
         };
 
         let mut chain = L1BlockInfo::default();
@@ -200,7 +200,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -222,7 +222,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -247,7 +247,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -272,7 +272,7 @@ mod tests {
 
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+        inject_custom_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 

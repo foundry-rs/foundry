@@ -1,4 +1,7 @@
-/// forge-lint: disable-start(mixed-case-variable)
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
+// forge-lint: disable-start(mixed-case-variable)
 contract UnsafeTypecast {
     // Unsigned upcasts are always safe.
     function upcastSafeUint() public pure {
@@ -441,7 +444,7 @@ contract Repros {
     function nestedCastsAreEvaluatedAtAllDepths(uint64 a, int128 b) internal pure returns (uint64) {
         uint64 aAloneIsSafe = uint64(uint128(int128(uint128(a))));
 
-        uint128 aPlusB = uint128(int128(a) + b);
+        uint128 aPlusB = uint128(int128(uint128(a)) + b);
         //~^WARN: typecasts that can truncate values should be checked
 
         uint64 unsafe = uint64(aPlusB);
@@ -449,7 +452,7 @@ contract Repros {
 
         return uint64(uint128(int128(uint128(a)) + b));
         //~^WARN: typecasts that can truncate values should be checked
-        //~^^WARN: typecasts that can truncate values should be checked
+        //~|WARN: typecasts that can truncate values should be checked
     }
 }
-/// forge-lint: disable-end(mixed-case-variable)
+// forge-lint: disable-end(mixed-case-variable)

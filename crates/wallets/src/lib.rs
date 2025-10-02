@@ -3,7 +3,7 @@
 //! Utilities for working with multiple signers.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -19,3 +19,6 @@ pub use multi_wallet::MultiWalletOpts;
 pub use raw_wallet::RawWalletOpts;
 pub use wallet::WalletOpts;
 pub use wallet_signer::{PendingSigner, WalletSigner};
+
+#[cfg(feature = "aws-kms")]
+use aws_config as _;

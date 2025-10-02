@@ -27,7 +27,7 @@ foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-evm-core.workspace = true
+foundry-evm-networks.workspace = true
 
 # alloy
 alloy-evm = { workspace = true, features = ["call-util"] }
@@ -37,6 +37,7 @@ alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
+alloy-eip5792.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
@@ -104,11 +105,11 @@ clap_complete = { workspace = true, optional = true}
 chrono.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
-clap_complete_fig = "4"
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
+alloy-eip5792.workspace = true
 rand.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }

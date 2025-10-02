@@ -274,7 +274,10 @@ impl SignaturesIdentifier {
 
 impl SignaturesIdentifierInner {
     fn save(&self) {
-        if let Some(path) = &self.cache_path {
+        // We only identify new signatures if the client is enabled.
+        if let Some(path) = &self.cache_path
+            && self.client.is_some()
+        {
             self.cache
                 .try_read()
                 .expect("SignaturesIdentifier cache is locked while attempting to save")

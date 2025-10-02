@@ -723,8 +723,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -752,8 +751,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
@@ -804,8 +802,7 @@ contract BalanceAssumeTest is Test {
     function invariant_balance() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -836,8 +833,7 @@ contract NoSelectorTest is Test {
     function invariant_panic() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -893,8 +889,7 @@ contract AnotherCounterHandler is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -966,8 +961,7 @@ contract TimeoutTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1031,8 +1025,7 @@ contract HandlerTwo {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "InvariantSelectorsWeightTest.t.sol",
@@ -1060,8 +1053,7 @@ contract InvariantSelectorsWeightTest is Test {
     function invariant_selectors_weight() public view {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
 });
@@ -1092,8 +1084,7 @@ contract InvariantSequenceLenTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1192,8 +1183,7 @@ contract Ownable {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_test(
         "OwnableTest.t.sol",
         r#"
@@ -1212,8 +1202,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1251,8 +1240,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
 Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
@@ -1290,8 +1278,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1319,8 +1306,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
         str![[r#"
@@ -1391,8 +1377,7 @@ contract InvariantTargetTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "InvariantTargetTest", "--mt", "invariant"])
         .assert_success()
@@ -1516,8 +1501,7 @@ contract InvariantTargetExcludeTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1562,4 +1546,124 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]
     ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_include", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_exclude", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11453>
+forgetest_init!(corpus_dir, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+
+        config.fuzz.runs = 10;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "CounterTests.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract Counter1Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+
+contract Counter2Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
+
+"#]]);
+
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter1Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter2Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter1Test").join("testFuzz_SetNumber").exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
+    );
 });

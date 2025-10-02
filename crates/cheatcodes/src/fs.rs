@@ -16,7 +16,7 @@ use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
@@ -149,7 +149,7 @@ impl Cheatcode for readFileCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::read_to_string(path)?.abi_encode())
+        Ok(fs::locked_read_to_string(path)?.abi_encode())
     }
 }
 
@@ -157,7 +157,7 @@ impl Cheatcode for readFileBinaryCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(fs::read(path)?.abi_encode())
+        Ok(fs::locked_read(path)?.abi_encode())
     }
 }
 
@@ -243,9 +243,7 @@ impl Cheatcode for writeLineCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         if state.fs_commit {
-            let mut file = std::fs::OpenOptions::new().append(true).create(true).open(path)?;
-
-            writeln!(file, "{line}")?;
+            fs::locked_write_line(path, line)?;
         }
 
         Ok(Default::default())
@@ -361,6 +359,12 @@ fn deploy_code(
     salt: Option<U256>,
 ) -> Result {
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+
+    // If active broadcast then set flag to deploy from code.
+    if let Some(broadcast) = &mut ccx.state.broadcast {
+        broadcast.deploy_from_code = true;
+    }
+
     if let Some(args) = constructor_args {
         bytecode.extend_from_slice(args);
     }
@@ -598,7 +602,7 @@ pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Re
     state.config.ensure_not_foundry_toml(&path)?;
 
     if state.fs_commit {
-        fs::write(path, contents)?;
+        fs::locked_write(path, contents)?;
     }
 
     Ok(Default::default())

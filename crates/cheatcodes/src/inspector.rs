@@ -5,7 +5,6 @@ use crate::{
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess,
-        mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -33,9 +32,12 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned,
+    mapping_slots::{MappingSlots, step as mapping_step},
+};
 use foundry_evm_core::{
-    InspectorExt,
+    Breakpoints, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
@@ -69,7 +71,7 @@ use std::{
     io::BufReader,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 mod utils;
@@ -495,7 +497,12 @@ pub struct Cheatcodes {
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
-    pub signatures_identifier: Option<SignaturesIdentifier>,
+    signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
+    /// Used to determine whether the broadcasted call has non-fixed gas limit.
+    /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
+    /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
+    /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
+    pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -550,7 +557,8 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
-            signatures_identifier: SignaturesIdentifier::new(true).ok(),
+            signatures_identifier: Default::default(),
+            dynamic_gas_limit_sequence: Default::default(),
         }
     }
 
@@ -574,6 +582,11 @@ impl Cheatcodes {
     /// Adds a delegation to the active delegations list.
     pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
         self.active_delegations.push(authorization);
+    }
+
+    /// Returns the signatures identifier.
+    pub fn signatures_identifier(&self) -> Option<&SignaturesIdentifier> {
+        self.signatures_identifier.get_or_init(|| SignaturesIdentifier::new(true).ok()).as_ref()
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -849,9 +862,18 @@ impl Cheatcodes {
                         });
                     }
 
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
-
+                    let (gas_seen, call_seen) =
+                        self.dynamic_gas_limit_sequence.take().unwrap_or_default();
+                    // Transaction has fixed gas limit if no GAS opcode seen before CALL opcode.
+                    let mut is_fixed_gas_limit = !(gas_seen && call_seen);
+                    // Additional check as transfers in forge scripts seem to be estimated at 2300
+                    // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
+                    if call.gas_limit < 21_000 {
+                        is_fixed_gas_limit = false;
+                    }
                     let input = TransactionInput::new(call.input.bytes(ecx));
+                    // Ensure account is touched.
+                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1072,6 +1094,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         self.pc = interpreter.bytecode.pc();
 
+        if self.broadcast.is_some() {
+            self.record_gas_limit_opcode(interpreter);
+        }
+
         // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
             self.meter_gas(interpreter);
@@ -1102,7 +1128,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping::step(mapping_slots, interpreter);
+            mapping_step(mapping_slots, interpreter);
         }
 
         // `snapshotGas*`: take a snapshot of the current gas.
@@ -1112,6 +1138,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        if self.broadcast.is_some() {
+            self.set_gas_limit_type(interpreter);
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1513,7 +1543,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _)| expected.count > 0 && !expected.found);
+            // For count=0 expectations, NOT being found is success, so mark them as found
+            for (expected, _) in &mut self.expected_emits {
+                if expected.count == 0 && !expected.found {
+                    expected.found = true;
+                }
+            }
+            self.expected_emits.retain(|(expected, _)| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
@@ -1590,7 +1626,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast
+        if let Some(broadcast) = &mut self.broadcast
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
         {
@@ -1607,9 +1643,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             ecx.tx.caller = broadcast.new_origin;
 
-            if curr_depth == broadcast.depth {
+            if curr_depth == broadcast.depth || broadcast.deploy_from_code {
+                // Reset deploy from code flag for upcoming calls;
+                broadcast.deploy_from_code = false;
+
                 input.set_caller(broadcast.new_origin);
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
+
+                // Ensure account is touched.
+                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1620,7 +1661,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         value: Some(input.value()),
                         input: TransactionInput::new(input.init_code()),
                         nonce: Some(account.info.nonce),
-                        gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                         ..Default::default()
                     }
                     .into(),
@@ -2289,6 +2329,40 @@ impl Cheatcodes {
             (REVERT, 0, 1, false),
         );
     }
+
+    #[cold]
+    fn record_gas_limit_opcode(&mut self, interpreter: &mut Interpreter) {
+        match interpreter.bytecode.opcode() {
+            // If current opcode is CREATE2 then set non-fixed gas limit.
+            op::CREATE2 => self.dynamic_gas_limit_sequence = Some((true, true)),
+            op::GAS => {
+                if self.dynamic_gas_limit_sequence.is_none() {
+                    // If current opcode is GAS then mark as seen.
+                    self.dynamic_gas_limit_sequence = Some((true, false));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cold]
+    fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
+        // Early exit in case we already determined is non-fixed gas limit.
+        if matches!(self.dynamic_gas_limit_sequence, Some((true, true))) {
+            return;
+        }
+
+        // Record CALL opcode if GAS opcode was seen.
+        if matches!(self.dynamic_gas_limit_sequence, Some((true, false)))
+            && interpreter.bytecode.opcode() == op::CALL
+        {
+            self.dynamic_gas_limit_sequence = Some((true, true));
+            return;
+        }
+
+        // Reset dynamic gas limit sequence if GAS opcode was not followed by a CALL opcode.
+        self.dynamic_gas_limit_sequence = None;
+    }
 }
 
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
@@ -2314,20 +2388,6 @@ fn disallowed_mem_write(
         Bytes::from(revert_string.into_bytes()),
         interpreter.gas,
     ));
-}
-
-// Determines if the gas limit on a given call was manually set in the script and should therefore
-// not be overwritten by later estimations
-fn check_if_fixed_gas_limit(ecx: &Ecx, call_gas_limit: u64) -> bool {
-    // If the gas limit was not set in the source code it is set to the estimated gas left at the
-    // time of the call, which should be rather close to configured gas limit.
-    // TODO: Find a way to reliably make this determination.
-    // For example by generating it in the compilation or EVM simulation process
-    ecx.tx.gas_limit > ecx.block.gas_limit &&
-        call_gas_limit <= ecx.block.gas_limit
-        // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
-        // gas too low" failure when simulated on chain
-        && call_gas_limit > 2300
 }
 
 /// Returns true if the kind of account access is a call.

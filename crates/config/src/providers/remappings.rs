@@ -4,6 +4,7 @@ use figment::{
     value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
+use rayon::prelude::*;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashSet, btree_map::Entry},
@@ -207,19 +208,16 @@ impl RemappingsProvider<'_> {
         // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
+            let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
+                || self.find_nested_foundry_remappings(),
+                || self.auto_detect_remappings(),
+            );
+
             let mut lib_remappings = BTreeMap::new();
-            // find all remappings of from libs that use a foundry.toml
-            for r in self.lib_foundry_toml_remappings() {
+            for r in nested_foundry_remappings {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
-            // use auto detection for all libs
-            for r in self
-                .lib_paths
-                .iter()
-                .map(|lib| self.root.join(lib))
-                .inspect(|lib| trace!(?lib, "find all remappings"))
-                .flat_map(|lib| Remapping::find_many(&lib))
-            {
+            for r in auto_detected_remappings {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
@@ -246,50 +244,67 @@ impl RemappingsProvider<'_> {
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
-    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+    fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
-            .iter()
+            .par_iter()
             .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
-            .inspect(|lib| {
-                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
+            .flat_map_iter(|lib| {
+                trace!(?lib, "find all remappings of nested foundry.toml");
+                self.nested_foundry_remappings(&lib)
             })
-            .flat_map(|lib: PathBuf| {
-                // load config, of the nested lib if it exists
-                let Ok(config) = Config::load_with_root(&lib) else { return vec![] };
-                let config = config.sanitized();
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
 
-                // if the configured _src_ directory is set to something that
-                // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
-                // lib), then we need to manually add a remapping here
-                let mut src_remapping = None;
-                if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-                    .contains(&config.src.as_path())
-                    && let Some(name) = lib.file_name().and_then(|s| s.to_str())
-                {
-                    let mut r = Remapping {
-                        context: None,
-                        name: format!("{name}/"),
-                        path: format!("{}", lib.join(&config.src).display()),
-                    };
-                    if !r.path.ends_with('/') {
-                        r.path.push('/')
-                    }
-                    src_remapping = Some(r);
-                }
+    fn nested_foundry_remappings(&self, lib: &Path) -> Vec<Remapping> {
+        // load config, of the nested lib if it exists
+        let Ok(config) = Config::load_with_root(lib) else { return vec![] };
+        let config = config.sanitized();
 
-                // Eventually, we could set context for remappings at this location,
-                // taking into account the OS platform. We'll need to be able to handle nested
-                // contexts depending on dependencies for this to work.
-                // For now, we just leave the default context (none).
-                let mut remappings =
-                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+        // if the configured _src_ directory is set to something that
+        // `Remapping::find_many` doesn't classify as a src directory (src, contracts,
+        // lib), then we need to manually add a remapping here
+        let mut src_remapping = None;
+        if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+            .contains(&config.src.as_path())
+            && let Some(name) = lib.file_name().and_then(|s| s.to_str())
+        {
+            let mut r = Remapping {
+                context: None,
+                name: format!("{name}/"),
+                path: format!("{}", lib.join(&config.src).display()),
+            };
+            if !r.path.ends_with('/') {
+                r.path.push('/')
+            }
+            src_remapping = Some(r);
+        }
 
-                if let Some(r) = src_remapping {
-                    remappings.push(r);
-                }
-                remappings
+        // Eventually, we could set context for remappings at this location,
+        // taking into account the OS platform. We'll need to be able to handle nested
+        // contexts depending on dependencies for this to work.
+        // For now, we just leave the default context (none).
+        let mut remappings =
+            config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
+
+        if let Some(r) = src_remapping {
+            remappings.push(r);
+        }
+        remappings
+    }
+
+    /// Auto detect remappings from the lib paths
+    fn auto_detect_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.lib_paths
+            .par_iter()
+            .flat_map_iter(|lib| {
+                let lib = self.root.join(lib);
+                trace!(?lib, "find all remappings");
+                Remapping::find_many(&lib)
             })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 

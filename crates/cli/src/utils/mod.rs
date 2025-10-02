@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -8,6 +8,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
+use path_slash::PathExt;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
@@ -90,26 +91,12 @@ pub fn subscriber() {
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
-    const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Low level networking
-        "hyper=off",
-        "hyper_util=off",
-        "h2=off",
-        "rustls=off",
-        // Tokio
-        "mio=off",
-    ];
+    const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
     let mut filter = tracing_subscriber::EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
     }
     filter
-}
-
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s
@@ -200,6 +187,14 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
+/// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
+pub fn common_setup() {
+    install_crypto_provider();
+    crate::handler::install();
+    load_dotenv();
+    enable_paint();
+}
+
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
@@ -245,6 +240,18 @@ pub fn install_crypto_provider() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install default rustls crypto provider");
+}
+
+/// Fetches the ABI of a contract from Etherscan.
+pub async fn fetch_abi_from_etherscan(
+    address: Address,
+    config: &foundry_config::Config,
+) -> Result<Vec<(JsonAbi, String)>> {
+    let chain = config.chain.unwrap_or_default();
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let source = client.contract_source_code(address).await?;
+    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -709,6 +716,14 @@ ignore them in the `.gitignore` file."
 
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
+    /// Get the URL of a submodule from git config
+    pub fn submodule_url(self, path: &Path) -> Result<Option<String>> {
+        self.cmd()
+            .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
     }
 
     pub fn cmd(self) -> Command {

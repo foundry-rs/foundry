@@ -1,39 +1,4 @@
-use alloy_primitives::{Address, ChainId, U64, map::HashMap};
-use serde::{Deserialize, Serialize};
-
-/// The capability to perform [EIP-7702][eip-7702] delegations, sponsored by the sequencer.
-///
-/// The sequencer will only perform delegations, and act on behalf of delegated accounts, if the
-/// account delegates to one of the addresses specified within this capability.
-///
-/// [eip-7702]: https://eips.ethereum.org/EIPS/eip-7702
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct DelegationCapability {
-    /// A list of valid delegation contracts.
-    pub addresses: Vec<Address>,
-}
-
-/// Wallet capabilities for a specific chain.
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct Capabilities {
-    /// The capability to delegate.
-    pub delegation: DelegationCapability,
-}
-
-/// A map of wallet capabilities per chain ID.
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct WalletCapabilities(HashMap<U64, Capabilities>);
-
-impl WalletCapabilities {
-    /// Get the capabilities of the wallet API for the specified chain ID.
-    pub fn get(&self, chain_id: ChainId) -> Option<&Capabilities> {
-        self.0.get(&U64::from(chain_id))
-    }
-
-    pub fn insert(&mut self, chain_id: ChainId, capabilities: Capabilities) {
-        self.0.insert(U64::from(chain_id), capabilities);
-    }
-}
+pub use alloy_eip5792::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalletError {

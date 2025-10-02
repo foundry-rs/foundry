@@ -185,8 +185,7 @@ contract ContractWithCustomError {
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }
    "#,
-    )
-    .unwrap();
+    );
     // Store selectors in local cache.
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 

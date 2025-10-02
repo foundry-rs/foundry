@@ -1,7 +1,7 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
@@ -147,6 +147,27 @@ impl InspectArgs {
                     project.standard_json_input(&target_path)?
                 };
                 print_json(&standard_json)?;
+            }
+            ContractArtifactField::Libraries => {
+                let all_libs: Vec<String> = artifact
+                    .all_link_references()
+                    .into_iter()
+                    .flat_map(|(path, libs)| {
+                        libs.into_keys().map(move |lib| format!("{path}:{lib}"))
+                    })
+                    .collect();
+                if shell::is_json() {
+                    return print_json(&all_libs);
+                } else {
+                    sh_println!(
+                        "Dynamically linked libraries:\n{}",
+                        all_libs
+                            .iter()
+                            .map(|v| format!("  {v}"))
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    )?;
+                }
             }
         };
 
@@ -371,7 +392,11 @@ fn print_table(
     should_wrap: bool,
 ) -> Result<()> {
     let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
     table.set_header(headers);
     if should_wrap {
         table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
@@ -402,6 +427,7 @@ pub enum ContractArtifactField {
     Errors,
     Events,
     StandardJson,
+    Libraries,
 }
 
 macro_rules! impl_value_enum {
@@ -485,6 +511,7 @@ impl_value_enum! {
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
         StandardJson      => "standardJson" | "standard-json" | "standard_json",
+        Libraries         => "libraries" | "lib" | "libs",
     }
 }
 
@@ -517,6 +544,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
             Caf::StandardJson => {
                 Err(eyre!("StandardJson is not supported for ContractOutputSelection"))
             }
+            Caf::Libraries => Err(eyre!("Libraries is not supported for ContractOutputSelection")),
         }
     }
 }
@@ -555,7 +583,10 @@ impl fmt::Display for ContractArtifactField {
 impl ContractArtifactField {
     /// Returns true if this field does not need to be passed to the compiler.
     pub const fn can_skip_field(&self) -> bool {
-        matches!(self, Self::Bytecode | Self::DeployedBytecode | Self::StandardJson)
+        matches!(
+            self,
+            Self::Bytecode | Self::DeployedBytecode | Self::StandardJson | Self::Libraries
+        )
     }
 }
 
@@ -622,6 +653,14 @@ mod tests {
                         .unwrap_err()
                         .to_string()
                         .eq("StandardJson is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::Libraries {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Libraries is not supported for ContractOutputSelection")
                 );
             } else {
                 let selection: ContractOutputSelection = field.try_into().unwrap();
