@@ -14,6 +14,13 @@ if %errorlevel% equ 0 (
     goto :error_exit
 )
 
+REM Check if curl is installed
+where curl --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Curl is not installed or in PATH.
+    goto :error_exit
+)
+
 echo +===========================+
 echo + Foundry Installer/Updater +
 echo +===========================+
@@ -26,7 +33,6 @@ if %errorlevel% neq 0 (
     echo ERROR: Failed to detect latest Foundry version.
     echo.
     echo Please check your internet connection and try again.
-    echo If the problem persists, ensure curl is installed and accessible.
     goto :error_exit
 )
 
