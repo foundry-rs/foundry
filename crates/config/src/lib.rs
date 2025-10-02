@@ -3,7 +3,7 @@
 //! Foundry configuration.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -678,6 +678,9 @@ impl Config {
 
     /// TOML section for profiles
     pub const PROFILE_SECTION: &'static str = "profile";
+
+    /// External config sections, ignored from warnings.
+    pub const EXTERNAL_SECTION: &'static str = "external";
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
@@ -2218,44 +2221,18 @@ impl Config {
     /// This normalizes the default `evm_version` if a `solc` was provided in the config.
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
-    #[expect(clippy::disallowed_macros)]
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        let evm_version = figment.extract_inner::<EvmVersion>("evm_version").ok().or_else(|| {
-            figment
-                .extract_inner::<String>("evm_version")
-                .ok()
-                .and_then(|s| s.parse::<EvmVersion>().ok())
-        });
-
-        let solc_version = figment
-            .extract_inner::<SolcReq>("solc")
-            .ok()
-            .and_then(|solc| solc.try_version().ok())
-            .and_then(|v| self.evm_version.normalize_version_solc(&v));
-
         if figment.contains("evm_version") {
-            // Check compatibility if both evm_version and solc are provided
-            // First try to extract as EvmVersion directly, then fallback to string parsing for
-            // case-insensitive support
-            if let Some(evm_version) = evm_version {
-                figment = figment.merge(("evm_version", evm_version));
-
-                if let Some(solc_version) = solc_version
-                    && solc_version != evm_version
-                {
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(&format!(
-                            "Warning: evm_version '{evm_version}' may be incompatible with solc version. Consider using '{solc_version}'"
-                        ))
-                    );
-                }
-            }
             return figment;
         }
 
         // Normalize `evm_version` based on the provided solc version.
-        if let Some(version) = solc_version {
+        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = solc
+                .try_version()
+                .ok()
+                .and_then(|version| self.evm_version.normalize_version_solc(&version))
+        {
             figment = figment.merge(("evm_version", version));
         }
 
@@ -6347,20 +6324,20 @@ mod tests {
     }
 
     #[test]
-    fn test_evm_version_solc_compatibility_warning() {
+    fn warns_on_unknown_keys_in_profile() {
         figment::Jail::expect_with(|jail| {
-            // Create a config with incompatible evm_version and solc version
-            // Using Cancun with an older solc version (Berlin) that doesn't support it
             jail.create_file(
                 "foundry.toml",
                 r#"
-            [profile.default]
-            evm_version = "Cancun"
-            solc = "0.8.5"
-        "#,
+                [profile.default]
+                unknown_key_xyz = 123
+                "#,
             )?;
 
-            let _config = Config::load().unwrap();
+            let cfg = Config::load().unwrap();
+            assert!(cfg.warnings.iter().any(
+                |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
+            ));
             Ok(())
         });
     }

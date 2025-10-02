@@ -16,8 +16,8 @@ workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
-foundry-config.workspace = true
 
+alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-eips.workspace = true
 alloy-json-abi.workspace = true
@@ -51,9 +51,6 @@ solar.workspace = true
 tower.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete.workspace = true
-clap_complete_nushell.workspace = true
-clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
@@ -75,7 +72,6 @@ yansi.workspace = true
 
 anstream.workspace = true
 anstyle.workspace = true
-terminal_size.workspace = true
 ciborium.workspace = true
 
 flate2.workspace = true

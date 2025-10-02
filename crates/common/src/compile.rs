@@ -53,7 +53,7 @@ pub struct ProjectCompiler {
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
     ignore_eip_3860: bool,
 
-    /// Extra files to include, that are not necessarily in the project's source dir.
+    /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
     /// Whether to compile with dynamic linking tests and scripts.
@@ -175,15 +175,6 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project with the given closure
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use foundry_common::compile::ProjectCompiler;
-    /// let config = foundry_config::Config::load().unwrap();
-    /// let prj = config.project().unwrap();
-    /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
-    /// ```
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
         self,
         f: F,

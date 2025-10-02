@@ -74,6 +74,9 @@ Traces:
   [..] CounterTableTest::tableMultipleParamsFail(1, true)
     └─ ← [Revert] Cannot swap
 
+Backtrace:
+  at CounterTableTest.tableMultipleParamsFail (test/CounterTable.t.sol:[..]:[..])
+
 [FAIL: No fixture defined for param noSwap] tableMultipleParamsNoParamFail(uint256,bool) ([GAS])
 [PASS] tableMultipleParamsPass(uint256,bool) (runs: 10, [AVG_GAS])
 Traces:
@@ -86,6 +89,9 @@ Traces:
 Traces:
   [..] CounterTableTest::tableSingleParamFail(10)
     └─ ← [Revert] Amount cannot be 10
+
+Backtrace:
+  at CounterTableTest.tableSingleParamFail (test/CounterTable.t.sol:[..]:[..])
 
 [PASS] tableSingleParamPass(uint256) (runs: 10, [AVG_GAS])
 Traces:

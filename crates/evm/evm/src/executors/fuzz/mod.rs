@@ -6,9 +6,10 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
 use eyre::Result;
-use foundry_common::{evm::Breakpoints, sh_println};
+use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
+    Breakpoints,
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
 };
@@ -222,7 +223,8 @@ impl FuzzedExecutor {
                             break 'stop;
                         }
                         TestCaseError::Reject(_) => {
-                            // Apply max rejects only if configured, otherwise silently discard run.
+                            // Discard run and apply max rejects if configured.
+                            test_data.runs -= 1;
                             if self.config.max_test_rejects > 0 {
                                 test_data.rejects += 1;
                                 if test_data.rejects >= self.config.max_test_rejects {

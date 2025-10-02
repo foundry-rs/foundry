@@ -26,9 +26,10 @@ foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-evm-core.workspace = true
+foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+forge-fmt.workspace = true
 
 alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
@@ -47,6 +48,7 @@ alloy-provider = { workspace = true, features = [
 ] }
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
+alloy-rpc-types-beacon.workspace = true
 alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true

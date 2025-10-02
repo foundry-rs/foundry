@@ -16,7 +16,7 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
-use std::{fs, io::Write, path::Path, str::FromStr};
+use std::{fs, path::Path, str::FromStr};
 
 #[macro_use]
 extern crate foundry_test_utils;
@@ -1241,11 +1241,9 @@ casttest!(rpc_raw_params, |_prj, cmd| {
 casttest!(rpc_raw_params_stdin, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
-    // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc  eth_getBlockByNumber --raw
+    // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc eth_getBlockByNumber --raw
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "--raw"]).stdin(
-        |mut stdin| {
-            stdin.write_all(b"\n[\n\"0x123\",\nfalse\n]\n").unwrap();
-        },
+        b"\n[\n\"0x123\",\nfalse\n]\n"
     )
     .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
@@ -1935,6 +1933,77 @@ casttest!(storage, |_prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
+});
+
+casttest!(storage_with_valid_solc_version_1, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.10",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_valid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.23",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(storage_with_invalid_solc_version_1, |_prj, cmd| {
+    let output = cmd
+        .args([
+            "storage",
+            "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+            "--solc-version",
+            "0.4.0",
+            "--rpc-url",
+            next_http_archive_rpc_url().as_str(),
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(
+        stderr.contains(
+            "Warning: The provided --solc-version is 0.4.0 while the minimum version for storage layouts is 0.6.5"
+        ),
+        "stderr did not contain expected warning. Full stderr:\n{stderr}"
+    );
+});
+
+casttest!(storage_with_invalid_solc_version_2, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--solc-version",
+        "0.8.2",
+        "--rpc-url",
+        next_http_archive_rpc_url().as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
 
 "#]]);
 });
@@ -4065,18 +4134,24 @@ casttest!(run_celo_with_precompiles, |_prj, cmd| {
     cmd.args([
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
+        "--quick",
         "--rpc-url",
         rpc.as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [17776] 0x471EcE3750Da237f93B8E339c536989b8978a438::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17])
     ├─ [12370] 0xFeA1B35f1D5f2A58532a70e7A32e6F2D3Bc4F7B1::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17]) [delegatecall]
     │   ├─ [9000] CELO_TRANSFER_PRECOMPILE::00000000(00000000000000008106680ba7095cfd8f4351a8b7041da3060afb83000000000000000000000000d2eb2d37d238caeff39cfa36a013299c6dbac56a00000000000000000000000000000000000000000000000001ea4644d3010000)
     │   │   └─ ← [Return]
-...
+    │   ├─ emit Transfer(param0: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, param1: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, param2: 138000000000000000 [1.38e17])
+    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });

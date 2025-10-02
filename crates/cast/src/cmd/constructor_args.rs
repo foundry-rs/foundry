@@ -2,13 +2,12 @@ use super::{creation_code::fetch_creation_code_from_etherscan, interface::load_a
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
-use clap::{Parser, command};
+use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::abi::fetch_abi_from_etherscan;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(ConstructorArgsArgs, etherscan, rpc);

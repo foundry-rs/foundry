@@ -54,12 +54,29 @@ contract SimpleComments {
 
         uint256 value;
         return /* a long block comment that exceeds line
-            width */
-            value;
+            width */ value;
         return /* a block comment that exceeds line width */
             value;
         return // a line comment that exceeds line width
             value;
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/11836
+    function test5() public {
+        (
+            /* poolIndex */,
+            uint256 sellAmount1,
+            uint256 buyAmount1,
+            /* poolKey1 */,
+            /* sellToken */,
+            /* buyToken */,
+            /* sellTokenBalanceBefore */,
+            uint256 buyTokenBalanceBefore1,
+            /* hashMul */,
+            /* hashMod */
+        ) = _swapPre(
+            2, TOTAL_SUPPLY / 1_000, false, zeroForOne1
+        );
     }
 }
 
