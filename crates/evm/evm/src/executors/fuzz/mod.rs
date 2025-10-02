@@ -87,9 +87,10 @@ impl FuzzedExecutor {
             fail_fast.clone(),
         ));
 
+        // Determine number of workers
+        let num_workers = self.num_workers();
         // Use single worker for deterministic behavior when replaying persisted failures
         let persisted_failure = self.persisted_failure.take();
-        let num_workers = self.num_workers();
         let workers = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
@@ -491,6 +492,11 @@ impl FuzzedExecutor {
     }
 
     /// Determines the number of workers to run
+    ///
+    /// Depends on:
+    /// - Whether we're replaying a persisted failure
+    /// - `--jobs` specified by the user
+    /// - Available threads
     fn num_workers(&self) -> u32 {
         if self.persisted_failure.is_some() {
             1

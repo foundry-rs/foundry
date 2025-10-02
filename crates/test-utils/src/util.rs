@@ -1054,7 +1054,6 @@ fn test_redactions() -> snapbox::Redactions {
             ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
             ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
-            ("[RUNS]", r"runs: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),

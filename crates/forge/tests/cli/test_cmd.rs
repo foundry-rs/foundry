@@ -749,14 +749,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) ([RUNS], [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) ([RUNS], [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
