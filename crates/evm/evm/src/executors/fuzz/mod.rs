@@ -239,6 +239,12 @@ impl FuzzedExecutor {
                 last_run_timestamp = worker.last_run_timestamp;
                 last_run_worker = Some(worker);
             }
+
+            // Only retrieve from worker 0 i.e master worker which is responsible for replaying
+            // persisted corpus.
+            if worker.worker_id == 0 {
+                result.failed_corpus_replays = worker.failed_corpus_replays;
+            }
         }
 
         // Set first case
@@ -270,9 +276,6 @@ impl FuzzedExecutor {
             result.skipped = true;
             result.reason = reason.0;
         }
-
-        // TODO
-        result.failed_corpus_replays = 0;
 
         // TODO: Logs stats from EvmFuzzState of all workers
         // state.log_stats();
@@ -499,6 +502,10 @@ impl FuzzedExecutor {
                     }
                 }
             }
+        }
+
+        if worker_id == 0 {
+            worker.failed_corpus_replays = corpus.failed_replays;
         }
 
         Ok(worker)

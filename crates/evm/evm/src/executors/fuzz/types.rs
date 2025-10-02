@@ -186,6 +186,8 @@ pub struct FuzzWorker {
     ///
     /// Used to identify which worker ran last and collect its traces and call breakpoints
     pub last_run_timestamp: u128,
+    /// Failed corpus replays
+    pub failed_corpus_replays: usize,
 }
 
 impl FuzzWorker {
