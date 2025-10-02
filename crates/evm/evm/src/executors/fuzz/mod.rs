@@ -1,5 +1,5 @@
 use crate::executors::{
-    Executor, FailFast,
+    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast,
     corpus::WorkerCorpus,
     fuzz::types::{FuzzWorker, SharedFuzzState},
 };
@@ -7,6 +7,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 use eyre::Result;
+use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
@@ -24,6 +25,7 @@ use proptest::{
     test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use serde_json::json;
 use std::{
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -355,6 +357,7 @@ impl FuzzedExecutor {
         let sync_offset = worker_id * 100;
         let mut runs_since_sync = 0;
         let sync_threshold = SYNC_INTERVAL + sync_offset;
+        let mut last_metrics_report = Instant::now();
         // Continue while:
         // 1. Global state allows (not timed out, not at global limit, no failure found)
         // 2. Worker hasn't reached its specific run limit
@@ -368,7 +371,13 @@ impl FuzzedExecutor {
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
                     let instance = Instant::now();
-                    corpus.sync(num_workers, &self.executor, Some(func), None)?;
+                    corpus.sync(
+                        num_workers,
+                        &self.executor,
+                        Some(func),
+                        None,
+                        &shared_state.global_corpus_metrics,
+                    )?;
                     trace!("Worker {worker_id} finished corpus sync in {:?}", instance.elapsed());
                     runs_since_sync = 0;
                 }
@@ -400,12 +409,26 @@ impl FuzzedExecutor {
 
                         if let Some(progress) = progress {
                             progress.inc(1);
-                            if self.config.corpus.collect_edge_coverage() {
-                                // TODO: Display Global Corpus Metrics
+                            if self.config.corpus.collect_edge_coverage() && worker_id == 0 {
+                                corpus.sync_metrics(&shared_state.global_corpus_metrics);
+                                progress
+                                    .set_message(format!("{}", shared_state.global_corpus_metrics));
                             }
-                        } else if self.config.corpus.collect_edge_coverage() {
-                            // TODO: Display global corpus metrics since
-                            // DURATION_BETWEEN_METRICS_REPORT
+                        } else if self.config.corpus.collect_edge_coverage()
+                            && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+                            && worker_id == 0
+                        {
+                            corpus.sync_metrics(&shared_state.global_corpus_metrics);
+                            // Display metrics inline.
+                            let metrics = json!({
+                                "timestamp": SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)?
+                                    .as_secs(),
+                                "test": func.name,
+                                "metrics": &shared_state.global_corpus_metrics,
+                            });
+                            let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                            last_metrics_report = Instant::now();
                         }
 
                         worker.gas_by_case.push((case.case.gas, case.case.stipend));

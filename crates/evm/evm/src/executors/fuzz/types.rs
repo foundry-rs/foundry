@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
-use crate::executors::{FailFast, FuzzTestTimer, RawCallResult};
+use crate::executors::{FailFast, FuzzTestTimer, RawCallResult, corpus::GlobalCorpusMetrics};
 use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_common::evm::Breakpoints;
 use foundry_evm_coverage::HitMaps;
@@ -66,6 +66,8 @@ pub struct SharedFuzzState {
     timer: FuzzTestTimer,
     /// Fail Fast coordinator
     fail_fast: FailFast,
+    /// Global corpus metrics
+    pub(crate) global_corpus_metrics: GlobalCorpusMetrics,
 }
 
 impl SharedFuzzState {
@@ -77,6 +79,7 @@ impl SharedFuzzState {
             total_rejects: Arc::new(AtomicU32::new(0)),
             timer: FuzzTestTimer::new(timeout),
             fail_fast,
+            global_corpus_metrics: GlobalCorpusMetrics::default(),
         }
     }
 
