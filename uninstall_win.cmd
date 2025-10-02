@@ -17,9 +17,9 @@ if %errorlevel% equ 0 (
 set FOUNDRY_DIR=%LOCALAPPDATA%\Programs\Foundry
 set FOUNDRY_BIN=%FOUNDRY_DIR%\bin
 
-echo ===================
-echo Foundry Uninstaller
-echo ===================
+echo +=====================+
+echo + Foundry Uninstaller +
+echo +=====================+
 echo.
 
 REM Check if Foundry is installed
@@ -135,16 +135,16 @@ if exist "%FOUNDRY_DIR%" (
 REM Display final status
 echo.
 if !REMOVAL_FAILED! equ 1 (
-    echo ======================================
-    echo Uninstallation completed with warnings
-    echo ======================================
+    echo +========================================+
+    echo + Uninstallation completed with warnings +
+    echo +========================================+
     echo.
     echo Some files or directories could not be removed.
     echo Please review the warnings above and take manual action if needed.
 ) else (
-    echo ==========================================
-    echo SUCCESS: Foundry uninstalled successfully!
-    echo ==========================================
+    echo +============================================+
+    echo + SUCCESS: Foundry uninstalled successfully! +
+    echo +============================================+
 )
 echo.
 echo Note: You may need to restart your terminal or IDE for PATH changes to take effect.
@@ -153,9 +153,9 @@ goto :end
 
 :error_exit
 echo.
-echo ======================================================
-echo Uninstallation failed. Please review the errors above.
-echo ======================================================
+echo +========================================================+
+echo + Uninstallation failed. Please review the errors above. +
+echo +========================================================+
 echo.
 timeout /t 15 /nobreak
 endlocal

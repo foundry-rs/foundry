@@ -14,9 +14,9 @@ if %errorlevel% equ 0 (
     goto :error_exit
 )
 
-echo =========================
-echo Foundry Installer/Updater
-echo =========================
+echo +===========================+
+echo + Foundry Installer/Updater +
+echo +===========================+
 echo.
 
 REM Detect latest Foundry version
@@ -211,14 +211,14 @@ call :cleanup
 if exist "%FOUNDRY_BACKUP%" rmdir /S /Q "%FOUNDRY_BACKUP%" >nul 2>&1
 
 echo.
-echo ==========================================================
-echo SUCCESS: Foundry !FOUNDRY_VERSION! installed successfully!
-echo ==========================================================
+echo +============================================================+
+echo + SUCCESS: Foundry !FOUNDRY_VERSION! installed successfully! +
+echo +============================================================+
 echo.
 echo Installation directory: %FOUNDRY_BIN%
 echo.
 echo Note: You may need to restart your terminal or IDE to use Foundry commands.
-echo       In the current session, Foundry commands are already available.
+echo       In the current session, Foundry commands should already be available.
 echo.
 goto :end
 
@@ -244,9 +244,9 @@ if exist "%FOUNDRY_BACKUP%" rmdir /S /Q "%FOUNDRY_BACKUP%" >nul 2>&1
 
 :error_exit
 echo.
-echo ====================================================
-echo Installation failed. Please review the errors above.
-echo ====================================================
+echo +======================================================+
+echo + Installation failed. Please review the errors above. +
+echo +======================================================+
 echo.
 echo For help, visit: https://github.com/foundry-rs/foundry/issues
 echo.
