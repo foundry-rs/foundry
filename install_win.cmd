@@ -43,7 +43,7 @@ if not exist "%FOUNDRY_BIN%" mkdir "%FOUNDRY_BIN%" >nul 2>&1
 
 set CURRENT_VERSION=
 if exist "%FOUNDRY_BIN%\forge.exe" (
-    set "VERSION_TEMP=%TEMP%\foundry_version_%RANDOM%.txt"
+    set "VERSION_TEMP=%TEMP%\foundry_version_%RANDOM%_%RANDOM%.txt"
     "%FOUNDRY_BIN%\forge.exe" --version > "!VERSION_TEMP!" 2>&1
     if %errorlevel% equ 0 (
         for /f "tokens=3 delims= " %%v in ('findstr /C:"forge Version:" "!VERSION_TEMP!"') do set CURRENT_VERSION=%%v
