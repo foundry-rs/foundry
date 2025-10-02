@@ -4,13 +4,13 @@ use super::{
 };
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use clap::{Parser, command};
+use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::{abi::fetch_abi_from_etherscan, fs};
+use foundry_common::fs;
 use serde_json::json;
 use std::path::PathBuf;
 

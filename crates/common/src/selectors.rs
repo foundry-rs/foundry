@@ -217,7 +217,7 @@ impl OpenChainClient {
             )
         }
 
-        let mut sigs = self.decode_function_selector(calldata[..8].parse().unwrap()).await?;
+        let mut sigs = self.decode_function_selector(calldata[..8].parse()?).await?;
         // Retain only signatures that can be decoded.
         sigs.retain(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok());
         Ok(sigs)

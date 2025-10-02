@@ -1,12 +1,9 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
-use crate::{
-    MultiContractRunnerBuilder,
-    coverage::{
-        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-        DebugReporter, ItemAnchor, LcovReporter,
-        analysis::{SourceAnalysis, SourceFiles},
-        anchors::find_anchors,
-    },
+use crate::coverage::{
+    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+    DebugReporter, ItemAnchor, LcovReporter,
+    analysis::{SourceAnalysis, SourceFiles},
+    anchors::find_anchors,
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
@@ -14,19 +11,14 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
-    compilers::multi::MultiCompiler,
 };
 use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
-use foundry_evm_core::ic::IcPcMap;
+use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -109,7 +101,7 @@ impl CoverageArgs {
         let report = self.prepare(&paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
+        self.collect(&paths.root, &output, report, config, evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
@@ -199,6 +191,15 @@ impl CoverageArgs {
         // Collect source files.
         let mut versioned_sources = HashMap::<Version, SourceFiles>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
+            // Filter out vyper sources.
+            if path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+            {
+                continue;
+            }
+
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out libs dependencies and tests.
@@ -255,30 +256,18 @@ impl CoverageArgs {
     #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
-        root: &Path,
+        project_root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
-        config: Arc<Config>,
+        config: Config,
         evm_opts: EvmOpts,
     ) -> Result<()> {
-        let verbosity = evm_opts.verbosity;
-
-        // Build the contract runner
-        let env = evm_opts.evm_env().await?;
-        let runner = MultiContractRunnerBuilder::new(config.clone())
-            .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .set_coverage(true)
-            .build::<MultiCompiler>(root, output, env, evm_opts)?;
-
-        let known_contracts = runner.known_contracts.clone();
-
         let filter = self.test.filter(&config)?;
-        let outcome = self.test.run_tests(runner, config, verbosity, &filter, output).await?;
-
+        let outcome =
+            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
         outcome.ensure_ok(false)?;
+
+        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
 
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {

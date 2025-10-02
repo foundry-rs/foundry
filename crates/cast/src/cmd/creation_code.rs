@@ -4,14 +4,14 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ext::TraceApi};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
-use clap::{Parser, command};
+use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::{abi::fetch_abi_from_etherscan, provider::RetryProvider};
+use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(CreationCodeArgs, etherscan, rpc);

@@ -1,9 +1,10 @@
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
-    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
-    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
-    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
+    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
+    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, estimate::EstimateArgs,
+    find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1054,6 +1055,10 @@ pub enum CastSubcommand {
     #[command(visible_alias = "bi")]
     Bind(BindArgs),
 
+    /// Convert Beacon payload to execution payload.
+    #[command(visible_alias = "b2e")]
+    B2EPayload(B2EPayloadArgs),
+
     /// Get the selector for a function.
     #[command(visible_alias = "si")]
     Sig {
@@ -1076,12 +1081,8 @@ pub enum CastSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: foundry_common::clap::Shell,
+        shell: foundry_cli::clap::Shell,
     },
-
-    /// Generate Fig autocompletion spec. Deprecated: use `cast completions fig` instead.
-    #[command(visible_alias = "fig", hide = true)]
-    GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.
     #[command(visible_alias = "r")]

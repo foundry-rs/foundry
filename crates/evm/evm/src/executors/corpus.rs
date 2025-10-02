@@ -375,7 +375,7 @@ impl WorkerCorpus {
                     corpus.new_finds_produced += 1
                 }
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
-                    < FAVORABILITY_THRESHOLD;
+                    > FAVORABILITY_THRESHOLD;
                 self.metrics.update_favored(is_favored, corpus.is_favored);
                 corpus.is_favored = is_favored;
 
@@ -1077,4 +1077,163 @@ fn parse_corpus_filename(name: &str) -> eyre::Result<(Uuid, u64)> {
     let timestamp = parts[1].parse()?;
 
     Ok((uuid, timestamp))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Address;
+    use std::fs;
+
+    fn basic_tx() -> BasicTxDetails {
+        BasicTxDetails {
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+            },
+        }
+    }
+
+    fn temp_corpus_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("foundry-corpus-tests-{}", Uuid::new_v4()));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    fn new_manager_with_single_corpus() -> (CorpusManager, Uuid) {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_gzip: false,
+            corpus_min_mutations: 0,
+            corpus_min_size: 0,
+            ..Default::default()
+        };
+
+        let tx_seq = vec![basic_tx()];
+        let corpus = CorpusEntry::from_tx_seq(&tx_seq);
+        let seed_uuid = corpus.uuid;
+
+        let manager = CorpusManager {
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config,
+            in_memory_corpus: vec![corpus],
+            current_mutated: Some(seed_uuid),
+            failed_replays: 0,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            metrics: CorpusMetrics::default(),
+        };
+
+        (manager, seed_uuid)
+    }
+
+    #[test]
+    fn favored_sets_true_and_metrics_increment_when_ratio_gt_threshold() {
+        let (mut manager, uuid) = new_manager_with_single_corpus();
+        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
+        corpus.total_mutations = 4;
+        corpus.new_finds_produced = 2; // ratio currently 0.5 if both increment → 3/5 = 0.6 > 0.3
+        corpus.is_favored = false;
+
+        // ensure metrics start at 0
+        assert_eq!(manager.metrics.favored_items, 0);
+
+        // mark this as the currently mutated corpus and process a run with new coverage
+        manager.current_mutated = Some(uuid);
+        manager.process_inputs(&[basic_tx()], true);
+
+        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
+        assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
+        assert_eq!(
+            manager.metrics.favored_items, 1,
+            "favored_items should increment on false→true"
+        );
+    }
+
+    #[test]
+    fn favored_sets_false_and_metrics_decrement_when_ratio_lt_threshold() {
+        let (mut manager, uuid) = new_manager_with_single_corpus();
+        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
+        corpus.total_mutations = 9;
+        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored
+        corpus.is_favored = true; // start as favored
+
+        manager.metrics.favored_items = 1;
+
+        // Next run does NOT produce coverage → only total_mutations increments, ratio drops
+        manager.current_mutated = Some(uuid);
+        manager.process_inputs(&[basic_tx()], false);
+
+        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
+        assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
+        assert_eq!(
+            manager.metrics.favored_items, 0,
+            "favored_items should decrement on true→false"
+        );
+    }
+
+    #[test]
+    fn favored_is_false_on_ratio_equal_threshold() {
+        let (mut manager, uuid) = new_manager_with_single_corpus();
+        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
+        // After this call with new_coverage=true, totals become 10 and 3 → 0.3
+        corpus.total_mutations = 9;
+        corpus.new_finds_produced = 2;
+        corpus.is_favored = false;
+
+        manager.current_mutated = Some(uuid);
+        manager.process_inputs(&[basic_tx()], true);
+
+        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
+        assert!(
+            !(corpus.is_favored),
+            "with strict '>' comparison, favored must be false when ratio == threshold"
+        );
+    }
+
+    #[test]
+    fn eviction_skips_favored_and_evicts_non_favored() {
+        // manager with two corpora
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_min_mutations: 0,
+            corpus_min_size: 0,
+            ..Default::default()
+        };
+
+        let mut favored = CorpusEntry::from_tx_seq(&[basic_tx()]);
+        favored.total_mutations = 2;
+        favored.is_favored = true;
+
+        let mut non_favored = CorpusEntry::from_tx_seq(&[basic_tx()]);
+        non_favored.total_mutations = 2;
+        non_favored.is_favored = false;
+        let non_favored_uuid = non_favored.uuid;
+
+        let mut manager = CorpusManager {
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config,
+            in_memory_corpus: vec![favored, non_favored],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            metrics: CorpusMetrics::default(),
+        };
+
+        // First eviction should remove the non-favored one
+        manager.evict_oldest_corpus().unwrap();
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus.iter().all(|c| c.is_favored));
+
+        // Attempt eviction again: only favored remains → should not remove
+        manager.evict_oldest_corpus().unwrap();
+        assert_eq!(manager.in_memory_corpus.len(), 1, "favored corpus must not be evicted");
+
+        // ensure the evicted one was the non-favored uuid
+        assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
+    }
 }

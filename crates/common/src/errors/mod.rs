@@ -3,9 +3,6 @@
 mod fs;
 pub use fs::FsPathError;
 
-mod artifacts;
-pub use artifacts::*;
-
 mod private {
     use eyre::Chain;
     use std::error::Error;

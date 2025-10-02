@@ -1,12 +1,11 @@
 use crate::{
     AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
-    document::DocumentContent, helpers::merge_toml_table,
+    document::DocumentContent, helpers::merge_toml_table, solang_ext::Visitable,
 };
 use alloy_primitives::map::HashMap;
 use eyre::{Context, Result};
-use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{DocConfig, filter::expand_globs};
+use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -134,6 +133,8 @@ impl DocBuilder {
 
                 // Read and parse source file
                 let source = fs::read_to_string(path)?;
+                let source =
+                    forge_fmt::format(&source, self.fmt.clone()).into_result().unwrap_or(source);
 
                 let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
                     Ok(res) => res,
@@ -152,7 +153,7 @@ impl DocBuilder {
                 };
 
                 // Visit the parse tree
-                let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
+                let mut doc = Parser::new(comments, source);
                 source_unit
                     .visit(&mut doc)
                     .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;

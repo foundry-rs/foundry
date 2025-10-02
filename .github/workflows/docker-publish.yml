@@ -19,7 +19,7 @@ env:
 jobs:
   build:
     name: build and push
-    runs-on: Linux-22.04
+    runs-on: depot-ubuntu-22.04-16
     permissions:
       contents: read
       id-token: write
@@ -32,6 +32,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
           toolchain: stable
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
       - name: Install gcc aarch64
         id: aarch_64_setup
         run: |
@@ -41,7 +42,7 @@ jobs:
       - name: Login into registry ${{ env.REGISTRY }}
         # Ensure this doesn't trigger on PR's
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
