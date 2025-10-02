@@ -246,7 +246,7 @@ impl Suggestion {
         self
     }
 
-    /// Sets the style for a `[SuggestionKind::Fix]` suggestion.
+    /// Sets the style for a [`SuggestionKind::Fix`] suggestion.
     pub fn with_style(mut self, style: SuggestionStyle) -> Self {
         if let SuggestionKind::Fix { style: ref mut s, .. } = self.kind {
             *s = style;
