@@ -38,6 +38,7 @@ impl NetworkConfigs {
 - Create a module for your network-specific logic, e.g., `my_network/transfer`.
 - Implement the precompile logic as a function that accepts a `PrecompileInput` containing execution context and hooks for 
 interacting with EVM state, and returns a `PrecompileResult`:
+
 ```rust
 pub fn custom_precompile(
   input: alloy_evm::precompiles::PrecompileInput<'_>
@@ -45,7 +46,9 @@ pub fn custom_precompile(
   // Your logic here
 }
 ```
+
 - Enable the precompile in the `NetworkConfigs` implementation by conditionally applying it to an address:
+
 ```rust
 if self.my_network {
     precompiles.apply_precompile(&MY_NETWORK_TRANSFER_ADDRESS, move |_| {
