@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
 REM Check if running as administrator (script should run as normal user)
 net session >nul 2>&1
 if %errorlevel% equ 0 (
-    echo ERROR: This script is intended to be run as a user. Please run without administrator privileges.
+    echo ERROR: This script is intended to be run as a user.  Please run without administrator privileges.
     goto :error_exit
 )
 
@@ -121,7 +121,7 @@ echo.
 curl -L -f --progress-bar -o "%FOUNDRY_TEMP%.zip" "!FOUNDRY_URL!" 2>&1
 if %errorlevel% neq 0 (
     echo.
-    echo ERROR: Failed to download Foundry. Error code: %errorlevel%
+    echo ERROR: Failed to download Foundry.  Error code: %errorlevel%
     echo.
     echo This could be due to:
     echo   - Network connectivity issues
@@ -136,7 +136,7 @@ if not exist "%FOUNDRY_TEMP%.zip" (
 )
 for %%A in ("%FOUNDRY_TEMP%.zip") do set FILESIZE=%%~zA
 if !FILESIZE! lss 1000000 (
-    echo ERROR: Downloaded file is too small ^(!FILESIZE! bytes^). Download may be corrupted.
+    echo ERROR: Downloaded file is too small ^(!FILESIZE! bytes^).  Download may be corrupted.
     goto :error_restore
 )
 
@@ -146,7 +146,7 @@ echo Extracting Foundry...
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force -ErrorAction Stop; exit 0 } catch { Write-Host \"ERROR: $_\"; exit 1 }" 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: Failed to extract Foundry archive. Error code: %errorlevel%
+    echo ERROR: Failed to extract Foundry archive.  Error code: %errorlevel%
     goto :error_restore
 )
 
@@ -167,7 +167,7 @@ for %%e in (anvil cast chisel forge) do (
     if exist "%FOUNDRY_TEMP%\%%e.exe" (
         copy /Y "%FOUNDRY_TEMP%\%%e.exe" "%FOUNDRY_BIN%\" >nul 2>&1
         if !errorlevel! neq 0 (
-            echo ERROR: Failed to install %%e.exe. Error code: !errorlevel!
+            echo ERROR: Failed to install %%e.exe.  Error code: !errorlevel!
             set INSTALL_FAILED=1
         ) else (
             echo   Installed %%e.exe
@@ -179,7 +179,7 @@ for %%e in (anvil cast chisel forge) do (
 
 if !INSTALL_FAILED! equ 1 (
     echo.
-    echo Installation failed. Check if files are in use or if you have write permissions.
+    echo Installation failed.  Check if files are in use or if you have write permissions.
     goto :error_restore
 )
 
@@ -194,7 +194,7 @@ if not exist "%FOUNDRY_BIN%\forge.exe" (
 
 "%FOUNDRY_BIN%\forge.exe" --version 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: forge.exe failed to execute. Error code: %errorlevel%
+    echo ERROR: forge.exe failed to execute.  Error code: %errorlevel%
     goto :error_restore
 )
 
@@ -251,7 +251,7 @@ if exist "%FOUNDRY_BACKUP%" rmdir /S /Q "%FOUNDRY_BACKUP%" >nul 2>&1
 :error_exit
 echo.
 echo +======================================================+
-echo + Installation failed. Please review the errors above. +
+echo + Installation failed.  Please review the errors above.  +
 echo +======================================================+
 echo.
 echo For help, visit: https://github.com/foundry-rs/foundry/issues

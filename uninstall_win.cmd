@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
 REM Check if running as administrator (script should run as normal user)
 net session >nul 2>&1
 if %errorlevel% equ 0 (
-    echo ERROR: This script is intended to be run as a user. Please run without administrator privileges.
+    echo ERROR: This script is intended to be run as a user.  Please run without administrator privileges.
     goto :error_exit
 )
 
@@ -89,7 +89,7 @@ for %%e in (anvil cast chisel forge) do (
         if !errorlevel! equ 0 (
             echo   Removed %%e.exe
         ) else (
-            echo   ERROR: Failed to remove %%e.exe. Error code: !errorlevel!
+            echo   ERROR: Failed to remove %%e.exe.  Error code: !errorlevel!
             set REMOVAL_FAILED=1
         )
     )
@@ -123,7 +123,7 @@ if exist "%FOUNDRY_DIR%" (
         echo Installation directory removed: %FOUNDRY_DIR%
         echo.
     ) else (
-        echo WARNING: Failed to remove installation directory. Error code: %errorlevel%
+        echo WARNING: Failed to remove installation directory.  Error code: %errorlevel%
         echo.
         echo This may be because files are in use or protected.
         echo You can manually delete: %FOUNDRY_DIR%
@@ -153,9 +153,9 @@ goto :end
 
 :error_exit
 echo.
-echo +========================================================+
-echo + Uninstallation failed. Please review the errors above. +
-echo +========================================================+
+echo +==========================================================+
+echo + Uninstallation failed.  Please review the errors above.  +
+echo +==========================================================+
 echo.
 timeout /t 15 /nobreak
 endlocal
