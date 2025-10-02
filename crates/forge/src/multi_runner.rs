@@ -34,7 +34,6 @@ use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
-    ops::Deref,
     path::Path,
     sync::{Arc, mpsc},
     time::Instant,
@@ -47,24 +46,6 @@ pub struct TestContract {
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
-
-// NOTE(rusowsky): temporary workaround until the solar compiler is debuggable.
-#[derive(Clone)]
-pub struct CompilerDebug(Arc<solar::sema::Compiler>);
-
-impl std::fmt::Debug for CompilerDebug {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Compiler")
-    }
-}
-
-impl Deref for CompilerDebug {
-    type Target = Arc<solar::sema::Compiler>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
@@ -82,7 +63,7 @@ pub struct MultiContractRunner {
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
-    pub analysis: CompilerDebug,
+    pub analysis: Arc<solar::sema::Compiler>,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -276,7 +257,7 @@ impl MultiContractRunner {
 
         let executor = self.tcfg.executor(
             self.known_contracts.clone(),
-            self.analysis.deref().clone(),
+            self.analysis.clone(),
             artifact_id,
             db.clone(),
         );
@@ -604,7 +585,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             libs_to_deploy,
             libraries,
-            analysis: CompilerDebug(Arc::new(analysis)),
+            analysis: Arc::new(analysis),
 
             tcfg: TestRunnerConfig {
                 evm_opts,
