@@ -37,6 +37,7 @@ pub struct FuzzConfig {
     /// Number of threads to use for parallel fuzz runs
     ///
     /// This is set by passing `-j` or `--jobs`
+    #[serde(skip)]
     pub threads: Option<usize>,
 }
 
