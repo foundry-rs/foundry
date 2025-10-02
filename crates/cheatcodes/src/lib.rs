@@ -28,6 +28,8 @@ pub use inspector::{
 };
 pub use spec::{CheatcodeDef, Vm};
 
+pub use evm::journaled_account;
+
 #[macro_use]
 mod error;
 

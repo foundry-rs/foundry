@@ -2905,6 +2905,7 @@ interface Vm {
     /// vm.pvm(false); // Disable PVM mode (use EVM)
     #[cheatcode(group = Utilities)]
     function pvm(bool enabled) external;
+
     /// Generates the hash of the canonical EIP-712 type representation.
     ///
     /// Supports 2 different inputs:

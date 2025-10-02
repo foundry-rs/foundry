@@ -1,10 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    fmt::Debug,
-    sync::Arc,
-};
-
-use alloy_primitives::{Address, B256, Bytes, ruint::aliases::U256};
+use alloy_primitives::{Address, B256, Bytes, hex, ruint::aliases::U256};
 use alloy_rpc_types::BlobTransactionSidecar;
 use alloy_sol_types::SolValue;
 use foundry_cheatcodes::{
@@ -15,17 +9,23 @@ use foundry_cheatcodes::{
         dealCall, getNonce_0Call, loadCall, pvmCall, rollCall, setNonceCall, setNonceUnsafeCall,
         warpCall,
     },
+    journaled_account,
 };
 use foundry_common::sh_err;
 use foundry_compilers::resolc::dual_compiled_contracts::DualCompiledContracts;
 use revive_env::{AccountId, Runtime, System, Timestamp};
+use std::{
+    any::{Any, TypeId},
+    fmt::Debug,
+    sync::Arc,
+};
 
 use polkadot_sdk::{
     frame_support::traits::{Currency, fungible::Mutate},
     pallet_balances,
     pallet_revive::{
-        self, AddressMapper, BalanceOf, BalanceWithDust, BumpNonce, Code, Config, DepositLimit,
-        Pallet, evm::GasEncoder,
+        self, AccountInfo, AddressMapper, BalanceOf, BalanceWithDust, BumpNonce, Code, Config,
+        DepositLimit, Pallet, evm::GasEncoder,
     },
     polkadot_sdk_frame::prelude::OriginFor,
     sp_core::{self, H160},
@@ -41,6 +41,7 @@ use revm::{
         CallInputs, CallOutcome, CreateOutcome, Gas, InstructionResult, Interpreter,
         InterpreterResult, interpreter_types::Jumps,
     },
+    state::Bytecode,
 };
 pub trait PvmCheatcodeInspectorStrategyBuilder {
     fn new_pvm(dual_compiled_contracts: DualCompiledContracts, resolc_startup: bool) -> Self;
@@ -187,11 +188,12 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
             t if is::<pvmCall>(t) => {
                 tracing::info!(cheatcode = ?cheatcode.as_debug() , using_pvm = ?using_pvm);
                 let pvmCall { enabled } = cheatcode.as_any().downcast_ref().unwrap();
+                let ctx: &mut PvmCheatcodeInspectorStrategyContext =
+                    get_context_ref_mut(ccx.state.strategy.context.as_mut());
                 if *enabled {
-                    let ctx = get_context_ref_mut(ccx.state.strategy.context.as_mut());
                     select_pvm(ctx, ccx.ecx);
                 } else {
-                    todo!("Switch back to EVM");
+                    select_evm(ctx, ccx.ecx);
                 }
                 Ok(Default::default())
             }
@@ -428,6 +430,52 @@ fn select_pvm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, 
             })
         });
     }
+}
+
+fn select_evm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, '_>) {
+    if !ctx.using_pvm {
+        tracing::info!("already in EVM");
+        return;
+    }
+
+    tracing::info!("switching to EVM");
+    ctx.using_pvm = false;
+
+    // Migrate state from PVM back to EVM
+    execute_with_externalities(|externalities| {
+        externalities.execute_with(|| {
+            let block_number = System::block_number();
+            let timestamp = Timestamp::get();
+
+            data.block.number = U256::from(block_number);
+            data.block.timestamp = U256::from(timestamp / 1000);
+
+            let test_contract = data.journaled_state.database.get_test_contract_address();
+            let persistent_accounts = data.journaled_state.database.persistent_accounts().clone();
+            for address in persistent_accounts.into_iter().chain([data.tx.caller]) {
+                let account_evm = H160::from_slice(address.as_slice());
+                let pallet_evm_nonce = Pallet::<Runtime>::evm_nonce(&account_evm);
+                let pallet_evm_balance = Pallet::<Runtime>::evm_balance(&account_evm);
+                let amount_evm = U256::from_limbs(pallet_evm_balance.0);
+                let account = journaled_account(data, address).expect("failed to load account");
+                account.info.balance = amount_evm;
+                account.info.nonce = pallet_evm_nonce as u64;
+
+                // Migrate bytecode for deployed contracts (skip test contract)
+                if test_contract != Some(address)
+                    && let Some(bytecode) = AccountInfo::<Runtime>::load_contract(&account_evm)
+                        .map(|info| hex::encode(info.code_hash))
+                        .and_then(|hash| {
+                            ctx.dual_compiled_contracts.find_by_resolc_bytecode_hash(hash)
+                        })
+                        .and_then(|(_, contract)| contract.evm_deployed_bytecode.as_bytes())
+                        .and_then(|bytes| Bytecode::new_raw_checked(bytes.clone()).ok())
+                {
+                    data.journaled_state.set_code(address, bytecode);
+                }
+            }
+        })
+    });
 }
 
 impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspectorStrategyRunner {
