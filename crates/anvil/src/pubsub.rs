@@ -1,6 +1,9 @@
 use crate::{
     StorageInfo,
-    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
+    eth::{
+        backend::notifications::{NewBlockNotifications, ReorgedBlockNotifications},
+        error::to_rpc_result,
+    },
 };
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{B256, TxHash};
@@ -20,6 +23,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 #[derive(Debug)]
 pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
+    pub reorged_blocks: ReorgedBlockNotifications,
     pub storage: StorageInfo,
     pub filter: FilteredParams,
     pub queued: VecDeque<Log>,
@@ -37,23 +41,31 @@ impl LogsSubscription {
                 return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
-            if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
+            // Check for new blocks first
+            if let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
                 let b = self.storage.block(block.hash);
                 let receipts = self.storage.receipts(block.hash);
                 if let (Some(receipts), Some(block)) = (receipts, b) {
-                    let logs = filter_logs(block, receipts, &self.filter);
-                    if logs.is_empty() {
-                        // this ensures we poll the receiver until it is pending, in which case the
-                        // underlying `UnboundedReceiver` will register the new waker, see
-                        // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
-                        continue;
+                    let logs = filter_logs(block, receipts, &self.filter, false);
+                    if !logs.is_empty() {
+                        self.queued.extend(logs);
                     }
-                    self.queued.extend(logs)
                 }
-            } else {
-                return Poll::Ready(None);
+                continue;
             }
 
+            // Check for reorged blocks
+            if let Poll::Ready(Some(reorged_block)) = self.reorged_blocks.poll_next_unpin(cx) {
+                // Use the block and receipts from the notification
+                let logs =
+                    filter_logs(reorged_block.block, reorged_block.receipts, &self.filter, true);
+                if !logs.is_empty() {
+                    self.queued.extend(logs);
+                }
+                continue;
+            }
+
+            // If we reach here, both streams are pending
             if self.queued.is_empty() {
                 return Poll::Pending;
             }
@@ -147,7 +159,12 @@ impl Stream for EthSubscription {
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredParams) -> Vec<Log> {
+pub fn filter_logs(
+    block: Block,
+    receipts: Vec<TypedReceipt>,
+    filter: &FilteredParams,
+    removed: bool,
+) -> Vec<Log> {
     /// Determines whether to add this log
     fn add_log(
         block_hash: B256,
@@ -182,7 +199,7 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
                     transaction_hash: Some(transaction_hash),
                     transaction_index: Some(receipt_index as u64),
                     log_index: Some(log_index as u64),
-                    removed: false,
+                    removed,
                     block_timestamp: Some(block.header.timestamp),
                 });
             }
