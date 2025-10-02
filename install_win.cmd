@@ -250,9 +250,9 @@ if exist "%FOUNDRY_BACKUP%" rmdir /S /Q "%FOUNDRY_BACKUP%" >nul 2>&1
 
 :error_exit
 echo.
-echo +======================================================+
+echo +========================================================+
 echo + Installation failed.  Please review the errors above.  +
-echo +======================================================+
+echo +========================================================+
 echo.
 echo For help, visit: https://github.com/foundry-rs/foundry/issues
 echo.
