@@ -125,7 +125,7 @@ impl GasSnapshotArgs {
     }
 }
 
-// Pretty table output is implemented via `--format table` and `build_gas_snapshot_table`.
+// Gas report format on stdout.
 #[derive(Clone, Debug)]
 pub enum Format {
     Table,
