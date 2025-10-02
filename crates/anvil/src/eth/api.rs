@@ -2545,7 +2545,7 @@ impl EthApi {
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Ok(Duration::from_secs(offset).as_secs())
     }
 
     /// Set the next block gas limit
