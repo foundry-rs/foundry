@@ -192,7 +192,7 @@ pub enum SuggestionKind {
     },
 }
 
-// An emitable diagnostic suggestion.
+// An emittable diagnostic suggestion.
 //
 // Depending on its [`SuggestionKind`] will be emitted as a simple note (examples), or a fix
 // suggestion.
