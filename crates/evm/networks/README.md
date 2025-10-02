@@ -22,7 +22,9 @@ Networks:
           Enable my custom network features
 
 ```
-If you'd like network features to be enabled automatically based on the chain ID, update the implementation of:
+
+If you'd like network features to be enabled automatically based on the chain ID, update `NetworkConfigs::with_chain_id`:
+
 ```rust
 impl NetworkConfigs {
     pub fn with_chain_id(chain_id: u64) -> Self {
