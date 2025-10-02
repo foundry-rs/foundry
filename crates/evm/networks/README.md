@@ -5,6 +5,7 @@ The evm-networks crate defines custom network features that are shared across Fo
 
 ## Adding a Custom Network
 To add configuration support for a custom network (e.g. `my_network`), add a new field to the `NetworkConfigs` struct:
+
 ```rust
     /// Enable my custom network features.
     #[arg(help_heading = "Networks", long)]
