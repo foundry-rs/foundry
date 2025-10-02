@@ -14,6 +14,10 @@ if %errorlevel% equ 0 (
     exit /b 1
 )
 
+echo Foundry Installer/Updater
+echo =========================
+echo.
+
 set FOUNDRY_VERSION=
 for /f "delims=" %%i in ('curl -Ls -o nul -w "%%{url_effective}" https://github.com/foundry-rs/foundry/releases/latest') do set FOUNDRY_LATEST_URL=%%i
 if %errorlevel% neq 0 (
