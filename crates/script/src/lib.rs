@@ -250,9 +250,30 @@ impl ScriptArgs {
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
+        let bundled = if compiled.args.resume
         {
             compiled.resume().await?
+        } else if compiled.args.verify && !compiled.args.broadcast {
+            // If we're verifying without broadcasting, we need to show console logs
+            // by executing the script first to capture them
+            let pre_simulation = compiled
+                .link()
+                .await?
+                .prepare_execution()
+                .await?
+                .execute()
+                .await?
+                .prepare_simulation()
+                .await?;
+
+            if shell::is_json() {
+                pre_simulation.show_json().await?;
+            } else {
+                pre_simulation.show_traces().await?;
+            }
+            
+            // Now bundle to get the bundled state for verification
+            pre_simulation.bundle().await?
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
