@@ -466,7 +466,7 @@ pub enum EthRequest {
     SetNextBlockBaseFeePerGas(U256),
 
     /// Sets the specific timestamp
-    /// Accepts timestamp (Unix epoch) with millisecond precision and returns the number of seconds
+    /// Accepts timestamp (Unix epoch, in seconds) and returns the number of seconds
     /// between the given timestamp and the current time.
     #[serde(
         rename = "anvil_setTime",
