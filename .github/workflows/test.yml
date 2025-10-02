@@ -132,20 +132,26 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   crate-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: parity-large-new
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Install clang and zip on ubuntu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev zip
+      - name: Install build-essential for tikv-jemalloc-sys
+        run: |
+          sudo apt-get install -y build-essential
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: taiki-e/install-action@cargo-hack
       - name: Install protobuf-compiler
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install clang on ubuntu
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: wasm32-unknown-unknown

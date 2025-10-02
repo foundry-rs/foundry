@@ -641,7 +641,7 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
 /// - `Counter` - contract name only
 #[derive(Clone, PartialEq, Eq)]
 pub enum PathOrContractInfo {
-    /// Non-canoncalized path provided via CLI.
+    /// Non-canonicalized path provided via CLI.
     Path(PathBuf),
     /// Contract info provided via CLI.
     ContractInfo(CompilerContractInfo),
