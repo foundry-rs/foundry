@@ -93,7 +93,9 @@ impl WalletSigner {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    return Err(WalletSignerError::Gcp(Box::new(GcpSignerError::GoogleKmsError(e))));
+                    return Err(WalletSignerError::Gcp(Box::new(GcpSignerError::GoogleKmsError(
+                        e,
+                    ))));
                 }
             };
 
