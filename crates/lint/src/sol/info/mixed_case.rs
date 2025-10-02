@@ -19,7 +19,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
                 check_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
         {
-            ctx.emit_with_fix(
+            ctx.emit_with_suggestion(
                 &MIXED_CASE_FUNCTION,
                 name.span,
                 Suggestion::fix(
@@ -50,7 +50,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
             && let Some(expected) =
                 check_mixed_case(name.as_str(), false, ctx.config.mixed_case_exceptions)
         {
-            ctx.emit_with_fix(
+            ctx.emit_with_suggestion(
                 &MIXED_CASE_VARIABLE,
                 name.span,
                 Suggestion::fix(

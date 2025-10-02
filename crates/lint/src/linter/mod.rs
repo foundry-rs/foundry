@@ -108,7 +108,12 @@ impl<'s, 'c> LintContext<'s, 'c> {
     /// Emit a diagnostic with a code suggestion.
     ///
     /// If no span is provided for [`SuggestionKind::Fix`], it will use the lint's span.
-    pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, suggestion: Suggestion) {
+    pub fn emit_with_suggestion<L: Lint>(
+        &self,
+        lint: &'static L,
+        span: Span,
+        suggestion: Suggestion,
+    ) {
         if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
@@ -125,7 +130,7 @@ impl<'s, 'c> LintContext<'s, 'c> {
             SuggestionKind::Fix { span: fix_span, applicability, style } => diag
                 .span_suggestion_with_style(
                     fix_span.unwrap_or(span),
-                    suggestion.desc.unwrap_or(""),
+                    suggestion.desc.unwrap_or_default(),
                     suggestion.content,
                     applicability,
                     style,

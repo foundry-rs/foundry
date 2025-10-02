@@ -16,7 +16,7 @@ impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
     fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
         let name = strukt.name.as_str();
         if let Some(expected) = check_pascal_case(name) {
-            ctx.emit_with_fix(
+            ctx.emit_with_suggestion(
                 &PASCAL_CASE_STRUCT,
                 strukt.name.span,
                 Suggestion::fix(

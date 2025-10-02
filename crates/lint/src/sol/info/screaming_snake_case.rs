@@ -36,10 +36,10 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
 
             match mutability {
                 VarMut::Constant => {
-                    ctx.emit_with_fix(&SCREAMING_SNAKE_CASE_CONSTANT, name.span, suggestion)
+                    ctx.emit_with_suggestion(&SCREAMING_SNAKE_CASE_CONSTANT, name.span, suggestion)
                 }
                 VarMut::Immutable => {
-                    ctx.emit_with_fix(&SCREAMING_SNAKE_CASE_IMMUTABLE, name.span, suggestion)
+                    ctx.emit_with_suggestion(&SCREAMING_SNAKE_CASE_IMMUTABLE, name.span, suggestion)
                 }
             }
         }
