@@ -280,6 +280,8 @@ impl FuzzedExecutor {
         result
     }
 
+    /// Runs a single fuzz worker
+    #[allow(clippy::too_many_arguments)]
     fn run_worker(
         &self,
         worker_id: u32,
