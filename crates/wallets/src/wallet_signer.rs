@@ -60,7 +60,11 @@ impl WalletSigner {
                 alloy_signer_aws::aws_config::load_defaults(BehaviorVersion::latest()).await;
             let client = AwsClient::new(&config);
 
-            Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
+            Ok(Self::Aws(
+                AwsSigner::new(client, key_id, None)
+                    .await
+                    .map_err(|e| WalletSignerError::Aws(Box::new(e)))?,
+            ))
         }
 
         #[cfg(not(feature = "aws-kms"))]
@@ -88,12 +92,18 @@ impl WalletSigner {
             .await
             {
                 Ok(c) => c,
-                Err(e) => return Err(WalletSignerError::from(GcpSignerError::GoogleKmsError(e))),
+                Err(e) => {
+                    return Err(WalletSignerError::Gcp(Box::new(GcpSignerError::GoogleKmsError(e))));
+                }
             };
 
             let specifier = KeySpecifier::new(keyring, &key_name, key_version);
 
-            Ok(Self::Gcp(GcpSigner::new(client, specifier, None).await?))
+            Ok(Self::Gcp(
+                GcpSigner::new(client, specifier, None)
+                    .await
+                    .map_err(|e| WalletSignerError::Gcp(Box::new(e)))?,
+            ))
         }
 
         #[cfg(not(feature = "gcp-kms"))]
