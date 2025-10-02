@@ -277,9 +277,6 @@ impl FuzzedExecutor {
             result.reason = reason.0;
         }
 
-        // TODO: Logs stats from EvmFuzzState of all workers
-        // state.log_stats();
-
         result
     }
 
@@ -507,6 +504,10 @@ impl FuzzedExecutor {
         if worker_id == 0 {
             worker.failed_corpus_replays = corpus.failed_replays;
         }
+
+        // Logs stats
+        trace!("worker {worker_id} fuzz stats");
+        state.log_stats();
 
         Ok(worker)
     }
