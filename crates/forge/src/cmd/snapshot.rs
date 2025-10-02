@@ -2,8 +2,12 @@ use super::test;
 use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use alloy_primitives::{U256, map::HashMap};
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
+use comfy_table::{
+    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+};
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
+use foundry_common::shell;
 use regex::Regex;
 use std::{
     cmp::Ordering,
@@ -111,13 +115,17 @@ impl GasSnapshotArgs {
                 std::process::exit(1)
             }
         } else {
+            if matches!(self.format, Some(Format::Table)) {
+                let table = build_gas_snapshot_table(&tests);
+                sh_println!("\n{}", table)?;
+            }
             write_to_gas_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
 }
 
-// TODO implement pretty tables
+// Gas report format on stdout.
 #[derive(Clone, Debug)]
 pub enum Format {
     Table,
@@ -288,6 +296,31 @@ fn write_to_gas_snapshot_file(
 
     let content = reports.join("\n");
     Ok(fs::write(path, content)?)
+}
+
+fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
+    let mut table = Table::new();
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
+
+    table.set_header(vec![
+        Cell::new("Contract").fg(Color::Cyan),
+        Cell::new("Signature").fg(Color::Cyan),
+        Cell::new("Report").fg(Color::Cyan),
+    ]);
+
+    for test in tests {
+        let mut row = Row::new();
+        row.add_cell(Cell::new(test.contract_name()));
+        row.add_cell(Cell::new(&test.signature));
+        row.add_cell(Cell::new(test.result.kind.report().to_string()));
+        table.add_row(row);
+    }
+
+    table
 }
 
 /// A Gas snapshot entry diff.
