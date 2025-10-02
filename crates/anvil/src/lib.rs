@@ -325,24 +325,46 @@ impl NodeHandle {
         Ok(())
     }
 
-    /// The address of the launched server.
+    /// Returns the primary address of the launched server (first bound address).
     ///
     /// **N.B.** this may not necessarily be the same `host + port` as configured in the
     /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port.
+    /// When multiple hosts are configured, consider using [`Self::socket_addresses`] for the full list.
     pub fn socket_address(&self) -> &SocketAddr {
         &self.addresses[0]
     }
 
-    /// Returns the http endpoint.
+    /// Returns the primary HTTP endpoint.
+    ///
+    /// When multiple hosts are configured, consider using [`Self::http_endpoints`] to
+    /// retrieve all endpoints.
     pub fn http_endpoint(&self) -> String {
         format!("http://{}", self.socket_address())
     }
 
-    /// Returns the websocket endpoint.
+    /// Returns the primary WebSocket endpoint.
+    ///
+    /// When multiple hosts are configured, consider using [`Self::ws_endpoints`] to
+    /// retrieve all endpoints.
     pub fn ws_endpoint(&self) -> String {
         format!("ws://{}", self.socket_address())
     }
 
+    /// Returns the list of all socket addresses the server is bound to.
+    pub fn socket_addresses(&self) -> &[SocketAddr] {
+        &self.addresses
+    }
+
+    /// Returns all HTTP endpoints when bound to multiple hosts.
+    pub fn http_endpoints(&self) -> Vec<String> {
+        self.addresses.iter().map(|addr| format!("http://{}", addr)).collect()
+    }
+
+    /// Returns all WebSocket endpoints when bound to multiple hosts.
+    pub fn ws_endpoints(&self) -> Vec<String> {
+        self.addresses.iter().map(|addr| format!("ws://{}", addr)).collect()
+    }
+    
     /// Returns the path of the launched ipc server, if any.
     pub fn ipc_path(&self) -> Option<String> {
         self.config.get_ipc_path()
