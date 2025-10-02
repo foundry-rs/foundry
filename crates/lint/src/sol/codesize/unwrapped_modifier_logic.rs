@@ -37,7 +37,11 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
 
         // Generate a fix suggestion if the modifier logic should be wrapped.
         if let Some(suggestion) = self.get_snippet(ctx, hir, func, before, after) {
-            ctx.emit_with_suggestion(&UNWRAPPED_MODIFIER_LOGIC, func.span.to(func.body_span), suggestion);
+            ctx.emit_with_suggestion(
+                &UNWRAPPED_MODIFIER_LOGIC,
+                func.span.to(func.body_span),
+                suggestion,
+            );
         }
     }
 }
