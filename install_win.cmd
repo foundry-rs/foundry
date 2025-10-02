@@ -87,7 +87,7 @@ echo Extracting Foundry...
 echo.
 powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Warning: Failed to extract Foundry archive.
+    echo Warning: Failed to extract Foundry archive.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 
@@ -95,22 +95,22 @@ echo Installing Foundry executables...
 echo.
 copy /Y "%FOUNDRY_TEMP%\anvil.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Warning: Failed to install anvil.exe. Error code: %errorlevel%
+    echo Warning: Failed to install anvil.exe.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 copy /Y "%FOUNDRY_TEMP%\cast.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Warning: Failed to install cast.exe. Error code: %errorlevel%
+    echo Warning: Failed to install cast.exe.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 copy /Y "%FOUNDRY_TEMP%\chisel.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Warning: Failed to install chisel.exe. Error code: %errorlevel%
+    echo Warning: Failed to install chisel.exe.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 copy /Y "%FOUNDRY_TEMP%\forge.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Warning: Failed to install forge.exe. Error code: %errorlevel%
+    echo Warning: Failed to install forge.exe.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 
@@ -119,7 +119,7 @@ echo.
 if exist "%FOUNDRY_BIN%\forge.exe" (
     "%FOUNDRY_BIN%\forge.exe" --version
 ) else (
-    echo Warning: forge.exe not found after installation. Error code: %errorlevel%
+    echo Warning: forge.exe not found after installation.  Error code: %errorlevel%
     goto :cleanup_foundry
 )
 
