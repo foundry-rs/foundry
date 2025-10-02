@@ -109,7 +109,7 @@ if exist "%FOUNDRY_DIR%" (
     )
 )
 
-echo Foundry has been uninstalled successfully!
+echo The operation completed successfully!
 echo.
 echo Note: You may need to restart your terminal or IDE for PATH changes to take effect.
 echo.

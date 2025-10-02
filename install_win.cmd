@@ -24,7 +24,7 @@ if %errorlevel% neq 0 (
     echo ERROR: Failed to detect latest Foundry version. Cannot proceed with installation.
     echo.
     echo Please check your internet connection and try again.
-    goto :end
+    goto :error_exit
 )
 
 for %%a in ("!FOUNDRY_LATEST_URL!") do set FOUNDRY_VERSION=%%~nxa
@@ -32,7 +32,7 @@ if "!FOUNDRY_VERSION!"=="" (
     echo ERROR: Failed to parse Foundry version from URL: !FOUNDRY_LATEST_URL!
     echo.
     echo Cannot proceed with installation.
-    goto :end
+    goto :error_exit
 )
 
 echo Latest Foundry version: !FOUNDRY_VERSION!
@@ -84,7 +84,7 @@ echo.
 curl -L -o "%FOUNDRY_TEMP%.zip" "!FOUNDRY_URL!" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to download Foundry.  Error code: %errorlevel%
-    goto :end
+    goto :error_exit
 )
 
 echo Extracting Foundry...
@@ -92,7 +92,7 @@ echo.
 powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to extract Foundry archive.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 
 echo Installing Foundry executables...
@@ -100,22 +100,22 @@ echo.
 copy /Y "%FOUNDRY_TEMP%\anvil.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install anvil.exe.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 copy /Y "%FOUNDRY_TEMP%\cast.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install cast.exe.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 copy /Y "%FOUNDRY_TEMP%\chisel.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install chisel.exe.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 copy /Y "%FOUNDRY_TEMP%\forge.exe" "%FOUNDRY_BIN%\" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to install forge.exe.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 
 echo Verifying installation...
@@ -124,7 +124,7 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
     "%FOUNDRY_BIN%\forge.exe" --version
 ) else (
     echo Warning: forge.exe not found after installation.  Error code: %errorlevel%
-    goto :cleanup_foundry
+    goto :error_cleanup
 )
 
 echo Adding Foundry to User PATH permanently...
@@ -144,7 +144,6 @@ echo.
 
 echo Installation complete!
 
-:cleanup_foundry
 if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
 if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
 
@@ -152,3 +151,12 @@ if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
 timeout /t 10 /nobreak
 endlocal
 exit /b 0
+
+:error_cleanup
+if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
+if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
+
+:error_exit
+timeout /t 10 /nobreak
+endlocal
+exit /b 1
