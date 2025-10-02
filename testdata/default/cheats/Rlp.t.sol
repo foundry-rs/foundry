@@ -48,7 +48,8 @@ contract Rlp is DSTest {
 
     function testDecodeBlockHeader() public {
         // cast block 23270177  --raw
-        bytes memory blockHeader = hex"f9027da01581f4448b16694d5a728161cd65f8c80b88f5352a6f5bd2d2315b970582958da01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794dadb0d80178819f2319190d340ce9a924f783711a010d2afa5dabcf2dbfe3aa82b758427938e07880bd6fef3c82c404d0dd7c3f0f3a0f81230c715a462c827898bf2e337982907a7af90e5be20f911785bda05dab93ca0740f11bc75cf25e40d78d892d2e03083eaa573e5b4c26913fcc1b833db854c94b9010085f734fb06ea8fe377abbcb2e27f9ac99751ba817dc327327db101fd76f964ed0b7ca161f148fc165b9e5b575dc7473f17f4b8ebbf4a7b02b3e1e642197f27b2af54680834449abaf833619ac7d18afb50b19d5f6944dca0dc952edfdd9837573783c339ee6a36353ce6e536eaaf29fcd569c426091d4e24568dc353347f98c74fb6f8c91d68d358467c437563f66566377fe6c3f9e8301dbeb5fc7e7adee7a85ef5f8fa905cedbaf26601e21ba91646cac4034601e51d889d49739ee6990943a6a41927660f68e1f50b9f9209ee29551a7dae478d88e0547eefc83334ea770bb6fbac620fc47479c2c59389622bf32f55e36a75e56a5fc47c38bf8ef211fc0e8084016313218402af50e883fc53b78468b5ea9b974275696c6465724e657420284e65746865726d696e6429a0580ca94e91c0e7aef26ffb0c86f6ae48ef40df6dd1629f203a1930e0ce0be9d188000000000000000084479c1e2aa00345740e1b79edb2fbb3a20220e1a497ea9bb82aaba7dc7a881f7f3cae8a8ea38080a06675ad2a40134499a753924a04b75898ae09efc6fba6b3d7a506203042cb7611a0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        bytes memory blockHeader =
+            hex"f9027da01581f4448b16694d5a728161cd65f8c80b88f5352a6f5bd2d2315b970582958da01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794dadb0d80178819f2319190d340ce9a924f783711a010d2afa5dabcf2dbfe3aa82b758427938e07880bd6fef3c82c404d0dd7c3f0f3a0f81230c715a462c827898bf2e337982907a7af90e5be20f911785bda05dab93ca0740f11bc75cf25e40d78d892d2e03083eaa573e5b4c26913fcc1b833db854c94b9010085f734fb06ea8fe377abbcb2e27f9ac99751ba817dc327327db101fd76f964ed0b7ca161f148fc165b9e5b575dc7473f17f4b8ebbf4a7b02b3e1e642197f27b2af54680834449abaf833619ac7d18afb50b19d5f6944dca0dc952edfdd9837573783c339ee6a36353ce6e536eaaf29fcd569c426091d4e24568dc353347f98c74fb6f8c91d68d358467c437563f66566377fe6c3f9e8301dbeb5fc7e7adee7a85ef5f8fa905cedbaf26601e21ba91646cac4034601e51d889d49739ee6990943a6a41927660f68e1f50b9f9209ee29551a7dae478d88e0547eefc83334ea770bb6fbac620fc47479c2c59389622bf32f55e36a75e56a5fc47c38bf8ef211fc0e8084016313218402af50e883fc53b78468b5ea9b974275696c6465724e657420284e65746865726d696e6429a0580ca94e91c0e7aef26ffb0c86f6ae48ef40df6dd1629f203a1930e0ce0be9d188000000000000000084479c1e2aa00345740e1b79edb2fbb3a20220e1a497ea9bb82aaba7dc7a881f7f3cae8a8ea38080a06675ad2a40134499a753924a04b75898ae09efc6fba6b3d7a506203042cb7611a0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
         bytes[] memory decoded = vm.fromRlp(blockHeader);
 
@@ -65,14 +66,14 @@ contract Rlp is DSTest {
             // Verify logsBloom (256 bytes)
             bytes memory logsBloom = decoded[6];
             assertEq(logsBloom.length, 256, "logsBloom length");
-            assertEq(_bytes32At(logsBloom, 32), bytes32(0x85f734fb06ea8fe377abbcb2e27f9ac99751ba817dc327327db101fd76f964ed), "logsBloom[0]");
-            assertEq(_bytes32At(logsBloom, 64), bytes32(0x0b7ca161f148fc165b9e5b575dc7473f17f4b8ebbf4a7b02b3e1e642197f27b2), "logsBloom[1]");
-            assertEq(_bytes32At(logsBloom, 96), bytes32(0xaf54680834449abaf833619ac7d18afb50b19d5f6944dca0dc952edfdd983757), "logsBloom[2]");
-            assertEq(_bytes32At(logsBloom, 128), bytes32(0x3783c339ee6a36353ce6e536eaaf29fcd569c426091d4e24568dc353347f98c7), "logsBloom[3]");
-            assertEq(_bytes32At(logsBloom, 160), bytes32(0x4fb6f8c91d68d358467c437563f66566377fe6c3f9e8301dbeb5fc7e7adee7a8), "logsBloom[4]");
-            assertEq(_bytes32At(logsBloom, 192), bytes32(0x5ef5f8fa905cedbaf26601e21ba91646cac4034601e51d889d49739ee6990943), "logsBloom[5]");
-            assertEq(_bytes32At(logsBloom, 224), bytes32(0xa6a41927660f68e1f50b9f9209ee29551a7dae478d88e0547eefc83334ea770b), "logsBloom[6]");
-            assertEq(_bytes32At(logsBloom, 256), bytes32(0xb6fbac620fc47479c2c59389622bf32f55e36a75e56a5fc47c38bf8ef211fc0e), "logsBloom[7]");
+            _checkLogsBloom(logsBloom, 0, 0x85f734fb06ea8fe377abbcb2e27f9ac99751ba817dc327327db101fd76f964ed);
+            _checkLogsBloom(logsBloom, 1, 0x0b7ca161f148fc165b9e5b575dc7473f17f4b8ebbf4a7b02b3e1e642197f27b2);
+            _checkLogsBloom(logsBloom, 2, 0xaf54680834449abaf833619ac7d18afb50b19d5f6944dca0dc952edfdd983757);
+            _checkLogsBloom(logsBloom, 3, 0x3783c339ee6a36353ce6e536eaaf29fcd569c426091d4e24568dc353347f98c7);
+            _checkLogsBloom(logsBloom, 4, 0x4fb6f8c91d68d358467c437563f66566377fe6c3f9e8301dbeb5fc7e7adee7a8);
+            _checkLogsBloom(logsBloom, 5, 0x5ef5f8fa905cedbaf26601e21ba91646cac4034601e51d889d49739ee6990943);
+            _checkLogsBloom(logsBloom, 6, 0xa6a41927660f68e1f50b9f9209ee29551a7dae478d88e0547eefc83334ea770b);
+            _checkLogsBloom(logsBloom, 7, 0xb6fbac620fc47479c2c59389622bf32f55e36a75e56a5fc47c38bf8ef211fc0e);
         }
 
         assertEq(decoded[7], hex"", "difficulty");
@@ -91,9 +92,13 @@ contract Rlp is DSTest {
         assertEq(decoded[20], hex"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "requestsHash");
     }
 
-    function _bytes32At(bytes memory data, uint256 offset) internal pure returns (bytes32 result) {
+    function _checkLogsBloom(bytes memory data, uint256 n, uint256 expected) internal {
+        uint256 offset = (n + 1) * 32;
+        bytes32 result;
         assembly {
             result := mload(add(data, offset))
         }
+
+        assertEq(result, bytes32(expected), string.concat("logsBloom[", vm.toString(n), "]"));
     }
 }
