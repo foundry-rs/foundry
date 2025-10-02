@@ -142,7 +142,7 @@ echo.
 echo Note: You may need to restart your terminal or IDE to use Foundry commands.
 echo.
 
-echo Installation complete!
+echo The operation completed successfully!
 
 if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
 if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
