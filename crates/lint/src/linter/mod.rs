@@ -238,7 +238,7 @@ impl Suggestion {
         self
     }
 
-    /// Sets the span for a `[SuggestionKind::Fix]` suggestion.
+    /// Sets the span for a [`SuggestionKind::Fix`] suggestion.
     pub fn with_span(mut self, span: Span) -> Self {
         if let SuggestionKind::Fix { span: ref mut s, .. } = self.kind {
             *s = Some(span);
