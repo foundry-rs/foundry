@@ -11,9 +11,11 @@ To add configuration support for a custom network (e.g. `my_network`), add a new
     #[serde(default)]
     pub my_network: bool,
 ```
-This automatically adds support for:
-- `my_network` config in foundry.toml (can be enabled as `my_network = true`)
+
+This automatically enables::
+- `my_network = true` in foundry.toml
 - `--my-network` anvil CLI flag
+- 
 ```
 Networks:
       --my-network
