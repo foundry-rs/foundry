@@ -85,7 +85,7 @@ if %errorlevel% neq 0 (
 
 echo Extracting Foundry...
 echo.
-powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" 2>nul
+powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to extract Foundry archive.  Error code: %errorlevel%
     goto :cleanup_foundry
