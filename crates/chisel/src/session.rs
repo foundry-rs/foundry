@@ -80,8 +80,9 @@ impl ChiselSession {
 
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
-                // ID is already set- use the existing cache file.
-                format!("{cache_dir}chisel-{id}.json")
+                /// ID is already set - use the existing cache file.
+                let path = cache_dir.join(format!("chisel-{id}.json"));
+                path.to_string_lossy().into_owned()
             }
             None => {
                 // Get the next session cache ID / file
@@ -115,7 +116,8 @@ impl ChiselSession {
         let mut latest = if let Some(e) = entries.next() {
             e?
         } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
+            let path = cache_dir.join("chisel-0.json");
+            return Ok((String::from("0"), path.to_string_lossy().into_owned()));
         };
 
         let mut session_num = 1;
@@ -130,7 +132,8 @@ impl ChiselSession {
             session_num += 1;
         }
 
-        Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
+        let path = cache_dir.join(format!("chisel-{session_num}.json"));
+        Ok((format!("{session_num}"), path.to_string_lossy().into_owned()))
     }
 
     /// The Chisel Cache Directory
@@ -138,13 +141,11 @@ impl ChiselSession {
     /// ### Returns
     ///
     /// Optionally, the directory of the chisel cache.
-    pub fn cache_dir() -> Result<String> {
+    /// Returns the cache directory path using platform-specific separators.
+    pub fn cache_dir() -> Result<std::path::PathBuf> {
         let home_dir =
             dirs::home_dir().ok_or_else(|| eyre::eyre!("Failed to grab home directory"))?;
-        let home_dir_str = home_dir
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("Failed to convert home directory to string"))?;
-        Ok(format!("{home_dir_str}/.foundry/cache/chisel/"))
+        Ok(home_dir.join(".foundry").join("cache").join("chisel"))
     }
 
     /// Create the cache directory if it does not exist
@@ -154,7 +155,7 @@ impl ChiselSession {
     /// The unit type if the operation was successful.
     pub fn create_cache_dir() -> Result<()> {
         let cache_dir = Self::cache_dir()?;
-        if !Path::new(&cache_dir).exists() {
+        if !cache_dir.exists() {
             std::fs::create_dir_all(&cache_dir)?;
         }
         Ok(())
@@ -195,7 +196,8 @@ impl ChiselSession {
     /// Optionally, an owned instance of the loaded chisel session.
     pub fn load(id: &str) -> Result<Self> {
         let cache_dir = Self::cache_dir()?;
-        let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
+        let file_path = cache_dir.join(format!("chisel-{id}.json"));
+        let contents = std::fs::read_to_string(&file_path)?;
         let chisel_env: Self = serde_json::from_str(&contents)?;
         Ok(chisel_env)
     }
