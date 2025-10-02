@@ -54,6 +54,7 @@ alloy-dyn-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
