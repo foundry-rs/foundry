@@ -138,14 +138,13 @@ echo.
 echo Note: You may need to restart your terminal or IDE to use Foundry commands.
 echo.
 
+echo Installation complete!
+
 :cleanup_foundry
 if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
 if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
 
-echo Installation complete!
-
 :skip_foundry
-
 timeout /t 10 /nobreak
 endlocal
 exit /b 0
