@@ -8,6 +8,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
+use path_slash::PathExt;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
@@ -715,6 +716,14 @@ ignore them in the `.gitignore` file."
 
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
+    /// Get the URL of a submodule from git config
+    pub fn submodule_url(self, path: &Path) -> Result<Option<String>> {
+        self.cmd()
+            .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
     }
 
     pub fn cmd(self) -> Command {

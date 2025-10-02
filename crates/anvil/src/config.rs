@@ -39,9 +39,9 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
+    core::AsEnvMut,
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
-use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;

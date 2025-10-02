@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![allow(dead_code)] // TODO(dani)
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
 const DEBUG_INDENT: bool = false || option_env!("FMT_DEBUG").is_some();
@@ -10,12 +9,6 @@ use foundry_common::comments::{
     Comment, Comments,
     inline_config::{InlineConfig, InlineConfigItem},
 };
-
-// TODO(dani)
-// #[macro_use]
-// extern crate tracing;
-use tracing as _;
-use tracing_subscriber as _;
 
 mod state;
 

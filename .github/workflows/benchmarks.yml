@@ -24,6 +24,7 @@ env:
   ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
   VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
   DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   run-benchmarks:
@@ -49,11 +50,7 @@ jobs:
 
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-        with:
-          workspaces: |
-            ./
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
       - name: Setup Foundry
         env:
@@ -157,7 +154,7 @@ jobs:
   publish-results:
     name: Publish Results
     needs: run-benchmarks
-    runs-on: foundry-runner
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write

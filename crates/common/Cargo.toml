@@ -72,7 +72,6 @@ yansi.workspace = true
 
 anstream.workspace = true
 anstyle.workspace = true
-terminal_size.workspace = true
 ciborium.workspace = true
 
 flate2.workspace = true

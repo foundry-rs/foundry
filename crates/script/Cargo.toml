@@ -42,7 +42,7 @@ yansi.workspace = true
 revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
-dialoguer = { version = "0.11", default-features = false }
+dialoguer.workspace = true
 indicatif.workspace = true
 
 alloy-signer.workspace = true

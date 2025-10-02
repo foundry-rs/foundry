@@ -118,12 +118,15 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
 ///  * external view visibility and mutability.
 ///  * zero parameters.
 ///  * exactly one return value.
-///  * return value is an elementary type
+///  * return value is an elementary or a custom type
 fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
     header.visibility().is_some_and(|v| matches!(v, Visibility::External))
         && header.state_mutability().is_view()
         && header.parameters.is_empty()
         && header.returns().len() == 1
-        && header.returns().first().is_some_and(|ret| ret.ty.kind.is_elementary())
+        && header
+            .returns()
+            .first()
+            .is_some_and(|ret| ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
         && check_screaming_snake_case(header.name.unwrap().as_str()).is_none()
 }

@@ -133,6 +133,8 @@ impl DocBuilder {
 
                 // Read and parse source file
                 let source = fs::read_to_string(path)?;
+                let source =
+                    forge_fmt::format(&source, self.fmt.clone()).into_result().unwrap_or(source);
 
                 let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
                     Ok(res) => res,
@@ -151,7 +153,7 @@ impl DocBuilder {
                 };
 
                 // Visit the parse tree
-                let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
+                let mut doc = Parser::new(comments, source);
                 source_unit
                     .visit(&mut doc)
                     .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;

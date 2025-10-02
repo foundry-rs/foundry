@@ -18,6 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   matrices:
@@ -66,7 +67,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@cd39cb0572834c149bf3533a143f05e09def0f3c # v2
+      - uses: taiki-e/install-action@d0f4f69b07c0804d1003ca9a5a5f853423872ed9 # v2
         with:
           tool: nextest
 
@@ -96,9 +97,7 @@ jobs:
             ~/.foundry/cache
             ~/.config/.foundry/cache
           key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-        with:
-          cache-on-failure: true
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"
