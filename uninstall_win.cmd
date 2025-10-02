@@ -42,7 +42,6 @@ if /i not "!CONFIRM!"=="Y" (
     echo Uninstallation cancelled.
     goto :end
 )
-echo.
 
 echo Removing Foundry executables...
 echo.
@@ -50,35 +49,42 @@ if exist "%FOUNDRY_BIN%\anvil.exe" (
     del /F /Q "%FOUNDRY_BIN%\anvil.exe" >nul 2>&1
     if %errorlevel% equ 0 (
         echo   - anvil.exe removed
+        echo.
     ) else (
         echo   - Warning: Failed to remove anvil.exe.  Error code: %errorlevel%
+        echo.
     )
 )
 if exist "%FOUNDRY_BIN%\cast.exe" (
     del /F /Q "%FOUNDRY_BIN%\cast.exe" >nul 2>&1
     if %errorlevel% equ 0 (
         echo   - cast.exe removed
+        echo.
     ) else (
         echo   - Warning: Failed to remove cast.exe.  Error code: %errorlevel%
+        echo.
     )
 )
 if exist "%FOUNDRY_BIN%\chisel.exe" (
     del /F /Q "%FOUNDRY_BIN%\chisel.exe" >nul 2>&1
     if %errorlevel% equ 0 (
         echo   - chisel.exe removed
+        echo.
     ) else (
         echo   - Warning: Failed to remove chisel.exe.  Error code: %errorlevel%
+        echo.
     )
 )
 if exist "%FOUNDRY_BIN%\forge.exe" (
     del /F /Q "%FOUNDRY_BIN%\forge.exe" >nul 2>&1
     if %errorlevel% equ 0 (
         echo   - forge.exe removed
+        echo.
     ) else (
         echo   - Warning: Failed to remove forge.exe.  Error code: %errorlevel%
+        echo.
     )
 )
-echo.
 
 echo Removing Foundry from User PATH...
 echo.
@@ -95,12 +101,13 @@ if exist "%FOUNDRY_DIR%" (
     rmdir /S /Q "%FOUNDRY_DIR%" >nul 2>&1
     if %errorlevel% equ 0 (
         echo Installation directory removed: %FOUNDRY_DIR%
+        echo.
     ) else (
         echo Warning: Failed to remove installation directory.  Error code: %errorlevel%
         echo You may need to manually delete: %FOUNDRY_DIR%
+        echo.
     )
 )
-echo.
 
 echo Foundry has been uninstalled successfully!
 echo.

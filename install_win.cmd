@@ -24,7 +24,7 @@ if %errorlevel% neq 0 (
     echo ERROR: Failed to detect latest Foundry version. Cannot proceed with installation.
     echo.
     echo Please check your internet connection and try again.
-    goto :skip_foundry
+    goto :end
 )
 
 for %%a in ("!FOUNDRY_LATEST_URL!") do set FOUNDRY_VERSION=%%~nxa
@@ -32,7 +32,7 @@ if "!FOUNDRY_VERSION!"=="" (
     echo ERROR: Failed to parse Foundry version from URL: !FOUNDRY_LATEST_URL!
     echo.
     echo Cannot proceed with installation.
-    goto :skip_foundry
+    goto :end
 )
 
 echo Latest Foundry version: !FOUNDRY_VERSION!
@@ -60,7 +60,7 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
             echo.
             if "!CURRENT_VERSION_TAG!"=="!FOUNDRY_VERSION!" (
                 echo Foundry !FOUNDRY_VERSION! is already installed and up to date.
-                goto :skip_foundry
+                goto :end
             )
             echo Upgrading from !CURRENT_VERSION_TAG! to !FOUNDRY_VERSION!...
             echo.
@@ -84,7 +84,7 @@ echo.
 curl -L -o "%FOUNDRY_TEMP%.zip" "!FOUNDRY_URL!" >nul 2>&1
 if %errorlevel% neq 0 (
     echo Warning: Failed to download Foundry.  Error code: %errorlevel%
-    goto :skip_foundry
+    goto :end
 )
 
 echo Extracting Foundry...
@@ -148,7 +148,7 @@ echo Installation complete!
 if exist "%FOUNDRY_TEMP%.zip" del /F /Q "%FOUNDRY_TEMP%.zip" >nul 2>&1
 if exist "%FOUNDRY_TEMP%" rmdir /S /Q "%FOUNDRY_TEMP%" >nul 2>&1
 
-:skip_foundry
+:end
 timeout /t 10 /nobreak
 endlocal
 exit /b 0
