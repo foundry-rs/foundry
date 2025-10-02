@@ -85,7 +85,7 @@ if %errorlevel% neq 0 (
 
 echo Extracting Foundry...
 echo.
-powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" >nul 2>&1
+powershell -Command "Expand-Archive -Path '%FOUNDRY_TEMP%.zip' -DestinationPath '%FOUNDRY_TEMP%' -Force" 2>nul
 if %errorlevel% neq 0 (
     echo Warning: Failed to extract Foundry archive.  Error code: %errorlevel%
     goto :cleanup_foundry
@@ -125,7 +125,7 @@ if exist "%FOUNDRY_BIN%\forge.exe" (
 
 echo Adding Foundry to User PATH permanently...
 echo.
-powershell -Command "$path = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($path -notlike '*%FOUNDRY_BIN%*') { [Environment]::SetEnvironmentVariable('Path', $path + ';%FOUNDRY_BIN%', 'User'); Write-Host 'Foundry added to User PATH permanently' } else { Write-Host 'Foundry already in User PATH' }" >nul 2>&1
+powershell -Command "$path = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($path -notlike '*%FOUNDRY_BIN%*') { [Environment]::SetEnvironmentVariable('Path', $path + ';%FOUNDRY_BIN%', 'User'); Write-Host 'Foundry added to User PATH permanently' } else { Write-Host 'Foundry already in User PATH' }" 2>nul
 
 echo Setting PATH for current session...
 echo.
