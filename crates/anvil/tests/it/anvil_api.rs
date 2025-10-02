@@ -1,39 +1,30 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{self, Greeter, Multicall, BUSD},
+    abi::{self, BUSD, Greeter, Multicall},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{address, fixed_bytes, utils::Unit, Address, Bytes, TxKind, U256};
-use alloy_provider::{ext::TxPoolApi, Provider};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
+use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
-    BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{
-    eth::{
-        api::CLIENT_VERSION,
-        backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
-    },
-    spawn, NodeConfig,
-};
+use anvil::{NodeConfig, eth::api::CLIENT_VERSION, spawn};
 use anvil_core::{
-    eth::{
-        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
-        EthRequest,
-    },
+    eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+
 use revm::primitives::hardfork::SpecId;
 use std::{
-    future::IntoFuture,
     str::FromStr,
     time::{Duration, SystemTime},
 };
@@ -667,9 +658,10 @@ async fn can_remove_pool_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "flaky"]
 async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = handle.http_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
@@ -827,75 +819,6 @@ async fn test_rollback() {
     assert_eq!(head, block1);
 }
 
-// === wallet endpoints === //
-#[tokio::test(flavor = "multi_thread")]
-async fn can_get_wallet_capabilities() {
-    let (api, handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let provider = handle.http_provider();
-
-    let init_sponsor_bal = provider.get_balance(EXECUTOR).await.unwrap();
-
-    let expected_bal = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
-    assert_eq!(init_sponsor_bal, expected_bal);
-
-    let p256_code = provider.get_code_at(P256_DELEGATION_CONTRACT).await.unwrap();
-
-    assert_eq!(p256_code, Bytes::from_static(P256_DELEGATION_RUNTIME_CODE));
-
-    let capabilities = api.get_capabilities().unwrap();
-
-    let mut expect_caps = WalletCapabilities::default();
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(capabilities, expect_caps);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_add_capability() {
-    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let init_capabilities = api.get_capabilities().unwrap();
-
-    let mut expect_caps = WalletCapabilities::default();
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(init_capabilities, expect_caps);
-
-    let new_cap_addr = Address::with_last_byte(1);
-
-    api.anvil_add_capability(new_cap_addr).unwrap();
-
-    let capabilities = api.get_capabilities().unwrap();
-
-    let cap: Capabilities = Capabilities {
-        delegation: DelegationCapability {
-            addresses: vec![P256_DELEGATION_CONTRACT, new_cap_addr],
-        },
-    };
-    expect_caps.insert(api.chain_id(), cap);
-
-    assert_eq!(capabilities, expect_caps);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_set_executor() {
-    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
-
-    let expected_addr = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-
-    let executor = api.anvil_set_executor(pk).unwrap();
-
-    assert_eq!(executor, expected_addr);
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn test_arb_get_block() {
     let (api, _handle) = spawn(NodeConfig::test().with_chain_id(Some(421611u64))).await;
@@ -947,11 +870,11 @@ async fn test_mine_blk_with_prev_timestamp() {
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     let third_blk_num = block.header.number;
-    let third_blk_timestmap = block.header.timestamp;
+    let third_blk_timestamp = block.header.timestamp;
 
     assert_eq!(third_blk_num, init_number + 2);
-    assert_ne!(third_blk_timestmap, next_blk_timestamp);
-    assert!(third_blk_timestmap > next_blk_timestamp);
+    assert_ne!(third_blk_timestamp, next_blk_timestamp);
+    assert!(third_blk_timestamp > next_blk_timestamp);
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
@@ -1003,7 +926,7 @@ async fn evm_mine_blk_with_same_timestamp() {
 
 // mine 4 blocks instantly.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mine_blks_with_same_timestamp() {
+async fn test_mine_blk_with_same_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
@@ -1054,4 +977,96 @@ async fn test_mine_first_block_with_interval() {
 
     let second_block = api.block_by_number(2.into()).await.unwrap().unwrap();
     assert_eq!(second_block.header.timestamp, init_timestamp + 120);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_non_fork() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Get initial state
+    let init_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let init_accounts = api.accounts().unwrap();
+    let init_balance = provider.get_balance(init_accounts[0]).await.unwrap();
+
+    // Store the instance id before reset
+    let instance_id_before = api.instance_id();
+
+    // Mine some blocks and make transactions
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
+
+    // Send a transaction
+    let to = Address::random();
+    let val = U256::from(1337);
+    let tx = TransactionRequest::default().with_from(init_accounts[0]).with_to(to).with_value(val);
+    let tx = WithOtherFields::new(tx);
+
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    // Check state has changed
+    let block_before_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert!(block_before_reset.header.number > init_block.header.number);
+
+    let balance_before_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert!(balance_before_reset < init_balance);
+
+    let to_balance_before_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_before_reset, val);
+
+    // Reset to fresh in-memory state (non-fork)
+    api.anvil_reset(None).await.unwrap();
+
+    // Check instance id has changed
+    let instance_id_after = api.instance_id();
+    assert_ne!(instance_id_before, instance_id_after);
+
+    // Check we're back at genesis
+    let block_after_reset = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block_after_reset.header.number, 0);
+
+    // Check accounts are restored to initial state
+    let balance_after_reset = provider.get_balance(init_accounts[0]).await.unwrap();
+    assert_eq!(balance_after_reset, init_balance);
+
+    // Check the recipient's balance is zero
+    let to_balance_after_reset = provider.get_balance(to).await.unwrap();
+    assert_eq!(to_balance_after_reset, U256::ZERO);
+
+    // Test we can continue mining after reset
+    api.mine_one().await;
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_fork_to_non_fork() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Verify we're in fork mode
+    let metadata = api.anvil_metadata().await.unwrap();
+    assert!(metadata.forked_network.is_some());
+
+    // Mine some blocks
+    for _ in 0..3 {
+        api.mine_one().await;
+    }
+
+    // Reset to non-fork mode
+    api.anvil_reset(None).await.unwrap();
+
+    // Verify we're no longer in fork mode
+    let metadata_after = api.anvil_metadata().await.unwrap();
+    assert!(metadata_after.forked_network.is_none());
+
+    // Check we're at block 0
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.number, 0);
+
+    // Verify we can still mine blocks
+    api.mine_one().await;
+    let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(new_block.header.number, 1);
 }

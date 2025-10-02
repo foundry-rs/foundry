@@ -4,7 +4,7 @@ use crate::fork::fork_config;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use std::str::FromStr;
 
 const GENESIS: &str = r#"{

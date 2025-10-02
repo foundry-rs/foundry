@@ -1,42 +1,42 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
+    Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{
-    eth::EthEvmContext,
-    precompiles::{DynPrecompile, PrecompilesMap},
-    Evm, EvmEnv,
-};
+use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
+    Context, Journal,
     context::{
-        result::{EVMError, HaltReason, ResultAndState},
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
+        LocalContextTr, TxEnv,
+        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
     },
     handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult,
-        Handler, ItemOrResult, MainnetHandler,
+        EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
+        instructions::EthInstructions,
     },
-    inspector::InspectorHandler,
+    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInput, CallInputs, CallOutcome, CallScheme,
-        CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult,
-        InterpreterResult,
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
+        interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
     },
-    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
-    Context, ExecuteEvm, Journal,
 };
 
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
     env: Env,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
-    let ctx = EthEvmContext {
+    inspector: I,
+) -> FoundryEvm<'db, I> {
+    let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
             journal.set_spec_id(env.evm_env.cfg_env.spec);
@@ -49,6 +49,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         local: LocalContext::default(),
         error: Ok(()),
     };
+    ctx.cfg.tx_chain_id_check = true;
     let spec = ctx.cfg.spec;
 
     let mut evm = FoundryEvm {
@@ -60,8 +61,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         ),
     };
 
-    inject_precompiles(&mut evm);
-
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 
@@ -80,18 +80,8 @@ pub fn new_evm_with_existing_context<'a>(
         ),
     };
 
-    inject_precompiles(&mut evm);
-
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
-}
-
-/// Conditionally inject additional precompiles into the EVM context.
-fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>) {
-    if evm.inspector().is_odyssey() {
-        evm.precompiles_mut().apply_precompile(P256VERIFY.address(), |_| {
-            Some(DynPrecompile::from(P256VERIFY.precompile()))
-        });
-    }
 }
 
 /// Get the precompiles for the given spec.
@@ -122,7 +112,6 @@ fn get_create2_factory_call_inputs(
         gas_limit: inputs.gas_limit,
         is_static: false,
         return_memory_offset: 0..0,
-        is_eof: false,
     }
 }
 
@@ -133,22 +122,26 @@ pub struct FoundryEvm<'db, I: InspectorExt> {
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
         PrecompilesMap,
+        EthFrame<EthInterpreter>,
     >,
 }
-
 impl<I: InspectorExt> FoundryEvm<'_, I> {
     pub fn run_execution(
         &mut self,
         frame: FrameInput,
     ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = FoundryHandler::<_>::default();
+        let mut handler = FoundryHandler::<I>::default();
 
-        // Create first frame action
-        let frame = handler.inspect_first_frame_init(&mut self.inner, frame)?;
-        let frame_result = match frame {
-            ItemOrResult::Item(frame) => handler.inspect_run_exec_loop(&mut self.inner, frame)?,
-            ItemOrResult::Result(result) => result,
-        };
+        // Create first frame
+        let memory =
+            SharedMemory::new_with_buffer(self.inner.ctx().local().shared_memory_buffer().clone());
+        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
+
+        // Run execution loop
+        let mut frame_result = handler.inspect_run_exec_loop(&mut self.inner, first_frame_input)?;
+
+        // Handle last frame result
+        handler.last_frame_result(&mut self.inner, &mut frame_result)?;
 
         Ok(frame_result)
     }
@@ -163,16 +156,28 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Spec = SpecId;
     type Tx = TxEnv;
 
-    fn chain_id(&self) -> u64 {
-        self.inner.ctx.cfg.chain_id
-    }
-
     fn block(&self) -> &BlockEnv {
         &self.inner.block
     }
 
+    fn chain_id(&self) -> u64 {
+        self.inner.ctx.cfg.chain_id
+    }
+
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
+        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        (
+            &mut self.inner.ctx.journaled_state.database,
+            &mut self.inner.inspector,
+            &mut self.inner.precompiles,
+        )
+    }
+
     fn db_mut(&mut self) -> &mut Self::DB {
-        self.inner.db()
+        &mut self.inner.ctx.journaled_state.database
     }
 
     fn precompiles(&self) -> &Self::Precompiles {
@@ -199,9 +204,12 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        let mut handler = FoundryHandler::<_>::default();
-        self.inner.set_tx(tx);
-        handler.inspect_run(&mut self.inner)
+        self.inner.ctx.tx = tx;
+
+        let mut handler = FoundryHandler::<I>::default();
+        let result = handler.inspect_run(&mut self.inner)?;
+
+        Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
     }
 
     fn transact_system_call(
@@ -209,7 +217,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         _caller: Address,
         _contract: Address,
         _data: Bytes,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<ExecResultAndState<ExecutionResult>, Self::Error> {
         unimplemented!()
     }
 
@@ -238,76 +246,104 @@ impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
 }
 
 pub struct FoundryHandler<'db, I: InspectorExt> {
-    #[allow(clippy::type_complexity)]
-    inner: MainnetHandler<
-        RevmEvm<
-            EthEvmContext<&'db mut dyn DatabaseExt>,
-            I,
-            EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-            PrecompilesMap,
-        >,
-        EVMError<DatabaseError>,
-        EthFrame<
-            RevmEvm<
-                EthEvmContext<&'db mut dyn DatabaseExt>,
-                I,
-                EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-                PrecompilesMap,
-            >,
-            EVMError<DatabaseError>,
-            EthInterpreter,
-        >,
-    >,
     create2_overrides: Vec<(usize, CallInputs)>,
+    _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
 }
 
 impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
     fn default() -> Self {
-        Self { inner: MainnetHandler::default(), create2_overrides: Vec::new() }
+        Self { create2_overrides: Vec::new(), _phantom: PhantomData }
     }
 }
 
+// Blanket Handler implementation for FoundryHandler, needed for implementing the InspectorHandler
+// trait.
 impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     type Evm = RevmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
         PrecompilesMap,
+        EthFrame<EthInterpreter>,
     >;
     type Error = EVMError<DatabaseError>;
-    type Frame = EthFrame<
-        RevmEvm<
-            EthEvmContext<&'db mut dyn DatabaseExt>,
-            I,
-            EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-            PrecompilesMap,
-        >,
-        EVMError<DatabaseError>,
-        EthInterpreter,
-    >;
     type HaltReason = HaltReason;
+}
 
-    fn frame_return_result(
+impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+    /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2
+    /// factory.
+    fn handle_create_frame(
         &mut self,
-        frame: &mut Self::Frame,
-        evm: &mut Self::Evm,
-        result: <Self::Frame as revm::handler::Frame>::FrameResult,
-    ) -> Result<(), Self::Error> {
-        let result = if self
-            .create2_overrides
-            .last()
-            .is_some_and(|(depth, _)| *depth == evm.journal().depth)
+        evm: &mut <Self as Handler>::Evm,
+        init: &mut FrameInit,
+    ) -> Result<Option<FrameResult>, <Self as Handler>::Error> {
+        if let FrameInput::Create(inputs) = &init.frame_input
+            && let CreateScheme::Create2 { salt } = inputs.scheme
         {
+            let (ctx, inspector) = evm.ctx_inspector();
+
+            if inspector.should_use_create2_factory(ctx, inputs) {
+                let gas_limit = inputs.gas_limit;
+
+                // Get CREATE2 deployer.
+                let create2_deployer = evm.inspector().create2_deployer();
+
+                // Generate call inputs for CREATE2 factory.
+                let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+
+                // Push data about current override to the stack.
+                self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
+
+                // Sanity check that CREATE2 deployer exists.
+                let code_hash = evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
+                if code_hash == KECCAK_EMPTY {
+                    return Ok(Some(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Bytes::from(
+                                format!("missing CREATE2 deployer: {create2_deployer}")
+                                    .into_bytes(),
+                            ),
+                            gas: Gas::new(gas_limit),
+                        },
+                        memory_offset: 0..0,
+                    })));
+                } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                    return Ok(Some(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: "invalid CREATE2 deployer bytecode".into(),
+                            gas: Gas::new(gas_limit),
+                        },
+                        memory_offset: 0..0,
+                    })));
+                }
+
+                // Rewrite the frame init
+                init.frame_input = FrameInput::Call(Box::new(call_inputs));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Transforms CREATE2 factory call results back into CREATE outcomes.
+    fn handle_create2_override(
+        &mut self,
+        evm: &mut <Self as Handler>::Evm,
+        result: FrameResult,
+    ) -> FrameResult {
+        if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
-            let FrameResult::Call(mut result) = result else {
+            let FrameResult::Call(mut call) = result else {
                 unreachable!("create2 override should be a call frame");
             };
 
             // Decode address from output.
-            let address = match result.instruction_result() {
-                return_ok!() => Address::try_from(result.output().as_ref())
+            let address = match call.instruction_result() {
+                return_ok!() => Address::try_from(call.output().as_ref())
                     .map_err(|_| {
-                        result.result = InterpreterResult {
+                        call.result = InterpreterResult {
                             result: InstructionResult::Revert,
                             output: "invalid CREATE2 factory output".into(),
                             gas: Gas::new(call_inputs.gas_limit),
@@ -317,71 +353,51 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
                 _ => None,
             };
 
-            FrameResult::Create(CreateOutcome { result: result.result, address })
+            FrameResult::Create(CreateOutcome { result: call.result, address })
         } else {
             result
-        };
-
-        self.inner.frame_return_result(frame, evm, result)
+        }
     }
 }
 
 impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
     type IT = EthInterpreter;
 
-    fn inspect_frame_call(
+    fn inspect_run_exec_loop(
         &mut self,
-        frame: &mut Self::Frame,
         evm: &mut Self::Evm,
-    ) -> Result<FrameInitOrResult<Self::Frame>, Self::Error> {
-        let frame_or_result = self.inner.inspect_frame_call(frame, evm)?;
+        first_frame_input: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameInit,
+    ) -> Result<FrameResult, Self::Error> {
+        let res = evm.inspect_frame_init(first_frame_input)?;
 
-        let ItemOrResult::Item(FrameInput::Create(inputs)) = &frame_or_result else {
-            return Ok(frame_or_result)
-        };
-
-        let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
-
-        if !evm.inspector.should_use_create2_factory(&mut evm.ctx, inputs) {
-            return Ok(frame_or_result)
+        if let ItemOrResult::Result(frame_result) = res {
+            return Ok(frame_result);
         }
 
-        let gas_limit = inputs.gas_limit;
+        loop {
+            let call_or_result = evm.inspect_frame_run()?;
 
-        // Get CREATE2 deployer.
-        let create2_deployer = evm.inspector.create2_deployer();
+            let result = match call_or_result {
+                ItemOrResult::Item(mut init) => {
+                    // Handle CREATE/CREATE2 frame initialization
+                    if let Some(frame_result) = self.handle_create_frame(evm, &mut init)? {
+                        return Ok(frame_result);
+                    }
 
-        // Generate call inputs for CREATE2 factory.
-        let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                    match evm.inspect_frame_init(init)? {
+                        ItemOrResult::Item(_) => continue,
+                        ItemOrResult::Result(result) => result,
+                    }
+                }
+                ItemOrResult::Result(result) => result,
+            };
 
-        // Push data about current override to the stack.
-        self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
+            // Handle CREATE2 override transformation if needed
+            let result = self.handle_create2_override(evm, result);
 
-        // Sanity check that CREATE2 deployer exists.
-        let code_hash = evm.journal().load_account(create2_deployer)?.info.code_hash;
-        if code_hash == KECCAK_EMPTY {
-            return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: Bytes::copy_from_slice(
-                        format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
-                    ),
-                    gas: Gas::new(gas_limit),
-                },
-                memory_offset: 0..0,
-            })))
-        } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
-            return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: "invalid CREATE2 deployer bytecode".into(),
-                    gas: Gas::new(gas_limit),
-                },
-                memory_offset: 0..0,
-            })))
+            if let Some(result) = evm.frame_return_result(result)? {
+                return Ok(result);
+            }
         }
-
-        // Return the created CALL frame instead
-        Ok(ItemOrResult::Item(FrameInput::Call(Box::new(call_inputs))))
     }
 }

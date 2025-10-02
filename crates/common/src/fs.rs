@@ -1,10 +1,11 @@
 //! Contains various `std::fs` wrapper functions that also contain the target path in their errors.
 
 use crate::errors::FsPathError;
-use serde::{de::DeserializeOwned, Serialize};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{BufWriter, Write},
+    io::{BufReader, BufWriter, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -49,6 +50,40 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     serde_json::from_str(&s).map_err(|source| FsPathError::ReadJson { source, path: path.into() })
 }
 
+/// Reads and decodes the json gzip file, then deserialize it into the provided type.
+pub fn read_json_gzip_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let file = open(path)?;
+    let reader = BufReader::new(file);
+    let decoder = GzDecoder::new(reader);
+    serde_json::from_reader(decoder)
+        .map_err(|source| FsPathError::ReadJson { source, path: path.into() })
+}
+
+/// Reads the entire contents of a locked shared file into a string.
+pub fn locked_read_to_string(path: impl AsRef<Path>) -> Result<String> {
+    let path = path.as_ref();
+    let file =
+        fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
+    file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
+    let mut contents = String::new();
+    (&file).read_to_string(&mut contents).map_err(|err| FsPathError::read(err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
+    Ok(contents)
+}
+
+/// Reads the entire contents of a locked shared file into a bytes vector.
+pub fn locked_read(path: impl AsRef<Path>) -> Result<Vec<u8>> {
+    let path = path.as_ref();
+    let file =
+        fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
+    file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
+    let file_len = file.metadata().map_err(|err| FsPathError::open(err, path))?.len() as usize;
+    let mut buffer = Vec::with_capacity(file_len);
+    (&file).read_to_end(&mut buffer).map_err(|err| FsPathError::read(err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
+    Ok(buffer)
+}
+
 /// Writes the object as a JSON object.
 pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
@@ -67,10 +102,50 @@ pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> 
     writer.flush().map_err(|e| FsPathError::write(e, path))
 }
 
+/// Writes the object as a gzip compressed file.
+pub fn write_json_gzip_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
+    let file = create_file(path)?;
+    let writer = BufWriter::new(file);
+    let mut encoder = GzEncoder::new(writer, Compression::default());
+    serde_json::to_writer(&mut encoder, obj)
+        .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+    // Ensure we surface any I/O errors on final gzip write and buffer flush.
+    let mut inner_writer = encoder.finish().map_err(|e| FsPathError::write(e, path))?;
+    inner_writer.flush().map_err(|e| FsPathError::write(e, path))?;
+    Ok(())
+}
+
 /// Wrapper for `std::fs::write`
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();
     fs::write(path, contents).map_err(|err| FsPathError::write(err, path))
+}
+
+/// Writes all content in an exclusive locked file.
+pub fn locked_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
+    let path = path.as_ref();
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|err| FsPathError::open(err, path))?;
+    file.lock().map_err(|err| FsPathError::lock(err, path))?;
+    file.write_all(contents.as_ref()).map_err(|err| FsPathError::write(err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))
+}
+
+/// Writes a line in an exclusive locked file.
+pub fn locked_write_line(path: impl AsRef<Path>, line: &String) -> Result<()> {
+    let path = path.as_ref();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(|err| FsPathError::open(err, path))?;
+    file.lock().map_err(|err| FsPathError::lock(err, path))?;
+    writeln!(file, "{line}").map_err(|err| FsPathError::write(err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
 
 /// Wrapper for `std::fs::copy`
@@ -118,7 +193,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<fs::File> {
 /// ref: <https://github.com/rust-lang/cargo/blob/9ded34a558a900563b0acf3730e223c649cf859d/crates/cargo-util/src/paths.rs#L81>
 pub fn normalize_path(path: &Path) -> PathBuf {
     let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().copied() {
         components.next();
         PathBuf::from(c.as_os_str())
     } else {

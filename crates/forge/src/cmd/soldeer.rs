@@ -27,7 +27,7 @@ impl SoldeerArgs {
 
 #[cfg(test)]
 mod tests {
-    use soldeer_commands::{commands::Version, Command, Verbosity};
+    use soldeer_commands::{Command, Verbosity, commands::Version};
 
     #[tokio::test]
     async fn test_soldeer_version() {

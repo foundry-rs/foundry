@@ -1,6 +1,6 @@
 use crate::{
-    tx::{CastTxBuilder, SenderKind},
     Cast,
+    tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
 use alloy_rpc_types::BlockId;
@@ -27,7 +27,7 @@ pub struct AccessListArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
-    #[arg(value_name = "ARGS")]
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// The block height to query at.

@@ -1,7 +1,7 @@
 use alloy_primitives::hex::ToHexExt;
 use revm_inspectors::tracing::{
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
     CallTraceArena,
+    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
 
 /// Builds a folded stack trace from a call trace arena.
@@ -30,17 +30,27 @@ impl EvmFoldedStackTraceBuilder {
         let node = &nodes[idx];
 
         let func_name = if node.trace.kind.is_any_create() {
-            let contract_name = node.trace.decoded.label.as_deref().unwrap_or("Contract");
+            let contract_name = node
+                .trace
+                .decoded
+                .as_ref()
+                .and_then(|dc| dc.label.as_deref())
+                .unwrap_or("Contract");
             format!("new {contract_name}")
         } else {
             let selector = node
                 .selector()
                 .map(|selector| selector.encode_hex_with_prefix())
                 .unwrap_or_else(|| "fallback".to_string());
-            let signature =
-                node.trace.decoded.call_data.as_ref().map(|dc| &dc.signature).unwrap_or(&selector);
+            let signature = node
+                .trace
+                .decoded
+                .as_ref()
+                .and_then(|dc| dc.call_data.as_ref())
+                .map(|dc| &dc.signature)
+                .unwrap_or(&selector);
 
-            if let Some(label) = &node.trace.decoded.label {
+            if let Some(label) = node.trace.decoded.as_ref().and_then(|dc| dc.label.as_ref()) {
                 format!("{label}.{signature}")
             } else {
                 signature.clone()
@@ -87,7 +97,7 @@ impl EvmFoldedStackTraceBuilder {
     ) {
         let step = &steps[step_idx];
         if let Some(decoded_step) = &step.decoded {
-            match decoded_step {
+            match decoded_step.as_ref() {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
                     let gas_used = steps[*step_end_idx].gas_used.saturating_sub(step.gas_used);
                     self.fst.enter(decoded_internal_call.func_name.clone(), gas_used as i64);

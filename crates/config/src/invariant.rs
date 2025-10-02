@@ -1,6 +1,6 @@
 //! Configuration for invariant testing
 
-use crate::fuzz::FuzzDictionaryConfig;
+use crate::fuzz::{FuzzCorpusConfig, FuzzDictionaryConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -26,6 +26,9 @@ pub struct InvariantConfig {
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// The fuzz corpus configuration.
+    #[serde(flatten)]
+    pub corpus: FuzzCorpusConfig,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -47,8 +50,9 @@ impl Default for InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: None,
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         }
@@ -58,19 +62,6 @@ impl Default for InvariantConfig {
 impl InvariantConfig {
     /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self {
-            runs: 256,
-            depth: 500,
-            fail_on_revert: false,
-            call_override: false,
-            dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
-            shrink_run_limit: 5000,
-            max_assume_rejects: 65536,
-            gas_report_samples: 256,
-            failure_persist_dir: Some(cache_dir),
-            show_metrics: false,
-            timeout: None,
-            show_solidity: false,
-        }
+        Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
     }
 }

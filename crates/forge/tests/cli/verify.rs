@@ -22,8 +22,7 @@ contract Unique {{
 }}
 "#
         ),
-    )
-    .unwrap();
+    );
 }
 
 fn add_verify_target(prj: &TestProject) {
@@ -35,8 +34,7 @@ contract Verify is Unique {
 function doStuff() external {}
 }
 "#,
-    )
-    .unwrap();
+    );
 }
 
 fn add_single_verify_target_file(prj: &TestProject) {
@@ -52,7 +50,7 @@ function doStuff() external {{}}
 "#
     );
 
-    prj.add_source("Verify.sol", &contract).unwrap();
+    prj.add_source("Verify.sol", &contract);
 }
 
 fn add_verify_target_with_constructor(prj: &TestProject) {
@@ -69,19 +67,17 @@ contract Verify is Unique {
     constructor(SomeStruct memory st, address owner) {}
 }
 "#,
-    )
-    .unwrap();
+    );
 }
 
-#[expect(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
         let out = String::from_utf8_lossy(&output.stdout);
-        println!("{out}");
+        test_debug!("{out}");
         if out.contains("Contract successfully verified") {
-            return Ok(())
+            return Ok(());
         }
         eyre::bail!(
             "Failed to get verification, stdout: {}, stderr: {}",
@@ -158,11 +154,10 @@ fn deploy_contract(
         .unwrap_or_else(|| panic!("Failed to parse deployer {output}"))
 }
 
-#[expect(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
-        println!("verifying on {}", info.chain);
+        test_debug!("verifying on {}", info.chain);
 
         let contract_path = "src/Verify.sol:Verify";
         let address = deploy_contract(&info, contract_path, prj, &mut cmd);
@@ -189,11 +184,10 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
     }
 }
 
-#[expect(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
-        println!("verifying on {}", info.chain);
+        test_debug!("verifying on {}", info.chain);
         add_unique(&prj);
         add_verify_target_with_constructor(&prj);
 
@@ -230,12 +224,11 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
-#[expect(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
-        println!("verifying on {}", info.chain);
+        test_debug!("verifying on {}", info.chain);
         add_single_verify_target_file(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
@@ -316,4 +309,50 @@ forgetest!(can_guess_constructor_args, |prj, cmd| {
 // tests `create && verify-contract && verify-check` on sepolia with default sourcify verifier
 forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
     verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
+});
+
+// Tests that verify properly validates verifier arguments.
+// <https://github.com/foundry-rs/foundry/issues/11430>
+forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
+    // No verifier URL.
+    cmd.args([
+        "verify-contract",
+        "--rpc-url",
+        "https://rpc.sepolia-api.lisk.com",
+        "--verifier",
+        "blockscout",
+        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+        "src/Counter.sol:Counter",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: No verifier URL specified for verifier blockscout
+
+"#]]);
+
+    // Unknown Etherscan chain.
+    cmd.forge_fuse()
+        .args([
+            "verify-contract",
+            "--rpc-url",
+            "https://rpc.sepolia-api.lisk.com",
+            "--verifier",
+            "etherscan",
+            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "src/Counter.sol:Counter",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: No known Etherscan API URL for chain `4202`. To fix this, please:
+1. Specify a `url` 
+2. Verify the chain `4202` is correct
+
+"#]]);
+
+    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stdout_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+
+Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+
+"#]]);
 });

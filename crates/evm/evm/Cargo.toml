@@ -21,6 +21,7 @@ foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
+foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
@@ -32,6 +33,7 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
+alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -51,4 +53,6 @@ proptest.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
+serde_json.workspace = true
 serde.workspace = true
+uuid.workspace = true

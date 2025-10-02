@@ -1,9 +1,9 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
-    document::DocumentContent, Comments, Document, ParseItem, ParseSource, PreprocessorOutput,
+    Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
+    solang_ext::SafeUnwrap,
 };
 use alloy_primitives::map::HashMap;
-use forge_fmt::solang_ext::SafeUnwrap;
 
 /// [`Inheritdoc`] preprocessor ID.
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");
@@ -70,19 +70,18 @@ impl Inheritdoc {
         documents: &Vec<Document>,
     ) -> Option<(String, Comments)> {
         for candidate in documents {
-            if let DocumentContent::Single(ref item) = candidate.content {
-                if let ParseSource::Contract(ref contract) = item.source {
-                    if base == contract.name.safe_unwrap().name {
-                        // Not matched for the contract because it's a noop
-                        // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
+            if let DocumentContent::Single(ref item) = candidate.content
+                && let ParseSource::Contract(ref contract) = item.source
+                && base == contract.name.safe_unwrap().name
+            {
+                // Not matched for the contract because it's a noop
+                // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
-                        for children in &item.children {
-                            // TODO: improve matching logic
-                            if source.ident() == children.source.ident() {
-                                let key = format!("{}.{}", base, source.ident());
-                                return Some((key, children.comments.clone()))
-                            }
-                        }
+                for children in &item.children {
+                    // TODO: improve matching logic
+                    if source.ident() == children.source.ident() {
+                        let key = format!("{}.{}", base, source.ident());
+                        return Some((key, children.comments.clone()));
                     }
                 }
             }

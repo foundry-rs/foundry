@@ -3,7 +3,7 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -671,13 +671,7 @@ async fn test_invariant_after_invariant() {
                     None,
                     None,
                 ),
-                (
-                    "invariant_failure()",
-                    false,
-                    Some("invariant failure".into()),
-                    None,
-                    None,
-                ),
+                ("invariant_failure()", false, Some("invariant failure".into()), None, None),
                 ("invariant_success()", true, None, None, None),
             ],
         )]),
@@ -729,8 +723,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -758,8 +751,7 @@ contract AssumeTest is Test {
     function invariant_assume() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
@@ -810,12 +802,11 @@ contract BalanceAssumeTest is Test {
     function invariant_balance() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 1, calls: 500, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 5, calls: 2500, reverts: 0)
 ...
 "#]]);
 });
@@ -842,8 +833,7 @@ contract NoSelectorTest is Test {
     function invariant_panic() public {}
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -899,8 +889,7 @@ contract AnotherCounterHandler is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -972,8 +961,7 @@ contract TimeoutTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -982,6 +970,13 @@ Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+
+╭----------------+-----------+-------+---------+----------╮
+| Contract       | Selector  | Calls | Reverts | Discards |
++=========================================================+
+| TimeoutHandler | increment | [..]  | [..]    | [..]     |
+╰----------------+-----------+-------+---------+----------╯
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1030,8 +1025,7 @@ contract HandlerTwo {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "InvariantSelectorsWeightTest.t.sol",
@@ -1051,16 +1045,15 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 1);
-        assertEq(handlerTwo.hit5(), 2);
+        assertEq(handlerTwo.hit5(), 3);
     }
 
     function invariant_selectors_weight() public view {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
 });
@@ -1069,7 +1062,7 @@ contract InvariantSelectorsWeightTest is Test {
 // Tests switch from regular sequence output to solidity.
 forgetest_init!(invariant_sequence_len, |prj, cmd| {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(100u32));
+        config.fuzz.seed = Some(U256::from(10u32));
     });
 
     prj.add_test(
@@ -1091,13 +1084,12 @@ contract InvariantSequenceLenTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 1)
 ...
 "#]]);
 
@@ -1112,11 +1104,10 @@ contract InvariantSequenceLenTest is Test {
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 4)
-		sender=0x00000000000000000000000000000000000018dE addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[1931387396117645594923 [1.931e21]]
-		sender=0x0000000000000000000000000000000000000C37 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x0000000000000000000000000000000000000106 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x0000000000000000000000000000000000001684 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -1135,15 +1126,13 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 4)
-		vm.prank(0x00000000000000000000000000000000000018dE);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(1931387396117645594923);
-		vm.prank(0x0000000000000000000000000000000000000C37);
+	[Sequence] (original: 3, shrunk: 3)
+		vm.prank(0x00000000000000000000000000000000000014aD);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x0000000000000000000000000000000000000106);
+		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x0000000000000000000000000000000000001684);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(996881781832960761274744263729582347);
+		vm.prank(0x00000000000000000000000000000000000016Ac);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -1161,11 +1150,10 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant_increment replay failure]
-	[Sequence] (original: 4, shrunk: 4)
-		sender=0x00000000000000000000000000000000000018dE addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[1931387396117645594923 [1.931e21]]
-		sender=0x0000000000000000000000000000000000000C37 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x0000000000000000000000000000000000000106 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x0000000000000000000000000000000000001684 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -1195,8 +1183,7 @@ contract Ownable {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_test(
         "OwnableTest.t.sol",
         r#"
@@ -1215,8 +1202,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1254,8 +1240,7 @@ contract OwnableTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
 Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
@@ -1293,8 +1278,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1322,8 +1306,7 @@ contract InvariantTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
         str![[r#"
@@ -1331,5 +1314,356 @@ contract InvariantTest is Test {
 [PASS] invariant_check_count() (runs: 5, calls: 25, reverts: 0)
 ...
 "#]],
+    );
+});
+
+// Tests that reserved test functions are not fuzzed when test is set as target.
+// <https://github.com/foundry-rs/foundry/issues/10469>
+forgetest_init!(invariant_target_test_contract_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetTest is Test {
+    bool fooCalled;
+    bool testSanityCalled;
+    bool testTableCalled;
+    uint256 invariantCalledNum;
+    uint256 setUpCalledNum;
+
+    function setUp() public {
+       targetContract(address(this));
+    }
+
+    function beforeTestSetup() public {
+    }
+
+    // Only this selector should be targeted.
+    function foo() public {
+        fooCalled = true;
+    }
+
+    function fixtureCalled() public returns (bool[] memory) {
+    }
+
+    function table_sanity(bool called) public {
+        testTableCalled = called;
+    }
+
+    function test_sanity() public {
+        testSanityCalled = true;
+    }
+
+    function afterInvariant() public {
+    }
+
+    function invariant_foo_called() public view {
+    }
+
+    function invariant_testSanity_considered_target() public {
+    }
+
+    function invariant_setUp_considered_target() public {
+        setUpCalledNum++;
+    }
+
+    function invariant_considered_target() public {
+        invariantCalledNum++;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "InvariantTargetTest", "--mt", "invariant"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
+[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});
+
+// Tests that `targetSelector` and `excludeSelector` applied on test contract selectors are
+// applied.
+// <https://github.com/foundry-rs/foundry/issues/11006>
+forgetest_init!(invariant_target_test_include_exclude_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetIncludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldInclude1.selector;
+       selectors[1] = this.shouldInclude2.selector;
+       targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_include() public view {
+        require(include, "does not include");
+    }
+}
+
+contract InvariantTargetExcludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldExclude1.selector;
+       selectors[1] = this.shouldExclude2.selector;
+       excludeSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_exclude() public view {
+        require(include, "does not include");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_exclude"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_include", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_exclude", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+| Contract                   | Selector       | Calls | Reverts | Discards |
+|----------------------------|----------------|-------|---------|----------|
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11453>
+forgetest_init!(corpus_dir, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+
+        config.fuzz.runs = 10;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "CounterTests.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract Counter1Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+
+contract Counter2Test is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+
+    function invariant_counter_called() public view {
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
+
+"#]]);
+
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter1Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root()
+            .join("invariant_corpus")
+            .join("Counter2Test")
+            .join("invariant_counter_called")
+            .exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter1Test").join("testFuzz_SetNumber").exists()
+    );
+    assert!(
+        prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
 });

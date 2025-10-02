@@ -5,31 +5,29 @@ use alloy_primitives::U256;
 use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
-    artifacts::{EvmVersion, Libraries, Settings},
+    Project, ProjectCompileOutput, SolcConfig,
+    artifacts::{EvmVersion, Settings},
     compilers::multi::MultiCompiler,
-    utils::RuntimeOrHandle,
-    Project, ProjectCompileOutput, SolcConfig, Vyper,
 };
 use foundry_config::{
-    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpointUrl, RpcEndpoints,
+    Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InvariantConfig,
+    RpcEndpointUrl, RpcEndpoints, fs_permissions::PathPermission,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
 use foundry_test_utils::{
-    fd_lock, init_tracing,
+    init_tracing,
     rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
+    util::get_compiled,
 };
 use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
-    io::Write,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 
 pub const RE_PATH_SEPARATOR: &str = "/";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
-static VYPER: LazyLock<PathBuf> = LazyLock::new(|| std::env::temp_dir().join("vyper"));
 
 /// Profile for the tests group. Used to configure separate configurations for test runs.
 pub enum ForgeTestProfile {
@@ -60,11 +58,7 @@ impl ForgeTestProfile {
 
     /// Configures the solc settings for the test profile.
     pub fn solc_config(&self) -> SolcConfig {
-        let libs =
-            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
-
-        let mut settings =
-            Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
+        let mut settings = Settings::default();
 
         if matches!(self, Self::Paris) {
             settings.evm_version = Some(EvmVersion::Paris);
@@ -88,9 +82,6 @@ impl ForgeTestProfile {
         config.src = self.root().join(self.to_string());
         config.out = self.root().join("out").join(self.to_string());
         config.cache_path = self.root().join("cache").join(self.to_string());
-        config.libraries = vec![
-            "fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
-        ];
 
         config.prompt_timeout = 0;
 
@@ -100,8 +91,8 @@ impl ForgeTestProfile {
         config.gas_limit = u64::MAX.into();
         config.chain = None;
         config.tx_origin = CALLER;
-        config.block_number = 1;
-        config.block_timestamp = 1;
+        config.block_number = U256::from(1);
+        config.block_timestamp = U256::from(1);
 
         config.sender = CALLER;
         config.initial_balance = U256::MAX;
@@ -115,6 +106,7 @@ impl ForgeTestProfile {
 
         config.fuzz = FuzzConfig {
             runs: 256,
+            fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig {
@@ -125,8 +117,8 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
-            failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
             timeout: None,
         };
@@ -145,6 +137,7 @@ impl ForgeTestProfile {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: Some(
                 tempfile::Builder::new()
                     .prefix(&format!("foundry-{self}"))
@@ -152,7 +145,7 @@ impl ForgeTestProfile {
                     .unwrap()
                     .keep(),
             ),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         };
@@ -253,77 +246,6 @@ impl ForgeTestData {
     }
 }
 
-/// Installs Vyper if it's not already present.
-pub fn get_vyper() -> Vyper {
-    if let Ok(vyper) = Vyper::new("vyper") {
-        return vyper;
-    }
-    if let Ok(vyper) = Vyper::new(&*VYPER) {
-        return vyper;
-    }
-    RuntimeOrHandle::new().block_on(async {
-        #[cfg(target_family = "unix")]
-        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-
-        let suffix = match svm::platform() {
-            svm::Platform::MacOsAarch64 => "darwin",
-            svm::Platform::LinuxAmd64 => "linux",
-            svm::Platform::WindowsAmd64 => "windows.exe",
-            platform => panic!(
-                "unsupported platform {platform:?} for installing vyper, \
-                 install it manually and add it to $PATH"
-            ),
-        };
-        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
-
-        let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
-
-        assert!(res.status().is_success());
-
-        let bytes = res.bytes().await.unwrap();
-
-        std::fs::write(&*VYPER, bytes).unwrap();
-
-        #[cfg(target_family = "unix")]
-        std::fs::set_permissions(&*VYPER, Permissions::from_mode(0o755)).unwrap();
-
-        Vyper::new(&*VYPER).unwrap()
-    })
-}
-
-pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
-    let lock_file_path = project.sources_path().join(".lock");
-    // Compile only once per test run.
-    // We need to use a file lock because `cargo-nextest` runs tests in different processes.
-    // This is similar to [`foundry_test_utils::util::initialize`], see its comments for more
-    // details.
-    let mut lock = fd_lock::new_lock(&lock_file_path);
-    let read = lock.read().unwrap();
-    let out;
-
-    let mut write = None;
-    if !project.cache_path().exists() || std::fs::read(&lock_file_path).unwrap() != b"1" {
-        drop(read);
-        write = Some(lock.write().unwrap());
-    }
-
-    if project.compiler.vyper.is_none() {
-        project.compiler.vyper = Some(get_vyper());
-    }
-
-    out = project.compile().unwrap();
-
-    if out.has_compiler_errors() {
-        panic!("Compiled with errors:\n{out}");
-    }
-
-    if let Some(ref mut write) = write {
-        write.write_all(b"1").unwrap();
-    }
-
-    out
-}
-
 /// Default data for the tests group.
 pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Default));
@@ -332,7 +254,7 @@ pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
-/// Data for tests requiring Cancun support on Solc and EVM level.
+/// Data for tests requiring no specific version on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 

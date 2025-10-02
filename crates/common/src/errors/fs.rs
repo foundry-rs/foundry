@@ -38,6 +38,10 @@ pub enum FsPathError {
     /// Provides additional path context for [`File::open`].
     #[error("failed to open file {path:?}: {source}")]
     Open { source: io::Error, path: PathBuf },
+    #[error("failed to lock file {path:?}: {source}")]
+    Lock { source: io::Error, path: PathBuf },
+    #[error("failed to unlock file {path:?}: {source}")]
+    Unlock { source: io::Error, path: PathBuf },
     /// Provides additional path context for the file whose contents should be parsed as JSON.
     #[error("failed to parse json file: {path:?}: {source}")]
     ReadJson { source: serde_json::Error, path: PathBuf },
@@ -91,22 +95,34 @@ impl FsPathError {
     pub fn open(source: io::Error, path: impl Into<PathBuf>) -> Self {
         Self::Open { source, path: path.into() }
     }
+
+    /// Returns the complementary error variant for [`File::lock`].
+    pub fn lock(source: io::Error, path: impl Into<PathBuf>) -> Self {
+        Self::Lock { source, path: path.into() }
+    }
+
+    /// Returns the complementary error variant for [`File::unlock`].
+    pub fn unlock(source: io::Error, path: impl Into<PathBuf>) -> Self {
+        Self::Unlock { source, path: path.into() }
+    }
 }
 
 impl AsRef<Path> for FsPathError {
     fn as_ref(&self) -> &Path {
         match self {
-            Self::Write { path, .. } |
-            Self::Read { path, .. } |
-            Self::ReadLink { path, .. } |
-            Self::Copy { from: path, .. } |
-            Self::CreateDir { path, .. } |
-            Self::RemoveDir { path, .. } |
-            Self::CreateFile { path, .. } |
-            Self::RemoveFile { path, .. } |
-            Self::Open { path, .. } |
-            Self::ReadJson { path, .. } |
-            Self::WriteJson { path, .. } => path,
+            Self::Write { path, .. }
+            | Self::Read { path, .. }
+            | Self::ReadLink { path, .. }
+            | Self::Copy { from: path, .. }
+            | Self::CreateDir { path, .. }
+            | Self::RemoveDir { path, .. }
+            | Self::CreateFile { path, .. }
+            | Self::RemoveFile { path, .. }
+            | Self::Open { path, .. }
+            | Self::Lock { path, .. }
+            | Self::Unlock { path, .. }
+            | Self::ReadJson { path, .. }
+            | Self::WriteJson { path, .. } => path,
         }
     }
 }
@@ -114,15 +130,17 @@ impl AsRef<Path> for FsPathError {
 impl From<FsPathError> for io::Error {
     fn from(value: FsPathError) -> Self {
         match value {
-            FsPathError::Write { source, .. } |
-            FsPathError::Read { source, .. } |
-            FsPathError::ReadLink { source, .. } |
-            FsPathError::Copy { source, .. } |
-            FsPathError::CreateDir { source, .. } |
-            FsPathError::RemoveDir { source, .. } |
-            FsPathError::CreateFile { source, .. } |
-            FsPathError::RemoveFile { source, .. } |
-            FsPathError::Open { source, .. } => source,
+            FsPathError::Write { source, .. }
+            | FsPathError::Read { source, .. }
+            | FsPathError::ReadLink { source, .. }
+            | FsPathError::Copy { source, .. }
+            | FsPathError::CreateDir { source, .. }
+            | FsPathError::RemoveDir { source, .. }
+            | FsPathError::CreateFile { source, .. }
+            | FsPathError::RemoveFile { source, .. }
+            | FsPathError::Open { source, .. }
+            | FsPathError::Lock { source, .. }
+            | FsPathError::Unlock { source, .. } => source,
 
             FsPathError::ReadJson { source, .. } | FsPathError::WriteJson { source, .. } => {
                 source.into()

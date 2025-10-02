@@ -155,7 +155,7 @@ update of the files.
 2. Implement the cheatcode in [`cheatcodes`] in its category's respective module. Follow the existing implementations as a guide.
 3. If a struct, enum, error, or event was added to `Vm`, update [`spec::Cheatcodes::new`]
 4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
-5. Write an integration test for the cheatcode in [`testdata/cheats/`]
+5. Write an integration test for the cheatcode in [`testdata/default/cheats/`]
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs

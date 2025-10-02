@@ -1,35 +1,36 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, Project, ProjectCompileOutput,
+    ProjectPathsConfig, Vyper,
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
-    error::Result as SolcResult,
-    project_util::{copy_dir, TempProject},
+    project_util::{TempProject, copy_dir},
     solc::SolcSettings,
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    utils::RuntimeOrHandle,
 };
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{assert_data_eq, cmd::OutputAssert, Data, IntoData};
+use snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert};
 use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
     io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
-    process::{ChildStdin, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, LazyLock,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
-const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -48,7 +49,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.27";
+pub const SOLC_VERSION: &str = "0.8.30";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -67,6 +68,7 @@ pub struct ExtTester {
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub install_commands: Vec<Vec<String>>,
+    pub verbosity: String,
 }
 
 impl ExtTester {
@@ -81,6 +83,7 @@ impl ExtTester {
             args: vec![],
             envs: vec![],
             install_commands: vec![],
+            verbosity: "-vvv".to_string(),
         }
     }
 
@@ -112,6 +115,12 @@ impl ExtTester {
         self
     }
 
+    /// Sets the verbosity
+    pub fn verbosity(mut self, verbosity: usize) -> Self {
+        self.verbosity = format!("-{}", "v".repeat(verbosity));
+        self
+    }
+
     /// Adds an environment variable to the forge command.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.envs.push((key.into(), value.into()));
@@ -138,15 +147,22 @@ impl ExtTester {
         self
     }
 
-    /// Runs the test.
-    pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
+    pub fn setup_forge_prj(&self, recursive: bool) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
+
+        // Export vyper and forge in test command - workaround for snekmate venom tests.
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
+            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_dir = forge_bin.parent().expect("forge path should have a parent");
+
+            let existing_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut new_paths = vec![vyper_dir.to_path_buf(), forge_dir.to_path_buf()];
+            new_paths.extend(std::env::split_paths(&existing_path));
+
+            let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
+            test_cmd.env("PATH", joined_path);
+        }
 
         // Wipe the default structure.
         prj.wipe();
@@ -154,13 +170,13 @@ impl ExtTester {
         // Clone the external repository.
         let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
         let root = prj.root().to_str().unwrap();
-        clone_remote(&repo_url, root);
+        clone_remote(&repo_url, root, recursive);
 
         // Checkout the revision.
         if self.rev.is_empty() {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
@@ -171,21 +187,24 @@ impl ExtTester {
         } else {
             let mut git = Command::new("git");
             git.current_dir(root).args(["checkout", self.rev]);
-            println!("$ {git:?}");
+            test_debug!("$ {git:?}");
             let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
             }
         }
 
-        // Run installation command.
+        (prj, test_cmd)
+    }
+
+    pub fn run_install_commands(&self, root: &str) {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
-            println!("cd {root}; {install_cmd:?}");
+            test_debug!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
-                    println!("\n\n{install_cmd:?}: {s}");
+                    test_debug!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
                         break;
                     }
@@ -195,11 +214,25 @@ impl ExtTester {
                 }
             }
         }
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut test_cmd) = self.setup_forge_prj(true);
+
+        // Run installation command.
+        self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=32", "--ffi", "-vvv"]);
+        test_cmd.args(["--fuzz-runs=32", "--ffi", &self.verbosity]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
@@ -228,17 +261,16 @@ impl ExtTester {
 /// test can initialize the template at a time.
 ///
 /// This sets the project's solc version to the [`SOLC_VERSION`].
-#[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
-    println!("initializing {}", target.display());
+    test_debug!("initializing {}", target.display());
 
     let tpath = TEMPLATE_PATH.as_path();
     pretty_err(tpath, fs::create_dir_all(tpath));
 
     // Initialize the global template if necessary.
     let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
-    let mut _read = Some(lock.read().unwrap());
-    if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
+    let mut _read = lock.read().unwrap();
+    if !crate::fd_lock::lock_exists(TEMPLATE_LOCK.as_path()) {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
         // - run `forge init`;
@@ -248,17 +280,15 @@ pub fn initialize(target: &Path) {
         // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
         // Release the read lock and acquire a write lock, initializing the lock file.
-        _read = None;
-
+        drop(_read);
         let mut write = lock.write().unwrap();
 
-        let mut data = String::new();
-        write.read_to_string(&mut data).unwrap();
-
-        if data != "1" {
+        let mut data = Vec::new();
+        write.read_to_end(&mut data).unwrap();
+        if data != crate::fd_lock::LOCK_TOKEN {
             // Initialize and build.
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
-            println!("- initializing template dir in {}", prj.root().display());
+            test_debug!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
             prj.write_config(Config {
@@ -286,30 +316,127 @@ pub fn initialize(target: &Path) {
             // Update lockfile to mark that template is initialized.
             write.set_len(0).unwrap();
             write.seek(std::io::SeekFrom::Start(0)).unwrap();
-            write.write_all(b"1").unwrap();
+            write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
         }
 
         // Release the write lock and acquire a new read lock.
         drop(write);
-        _read = Some(lock.read().unwrap());
+        _read = lock.read().unwrap();
     }
 
-    println!("- copying template dir from {}", tpath.display());
+    test_debug!("- copying template dir from {}", tpath.display());
     pretty_err(target, fs::create_dir_all(target));
     pretty_err(target, copy_dir(tpath, target));
 }
 
+/// Compile the project with a lock for the cache.
+pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
+    let lock_file_path = project.sources_path().join(".lock");
+    // We need to use a file lock because `cargo-nextest` runs tests in different processes.
+    // This is similar to `initialize`, see its comments for more details.
+    let mut lock = crate::fd_lock::new_lock(&lock_file_path);
+    let read = lock.read().unwrap();
+    let out;
+
+    let mut write = None;
+    if !project.cache_path().exists() || !crate::fd_lock::lock_exists(&lock_file_path) {
+        drop(read);
+        write = Some(lock.write().unwrap());
+        test_debug!("cache miss for {}", lock_file_path.display());
+    } else {
+        test_debug!("cache hit for {}", lock_file_path.display());
+    }
+
+    if project.compiler.vyper.is_none() {
+        project.compiler.vyper = Some(get_vyper());
+    }
+
+    test_debug!("compiling {}", lock_file_path.display());
+    out = project.compile().unwrap();
+    test_debug!("compiled {}", lock_file_path.display());
+
+    if out.has_compiler_errors() {
+        panic!("Compiled with errors:\n{out}");
+    }
+
+    if let Some(write) = &mut write {
+        write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
+    }
+
+    out
+}
+
+/// Installs Vyper if it's not already present.
+pub fn get_vyper() -> Vyper {
+    static VYPER: LazyLock<PathBuf> = LazyLock::new(|| std::env::temp_dir().join("vyper"));
+
+    if let Ok(vyper) = Vyper::new("vyper") {
+        return vyper;
+    }
+    if let Ok(vyper) = Vyper::new(&*VYPER) {
+        return vyper;
+    }
+    return RuntimeOrHandle::new().block_on(install());
+
+    async fn install() -> Vyper {
+        #[cfg(target_family = "unix")]
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+        let path = VYPER.as_path();
+        let mut file = File::create(path).unwrap();
+        if let Err(e) = file.try_lock() {
+            if let fs::TryLockError::WouldBlock = e {
+                file.lock().unwrap();
+                assert!(path.exists());
+                return Vyper::new(path).unwrap();
+            }
+            file.lock().unwrap();
+        }
+
+        let suffix = match svm::platform() {
+            svm::Platform::MacOsAarch64 => "darwin",
+            svm::Platform::LinuxAmd64 => "linux",
+            svm::Platform::WindowsAmd64 => "windows.exe",
+            platform => panic!(
+                "unsupported platform {platform:?} for installing vyper, \
+                 install it manually and add it to $PATH"
+            ),
+        };
+        let url = format!(
+            "https://github.com/vyperlang/vyper/releases/download/v0.4.3/vyper.0.4.3+commit.bff19ea2.{suffix}"
+        );
+
+        test_debug!("downloading vyper from {url}");
+        let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
+
+        assert!(res.status().is_success());
+
+        let bytes = res.bytes().await.unwrap();
+
+        file.write_all(&bytes).unwrap();
+
+        #[cfg(target_family = "unix")]
+        file.set_permissions(Permissions::from_mode(0o755)).unwrap();
+
+        Vyper::new(path).unwrap()
+    }
+}
+
 /// Clones a remote repository into the specified directory. Panics if the command fails.
-pub fn clone_remote(repo_url: &str, target_dir: &str) {
+pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone"]);
+    if recursive {
+        cmd.args(["--recursive", "--shallow-submodules"]);
+    } else {
+        cmd.args(["--depth=1", "--no-checkout", "--filter=blob:none", "--no-recurse-submodules"]);
+    }
     cmd.args([repo_url, target_dir]);
-    println!("{cmd:?}");
+    test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
         panic!("git clone failed: {status}");
     }
-    println!();
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -522,28 +649,28 @@ impl TestProject {
     }
 
     /// Adds a source file to the project.
-    pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, Self::add_source_prelude(contents))
+    pub fn add_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a source file to the project. Prefer using `add_source` instead.
-    pub fn add_raw_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_source(name, contents)
+    pub fn add_raw_source(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_source(name, contents).unwrap()
     }
 
     /// Adds a script file to the project.
-    pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_script(name, Self::add_source_prelude(contents))
+    pub fn add_script(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_script(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a test file to the project.
-    pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_test(name, Self::add_source_prelude(contents))
+    pub fn add_test(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_test(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     /// Adds a library file to the project.
-    pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
-        self.inner.add_lib(name, Self::add_source_prelude(contents))
+    pub fn add_lib(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_lib(name, Self::add_source_prelude(contents)).unwrap()
     }
 
     fn add_source_prelude(s: &str) -> String {
@@ -620,19 +747,19 @@ impl TestProject {
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
         let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.add_source("test.sol", s).unwrap()
+        self.add_source("test.sol", s)
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
         let s = include_str!("../../../testdata/default/logs/console.sol");
-        self.add_source("console.sol", s).unwrap()
+        self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
         let s = include_str!("../../../testdata/cheats/Vm.sol");
-        self.add_source("Vm.sol", s).unwrap()
+        self.add_source("Vm.sol", s)
     }
 
     /// Asserts all project paths exist. These are:
@@ -662,7 +789,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -677,7 +804,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -775,7 +902,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    stdin: Option<Vec<u8>>,
     /// If true, command output is redacted.
     redact_output: bool,
 }
@@ -827,8 +954,9 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
-        self.stdin_fun = Some(Box::new(fun));
+    /// Set the stdin bytes for the next command.
+    pub fn stdin(&mut self, stdin: impl Into<Vec<u8>>) -> &mut Self {
+        self.stdin = Some(stdin.into());
         self
     }
 
@@ -886,6 +1014,14 @@ impl TestCommand {
         output.success();
     }
 
+    /// Runs `git submodule status` inside the project's dir
+    #[track_caller]
+    pub fn git_submodule_status(&self) -> Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("submodule").arg("status").current_dir(self.project.root());
+        cmd.output().unwrap()
+    }
+
     /// Runs `git add .` inside the project's dir
     #[track_caller]
     pub fn git_add(&self) {
@@ -928,6 +1064,18 @@ impl TestCommand {
         let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
         let stdout = self.assert_success().get_output().stdout.clone();
         let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
+        assert_data_eq!(actual, expected);
+    }
+
+    /// Runs the command and asserts that it resulted in the expected outcome and JSON data.
+    #[track_caller]
+    pub fn assert_json_stderr(&mut self, success: bool, expected: impl IntoData) {
+        let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
+        let stderr = if success { self.assert_success() } else { self.assert_failure() }
+            .get_output()
+            .stderr
+            .clone();
+        let actual = stderr.into_data().is(snapbox::data::DataFormat::Json).unordered();
         assert_data_eq!(actual, expected);
     }
 
@@ -985,11 +1133,11 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        println!("executing {:?}", self.cmd);
+        test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
-        if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap());
+        if let Some(bytes) = self.stdin.take() {
+            child.stdin.take().unwrap().write_all(&bytes)?;
         }
         child.wait_with_output()
     }
@@ -1015,7 +1163,9 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
-            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
+            ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
+            ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),

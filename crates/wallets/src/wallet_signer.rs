@@ -2,24 +2,24 @@ use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{hex, Address, ChainId, Signature, B256};
+use alloy_primitives::{Address, B256, ChainId, Signature, hex};
 use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
-use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
+use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[cfg(feature = "aws-kms")]
-use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
+use alloy_signer_aws::{AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
-use {
-    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
+use alloy_signer_gcp::{
+    GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier,
     gcloud_sdk::{
-        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
         GoogleApi,
+        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
     },
 };
 
@@ -56,10 +56,15 @@ impl WalletSigner {
     pub async fn from_aws(key_id: String) -> Result<Self> {
         #[cfg(feature = "aws-kms")]
         {
-            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let config =
+                alloy_signer_aws::aws_config::load_defaults(BehaviorVersion::latest()).await;
             let client = AwsClient::new(&config);
 
-            Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
+            Ok(Self::Aws(
+                AwsSigner::new(client, key_id, None)
+                    .await
+                    .map_err(|e| WalletSignerError::Aws(Box::new(e)))?,
+            ))
         }
 
         #[cfg(not(feature = "aws-kms"))]
@@ -87,12 +92,20 @@ impl WalletSigner {
             .await
             {
                 Ok(c) => c,
-                Err(e) => return Err(WalletSignerError::from(GcpSignerError::GoogleKmsError(e))),
+                Err(e) => {
+                    return Err(WalletSignerError::Gcp(Box::new(GcpSignerError::GoogleKmsError(
+                        e,
+                    ))));
+                }
             };
 
             let specifier = KeySpecifier::new(keyring, &key_name, key_version);
 
-            Ok(Self::Gcp(GcpSigner::new(client, specifier, None).await?))
+            Ok(Self::Gcp(
+                GcpSigner::new(client, specifier, None)
+                    .await
+                    .map_err(|e| WalletSignerError::Gcp(Box::new(e)))?,
+            ))
         }
 
         #[cfg(not(feature = "gcp-kms"))]

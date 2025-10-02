@@ -4,18 +4,19 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
     TransactionRequest,
+    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use eyre::Ok;
-use futures::{future::join_all, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::join_all};
+use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
@@ -961,14 +962,15 @@ async fn can_stream_pending_transactions() {
             complete => unreachable!(),
         };
 
-        if watch_received.len() == num_txs && sub_received.len() == num_txs {
-            if let Some(sent) = &sent {
-                assert_eq!(sent.len(), watch_received.len());
-                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
-                assert_eq!(sent_txs, watch_received.iter().copied().collect());
-                assert_eq!(sent_txs, sub_received.iter().copied().collect());
-                break
-            }
+        if watch_received.len() == num_txs
+            && sub_received.len() == num_txs
+            && let Some(sent) = &sent
+        {
+            assert_eq!(sent.len(), watch_received.len());
+            let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
+            assert_eq!(sent_txs, watch_received.iter().copied().collect());
+            assert_eq!(sent_txs, sub_received.iter().copied().collect());
+            break;
         }
     }
 }
@@ -1171,7 +1173,9 @@ async fn test_block_override() {
     //     function getBlockNumber() external view returns (uint256) {
     //         return block.number;
     //     }
-    let code = hex!("6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033");
+    let code = hex!(
+        "6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033"
+    );
 
     let account_override =
         AccountOverride { balance: Some(U256::from(1e18)), ..Default::default() };
@@ -1293,7 +1297,7 @@ async fn can_mine_multiple_in_block() {
 
 // ensures that the gas estimate is running on pending block by default
 #[tokio::test(flavor = "multi_thread")]
-async fn estimates_gas_prague() {
+async fn can_estimate_gas_prague() {
     let (api, _handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
 
@@ -1304,4 +1308,76 @@ async fn estimates_gas_prague() {
         .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
     api.estimate_gas(WithOtherFields::new(req), None, EvmOverrides::default()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_enabled() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .enable_tx_gas_limit(true)
+            .with_hardfork(Some(EthereumHardfork::Osaka.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is rejected
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let err = provider.send_transaction(tx).await.unwrap_err().to_string();
+    assert!(
+        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        "{err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_osaka_valid_with_limit_disabled() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let base_tx = TransactionRequest::default().from(sender).to(recipient).value(U256::from(1e18));
+
+    // gas limit below the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP - 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit at the cap is accepted
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
+
+    // gas limit above the cap is accepted when the limit is disabled
+    let tx = base_tx.clone().gas_limit(TX_GAS_LIMIT_CAP + 1);
+    let tx = WithOtherFields::new(tx);
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let tx_receipt = pending_tx.get_receipt().await.unwrap();
+    assert!(tx_receipt.inner.inner.is_success());
 }

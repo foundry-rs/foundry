@@ -1,0 +1,64 @@
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target.call(data);
+   |         ^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target.call{value: value}("");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target.delegatecall(data);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target.staticcall(data);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target1.call("");
+   |         ^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         target2.delegatecall("");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         (, bytes memory data) = target.call("");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+
+warning[unchecked-call]: Low-level calls should check the success return value
+  --> ROOT/testdata/UncheckedCall.sol:LL:CC
+   |
+LL |         (, existingData) = target.call("");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unchecked-call
+

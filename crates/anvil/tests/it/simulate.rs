@@ -1,13 +1,13 @@
 //! general eth api tests
 
-use alloy_primitives::{address, TxKind, U256};
+use alloy_primitives::{TxKind, U256, address};
 use alloy_rpc_types::{
+    BlockOverrides,
     request::TransactionRequest,
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
-    BlockOverrides,
 };
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::rpc;
 
 #[tokio::test(flavor = "multi_thread")]

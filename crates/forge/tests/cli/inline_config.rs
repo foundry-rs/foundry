@@ -11,8 +11,7 @@ forgetest!(runs, |prj, cmd| {
             function test2(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -61,11 +60,10 @@ forgetest!(invalid_profile, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[r#"
-Error: Inline config error at test/inline.sol:80:123:0: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
+Error: Inline config error at test/inline.sol:4:9: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
 
 "#]]);
 });
@@ -81,8 +79,7 @@ forgetest!(invalid_key, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -113,8 +110,7 @@ forgetest!(invalid_key_2, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -146,8 +142,7 @@ forgetest!(invalid_value, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -178,8 +173,7 @@ forgetest!(invalid_value_2, |prj, cmd| {
             function test(bool) public {}
         }
     ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -256,8 +250,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-j1"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -382,8 +375,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--evm-version=cancun", "-j1"]).assert_success().stdout_eq(str![[r#"
 ...

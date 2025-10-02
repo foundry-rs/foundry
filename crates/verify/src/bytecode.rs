@@ -2,28 +2,33 @@
 use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
-        check_and_encode_args, check_explorer_args, configure_env_block, maybe_predeploy_contract,
-        BytecodeType, JsonResult,
+        BytecodeType, JsonResult, check_and_encode_args, check_explorer_args, configure_env_block,
+        maybe_predeploy_contract,
     },
     verify::VerifierArgs,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
-    network::{AnyTxEnvelope, TransactionBuilder},
     Provider,
+    ext::TraceApi,
+    network::{AnyTxEnvelope, TransactionBuilder},
 };
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
+};
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
-    utils::{self, read_constructor_args_file, LoadConfig},
+    utils::{self, LoadConfig, read_constructor_args_file},
 };
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
-use foundry_config::{figment, impl_figment_convert, Config};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use foundry_evm_core::AsEnvMut;
+use foundry_config::{Config, figment, impl_figment_convert};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, utils::configure_tx_req_env,
+};
 use revm::state::AccountInfo;
 use std::path::PathBuf;
 
@@ -104,10 +109,6 @@ impl figment::Provider for VerifyBytecodeArgs {
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
-        }
-
-        if let Some(api_version) = &self.verifier.verifier_api_version {
-            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(block) = &self.block {
@@ -243,7 +244,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
 
-            env.evm_env.block_env.number = 0;
+            env.evm_env.block_env.number = U256::ZERO;
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
@@ -341,23 +342,41 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code from creation tx input.
-        let maybe_creation_code =
-            if receipt.to.is_none() && receipt.contract_address == Some(self.address) {
-                match &transaction.input.input {
-                    Some(input) => &input[..],
-                    None => unreachable!("creation tx input is None"),
-                }
-            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                match &transaction.input.input {
-                    Some(input) => &input[32..],
-                    None => unreachable!("creation tx input is None"),
-                }
-            } else {
-                eyre::bail!(
+        let maybe_creation_code = if receipt.to.is_none()
+            && receipt.contract_address == Some(self.address)
+        {
+            match &transaction.input.input {
+                Some(input) => &input[..],
+                None => unreachable!("creation tx input is None"),
+            }
+        } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+            match &transaction.input.input {
+                Some(input) => &input[32..],
+                None => unreachable!("creation tx input is None"),
+            }
+        } else {
+            // Try to get creation bytecode from tx trace.
+            let traces = provider
+                .trace_transaction(creation_data.transaction_hash)
+                .await
+                .unwrap_or_default();
+
+            let creation_bytecode =
+                traces.iter().find_map(|trace| match (&trace.trace.result, &trace.trace.action) {
+                    (
+                        Some(TraceOutput::Create(CreateOutput { address, .. })),
+                        Action::Create(CreateAction { init, .. }),
+                    ) if *address == self.address => Some(init.clone()),
+                    _ => None,
+                });
+
+            &creation_bytecode.ok_or_else(|| {
+                eyre::eyre!(
                     "Could not extract the creation code for contract at address {}",
                     self.address
-                );
-            };
+                )
+            })?
+        };
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
         // happens, try extracting arguments ourselves.
@@ -443,7 +462,7 @@ impl VerifyBytecodeArgs {
                 evm_opts,
             )
             .await?;
-            env.evm_env.block_env.number = simulation_block;
+            env.evm_env.block_env.number = U256::from(simulation_block);
             let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same

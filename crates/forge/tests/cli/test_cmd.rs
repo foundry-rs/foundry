@@ -1,10 +1,10 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
-    rpc, str,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    TestCommand, rpc, str,
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -36,56 +36,39 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     assert_eq!(config.coverage_pattern_inverse, None);
 });
 
-// tests that warning is displayed when there are no tests in project
-forgetest!(warn_no_tests, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    )
-    .unwrap();
-    // set up command
-    cmd.args(["test"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests found in project! Forge looks for functions that starts with `test`.
-
-"#]]);
-});
-
-// tests that warning is displayed with pattern when no tests match
-forgetest!(warn_no_tests_match, |prj, cmd| {
-    prj.add_source(
-        "dummy",
-        r"
-contract Dummy {}
-",
-    )
-    .unwrap();
-
-    // set up command
+fn dummy_test_filter(cmd: &mut TestCommand) {
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+}
 
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
-	match-test: `testA.*`
-	no-match-test: `testB.*`
-	match-contract: `TestC.*`
-	no-match-contract: `TestD.*`
-	match-path: `*TestE*`
-	no-match-path: `*TestF*`
+// tests that a warning is displayed when there are no tests in project, regardless of filters
+forgetest!(warn_no_tests, |prj, cmd| {
+    // Must add at least one source to not fail earlier.
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {}
+",
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    cmd.forge_fuse();
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 });
 
-// tests that suggestion is provided with pattern when no tests match
+// tests that a warning is displayed if there are tests but none match a non-empty filter
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
-    // set up project
     prj.add_source(
         "TestE.t.sol",
         r"
@@ -94,17 +77,11 @@ contract TestC {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
-    // set up command
-    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
-    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
-    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
-
-    // run command and assert
-    cmd.assert_failure().stdout_eq(str![[r#"
-No tests match the provided pattern:
+    dummy_test_filter(&mut cmd);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
 	match-contract: `TestC.*`
@@ -131,8 +108,7 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -164,12 +140,10 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+...
 Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
@@ -195,8 +169,7 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FailTest.t.sol",
@@ -208,8 +181,7 @@ contract FailTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -239,8 +211,7 @@ contract ATest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "FailTest.t.sol",
@@ -252,8 +223,7 @@ contract FailTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let test_path = prj.root().join("src/ATest.t.sol");
     let test_path = test_path.to_string_lossy();
@@ -297,7 +267,7 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
 
-    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
     // Assert that with verbose output the json output includes the traces
     cmd.args(["test", "-vvv", "--json"])
@@ -309,7 +279,7 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
 
-    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
     // Assert that without verbose output the json output does not include the traces
     cmd.args(["test", "--json"])
@@ -337,8 +307,7 @@ contract MyTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -407,8 +376,7 @@ contract ContractTest is DSTest {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // pin version
     prj.update_config(|config| {
@@ -469,8 +437,7 @@ contract Contract {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
     let endpoint = rpc::next_http_archive_rpc_url();
 
@@ -491,8 +458,7 @@ contract ContractTest is Test {
 }
    "#
         .replace("<url>", &endpoint),
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -520,23 +486,19 @@ contract FailingTest is Test {
 
 forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_source("failing_test", FAILING_TEST).unwrap();
+    prj.add_source("failing_test", FAILING_TEST);
 
-    // set up command
     cmd.args(["test", "--fail-fast"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     prj.wipe_contracts();
 
-    prj.add_source("failing_test", FAILING_TEST).unwrap();
-    // set up command
+    prj.add_source("failing_test", FAILING_TEST);
     cmd.args(["test", "--fail-fast", "--json"]);
 
-    // run command and assert error exit code
     cmd.assert_empty_stderr();
 });
 
@@ -563,8 +525,7 @@ contract USDTCallingTest is Test {
 }
    "#
         .replace("<url>", &endpoint),
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -609,8 +570,7 @@ contract CustomTypesTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -622,6 +582,9 @@ Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 Traces:
   [247] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
+
+Backtrace:
+  at CustomTypesTest.testErr (test/Contract.t.sol:[..]:[..])
 
 [PASS] testEvent() ([GAS])
 Traces:
@@ -688,8 +651,7 @@ contract TransientTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
 });
@@ -727,8 +689,7 @@ contract GasLimitTest is Test {
 }
    "#
             .replace("<rpc>", &endpoint),
-        )
-        .unwrap();
+        );
 
         cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
     }
@@ -742,8 +703,7 @@ contract Dummy {
     function testDummy() public {}
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--match-path", "src/dummy.sol"]);
     cmd.assert_success();
@@ -783,8 +743,7 @@ contract CounterTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
@@ -793,14 +752,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 [1.157e77]]] testAddOne(uint256) (runs: 27, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -834,8 +793,7 @@ contract CounterTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     // make sure invariant test exit early with 0 runs
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
@@ -883,8 +841,7 @@ contract ReplayFailuresTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -949,8 +906,7 @@ contract SetupFailureTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_success();
     // Test failure filter should not be persisted if `setUp` failed.
@@ -986,8 +942,7 @@ contract PrecompileLabelsTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1061,8 +1016,7 @@ contract ContractFuzz is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1106,8 +1060,7 @@ contract ContractFuzz is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1151,8 +1104,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
       }
     }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1191,8 +1143,7 @@ contract ContractFuzz is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1250,8 +1201,7 @@ contract SimpleContractTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1313,8 +1263,7 @@ contract SimpleContractTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
@@ -1361,8 +1310,7 @@ contract DeterministicRandomnessTest is Test {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     // Extracts the test result section from the DeterministicRandomnessTest contract output.
     fn extract_test_result(out: &str) -> &str {
@@ -1446,8 +1394,7 @@ contract ATest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
@@ -1480,8 +1427,7 @@ contract ATest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1532,8 +1478,7 @@ contract ATest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     // Log and test gas cost should be similar.
     cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
@@ -1577,12 +1522,11 @@ contract ATest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 0)
+[PASS] test_negativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1634,8 +1578,7 @@ contract PauseTracingTest is DSTest {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
@@ -1774,22 +1717,21 @@ contract ATest is DSTest {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testResetGas() (gas: 40)
-[PASS] testResetGas1() (gas: 40)
-[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas() (gas: 96)
+[PASS] testResetGas1() (gas: 96)
+[PASS] testResetGas2() (gas: 96)
 [PASS] testResetGas3() (gas: [..])
 [PASS] testResetGas4() (gas: [..])
-[PASS] testResetGas5() (gas: 40)
-[PASS] testResetGas6() (gas: 40)
-[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas5() (gas: 96)
+[PASS] testResetGas6() (gas: 96)
+[PASS] testResetGas7() (gas: 96)
 [PASS] testResetGas8() (gas: [..])
-[PASS] testResetGas9() (gas: 40)
-[PASS] testResetNegativeGas() (gas: 0)
+[PASS] testResetGas9() (gas: 96)
+[PASS] testResetNegativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1829,8 +1771,7 @@ contract CounterTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1877,8 +1818,7 @@ contract CounterTest is DSTest {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -1960,8 +1900,7 @@ contract CounterRevertTest is DSTest {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test"]).with_no_redact().assert_failure().stdout_eq(str![[r#"
 ...
@@ -2010,8 +1949,7 @@ forgetest_init!(skip_output, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
@@ -2054,8 +1992,7 @@ contract SkipCounterSetup is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "SkipCounterSetup"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -2111,8 +2048,7 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             }
         }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -2166,8 +2102,7 @@ contract JunitReportTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -2225,8 +2160,7 @@ forgetest_init!(
             }
         }
    "#,
-        )
-        .unwrap();
+        );
 
         // Tests deprecated cheatcode warning for unit tests.
         cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[
@@ -2317,8 +2251,7 @@ contract FooTest {
 }
 
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -2352,8 +2285,7 @@ abstract contract ParentProxy {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_source(
         "Proxy.sol",
         r#"
@@ -2366,8 +2298,7 @@ contract Proxy is ParentProxy {
     {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     prj.add_test(
         "MetadataTraceTest.t.sol",
@@ -2384,8 +2315,7 @@ contract MetadataTraceTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -2443,8 +2373,7 @@ contract Dummy {
     function testDummy() public {}
 }
 ",
-    )
-    .unwrap();
+    );
 
     let dump_path = prj.root().join("dump.json");
 
@@ -2456,8 +2385,7 @@ contract Dummy {
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
-        config.fuzz.runs = 60;
-        config.fuzz.seed = Some(U256::from(100));
+        config.fuzz.seed = Some(U256::from(111));
     });
 
     prj.add_source(
@@ -2476,6 +2404,7 @@ interface Vm {
     function assumeNoRevert(PotentialRevert calldata revertData) external pure;
     function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
     function expectRevert(bytes4 revertData, uint64 count) external;
+    function assume(bool condition) external pure;
 }
 
 contract ReverterB {
@@ -2582,6 +2511,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
     function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+        _vm.assume(x != 3);
         Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
         revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
         revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
@@ -2623,19 +2553,18 @@ contract ReverterTest is Test {
     }
 
 }"#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
 [FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
@@ -2668,8 +2597,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "DeployCounter",
@@ -2691,8 +2619,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_script(
         "DeployCounterWithCreate2",
@@ -2715,8 +2642,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
             }
         }
     "#,
-    )
-    .unwrap();
+    );
 
     let test = r#"
         import {Vm} from "../src/Vm.sol";
@@ -2726,7 +2652,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         contract GetBroadcastTest is DSTest {
             Vm constant vm = Vm(HEVM_ADDRESS);
 
-            function test_getLatestBroacast() external {
+            function test_getLatestBroadcast() external {
                 // Gets the latest create
                 Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
                     "Counter",
@@ -2788,7 +2714,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                     31337
                 );
 
-                assertEq(deployedAddress, address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F));
+                assertEq(deployedAddress, address(0xD32c10E38A626Db0b0978B1A5828eb2957665668));
             }
 
             function test_getDeployments() public {
@@ -2798,13 +2724,13 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); // Create2 address - latest deployment
+                assertEq(deployments[0], address(0xD32c10E38A626Db0b0978B1A5828eb2957665668)); // Create2 address - latest deployment
                 assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
 }
     "#;
 
-    prj.add_test("GetBroadcast", test).unwrap();
+    prj.add_test("GetBroadcast", test);
 
     let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
@@ -2844,10 +2770,13 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 });
 
 // See <https://github.com/foundry-rs/foundry/issues/9297>
-forgetest_init!(test_roll_scroll_fork_with_cancun, |prj, cmd| {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
+forgetest_init!(
+    #[ignore = "RPC Service Unavailable"]
+    test_roll_scroll_fork_with_cancun,
+    |prj, cmd| {
+        prj.add_test(
+            "ScrollForkTest.t.sol",
+            r#"
 
 import {Test} from "forge-std/Test.sol";
 
@@ -2859,12 +2788,12 @@ contract ScrollForkTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+        );
 
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
-});
+        cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+            .assert_success();
+    }
+);
 
 // Test that only provider is included in failed fork error.
 forgetest_init!(test_display_provider_on_error, |prj, cmd| {
@@ -2879,8 +2808,7 @@ contract ForkTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -2907,15 +2835,13 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [31851] CounterTest::test_Increment()
+  [28783] CounterTest::test_Increment()
     ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -2935,8 +2861,7 @@ contract ContractTest {
     function test_anything(uint) public {}
 }
    "#,
-    )
-    .unwrap();
+    );
 
     cmd.arg("test").arg("--gas-limit=100").assert_failure().stdout_eq(str![[r#"
 ...
@@ -2967,8 +2892,7 @@ contract DebugTraceRecordingTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "test_start_stop_recording", "-vvvv"]).assert_success().stdout_eq(
         str![[r#"
@@ -2980,6 +2904,7 @@ Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
   [..] DebugTraceRecordingTest::test_start_stop_recording()
+...
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -3028,8 +2953,7 @@ contract SuppressTracesTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     // Show traces and logs for failed test only.
     cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvv", "-s"]).assert_failure().stdout_eq(
@@ -3051,7 +2975,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [35200] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3061,6 +2985,10 @@ Traces:
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
     └─ ← [Revert] assertion failed: 1 != 100
+
+Backtrace:
+  at VM.assertEq
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
 
 [PASS] test_increment_success() ([GAS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -3096,7 +3024,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [35200] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3107,20 +3035,22 @@ Traces:
     │   └─ ← [Revert] assertion failed: 1 != 100
     └─ ← [Revert] assertion failed: 1 != 100
 
+Backtrace:
+  at VM.assertEq
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
+
 [PASS] test_increment_success() ([GAS])
 Logs:
   test increment success
 
 Traces:
-  [35229] SuppressTracesTest::test_increment_success()
+  [32164] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -3156,8 +3086,7 @@ contract TestDeploymentFailure is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["t", "--mt", "test_something"]).assert_failure().stdout_eq(str![[r#"
 ...
@@ -3187,8 +3116,7 @@ contract CounterTestA is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["t", "--mt", "test_something"]).assert_failure();
 });
@@ -3230,8 +3158,7 @@ contract SenderLogger {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
     // Emits
     // Log(: player: [], : player: []) instead
     // Log(: ContractTest: [], : player: [])
@@ -3292,8 +3219,7 @@ contract CounterTest is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -3306,9 +3232,9 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
 ...
 
@@ -3332,8 +3258,7 @@ contract Counter {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "CounterV2.sol",
@@ -3350,8 +3275,7 @@ contract CounterV2 {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Upload Counter without path fails as there are multiple contracts with same name.
     cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
@@ -3406,6 +3330,183 @@ Uploading selectors for Counter...
 ...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]]);
+});
+
+forgetest_init!(selectors_list_cmd, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+    event Incremented(uint256 newNumber);
+    error IncrementError();
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    prj.add_source(
+        "CounterV2.sol",
+        r"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    cmd.args(["selectors", "list"]).assert_success().stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+Counter
+
+╭----------+----------------------+--------------------------------------------------------------------╮
+| Type     | Signature            | Selector                                                           |
++======================================================================================================+
+| Function | increment()          | 0xd09de08a                                                         |
+|----------+----------------------+--------------------------------------------------------------------|
+| Function | number()             | 0x8381f58a                                                         |
+|----------+----------------------+--------------------------------------------------------------------|
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         |
+|----------+----------------------+--------------------------------------------------------------------|
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+|----------+----------------------+--------------------------------------------------------------------|
+| Error    | IncrementError()     | 0x46544c04                                                         |
+╰----------+----------------------+--------------------------------------------------------------------╯
+
+CounterV2
+
+╭----------+----------------------+------------╮
+| Type     | Signature            | Selector   |
++==============================================+
+| Function | incrementV2()        | 0x49365a69 |
+|----------+----------------------+------------|
+| Function | number()             | 0x8381f58a |
+|----------+----------------------+------------|
+| Function | setNumberV2(uint256) | 0xb525b68c |
+╰----------+----------------------+------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["selectors", "list", "--no-group"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+
+╭----------+----------------------+--------------------------------------------------------------------+-----------╮
+| Type     | Signature            | Selector                                                           | Contract  |
++==================================================================================================================+
+| Function | increment()          | 0xd09de08a                                                         | Counter   |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Function | number()             | 0x8381f58a                                                         | Counter   |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         | Counter   |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 | Counter   |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Error    | IncrementError()     | 0x46544c04                                                         | Counter   |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Function | number()             | 0x8381f58a                                                         | CounterV2 |
+|----------+----------------------+--------------------------------------------------------------------+-----------|
+| Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+╰----------+----------------------+--------------------------------------------------------------------+-----------╯
+
+"#]]);
+});
+
+forgetest_init!(selectors_list_cmd_md, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+    event Incremented(uint256 newNumber);
+    error IncrementError();
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    prj.add_source(
+        "CounterV2.sol",
+        r"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+   ",
+    );
+
+    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+Counter
+
+| Type     | Signature            | Selector                                                           |
+|----------|----------------------|--------------------------------------------------------------------|
+| Function | increment()          | 0xd09de08a                                                         |
+| Function | number()             | 0x8381f58a                                                         |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+| Error    | IncrementError()     | 0x46544c04                                                         |
+
+CounterV2
+
+| Type     | Signature            | Selector   |
+|----------|----------------------|------------|
+| Function | incrementV2()        | 0x49365a69 |
+| Function | number()             | 0x8381f58a |
+| Function | setNumberV2(uint256) | 0xb525b68c |
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["selectors", "list", "--no-group", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Listing selectors for contracts in the project...
+
+| Type     | Signature            | Selector                                                           | Contract  |
+|----------|----------------------|--------------------------------------------------------------------|-----------|
+| Function | increment()          | 0xd09de08a                                                         | Counter   |
+| Function | number()             | 0x8381f58a                                                         | Counter   |
+| Function | setNumber(uint256)   | 0x3fb5c1cb                                                         | Counter   |
+| Event    | Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 | Counter   |
+| Error    | IncrementError()     | 0x46544c04                                                         | Counter   |
+| Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
+| Function | number()             | 0x8381f58a                                                         | CounterV2 |
+| Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
 
 "#]]);
 });
@@ -3515,8 +3616,7 @@ contract InterceptInitcodeTest is DSTest {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
     cmd.args(["test", "-vvvvv"]).assert_success();
 });
 
@@ -3526,7 +3626,7 @@ forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "Counter.t.sol",
-        r#"
+        &r#"
 import "forge-std/Test.sol";
 import {StdChains} from "forge-std/StdChains.sol";
 
@@ -3553,7 +3653,7 @@ contract CounterTest is Test {
         // Temporary workaround for `https://eth.llamarpc.com/` being down
         setChain("mainnet", ChainData({
             name: "mainnet",
-            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            rpcUrl: "<url>",
             chainId: 1
         }));
 
@@ -3588,9 +3688,9 @@ contract CounterTest is Test {
         assertEq(data[3].bridges.length, 2);
     }
 }
-    "#,
-    )
-    .unwrap();
+    "#
+        .replace("<url>", &rpc::next_http_archive_rpc_url()),
+    );
 
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3628,8 +3728,7 @@ contract CounterTest is Test {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3690,8 +3789,7 @@ contract NonContractCallRevertTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvv"])
         .assert_failure()
@@ -3713,6 +3811,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
+Backtrace:
+  at NonContractCallRevertTest.test_non_contract_call_failure
+
 [FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
 Logs:
   test non contract (void) call failure
@@ -3722,6 +3823,9 @@ Traces:
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+Backtrace:
+  at NonContractCallRevertTest.test_non_contract_void_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
 
 [FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 Logs:
@@ -3734,6 +3838,10 @@ Traces:
     ├─ [145] Counter::random()
     │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
     └─ ← [Revert] EvmError: Revert
+
+Backtrace:
+  at Counter.random (src/Counter.sol:[..]:[..])
+  at NonContractCallRevertTest.test_non_supported_selector_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
 
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
@@ -3789,8 +3897,7 @@ contract NonContractDelegateCallRevertTest is Test {
     }
 }
      "#,
-    )
-    .unwrap();
+    );
 
     cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvv"])
         .assert_failure()
@@ -3816,6 +3923,10 @@ Traces:
     │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
     └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
 
+Backtrace:
+  at LibraryCaller.foobar
+  at NonContractDelegateCallRevertTest.test_unlinked_library_call_failure (test/NonContractDelegateCallRevertTest.t.sol:[..]:[..])
+
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
@@ -3840,8 +3951,7 @@ contract ContractWithCustomError {
     event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }
    "#,
-    )
-    .unwrap();
+    );
     // Build and cache project selectors.
     cmd.forge_fuse().args(["build"]).assert_success();
 
@@ -3863,6 +3973,160 @@ AnotherValueTooHigh(uint256,address)
 MyUniqueEventWithinLocalProject(uint256,address)
 78
 0x00000000000000000000000000000DD00000004e
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11021>
+forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {
+    prj.add_test(
+        "PrankBug.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PrankTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+    }
+
+    function test_Increment() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/PrankBug.t.sol:PrankTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [..] PrankTest::setUp()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+  [..] PrankTest::test_Increment()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@0xc4B957Cd61beB9b9afD76204b30683EDAaaB51Ec
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [..] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [..] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─  storage changes:
+    │   @ 31: 0x00000000000000000000006cdbd1b486b8fbd4140e8cd6daaed05be13ed91401 → 0x0000000000000000000000c4b957cd61beb9b9afd76204b30683edaaab51ec01
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// tests proper reverts in fork mode for contracts with non-existent linked libraries.
+// <https://github.com/foundry-rs/foundry/issues/11185>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
+    prj.update_config(|config| {
+        config.libraries =
+            vec!["src/Counter.sol:LibCounter:0x530008d2b058137d9c475b1b7d83984f1fcf1dd0".into()];
+    });
+    prj.add_source(
+        "Counter.sol",
+        r"
+library LibCounter {
+    function dummy() external pure returns (uint) {
+        return 1;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor() {
+        LibCounter.dummy();
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+
+    function dummy() external pure returns (uint) {
+        return LibCounter.dummy();
+    }
+}
+   ",
+    );
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_test(
+        "Counter.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_select_fork() public {
+        vm.createSelectFork("<url>");
+        new Counter();
+    }
+
+    function test_roll_fork() public {
+        vm.rollFork(block.number - 100);
+        new Counter();
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
 
 "#]]);
 });

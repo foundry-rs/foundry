@@ -1,0 +1,28 @@
+[package]
+name = "foundry-bench"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+
+[[bin]]
+name = "foundry-bench"
+path = "src/main.rs"
+
+[dependencies]
+foundry-test-utils.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util"] }
+eyre.workspace = true
+color-eyre.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+rayon.workspace = true
+clap = { version = "4", features = ["derive"] }
+once_cell = "1.21"
+
+[dev-dependencies]
+foundry-test-utils.workspace = true

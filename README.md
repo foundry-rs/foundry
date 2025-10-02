@@ -13,10 +13,11 @@
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
-**[Install](https://book.getfoundry.sh/getting-started/installation)**
-| [User Book][foundry-book]
-| [Developer Docs](./docs/dev/README.md)
+**[Install](https://getfoundry.sh/getting-started/installation)**
+| [Docs][foundry-docs]
+| [Developer Guidelines](./docs/dev/README.md)
 | [Contributing](./CONTRIBUTING.md)
+| [Crate Docs](https://foundry-rs.github.io/foundry)
 
 </div>
 
@@ -31,7 +32,7 @@ Foundry consists of:
 - [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
 - [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
 
-**Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
+**Need help getting started with Foundry? Read the [📖 Foundry Docs][foundry-docs]!**
 
 ![Demo](.github/assets/demo.gif)
 
@@ -82,9 +83,9 @@ foundryup
 
 **Done!**
 
-For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the [Foundry Book][foundry-book].
+For additional details see the [installation guide](https://getfoundry.sh/getting-started/installation) in the [Foundry Docs][foundry-docs].
 
-If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
+If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://getfoundry.sh/faq).
 
 ## How Fast?
 
@@ -115,7 +116,7 @@ _In the above benchmarks, compilation was always skipped_
     <img src=".github/assets/build_benchmark_solady_light.png" width="600px">
   </picture>
 
-  <picture>
+<picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_openzeppelin_dark.png" width="600px">
     <img src=".github/assets/build_benchmark_openzeppelin_light.png" width="600px">
   </picture>
@@ -151,7 +152,7 @@ forge build
 Compiler run successful!
 ```
 
-Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
+Let's [test](https://getfoundry.sh/forge/tests#tests) our contracts:
 
 ```sh
 forge test
@@ -186,7 +187,7 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 
 Run `forge --help` to explore the full list of available subcommands and their usage.
 
-More documentation can be found in the [forge][foundry-book-forge] section of the Foundry Book.
+More documentation can be found in the [forge](https://getfoundry.sh/forge/overview) section of the Foundry Docs.
 
 ## Cast
 
@@ -218,7 +219,7 @@ Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces us
 
 Run `cast --help` to explore the full list of available subcommands and their usage.
 
-More documentation can be found in the [cast][foundry-book-cast] section of the Foundry Book.
+More documentation can be found in the [cast](https://getfoundry.sh/cast/overview) section of the Foundry Docs.
 
 ## Anvil
 
@@ -240,7 +241,7 @@ cast block-number
 
 Run `anvil --help` to explore the full list of available features and their usage.
 
-More documentation can be found in the [anvil][foundry-book-anvil] section of the Foundry Book.
+More documentation can be found in the [anvil](https://getfoundry.sh/anvil/overview) section of the Foundry Docs.
 
 ## Chisel
 
@@ -287,7 +288,7 @@ contract REPL {
 
 Run `chisel --help` to explore the full list of available features and their usage.
 
-More documentation can be found in the [chisel][foundry-book-chisel] section of the Foundry Book.
+More documentation can be found in the [chisel](https://getfoundry.sh/chisel/overview) section of the Foundry Docs.
 
 ## Configuration
 
@@ -302,9 +303,9 @@ Foundry is highly configurable, allowing you to tailor it to your needs. Configu
 
 ---
 
-You can find additional [setup and configurations guides][foundry-book-config] in the [Foundry Book][foundry-book] and in the [config crate](./crates/config/README.md):
+You can find additional [setup and configurations guides](https://getfoundry.sh/config/overview) in the [Foundry Docs][foundry-docs] and in the [config crate](./crates/config/README.md):
 
-- [Configuring with `foundry.toml`](https://book.getfoundry.sh/config/)
+- [Configuring with `foundry.toml`](https://getfoundry.sh/config/overview)
 - [Setting up VSCode][vscode-setup]
 - [Shell autocompletions][shell-setup]
 
@@ -314,7 +315,7 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in the [Foundy Book][foundry-book], or in the relevant crate.
+First, see if the answer to your question can be found in the [Foundry Docs][foundry-docs], or in the relevant crate.
 
 If the answer is not there:
 
@@ -339,15 +340,11 @@ shall be dual licensed as above, without any additional terms or conditions.
 - [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc] (now [foundry-compilers]) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
 - [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
 - [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
+- Thank you to [Depot](https://depot.dev) for sponsoring us with their fast GitHub runners and sccache, which we use in CI to reduce build and test times significantly.
 - All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy][alloy] & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [solidity]: https://soliditylang.org/
-[foundry-book]: https://book.getfoundry.sh
-[foundry-book-config]: https://book.getfoundry.sh/config/
-[foundry-book-forge]: https://book.getfoundry.sh/reference/forge/
-[foundry-book-anvil]: https://book.getfoundry.sh/reference/anvil/
-[foundry-book-cast]: https://book.getfoundry.sh/reference/cast/
-[foundry-book-chisel]: https://book.getfoundry.sh/reference/chisel/
+[foundry-docs]: https://getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
@@ -359,8 +356,8 @@ shall be dual licensed as above, without any additional terms or conditions.
 [geb]: https://github.com/reflexer-labs/geb
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
 [convex]: https://github.com/mds1/convex-shutdown-simulation
-[vscode-setup]: https://book.getfoundry.sh/config/vscode.html
-[shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
+[vscode-setup]: https://getfoundry.sh/config/vscode.html
+[shell-setup]: https://getfoundry.sh/config/shell-autocompletion.html
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
 [dapptools]: https://github.com/dapphub/dapptools

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM alpine:3.21 as build-environment
+FROM alpine:3.22 AS build-environment
 
 ARG TARGETARCH
 WORKDIR /opt
@@ -19,7 +19,7 @@ COPY . .
 RUN git update-index --force-write-index
 
 RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
-    source $HOME/.profile && cargo build --release --features cast/aws-kms,cast/gcp-kms,forge/aws-kms,forge/gcp-kms \
+    source $HOME/.profile && cargo build --release --features anvil/js-tracer,cast/aws-kms,cast/gcp-kms,forge/aws-kms,forge/gcp-kms \
     && mkdir out \
     && mv target/release/forge out/forge \
     && mv target/release/cast out/cast \
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/r
     && strip out/chisel \
     && strip out/anvil;
 
-FROM alpine:3.21 as foundry-client
+FROM alpine:3.22 AS foundry-client
 
 RUN apk add --no-cache linux-headers git gcompat libstdc++
 
@@ -42,7 +42,6 @@ COPY --from=build-environment /opt/foundry/out/chisel /usr/local/bin/chisel
 RUN adduser -Du 1000 foundry
 
 ENTRYPOINT ["/bin/sh", "-c"]
-
 
 LABEL org.label-schema.build-date=$BUILD_DATE \
       org.label-schema.name="Foundry" \

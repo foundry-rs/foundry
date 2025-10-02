@@ -1,6 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Comments, Document, ParseItem, ParseSource};
-use forge_fmt::solang_ext::SafeUnwrap;
+use crate::{Comments, Document, ParseItem, ParseSource, solang_ext::SafeUnwrap};
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,
@@ -88,10 +87,13 @@ impl InferInlineHyperlinks {
                     let name = &contract.name.safe_unwrap().name;
                     if name == link.identifier {
                         if link.part.is_none() {
-                            return Some(InlineLinkTarget::borrowed(name, target_path.to_path_buf()))
+                            return Some(InlineLinkTarget::borrowed(
+                                name,
+                                target_path.to_path_buf(),
+                            ));
                         }
                         // try to find the referenced item in the contract's children
-                        return Self::find_match(link, target_path, item.children.iter())
+                        return Self::find_match(link, target_path, item.children.iter());
                     }
                 }
                 ParseSource::Function(fun) => {
@@ -104,26 +106,32 @@ impl InferInlineHyperlinks {
                             return Some(InlineLinkTarget::borrowed(
                                 &id.name,
                                 target_path.to_path_buf(),
-                            ))
+                            ));
                         }
                     } else if link.ref_name() == "constructor" {
                         return Some(InlineLinkTarget::borrowed(
                             "constructor",
                             target_path.to_path_buf(),
-                        ))
+                        ));
                     }
                 }
                 ParseSource::Variable(_) => {}
                 ParseSource::Event(ev) => {
                     let ev_name = &ev.name.safe_unwrap().name;
                     if ev_name == link.ref_name() {
-                        return Some(InlineLinkTarget::borrowed(ev_name, target_path.to_path_buf()))
+                        return Some(InlineLinkTarget::borrowed(
+                            ev_name,
+                            target_path.to_path_buf(),
+                        ));
                     }
                 }
                 ParseSource::Error(err) => {
                     let err_name = &err.name.safe_unwrap().name;
                     if err_name == link.ref_name() {
-                        return Some(InlineLinkTarget::borrowed(err_name, target_path.to_path_buf()))
+                        return Some(InlineLinkTarget::borrowed(
+                            err_name,
+                            target_path.to_path_buf(),
+                        ));
                     }
                 }
                 ParseSource::Struct(structdef) => {
@@ -132,7 +140,7 @@ impl InferInlineHyperlinks {
                         return Some(InlineLinkTarget::borrowed(
                             struct_name,
                             target_path.to_path_buf(),
-                        ))
+                        ));
                     }
                 }
                 ParseSource::Enum(_) => {}
@@ -227,7 +235,7 @@ impl<'a> InlineLink<'a> {
     }
 
     fn captures(s: &'a str) -> impl Iterator<Item = Self> + 'a {
-        RE_INLINE_LINK.captures(s).map(Self::from_capture).into_iter().flatten()
+        RE_INLINE_LINK.captures_iter(s).filter_map(Self::from_capture)
     }
 
     /// Parses the first inline link.

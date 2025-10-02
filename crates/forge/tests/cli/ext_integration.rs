@@ -1,13 +1,15 @@
 use foundry_test_utils::util::ExtTester;
 
 // Actively maintained tests
+// Last updated: June 19th 2025
 
 // <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "464587138602dd194ed0eb5aab15b4721859d422")
+    ExtTester::new("foundry-rs", "forge-std", "60acb7aaadcce2d68e52986a0a66fe79f07d138f")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
+        .verbosity(2)
         .run();
 }
 
@@ -15,7 +17,7 @@ fn forge_std() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "b03f814a03558ed5b62f89a57bcc8d720a393f67")
+    ExtTester::new("PaulRBerg", "prb-math", "aad73cfc6cdc2c9b660199b5b1e9db391ea48640")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -38,7 +40,7 @@ fn prb_proxy() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2_core() {
     let mut tester =
-        ExtTester::new("sablier-labs", "v2-core", "43cf7c9d968e61a5a03e9237a71a27165b125414")
+        ExtTester::new("sablier-labs", "v2-core", "d85521f5615f6c19612ff250ee89c57b9afa6aa2")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
@@ -47,7 +49,8 @@ fn sablier_v2_core() {
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])
             // Try npm if bun fails / is not installed.
-            .install_command(&["npm", "install", "--prefer-offline"]);
+            .install_command(&["npm", "install", "--prefer-offline"])
+            .verbosity(2);
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
     // isolation because memory is divided between separate EVMs created by inner calls.
@@ -61,7 +64,7 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "66162801e022c268a2a0f621ac5eb0df4986f6eb").run();
+    ExtTester::new("Vectorized", "solady", "701406e8126cfed931645727b274df303fbcd94d").run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>
@@ -69,8 +72,7 @@ fn solady() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "df226f4a45e86c8f8c3ff1f9fa3443d260002050")
-        .args(["--nmc", "ERC4626VaultTest"])
+    ExtTester::new("pcaversaccio", "snekmate", "601031d244475b160a00f73053532528bf665cc3")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -80,7 +82,7 @@ fn snekmate() {
 // <https://github.com/mds1/multicall>
 #[test]
 fn mds1_multicall3() {
-    ExtTester::new("mds1", "multicall", "f534fbc9f98386a217eaaf9b29d3d4f6f920d5ec").run();
+    ExtTester::new("mds1", "multicall", "5f90062160aedb7c807fadca469ac783a0557b57").run();
 }
 
 // Legacy tests

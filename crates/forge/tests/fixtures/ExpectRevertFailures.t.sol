@@ -253,7 +253,7 @@ contract ExpectRevertCountFailureTest is DSTest {
         reverter.revertWithMessage("revert");
     }
 
-    function testShouldFailReverCountSpecifc() public {
+    function testShouldFailRevertCountSpecific() public {
         uint64 count = 2;
         Reverter reverter = new Reverter();
         vm.expectRevert("revert", count);
@@ -276,6 +276,13 @@ contract ExpectRevertCountFailureTest is DSTest {
         vm.expectRevert("called a function and then reverted", count);
         reverter.callThenRevert(dummy, "called a function and then reverted");
         reverter.callThenRevert(dummy, "wrong revert");
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10858>
+    function testShouldFailIfExpectRevertWrongString() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert("my not so cool error", 0);
+        reverter.revertWithMessage("my cool error");
     }
 }
 
@@ -313,5 +320,25 @@ contract ExpectRevertCountWithReverterFailures is DSTest {
         vm.expectRevert("revert", address(reverter), count);
         reverter.revertWithMessage("revert");
         reverter2.revertWithMessage("revert");
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10858>
+    function testNoReverterCountWithData() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.doNotRevert();
+
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.revertWithMessage("revert2");
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10858>
+    function testNoRevertWithWrongReverter() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        Reverter reverter2 = new Reverter();
+        vm.expectRevert(address(reverter), count);
+        reverter2.revertWithMessage("revert"); // revert from wrong reverter
     }
 }

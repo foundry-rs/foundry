@@ -4,9 +4,9 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::{hex, Address};
-use anvil::{spawn, NodeConfig};
-use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
+use alloy_primitives::{Address, hex};
+use anvil::{NodeConfig, spawn};
+use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_test_utils::{
     forgetest, forgetest_async,
     snapbox::IntoData,
@@ -40,8 +40,7 @@ contract LinkTest {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_lib(
         "remapping/MyLib",
@@ -52,8 +51,7 @@ library MyLib {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     "src/LinkTest.sol:LinkTest".to_string()
 }
@@ -76,8 +74,7 @@ contract Contract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "libraries/ChainlinkTWAP",
@@ -88,8 +85,7 @@ library ChainlinkTWAP {
    }
 }
 ",
-    )
-    .unwrap();
+    );
 
     "src/Contract.sol:Contract".to_string()
 }
@@ -124,9 +120,9 @@ forgetest!(can_create_oracle_on_goerli, |prj, cmd| {
     create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
 });
 
-// tests `forge` create on mumbai if correct env vars are set
-forgetest!(can_create_oracle_on_mumbai, |prj, cmd| {
-    create_on_chain(EnvExternalities::mumbai(), prj, cmd, setup_oracle);
+// tests `forge` create on amoy if correct env vars are set
+forgetest!(can_create_oracle_on_amoy, |prj, cmd| {
+    create_on_chain(EnvExternalities::amoy(), prj, cmd, setup_oracle);
 });
 
 // tests that we can deploy the template contract
@@ -345,8 +341,7 @@ contract ConstructorContract {
     }
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args([
@@ -383,8 +378,7 @@ contract TupleArrayConstructorContract {
     constructor(Point[] memory _points) {}
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args([
@@ -433,8 +427,7 @@ contract UniswapV2Swap {
 
 }
 "#,
-    )
-    .unwrap();
+    );
 
     cmd.forge_fuse()
         .args([
@@ -484,8 +477,7 @@ abstract contract AbstractCounter {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     cmd.args([
         "create",

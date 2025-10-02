@@ -8,36 +8,28 @@ use crate::eth::{
         env::Env,
         mem::cache::DiskStateCache,
     },
-    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
+    B256, Bytes, U256,
     map::{B256HashMap, HashMap},
-    Bytes, B256, U256,
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
-        geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
-        },
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
-use anvil_rpc::error::RpcError;
 use foundry_evm::{
     backend::MemDb,
-    traces::{
-        CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
-    },
+    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
 };
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
@@ -173,17 +165,21 @@ impl InMemoryBlockStates {
         }
     }
 
-    /// Returns the state for the given `hash` if present
-    pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
-        self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
-            }
-            None
-        })
+    /// Returns the in-memory state for the given `hash` if present
+    pub fn get_state(&self, hash: &B256) -> Option<&StateDb> {
+        self.states.get(hash)
+    }
+
+    /// Returns on-disk state for the given `hash` if present
+    pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
+        if let Some(state) = self.on_disk_states.get_mut(hash)
+            && let Some(cached) = self.disk_cache.read(*hash)
+        {
+            state.init_from_state_snapshot(cached);
+            return Some(state);
+        }
+
+        None
     }
 
     /// Sets the maximum number of stats we keep in memory
@@ -250,7 +246,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
@@ -337,17 +333,20 @@ impl BlockchainStorage {
     ///
     /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
     /// remain in the state.
-    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) -> Vec<Block> {
+        let mut removed = vec![];
         let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
-            if let Some(hash) = self.hashes.remove(&i) {
-                if let Some(block) = self.blocks.remove(&hash) {
-                    self.remove_block_transactions_by_number(block.header.number);
-                }
+            if let Some(hash) = self.hashes.remove(&i)
+                && let Some(block) = self.blocks.remove(&hash)
+            {
+                self.remove_block_transactions_by_number(block.header.number);
+                removed.push(block);
             }
         }
         self.best_hash = block_hash;
         self.best_number = block_number;
+        removed
     }
 
     pub fn empty() -> Self {
@@ -435,7 +434,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -555,45 +554,6 @@ impl MinedTransaction {
             })
             .collect()
     }
-
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
-
-        if let Some(tracer) = tracer {
-            match tracer {
-                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                    GethDebugBuiltInTracerType::FourByteTracer => {
-                        let inspector = FourByteInspector::default();
-                        return Ok(FourByteFrame::from(inspector).into());
-                    }
-                    GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
-                            Ok(call_config) => Ok(GethTraceBuilder::new(self.info.traces.clone())
-                                .geth_call_traces(call_config, self.receipt.cumulative_gas_used())
-                                .into()),
-                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        };
-                    }
-                    GethDebugBuiltInTracerType::PreStateTracer |
-                    GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer |
-                    GethDebugBuiltInTracerType::FlatCallTracer => {}
-                },
-                GethDebugTracerType::JsTracer(_code) => {}
-            }
-
-            return Ok(NoopFrame::default().into());
-        }
-
-        // default structlog tracer
-        Ok(GethTraceBuilder::new(self.info.traces.clone())
-            .geth_traces(
-                self.receipt.cumulative_gas_used(),
-                self.info.out.clone().unwrap_or_default(),
-                config,
-            )
-            .into())
-    }
 }
 
 /// Intermediary Anvil representation of a receipt
@@ -609,7 +569,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
     use revm::{database::DatabaseRef, state::AccountInfo};
@@ -663,7 +623,7 @@ mod tests {
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.contains_key(&one));
 
-        let loaded = storage.get(&one).unwrap();
+        let loaded = storage.get_on_disk_state(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, U256::from(1337u64));
@@ -688,13 +648,21 @@ mod tests {
         // wait for files to be flushed
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
+        let on_disk_states_len = num_states - storage.min_in_memory_limit;
+
+        assert_eq!(storage.on_disk_states.len(), on_disk_states_len);
         assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
-            let loaded = storage.get(&hash).unwrap();
+
+            let loaded = if idx < on_disk_states_len {
+                storage.get_on_disk_state(&hash).unwrap()
+            } else {
+                storage.get_state(&hash).unwrap()
+            };
+
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));

@@ -3,15 +3,15 @@
 use crate::abi::Multicall;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
     BlockNumberOrTag, TransactionRequest,
+    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{sol, SolCall, SolError, SolValue};
-use anvil::{spawn, NodeConfig};
+use alloy_sol_types::{SolCall, SolError, SolValue, sol};
+use anvil::{NodeConfig, spawn};
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]

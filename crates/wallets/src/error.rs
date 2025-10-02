@@ -14,7 +14,9 @@ use alloy_signer_gcp::GcpSignerError;
 pub enum PrivateKeyError {
     #[error("Failed to create wallet from private key. Private key is invalid hex: {0}")]
     InvalidHex(#[from] FromHexError),
-    #[error("Failed to create wallet from private key. Invalid private key. But env var {0} exists. Is the `$` anchor missing?")]
+    #[error(
+        "Failed to create wallet from private key. Invalid private key. But env var {0} exists. Is the `$` anchor missing?"
+    )]
     ExistsAsEnvVar(String),
 }
 
@@ -30,10 +32,10 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     #[cfg(feature = "aws-kms")]
-    Aws(#[from] AwsSignerError),
+    Aws(#[from] Box<AwsSignerError>),
     #[error(transparent)]
     #[cfg(feature = "gcp-kms")]
-    Gcp(#[from] GcpSignerError),
+    Gcp(#[from] Box<GcpSignerError>),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

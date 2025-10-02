@@ -1,14 +1,17 @@
-use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
+use crate::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
-    map::{AddressIndexSet, B256IndexSet, HashMap},
-    Address, Bytes, Log, B256, U256,
+    Address, B256, Bytes, Log, U256,
+    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap},
 };
-use foundry_common::ignore_metadata_hash;
+use foundry_common::{
+    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
+};
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
+use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use revm::{
     bytecode::opcode,
     database::{CacheDB, DatabaseRef, DbAccount},
@@ -30,6 +33,11 @@ pub struct EvmFuzzState {
     inner: Arc<RwLock<FuzzDictionary>>,
     /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
     pub deployed_libs: Vec<Address>,
+    /// Records mapping accesses. Used to identify storage slots belonging to mappings and sampling
+    /// the values in the [`FuzzDictionary`].
+    ///
+    /// Only needed when [`StorageLayout`] is available.
+    pub(crate) mapping_slots: Option<AddressMap<MappingSlots>>,
 }
 
 impl EvmFuzzState {
@@ -45,7 +53,16 @@ impl EvmFuzzState {
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
         dictionary.insert_db_values(accs);
-        Self { inner: Arc::new(RwLock::new(dictionary)), deployed_libs: deployed_libs.to_vec() }
+        Self {
+            inner: Arc::new(RwLock::new(dictionary)),
+            deployed_libs: deployed_libs.to_vec(),
+            mapping_slots: None,
+        }
+    }
+
+    pub fn with_mapping_slots(mut self, mapping_slots: AddressMap<MappingSlots>) -> Self {
+        self.mapping_slots = Some(mapping_slots);
+        self
     }
 
     pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
@@ -72,8 +89,14 @@ impl EvmFuzzState {
             let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
             dict.insert_logs_values(target_abi, logs, run_depth);
             dict.insert_result_values(target_function, result, run_depth);
+            // Get storage layouts for contracts in the state changeset
+            let storage_layouts = targets.get_storage_layouts();
+            dict.insert_new_state_values(
+                state_changeset,
+                &storage_layouts,
+                self.mapping_slots.as_ref(),
+            );
         }
-        dict.insert_new_state_values(state_changeset);
     }
 
     /// Removes all newly added entries from the dictionary.
@@ -151,7 +174,7 @@ impl FuzzDictionary {
                 // Sort storage values before inserting to ensure deterministic dictionary.
                 let values = account.storage.iter().collect::<BTreeMap<_, _>>();
                 for (slot, value) in values {
-                    self.insert_storage_value(slot, value);
+                    self.insert_storage_value(slot, value, None, None);
                 }
             }
         }
@@ -176,12 +199,12 @@ impl FuzzDictionary {
         result: &Bytes,
         run_depth: u32,
     ) {
-        if let Some(function) = function {
-            if !function.outputs.is_empty() {
-                // Decode result and collect samples to be used in subsequent fuzz runs.
-                if let Ok(decoded_result) = function.abi_decode_output(result) {
-                    self.insert_sample_values(decoded_result, run_depth);
-                }
+        if let Some(function) = function
+            && !function.outputs.is_empty()
+        {
+            // Decode result and collect samples to be used in subsequent fuzz runs.
+            if let Ok(decoded_result) = function.abi_decode_output(result) {
+                self.insert_sample_values(decoded_result, run_depth);
             }
         }
     }
@@ -226,7 +249,12 @@ impl FuzzDictionary {
 
     /// Insert values from call state changeset into fuzz dictionary.
     /// These values are removed at the end of current run.
-    fn insert_new_state_values(&mut self, state_changeset: &StateChangeset) {
+    fn insert_new_state_values(
+        &mut self,
+        state_changeset: &StateChangeset,
+        storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
+        mapping_slots: Option<&AddressMap<MappingSlots>>,
+    ) {
         for (address, account) in state_changeset {
             // Insert basic account information.
             self.insert_value(address.into_word());
@@ -234,8 +262,19 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
+                let storage_layout = storage_layouts.get(address).cloned();
+                trace!(
+                    "{address:?} has mapping_slots {}",
+                    mapping_slots.is_some_and(|m| m.contains_key(address))
+                );
+                let mapping_slots = mapping_slots.and_then(|m| m.get(address));
                 for (slot, value) in &account.storage {
-                    self.insert_storage_value(slot, &value.present_value);
+                    self.insert_storage_value(
+                        slot,
+                        &value.present_value,
+                        storage_layout.as_deref(),
+                        mapping_slots,
+                    );
                 }
             }
         }
@@ -289,18 +328,41 @@ impl FuzzDictionary {
     }
 
     /// Insert values from single storage slot and storage value into fuzz dictionary.
-    /// If storage values are newly collected then they are removed at the end of current run.
-    fn insert_storage_value(&mut self, storage_slot: &U256, storage_value: &U256) {
-        self.insert_value(B256::from(*storage_slot));
-        self.insert_value(B256::from(*storage_value));
-        // also add the value below and above the storage value to the dictionary.
-        if *storage_value != U256::ZERO {
-            let below_value = storage_value - U256::from(1);
-            self.insert_value(B256::from(below_value));
-        }
-        if *storage_value != U256::MAX {
-            let above_value = storage_value + U256::from(1);
-            self.insert_value(B256::from(above_value));
+    /// Uses [`SlotIdentifier`] to identify storage slots types.
+    fn insert_storage_value(
+        &mut self,
+        slot: &U256,
+        value: &U256,
+        layout: Option<&StorageLayout>,
+        mapping_slots: Option<&MappingSlots>,
+    ) {
+        let slot = B256::from(*slot);
+        let value = B256::from(*value);
+
+        // Always insert the slot itself
+        self.insert_value(slot);
+
+        // If we have a storage layout, use SlotIdentifier for better type identification
+        if let Some(slot_identifier) =
+            layout.map(|l| SlotIdentifier::new(l.clone().into()))
+            // Identify Slot Type
+            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
+        {
+            trace!(?slot_info, "inserting typed storage value");
+            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
+        } else {
+            self.insert_value(value);
+            let value = U256::from_be_bytes(value.0);
+
+            // Also add the value below and above the storage value to the dictionary
+            if value != U256::ZERO {
+                let below_value = value - U256::from(1);
+                self.insert_value(B256::from(below_value));
+            }
+            if value != U256::MAX {
+                let above_value = value + U256::from(1);
+                self.insert_value(B256::from(above_value));
+            }
         }
     }
 

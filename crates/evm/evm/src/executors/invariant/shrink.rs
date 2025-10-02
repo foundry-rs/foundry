@@ -1,12 +1,12 @@
 use crate::executors::{
+    Executor,
     invariant::{
         call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
     },
-    Executor,
 };
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::constants::MAGIC_ASSUME;
-use foundry_evm_fuzz::invariant::BasicTxDetails;
+use foundry_evm_fuzz::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use std::cmp::min;

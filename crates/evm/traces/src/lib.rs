@@ -3,7 +3,7 @@
 //! EVM trace identifying and decoding.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate foundry_common;
@@ -17,8 +17,8 @@ use foundry_common::{
 };
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{
-    types::{DecodedTraceStep, TraceMemberOrder},
     OpcodeFilter,
+    types::{DecodedTraceStep, TraceMemberOrder},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,12 +30,12 @@ use std::{
 use alloy_primitives::map::HashMap;
 
 pub use revm_inspectors::tracing::{
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
         DecodedCallTrace,
     },
-    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
-    TraceWriter, TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.
@@ -51,6 +51,8 @@ pub mod debug;
 pub use debug::DebugTraceIdentifier;
 
 pub mod folded_stack_trace;
+
+pub mod backtrace;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -86,7 +88,7 @@ impl SparsedTraceArena {
                     .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
                     .enumerate();
 
-                let mut iternal_calls = Vec::new();
+                let mut internal_calls = Vec::new();
                 let mut items_to_remove = BTreeSet::new();
                 for (item_idx, item) in items {
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
@@ -108,17 +110,17 @@ impl SparsedTraceArena {
                         }
                         // we only remove decoded internal calls if they did not start/pause tracing
                         Some(TraceMemberOrder::Step(step_idx)) => {
-                            // If this is an internal call beginning, track it in `iternal_calls`
-                            if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
-                                &nodes[node_idx].trace.steps[step_idx].decoded
+                            // If this is an internal call beginning, track it in `internal_calls`
+                            if let Some(decoded) = &nodes[node_idx].trace.steps[step_idx].decoded
+                                && let DecodedTraceStep::InternalCall(_, end_step_idx) = &**decoded
                             {
-                                iternal_calls.push((item_idx, remove, *end_step_idx));
+                                internal_calls.push((item_idx, remove, *end_step_idx));
                                 // we decide if we should remove it later
                                 remove = false;
                             }
                             // Handle ends of internal calls
-                            iternal_calls.retain(|(start_item_idx, remove_start, end_step_idx)| {
-                                if *end_step_idx != step_idx {
+                            internal_calls.retain(|(start_item_idx, remove_start, end_idx)| {
+                                if *end_idx != step_idx {
                                     return true;
                                 }
                                 // only remove start if end should be removed as well
@@ -138,10 +140,11 @@ impl SparsedTraceArena {
                         items_to_remove.insert(item_idx);
                     }
 
-                    if let Some((end_node, end_step_idx)) = cur_ignore_end {
-                        if node_idx == *end_node && item_idx == *end_step_idx {
-                            *cur_ignore_end = None;
-                        }
+                    if let Some((end_node, end_step_idx)) = cur_ignore_end
+                        && node_idx == *end_node
+                        && item_idx == *end_step_idx
+                    {
+                        *cur_ignore_end = None;
                     }
                 }
 
@@ -293,6 +296,10 @@ pub enum TraceMode {
     None,
     /// Simple call trace, no steps tracing required.
     Call,
+    /// Call trace with steps tracing for JUMP and JUMPDEST opcodes.
+    ///
+    /// Does not enable tracking memory or stack snapshots.
+    Steps,
     /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
     ///
     /// Used for internal functions identification. Does not track memory snapshots.
@@ -318,6 +325,10 @@ impl TraceMode {
         matches!(self, Self::Call)
     }
 
+    pub const fn is_steps(self) -> bool {
+        matches!(self, Self::Steps)
+    }
+
     pub const fn is_jump_simple(self) -> bool {
         matches!(self, Self::JumpSimple)
     }
@@ -335,11 +346,7 @@ impl TraceMode {
     }
 
     pub fn with_debug(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::Debug)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::Debug) } else { self }
     }
 
     pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
@@ -347,19 +354,13 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::RecordStateDiff)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        if verbosity >= 3 {
-            std::cmp::max(self, Self::Call)
-        } else {
-            self
-        }
+        // Enable step recording for backtraces when verbosity >= 3
+        // We need to ensure we're recording JUMP AND JUMPDEST steps:
+        if verbosity >= 3 { std::cmp::max(self, Self::Steps) } else { self }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
@@ -367,9 +368,9 @@ impl TraceMode {
             None
         } else {
             TracingInspectorConfig {
-                record_steps: self >= Self::JumpSimple,
+                record_steps: self >= Self::Steps,
                 record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self >= Self::JumpSimple {
+                record_stack_snapshots: if self > Self::Steps {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
@@ -377,7 +378,7 @@ impl TraceMode {
                 record_logs: true,
                 record_state_diff: self.record_state_diff(),
                 record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
+                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
                     .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
                 record_immediate_bytes: self.is_debug(),

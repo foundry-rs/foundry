@@ -5,10 +5,10 @@ use anvil_rpc::{
     response::{Response, RpcResponse},
 };
 use axum::{
-    extract::{rejection::JsonRejection, State},
     Json,
+    extract::{State, rejection::JsonRejection},
 };
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 
 /// Handles incoming JSON-RPC Request.
 // NOTE: `handler` must come first because the `request` extractor consumes the request body.

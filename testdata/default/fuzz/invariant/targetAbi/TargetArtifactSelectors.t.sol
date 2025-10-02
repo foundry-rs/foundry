@@ -15,7 +15,7 @@ contract Hi {
         world = true;
     }
 
-    function changee() public {
+    function change() public {
         world = false;
     }
 }

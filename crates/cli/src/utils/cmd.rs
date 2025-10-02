@@ -1,32 +1,24 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{
-    compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
-    TestFunctionExt,
-};
+use foundry_common::{TestFunctionExt, fs, selectors::SelectorKind, shell};
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
-use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
-use foundry_debugger::Debugger;
+use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena,
-        identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
+        render_trace_arena_inner,
     },
 };
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 use yansi::Paint;
 
@@ -48,14 +40,14 @@ pub fn remove_contract(
         }
     }) else {
         let mut err = format!("could not find artifact: `{name}`");
-        if let Some(suggestion) = super::did_you_mean(name, other).pop() {
-            if suggestion != name {
-                err = format!(
-                    r#"{err}
+        if let Some(suggestion) = super::did_you_mean(name, other).pop()
+            && suggestion != name
+        {
+            err = format!(
+                r#"{err}
 
         Did you mean `{suggestion}`?"#
-                );
-            }
+            );
         }
         eyre::bail!(err)
     };
@@ -116,10 +108,12 @@ pub fn get_cached_entry_by_name(
 
 /// Returns error if constructor has arguments.
 pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
-    if let Some(constructor) = &abi.constructor {
-        if !constructor.inputs.is_empty() {
-            eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
-        }
+    if let Some(constructor) = &abi.constructor
+        && !constructor.inputs.is_empty()
+    {
+        eyre::bail!(
+            "Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`."
+        );
     }
     Ok(())
 }
@@ -162,27 +156,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum() ||
-            matches!(
+        return chain.is_arbitrum()
+            || chain.is_elastic()
+            || matches!(
                 chain,
-                NamedChain::Acala |
-                    NamedChain::AcalaMandalaTestnet |
-                    NamedChain::AcalaTestnet |
-                    NamedChain::Etherlink |
-                    NamedChain::EtherlinkTestnet |
-                    NamedChain::Karura |
-                    NamedChain::KaruraTestnet |
-                    NamedChain::Mantle |
-                    NamedChain::MantleSepolia |
-                    NamedChain::MantleTestnet |
-                    NamedChain::Moonbase |
-                    NamedChain::Moonbeam |
-                    NamedChain::MoonbeamDev |
-                    NamedChain::Moonriver |
-                    NamedChain::Metis |
-                    NamedChain::Abstract |
-                    NamedChain::ZkSync |
-                    NamedChain::ZkSyncTestnet
+                NamedChain::Acala
+                    | NamedChain::AcalaMandalaTestnet
+                    | NamedChain::AcalaTestnet
+                    | NamedChain::Etherlink
+                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::Karura
+                    | NamedChain::KaruraTestnet
+                    | NamedChain::Mantle
+                    | NamedChain::MantleSepolia
+                    | NamedChain::Moonbase
+                    | NamedChain::Moonbeam
+                    | NamedChain::MoonbeamDev
+                    | NamedChain::Moonriver
+                    | NamedChain::Metis
             );
     }
     false
@@ -329,81 +320,6 @@ impl TryFrom<Result<RawCallResult>> for TraceResult {
             Err(err) => Err(EvmError::from(err)),
         }
     }
-}
-
-/// labels the traces, conditionally prints them or opens the debugger
-pub async fn handle_traces(
-    mut result: TraceResult,
-    config: &Config,
-    chain: Option<Chain>,
-    labels: Vec<String>,
-    with_local_artifacts: bool,
-    debug: bool,
-    decode_internal: bool,
-) -> Result<()> {
-    let (known_contracts, mut sources) = if with_local_artifacts {
-        let _ = sh_println!("Compiling project to generate artifacts");
-        let project = config.project()?;
-        let compiler = ProjectCompiler::new();
-        let output = compiler.compile(&project)?;
-        (
-            Some(ContractsByArtifact::new(
-                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
-            )),
-            ContractSources::from_project_output(&output, project.root(), None)?,
-        )
-    } else {
-        (None, ContractSources::default())
-    };
-
-    let labels = labels.iter().filter_map(|label_str| {
-        let mut iter = label_str.split(':');
-
-        if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()));
-            }
-        }
-        None
-    });
-    let config_labels = config.labels.clone().into_iter();
-
-    let mut builder = CallTraceDecoderBuilder::new()
-        .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::from_config(config)?);
-    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
-    if let Some(contracts) = &known_contracts {
-        builder = builder.with_known_contracts(contracts);
-        identifier = identifier.with_local(contracts);
-    }
-
-    let mut decoder = builder.build();
-
-    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-        decoder.identify(trace, &mut identifier);
-    }
-
-    if decode_internal || debug {
-        if let Some(ref etherscan_identifier) = identifier.etherscan {
-            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
-        }
-
-        if debug {
-            let mut debugger = Debugger::builder()
-                .traces(result.traces.expect("missing traces"))
-                .decoder(&decoder)
-                .sources(sources)
-                .build();
-            debugger.try_run_tui()?;
-            return Ok(())
-        }
-
-        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
-    }
-
-    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
-
-    Ok(())
 }
 
 pub async fn print_traces(

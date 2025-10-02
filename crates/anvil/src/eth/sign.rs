@@ -2,7 +2,7 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
+use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
@@ -49,7 +49,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts).collect();
+        let accounts = addresses.iter().copied().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }

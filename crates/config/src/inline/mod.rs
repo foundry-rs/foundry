@@ -1,8 +1,8 @@
 use crate::Config;
 use alloy_primitives::map::HashMap;
 use figment::{
-    value::{Dict, Map, Value},
     Figment, Profile, Provider,
+    value::{Dict, Map, Value},
 };
 use foundry_compilers::ProjectCompileOutput;
 use itertools::Itertools;

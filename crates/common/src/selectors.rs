@@ -4,15 +4,15 @@
 
 use crate::{abi::abi_decode_calldata, provider::runtime_transport::RuntimeTransportBuilder};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{map::HashMap, Selector, B256};
+use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Context;
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -217,7 +217,7 @@ impl OpenChainClient {
             )
         }
 
-        let mut sigs = self.decode_function_selector(calldata[..8].parse().unwrap()).await?;
+        let mut sigs = self.decode_function_selector(calldata[..8].parse()?).await?;
         // Retain only signatures that can be decoded.
         sigs.retain(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok());
         Ok(sigs)
@@ -264,7 +264,7 @@ impl OpenChainClient {
         };
         let (_, data) = calldata.split_at(8);
 
-        if data.len() % 64 != 0 {
+        if !data.len().is_multiple_of(64) {
             eyre::bail!("\nInvalid calldata size")
         }
 

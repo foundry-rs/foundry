@@ -1,6 +1,7 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256};
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
@@ -10,7 +11,6 @@ use alloy_rpc_types::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     },
-    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
@@ -43,6 +43,10 @@ pub enum EthRequest {
     #[serde(rename = "web3_sha3", with = "sequence")]
     Web3Sha3(Bytes),
 
+    /// Returns the current Ethereum protocol version.
+    #[serde(rename = "eth_protocolVersion", with = "empty_params")]
+    EthProtocolVersion(()),
+
     #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
@@ -51,6 +55,10 @@ pub enum EthRequest {
 
     #[serde(rename = "net_listening", with = "empty_params")]
     NetListening(()),
+
+    /// Returns the number of hashes per second with which the node is mining.
+    #[serde(rename = "eth_hashrate", with = "empty_params")]
+    EthHashrate(()),
 
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
@@ -66,6 +74,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_blockNumber", with = "empty_params")]
     EthBlockNumber(()),
+
+    /// Returns the client coinbase address.
+    #[serde(rename = "eth_coinbase", with = "empty_params")]
+    EthCoinbase(()),
 
     #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, Option<BlockId>),
@@ -144,8 +156,14 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
+    #[serde(rename = "eth_sendTransactionSync", with = "sequence")]
+    EthSendTransactionSync(Box<WithOtherFields<TransactionRequest>>),
+
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
+
+    #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
+    EthSendRawTransactionSync(Bytes),
 
     #[serde(rename = "eth_call")]
     EthCall(
@@ -171,6 +189,18 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
+
+    /// Returns the blob for a given blob versioned hash.
+    #[serde(rename = "anvil_getBlobByHash", with = "sequence")]
+    GetBlobByHash(B256),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
+    GetBlobByTransactionHash(TxHash),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
+    GetBlobSidecarsByBlockId(BlockId),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
@@ -250,6 +280,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_syncing", with = "empty_params")]
     EthSyncing(()),
 
+    #[serde(rename = "eth_config", with = "empty_params")]
+    EthConfig(()),
+
     /// geth's `debug_getRawTransaction`  endpoint
     #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
@@ -265,6 +298,10 @@ pub enum EthRequest {
         #[serde(default)] Option<BlockId>,
         #[serde(default)] GethDebugTracingCallOptions,
     ),
+
+    /// reth's `debug_codeByHash` endpoint
+    #[serde(rename = "debug_codeByHash")]
+    DebugCodeByHash(B256, #[serde(default)] Option<BlockId>),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
@@ -303,6 +340,11 @@ pub enum EthRequest {
         with = "sequence"
     )]
     AutoImpersonateAccount(bool),
+
+    /// Registers a signature/address pair for faking `ecrecover` results
+    #[serde(rename = "anvil_impersonateSignature", with = "sequence")]
+    ImpersonateSignature(Bytes, Address),
+
     /// Returns true if automatic mining is enabled, and false.
     #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")]
     GetAutoMine(()),
@@ -325,11 +367,7 @@ pub enum EthRequest {
     SetAutomine(bool),
 
     /// Sets the mining behavior to interval with the given interval (seconds)
-    #[serde(
-        rename = "anvil_setIntervalMining",
-        alias = "evm_setIntervalMining",
-        with = "sequence"
-    )]
+    #[serde(rename = "anvil_setIntervalMining", alias = "evm_setIntervalMining", with = "sequence")]
     SetIntervalMining(u64),
 
     /// Gets the current mining behavior
@@ -337,11 +375,7 @@ pub enum EthRequest {
     GetIntervalMining(()),
 
     /// Removes transactions from the pool
-    #[serde(
-        rename = "anvil_dropTransaction",
-        alias = "hardhat_dropTransaction",
-        with = "sequence"
-    )]
+    #[serde(rename = "anvil_dropTransaction", alias = "hardhat_dropTransaction", with = "sequence")]
     DropTransaction(B256),
 
     /// Removes transactions from the pool
@@ -380,10 +414,18 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_dealERC20",
         alias = "hardhat_dealERC20",
-        alias = "anvil_setERC20Balance",
-        alias = "tenderly_setErc20Balance"
+        alias = "anvil_setERC20Balance"
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the ERC20 allowance for a spender
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetERC20Allowance(
+        Address,
+        Address,
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
 
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
@@ -654,17 +696,7 @@ pub enum EthRequest {
     #[serde(rename = "wallet_getCapabilities", with = "empty_params")]
     WalletGetCapabilities(()),
 
-    /// Wallet send_tx
-    #[serde(
-        rename = "wallet_sendTransaction",
-        alias = "odyssey_sendTransaction",
-        with = "sequence"
-    )]
-    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
-
-    /// Add an address to the [`DelegationCapability`] of the wallet
-    ///
-    /// [`DelegationCapability`]: wallet::DelegationCapability  
+    /// Add an address to the delegation capability of the wallet
     #[serde(rename = "anvil_addCapability", with = "sequence")]
     AnvilAddCapability(Address),
 

@@ -1,14 +1,15 @@
 use super::fork::environment;
 use crate::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{configure_env, CreateFork},
     EvmEnv,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{CreateFork, configure_env},
 };
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
+use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -72,8 +73,12 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// whether to enable Odyssey features.
-    pub odyssey: bool,
+    /// Whether to enable tx gas limit checks as imposed by Osaka (EIP-7825).
+    pub enable_tx_gas_limit: bool,
+
+    #[serde(flatten)]
+    /// Networks with enabled features.
+    pub networks: NetworkConfigs,
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
@@ -99,7 +104,8 @@ impl Default for EvmOpts {
             memory_limit: 0,
             isolate: false,
             disable_block_gas_limit: false,
-            odyssey: false,
+            enable_tx_gas_limit: false,
+            networks: NetworkConfigs::default(),
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }
@@ -132,14 +138,15 @@ impl EvmOpts {
             self.fork_block_number,
             self.sender,
             self.disable_block_gas_limit,
+            self.enable_tx_gas_limit,
         )
         .await
         .wrap_err_with(|| {
             let mut msg = "could not instantiate forked environment".to_string();
-            if let Ok(url) = Url::parse(fork_url) {
-                if let Some(provider) = url.host() {
-                    write!(msg, " with provider {provider}").unwrap();
-                }
+            if let Ok(url) = Url::parse(fork_url)
+                && let Some(provider) = url.host()
+            {
+                write!(msg, " with provider {provider}").unwrap();
             }
             msg
         })
@@ -151,6 +158,7 @@ impl EvmOpts {
             self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
             self.memory_limit,
             self.disable_block_gas_limit,
+            self.enable_tx_gas_limit,
         );
 
         crate::Env {
@@ -220,7 +228,7 @@ impl EvmOpts {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups;
+            cups
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
@@ -278,10 +286,18 @@ pub struct Env {
     pub block_coinbase: Address,
 
     /// the block.timestamp value during EVM execution
-    pub block_timestamp: u64,
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
+    pub block_timestamp: U256,
 
     /// the block.number value during EVM execution"
-    pub block_number: u64,
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
+    pub block_number: U256,
 
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,

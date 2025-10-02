@@ -1,12 +1,9 @@
-use crate::{error::ParserResult, Comments};
-use forge_fmt::{
-    solang_ext::SafeUnwrap, Comments as FmtComments, Formatter, FormatterConfig, InlineConfig,
-    Visitor,
-};
+use crate::{Comments, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
 };
+use std::ops::Range;
 
 /// The parsed item.
 #[derive(Debug, PartialEq)]
@@ -80,37 +77,12 @@ impl ParseItem {
         self
     }
 
-    /// Set formatted code on the [ParseItem].
-    pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
-        let mut code = String::new();
-        let mut fmt = Formatter::new(
-            &mut code,
-            source,
-            FmtComments::default(),
-            InlineConfig::default(),
-            config,
-        );
-
-        match self.source.clone() {
-            ParseSource::Contract(mut contract) => {
-                contract.parts = vec![];
-                fmt.visit_contract(&mut contract)?
-            }
-            ParseSource::Function(mut func) => {
-                func.body = None;
-                fmt.visit_function(&mut func)?
-            }
-            ParseSource::Variable(mut var) => fmt.visit_var_definition(&mut var)?,
-            ParseSource::Event(mut event) => fmt.visit_event(&mut event)?,
-            ParseSource::Error(mut error) => fmt.visit_error(&mut error)?,
-            ParseSource::Struct(mut structure) => fmt.visit_struct(&mut structure)?,
-            ParseSource::Enum(mut enumeration) => fmt.visit_enum(&mut enumeration)?,
-            ParseSource::Type(mut ty) => fmt.visit_type_definition(&mut ty)?,
-        };
-
-        self.code = code;
-
-        Ok(self)
+    /// Set the source code of this [ParseItem].
+    ///
+    /// The parameter should be the full source file where this parse item originated from.
+    pub fn with_code(mut self, source: &str) -> Self {
+        self.code = source[self.source.range()].to_string();
+        self
     }
 
     /// Format the item's filename.
@@ -183,5 +155,20 @@ impl ParseSource {
             }
             Self::Type(ty) => ty.name.name.to_owned(),
         }
+    }
+
+    /// Get the range of this item in the source file.
+    pub fn range(&self) -> Range<usize> {
+        match self {
+            Self::Contract(contract) => contract.loc,
+            Self::Variable(var) => var.loc,
+            Self::Event(event) => event.loc,
+            Self::Error(error) => error.loc,
+            Self::Struct(structure) => structure.loc,
+            Self::Enum(enumerable) => enumerable.loc,
+            Self::Function(func) => func.loc,
+            Self::Type(ty) => ty.loc,
+        }
+        .range()
     }
 }

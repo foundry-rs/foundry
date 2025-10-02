@@ -1,17 +1,16 @@
 use eyre::{Context, Result};
-use foundry_common::compact_to_contract;
+use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
+    Artifact, ProjectCompileOutput,
     artifacts::{
+        Bytecode, ContractBytecodeSome, Libraries, Source,
         sourcemap::{SourceElement, SourceMap},
-        Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
     },
     multi::MultiCompilerLanguage,
-    Artifact, Compiler, ProjectCompileOutput,
 };
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{interface::Session, Parser};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
@@ -31,7 +30,13 @@ pub struct SourceData {
 }
 
 impl SourceData {
-    pub fn new(source: Arc<String>, language: MultiCompilerLanguage, path: PathBuf) -> Self {
+    pub fn new(
+        output: &ProjectCompileOutput,
+        source: Arc<String>,
+        language: MultiCompilerLanguage,
+        path: PathBuf,
+        root: &Path,
+    ) -> Self {
         let mut contract_definitions = Vec::new();
 
         match language {
@@ -42,21 +47,21 @@ impl SourceData {
                 }
             }
             MultiCompilerLanguage::Solc(_) => {
-                let sess = Session::builder().with_silent_emitter(None).build();
-                let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
-                    let arena = solar_parse::ast::Arena::new();
-                    let filename = path.clone().into();
-                    let mut parser =
-                        Parser::from_source_code(&sess, &arena, filename, source.to_string())?;
-                    let ast = parser.parse_file().map_err(|e| e.emit())?;
-                    for item in ast.items {
-                        if let solar_parse::ast::ItemKind::Contract(contract) = &item.kind {
-                            let range = item.span.lo().to_usize()..item.span.hi().to_usize();
-                            contract_definitions.push((contract.name.to_string(), range));
+                let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
+                    let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
+                    for item in source.ast.as_ref()?.items.iter() {
+                        if let solar::ast::ItemKind::Contract(contract) = &item.kind {
+                            contract_definitions.push((
+                                contract.name.to_string(),
+                                compiler.sess().source_map().span_to_range(item.span).unwrap(),
+                            ));
                         }
                     }
-                    Ok(())
+                    Some(())
                 });
+                if r.is_none() {
+                    warn!("failed to parse contract definitions for {}", path.display());
+                }
             }
         }
 
@@ -94,9 +99,9 @@ impl ArtifactData {
                 })
             };
 
-            // Only parse bytecode if it's not empty.
-            let pc_ic_map = if let Some(bytes) = b.bytes() {
-                (!bytes.is_empty()).then(|| PcIcMap::new(bytes))
+            // Only parse bytecode if it's not empty, stripping placeholders if necessary.
+            let pc_ic_map = if let Some(bytes) = strip_bytecode_placeholders(&b.object) {
+                (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref()))
             } else {
                 None
             };
@@ -135,15 +140,12 @@ impl ContractSources {
         Ok(sources)
     }
 
-    pub fn insert<C: Compiler<CompilerContract = Contract>>(
+    pub fn insert(
         &mut self,
-        output: &ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput,
         root: &Path,
         libraries: Option<&Libraries>,
-    ) -> Result<()>
-    where
-        C::Language: Into<MultiCompilerLanguage>,
-    {
+    ) -> Result<()> {
         let link_data = libraries.map(|libraries| {
             let linker = Linker::new(root, output.artifact_ids().collect());
             (linker, libraries)
@@ -197,9 +199,11 @@ impl ContractSources {
                         })?;
                         let stripped = path.strip_prefix(root).unwrap_or(path).to_path_buf();
                         let source_data = Arc::new(SourceData::new(
+                            output,
                             source.content.clone(),
-                            build.language.into(),
+                            build.language,
                             stripped,
+                            root,
                         ));
                         entry.insert(source_data.clone());
                         source_data
@@ -287,7 +291,7 @@ impl ContractSources {
                 source_map.get(pc as usize)
             }?;
             // if the source element has an index, find the sourcemap for that index
-            let res = source_element
+            source_element
                 .index()
                 // if index matches current file_id, return current source code
                 .and_then(|index| {
@@ -299,9 +303,7 @@ impl ContractSources {
                         .get(&artifact.build_id)?
                         .get(&source_element.index()?)
                         .map(|source| (source_element.clone(), source.as_ref()))
-                });
-
-            res
+                })
         })
     }
 }

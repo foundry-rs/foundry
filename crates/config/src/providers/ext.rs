@@ -1,12 +1,15 @@
-use crate::{utils, Config};
+use crate::{Config, extend, utils};
 use figment::{
+    Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Toml},
     value::{Dict, Map, Value},
-    Error, Figment, Metadata, Profile, Provider,
 };
 use foundry_compilers::ProjectPathsConfig;
 use heck::ToSnakeCase;
-use std::path::{Path, PathBuf};
+use std::{
+    cell::OnceCell,
+    path::{Path, PathBuf},
+};
 
 pub(crate) trait ProviderExt: Provider + Sized {
     fn rename(
@@ -46,18 +49,19 @@ impl<P: Provider> ProviderExt for P {}
 /// A convenience provider to retrieve a toml file.
 /// This will return an error if the env var is set but the file does not exist
 pub(crate) struct TomlFileProvider {
-    pub env_var: Option<&'static str>,
-    pub default: PathBuf,
-    pub cache: Option<Result<Map<Profile, Dict>, Error>>,
+    env_var: Option<&'static str>,
+    env_val: OnceCell<Option<String>>,
+    default: PathBuf,
+    cache: OnceCell<Result<Map<Profile, Dict>, Error>>,
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: impl Into<PathBuf>) -> Self {
-        Self { env_var, default: default.into(), cache: None }
+    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+        Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 
-    fn env_val(&self) -> Option<String> {
-        self.env_var.and_then(Env::var)
+    fn env_val(&self) -> Option<&str> {
+        self.env_val.get_or_init(|| self.env_var.and_then(Env::var)).as_deref()
     }
 
     fn file(&self) -> PathBuf {
@@ -74,28 +78,162 @@ impl TomlFileProvider {
         false
     }
 
-    pub(crate) fn cached(mut self) -> Self {
-        self.cache = Some(self.read());
-        self
-    }
-
+    /// Reads and processes the TOML configuration file, handling inheritance if configured.
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
-        if let Some(file) = self.env_val() {
-            let path = Path::new(&file);
-            if !path.exists() {
+
+        // Get the config file path and validate it exists
+        let local_path = self.file();
+        if !local_path.exists() {
+            if let Some(file) = self.env_val() {
                 return Err(Error::custom(format!(
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
                 )));
             }
-            Toml::file(file)
-        } else {
-            Toml::file(&self.default)
+            return Ok(Map::new());
         }
-        .nested()
-        .data()
+
+        // Create a provider for the local config file
+        let local_provider = Toml::file(local_path.clone()).nested();
+
+        // Parse the local config to check for extends field
+        let local_path_str = local_path.to_string_lossy();
+        let local_content = std::fs::read_to_string(&local_path)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+        let partial_config: extend::ExtendsPartialConfig = toml::from_str(&local_content)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+
+        // Check if the currently active profile has an 'extends' field
+        let selected_profile = Config::selected_profile();
+        let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
+            let profile_str = selected_profile.to_string();
+            profiles.get(&profile_str).and_then(|cfg| cfg.extends.as_ref())
+        });
+
+        // If inheritance is configured, load and merge the base config
+        if let Some(extends_config) = extends_config {
+            let extends_path = extends_config.path();
+            let extends_strategy = extends_config.strategy();
+            let relative_base_path = PathBuf::from(extends_path);
+            let local_dir = local_path.parent().ok_or_else(|| {
+                Error::custom(format!(
+                    "Could not determine parent directory of config file: {}",
+                    local_path.display()
+                ))
+            })?;
+
+            let base_path =
+                foundry_compilers::utils::canonicalize(local_dir.join(&relative_base_path))
+                    .map_err(|e| {
+                        Error::custom(format!(
+                            "Failed to resolve inherited config path: {}: {e}",
+                            relative_base_path.display()
+                        ))
+                    })?;
+
+            // Validate the base config file exists
+            if !base_path.is_file() {
+                return Err(Error::custom(format!(
+                    "Inherited config file does not exist or is not a file: {}",
+                    base_path.display()
+                )));
+            }
+
+            // Prevent self-inheritance which would cause infinite recursion
+            if foundry_compilers::utils::canonicalize(&local_path).ok().as_ref() == Some(&base_path)
+            {
+                return Err(Error::custom(format!(
+                    "Config file {} cannot inherit from itself.",
+                    local_path.display()
+                )));
+            }
+
+            // Parse the base config to check for nested inheritance
+            let base_path_str = base_path.to_string_lossy();
+            let base_content = std::fs::read_to_string(&base_path)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+            let base_partial: extend::ExtendsPartialConfig = toml::from_str(&base_content)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+
+            // Check if the base file's same profile also has extends (nested inheritance)
+            let base_extends = base_partial
+                .profile
+                .as_ref()
+                .and_then(|profiles| {
+                    let profile_str = selected_profile.to_string();
+                    profiles.get(&profile_str)
+                })
+                .and_then(|profile| profile.extends.as_ref());
+
+            // Prevent nested inheritance to avoid complexity and potential cycles
+            if base_extends.is_some() {
+                return Err(Error::custom(format!(
+                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{selected_profile}'.",
+                    base_path.display()
+                )));
+            }
+
+            // Load base configuration as a Figment provider
+            let base_provider = Toml::file(base_path).nested();
+
+            // Apply the selected merge strategy
+            match extends_strategy {
+                extend::ExtendStrategy::ExtendArrays => {
+                    // Using 'admerge' strategy:
+                    // - Arrays are concatenated (base elements + local elements)
+                    // - Other values are replaced (local values override base values)
+                    // - The extends field is preserved in the final configuration
+                    Figment::new().merge(base_provider).admerge(local_provider).data()
+                }
+                extend::ExtendStrategy::ReplaceArrays => {
+                    // Using 'merge' strategy:
+                    // - Arrays are replaced entirely (local arrays replace base arrays)
+                    // - Other values are replaced (local values override base values)
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+                extend::ExtendStrategy::NoCollision => {
+                    // Check for key collisions between base and local configs
+                    let base_data = base_provider.data()?;
+                    let local_data = local_provider.data()?;
+
+                    let profile_key = Profile::new("profile");
+                    if let (Some(local_profiles), Some(base_profiles)) =
+                        (local_data.get(&profile_key), base_data.get(&profile_key))
+                    {
+                        // Extract dicts for the selected profile
+                        let profile_str = selected_profile.to_string();
+                        let base_dict = base_profiles.get(&profile_str).and_then(|v| v.as_dict());
+                        let local_dict = local_profiles.get(&profile_str).and_then(|v| v.as_dict());
+
+                        // Find colliding keys
+                        if let (Some(local_dict), Some(base_dict)) = (local_dict, base_dict) {
+                            let collisions: Vec<&String> = local_dict
+                                .keys()
+                                .filter(|key| {
+                                    // Ignore the "extends" key as it's expected
+                                    *key != "extends" && base_dict.contains_key(*key)
+                                })
+                                .collect();
+
+                            if !collisions.is_empty() {
+                                return Err(Error::custom(format!(
+                                    "Key collision detected in profile '{profile_str}' when extending '{extends_path}'. \
+                                    Conflicting keys: {collisions:?}. Use 'extends.strategy' or 'extends_strategy' to specify how to handle conflicts."
+                                )));
+                            }
+                        }
+                    }
+
+                    // Safe to merge the configs without collisions
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+            }
+        } else {
+            // No inheritance - return the local config as-is
+            local_provider.data()
+        }
     }
 }
 
@@ -109,11 +247,7 @@ impl Provider for TomlFileProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(cache) = self.cache.as_ref() {
-            cache.clone()
-        } else {
-            self.read()
-        }
+        self.cache.get_or_init(|| self.read()).clone()
     }
 }
 
@@ -127,16 +261,20 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut map = Map::new();
-        for (profile, dict) in self.0.data()? {
+        let mut map = self.0.data()?;
+        for (profile, dict) in &mut map {
             if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
                 // don't force snake case for keys in standalone sections
-                map.insert(profile, dict);
                 continue;
             }
-            map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+            let dict2 = std::mem::take(dict);
+            *dict = dict2.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect();
         }
         Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
     }
 }
 
@@ -164,13 +302,19 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
                     dict.insert("solc".to_string(), v);
                 }
             }
-
-            if let Some(v) = dict.remove("odyssey") {
-                dict.insert("odyssey".to_string(), v);
+            if let Some(v) = dict.remove("deny_warnings")
+                && !dict.contains_key("deny")
+            {
+                dict.insert("deny".to_string(), v);
             }
+
             map.insert(profile, dict);
         }
         Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
     }
 }
 
@@ -339,6 +483,7 @@ impl<P: Provider> Provider for RenameProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut data = self.provider.data()?;
         if let Some(data) = data.remove(&self.from) {
@@ -346,6 +491,7 @@ impl<P: Provider> Provider for RenameProfileProvider<P> {
         }
         Ok(Default::default())
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.to.clone())
     }
@@ -382,31 +528,32 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        self.provider.data().and_then(|mut data| {
-            if let Some(profiles) = data.remove(&self.wrapping_key) {
-                for (profile_str, profile_val) in profiles {
-                    let profile = Profile::new(&profile_str);
-                    if profile != self.profile {
-                        continue;
-                    }
-                    match profile_val {
-                        Value::Dict(_, dict) => return Ok(profile.collect(dict)),
-                        bad_val => {
-                            let mut err = Error::from(figment::error::Kind::InvalidType(
-                                bad_val.to_actual(),
-                                "dict".into(),
-                            ));
-                            err.metadata = Some(self.provider.metadata());
-                            err.profile = Some(self.profile.clone());
-                            return Err(err);
-                        }
+        let mut data = self.provider.data()?;
+        if let Some(profiles) = data.remove(&self.wrapping_key) {
+            for (profile_str, profile_val) in profiles {
+                let profile = Profile::new(&profile_str);
+                if profile != self.profile {
+                    continue;
+                }
+                match profile_val {
+                    Value::Dict(_, dict) => return Ok(profile.collect(dict)),
+                    bad_val => {
+                        let mut err = Error::from(figment::error::Kind::InvalidType(
+                            bad_val.to_actual(),
+                            "dict".into(),
+                        ));
+                        err.metadata = Some(self.provider.metadata());
+                        err.profile = Some(self.profile.clone());
+                        return Err(err);
                     }
                 }
             }
-            Ok(Default::default())
-        })
+        }
+        Ok(Default::default())
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
@@ -443,15 +590,18 @@ impl<P: Provider> Provider for WrapProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         if let Some(inner) = self.provider.data()?.remove(&self.profile) {
             let value = Value::from(inner);
-            let dict = [(self.profile.to_string().to_snake_case(), value)].into_iter().collect();
+            let mut dict = Dict::new();
+            dict.insert(self.profile.as_str().as_str().to_snake_case(), value);
             Ok(self.wrapping_key.collect(dict))
         } else {
             Ok(Default::default())
         }
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
@@ -496,6 +646,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut figment = Figment::from(&self.provider);
         for profile in &self.profiles {
@@ -516,6 +667,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
             err
         })
     }
+
     fn profile(&self) -> Option<Profile> {
         self.profiles.last().cloned()
     }
@@ -542,13 +694,11 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let data = self.provider.data()?;
-        if let Some(fallback) = data.get(&self.fallback) {
-            let mut inner = data.get(&self.profile).cloned().unwrap_or_default();
+        let mut data = self.provider.data()?;
+        if let Some(fallback) = data.remove(&self.fallback) {
+            let mut inner = data.remove(&self.profile).unwrap_or_default();
             for (k, v) in fallback {
-                if !inner.contains_key(k) {
-                    inner.insert(k.to_owned(), v.clone());
-                }
+                inner.entry(k).or_insert(v);
             }
             Ok(self.profile.collect(inner))
         } else {

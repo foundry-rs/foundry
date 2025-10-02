@@ -3,13 +3,13 @@
 //! Internal Foundry proc-macros.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate proc_macro_error2;
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Error};
+use syn::{DeriveInput, Error, parse_macro_input};
 
 mod cheatcodes;
 mod console_fmt;

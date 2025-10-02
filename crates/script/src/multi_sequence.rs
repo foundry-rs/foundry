@@ -1,6 +1,6 @@
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{
-    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
+    DRY_RUN_DIR, ScriptSequence, SensitiveScriptSequence, now, sig_to_file_name,
 };
 use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
@@ -19,7 +19,7 @@ pub struct MultiChainSequence {
     pub path: PathBuf,
     #[serde(skip)]
     pub sensitive_path: PathBuf,
-    pub timestamp: u64,
+    pub timestamp: u128,
 }
 
 /// Sensitive values from script sequences.
@@ -46,7 +46,7 @@ impl MultiChainSequence {
     ) -> Result<Self> {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
 
-        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_secs() })
+        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_millis() })
     }
 
     /// Gets paths in the formats
@@ -113,7 +113,7 @@ impl MultiChainSequence {
     pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
-        self.timestamp = now().as_secs();
+        self.timestamp = now().as_millis();
 
         let sensitive_sequence = SensitiveMultiChainSequence::from_multi_sequence(self.clone());
 

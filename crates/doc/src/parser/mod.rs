@@ -1,9 +1,9 @@
 //! The parser module.
 
-use forge_fmt::{FormatterConfig, Visitable, Visitor};
+use crate::solang_ext::{Visitable, Visitor};
 use itertools::Itertools;
 use solang_parser::{
-    doccomment::{parse_doccomments, DocComment},
+    doccomment::{DocComment, parse_doccomments},
     pt::{
         Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
         FunctionDefinition, Identifier, Loc, SourceUnit, SourceUnitPart, StructDefinition,
@@ -37,8 +37,6 @@ pub struct Parser {
     items: Vec<ParseItem>,
     /// Source file.
     source: String,
-    /// The formatter config.
-    fmt: FormatterConfig,
 }
 
 /// [Parser] context.
@@ -54,12 +52,6 @@ impl Parser {
     /// Create a new instance of [Parser].
     pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
         Self { comments, source, ..Default::default() }
-    }
-
-    /// Set formatter config on the [Parser]
-    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
-        self.fmt = fmt;
-        self
     }
 
     /// Return the parsed items. Consumes the parser.
@@ -101,7 +93,7 @@ impl Parser {
     /// Create new [ParseItem] with comments and formatted code.
     fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
-        ParseItem::new(source).with_comments(docs).with_code(&self.source, self.fmt.clone())
+        Ok(ParseItem::new(source).with_comments(docs).with_code(&self.source))
     }
 
     /// Parse the doc comments from the current start location.
@@ -185,17 +177,15 @@ impl Visitor for Parser {
         // `@custom:name` tag if any was provided
         let mut start_loc = func.loc.start();
         for (loc, param) in &mut func.params {
-            if let Some(param) = param {
-                if param.name.is_none() {
-                    let docs = self.parse_docs_range(start_loc, loc.end())?;
-                    let name_tag =
-                        docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
-                    if let Some(name_tag) = name_tag {
-                        if let Some(name) = name_tag.value.trim().split(' ').next() {
-                            param.name =
-                                Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
-                        }
-                    }
+            if let Some(param) = param
+                && param.name.is_none()
+            {
+                let docs = self.parse_docs_range(start_loc, loc.end())?;
+                let name_tag = docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
+                if let Some(name_tag) = name_tag
+                    && let Some(name) = name_tag.value.trim().split(' ').next()
+                {
+                    param.name = Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
                 }
             }
             start_loc = loc.end();
@@ -226,7 +216,6 @@ mod tests {
     use super::*;
     use solang_parser::parse;
 
-    #[inline]
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
         let mut doc = Parser::new(comments, src.to_owned());
@@ -298,7 +287,7 @@ mod tests {
                 struct ContractStruct { }
                 enum ContractEnum { }
 
-                uint256 constant CONTRACT_CONSTANT;
+                uint256 constant CONTRACT_CONSTANT = 0;
                 bool contractVar;
 
                 function contractFunction(uint256) external returns (uint256) {
@@ -355,15 +344,15 @@ mod tests {
             pragma solidity ^0.8.19;
             /// @name Test
             ///  no tag
-            ///@notice    Cool contract    
-            ///   @  dev     This is not a dev tag 
+            ///@notice    Cool contract
+            ///   @  dev     This is not a dev tag
             /**
              * @dev line one
              *    line 2
              */
             contract Test {
-                /*** my function    
-                      i like whitespace    
+                /** my function
+                      i like whitespace
             */
                 function test() {}
             }

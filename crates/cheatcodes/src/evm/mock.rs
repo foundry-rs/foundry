@@ -200,7 +200,7 @@ fn mock_calls(
     ret_type: InstructionResult,
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(
-        MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
+        MockCallDataContext { calldata: cdata.clone(), value: value.copied() },
         rdata_vec
             .iter()
             .map(|rdata| MockCallReturnData { ret_type, data: rdata.clone() })

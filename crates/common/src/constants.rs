@@ -1,8 +1,8 @@
 //! Commonly used constants.
 
-use alloy_consensus::Typed2718;
+use alloy_eips::Typed2718;
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{address, Address, Signature, B256};
+use alloy_primitives::{Address, B256, Signature, address};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -45,12 +45,14 @@ pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
 /// Default user agent set as the header for requests that don't specify one.
 pub const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
 
-/// Returns whether the sender is a known system sender that is the first tx in every block.
+/// Prefix for auto-generated type bindings using `forge bind-json`.
+pub const TYPE_BINDING_PREFIX: &str = "string constant schema_";
+
+/// Returns whether the sender is a known L2 system sender that is the first tx in every block.
 ///
 /// Transactions from these senders usually don't have a any fee information OR set absurdly high fees that exceed the gas limit (See: <https://github.com/foundry-rs/foundry/pull/10608>)
 ///
 /// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS] and [Address::ZERO]
-#[inline]
 pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, Address::ZERO].contains(&sender)
 }
@@ -65,7 +67,9 @@ pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
 pub fn is_impersonated_sig(sig: &Signature, ty: u8) -> bool {
     let impersonated_sig =
         Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
-    if ty != SYSTEM_TRANSACTION_TYPE && sig == &impersonated_sig {
+    if ty != SYSTEM_TRANSACTION_TYPE
+        && (sig == &impersonated_sig || sig.r() == impersonated_sig.r())
+    {
         return true;
     }
     false

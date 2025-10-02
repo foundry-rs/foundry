@@ -13,7 +13,7 @@ contract BroadcastRawTransactionTest is DSTest {
     }
 
     function test_revert_missing_signature() public {
-        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: input too short");
+        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: Unexpected type flag");
         vm.broadcastRawTransaction(hex"dd806483030d40940993863c19b0defb183ca2b502db7d1b331ded757b80");
     }
 

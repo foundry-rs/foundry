@@ -1,15 +1,16 @@
 use alloy_evm::Database;
-use alloy_primitives::Address;
-use foundry_common::sh_err;
+use alloy_primitives::{Address, Bytes};
 use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Inspector,
     bytecode::opcode::ADDRESS,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, interpreter_types::Jumps, InstructionResult, Interpreter,
+        InstructionResult, Interpreter, InterpreterAction,
+        interpreter::EthInterpreter,
+        interpreter_types::{Jumps, LoopControl},
     },
-    Inspector,
 };
 
 /// An inspector that enforces certain rules during script execution.
@@ -27,23 +28,18 @@ where
     CTX: ContextTr<Db = D>,
     CTX::Journal: JournalExt,
 {
-    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
-        if interpreter.bytecode.opcode() == ADDRESS &&
-            interpreter.input.target_address == self.script_address &&
-            interpreter.input.bytecode_address == Some(self.script_address)
+        if interpreter.bytecode.opcode() == ADDRESS
+            && interpreter.input.target_address == self.script_address
+            && interpreter.input.bytecode_address == Some(self.script_address)
         {
-            // Log the reason for revert
-            let _ = sh_err!(
-                "Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon."
-            );
-            // Set the instruction result to Revert to stop execution
-            interpreter.control.instruction_result = InstructionResult::Revert;
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                Bytes::from("Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon."),
+                interpreter.gas,
+            ));
         }
-        // Note: We don't return anything here as step returns void.
-        // The original check returned InstructionResult::Continue, but that's the default
-        // behavior.
     }
 }

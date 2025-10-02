@@ -440,7 +440,7 @@ contract MemSafetyTest is DSTest {
         vm.stopExpectSafeMemory();
 
         assembly {
-            // write ouside allowed range, this should be fine
+            // write outside allowed range, this should be fine
             mstore(add(initPtr, 0x20), 0x01)
         }
     }

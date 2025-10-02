@@ -1,10 +1,10 @@
 use alloy_network::{Ethereum, EthereumWallet};
 use alloy_provider::{
-    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
     Identity, RootProvider,
+    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
 };
 use foundry_common::provider::{
-    get_http_provider, ProviderBuilder, RetryProvider, RetryProviderWithSigner,
+    ProviderBuilder, RetryProvider, RetryProviderWithSigner, get_http_provider,
 };
 
 pub fn http_provider(http_endpoint: &str) -> RetryProvider {

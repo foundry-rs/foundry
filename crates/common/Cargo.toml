@@ -16,8 +16,8 @@ workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
-foundry-config.workspace = true
 
+alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-eips.workspace = true
 alloy-json-abi.workspace = true
@@ -44,8 +44,9 @@ alloy-transport.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
-solar-parse.workspace = true
-solar-sema.workspace = true
+revm.workspace = true
+
+solar.workspace = true
 
 tower.workspace = true
 
@@ -57,6 +58,7 @@ itertools.workspace = true
 jiff.workspace = true
 num-format.workspace = true
 path-slash.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -70,8 +72,9 @@ yansi.workspace = true
 
 anstream.workspace = true
 anstyle.workspace = true
-terminal_size.workspace = true
 ciborium.workspace = true
+
+flate2.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

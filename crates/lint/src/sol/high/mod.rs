@@ -1,9 +1,13 @@
-use crate::{
-    register_lints,
-    sol::{EarlyLintPass, SolLint},
-};
+use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
 mod incorrect_shift;
-use incorrect_shift::INCORRECT_SHIFT;
+mod unchecked_calls;
 
-register_lints!((IncorrectShift, (INCORRECT_SHIFT)));
+use incorrect_shift::INCORRECT_SHIFT;
+use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
+
+register_lints!(
+    (IncorrectShift, early, (INCORRECT_SHIFT)),
+    (UncheckedCall, early, (UNCHECKED_CALL)),
+    (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER))
+);

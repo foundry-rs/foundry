@@ -1,13 +1,14 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, TxKind};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
+    utils::lookup_compiler_version,
 };
 use foundry_common::{
     abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
@@ -16,12 +17,12 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode, Env, EnvMut,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    traces::TraceMode,
 };
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
-use semver::Version;
+use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
@@ -121,16 +122,15 @@ pub fn build_using_cache(
                 }
 
                 // Check if Solidity version matches
-                if let Ok(version) = Version::parse(&version) {
-                    if !(artifact.version.major == version.major &&
-                        artifact.version.minor == version.minor &&
-                        artifact.version.patch == version.patch)
-                    {
-                        continue;
-                    }
+                if let Ok(version) = Version::parse(&version)
+                    && !(artifact.version.major == version.major
+                        && artifact.version.minor == version.minor
+                        && artifact.version.patch == version.patch)
+                {
+                    continue;
                 }
 
-                return Ok(artifact.artifact)
+                return Ok(artifact.artifact);
             }
         }
     }
@@ -185,7 +185,7 @@ fn is_partial_match(
     // 1. Check length of constructor args
     if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        return try_extract_and_compare_bytecode(local_bytecode, bytecode)
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
@@ -224,12 +224,12 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64) ||
-        (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
+        || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.unwrap(),
+            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -290,13 +290,14 @@ pub fn check_args_len(
     artifact: &CompactContractBytecode,
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
-    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.is_empty() {
-            eyre::bail!(
-                "Contract expects {} constructor argument(s), but none were provided",
-                constructor.inputs.len()
-            );
-        }
+    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor())
+        && !constructor.inputs.is_empty()
+        && args.is_empty()
+    {
+        eyre::bail!(
+            "Contract expects {} constructor argument(s), but none were provided",
+            constructor.inputs.len()
+        );
     }
     Ok(())
 }
@@ -311,7 +312,7 @@ pub async fn get_tracing_executor(
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (env, fork, _chain, is_odyssey) =
+    let (env, fork, _chain, networks) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
@@ -319,15 +320,16 @@ pub async fn get_tracing_executor(
         fork,
         Some(fork_config.evm_version),
         TraceMode::Call,
-        is_odyssey,
+        networks,
         create2_deployer,
+        None,
     )?;
 
     Ok((env, executor))
 }
 
 pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
-    env.block.timestamp = block.header.timestamp;
+    env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
@@ -351,7 +353,9 @@ pub fn deploy_contract(
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
         if to != DEFAULT_CREATE2_DEPLOYER {
-            eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
+            eyre::bail!(
+                "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
+            );
         }
         let result = executor.transact_with_env(env)?;
 
@@ -406,9 +410,26 @@ pub async fn get_runtime_codes(
 /// Returns `true` if the URL only consists of host.
 ///
 /// This is used to check user input url for missing /api path
-#[inline]
 pub fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
+}
+
+/// Given any solc [Version] return a [Version] with build metadata
+///
+/// # Example
+///
+/// ```ignore
+/// use semver::{BuildMetadata, Version};
+/// let version = Version::new(1, 2, 3);
+/// let version = ensure_solc_build_metadata(version).await?;
+/// assert_ne!(version.build, BuildMetadata::EMPTY);
+/// ```
+pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
+    if version.build != BuildMetadata::EMPTY {
+        Ok(version)
+    } else {
+        Ok(lookup_compiler_version(&version).await?)
+    }
 }
 
 #[cfg(test)]

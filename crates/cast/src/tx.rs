@@ -7,14 +7,13 @@ use alloy_network::{
     AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
     TransactionBuilder7702,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use eyre::Result;
-use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
@@ -98,16 +97,16 @@ pub fn validate_from_address(
     specified_from: Option<Address>,
     signer_address: Address,
 ) -> Result<()> {
-    if let Some(specified_from) = specified_from {
-        if specified_from != signer_address {
-            eyre::bail!(
+    if let Some(specified_from) = specified_from
+        && specified_from != signer_address
+    {
+        eyre::bail!(
                 "\
 The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
             )
-        }
     }
     Ok(())
 }
@@ -144,7 +143,6 @@ pub struct CastTxBuilder<P, S> {
     auth: Option<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
-    etherscan_api_version: EtherscanApiVersion,
     access_list: Option<Option<AccessList>>,
     state: S,
 }
@@ -156,7 +154,6 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_version = config.get_etherscan_api_version(Some(chain));
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_none());
@@ -177,10 +174,8 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             }
         }
 
-        if !legacy {
-            if let Some(priority_fee) = tx_opts.priority_gas_price {
-                tx.set_max_priority_fee_per_gas(priority_fee.to());
-            }
+        if !legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
         }
 
         if let Some(max_blob_fee) = tx_opts.blob_gas_price {
@@ -198,7 +193,6 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             blob: tx_opts.blob,
             chain,
             etherscan_api_key,
-            etherscan_api_version,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -215,7 +209,6 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
-            etherscan_api_version: self.etherscan_api_version,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -241,7 +234,6 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
-                self.etherscan_api_version,
             )
             .await?
         } else {
@@ -273,7 +265,6 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
-            etherscan_api_version: self.etherscan_api_version,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
@@ -374,8 +365,8 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
             self.tx.max_fee_per_blob_gas = Some(self.provider.get_blob_base_fee().await?)
         }
 
-        if !self.legacy &&
-            (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
+        if !self.legacy
+            && (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
         {
             let estimate = self.provider.estimate_eip1559_fees().await?;
 
@@ -408,12 +399,11 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
                 if let TransportError::ErrorResp(payload) = &err {
                     // If execution reverted with code 3 during provider gas estimation then try
                     // to decode custom errors and append it to the error message.
-                    if payload.code == 3 {
-                        if let Some(data) = &payload.data {
-                            if let Ok(Some(decoded_error)) = decode_execution_revert(data).await {
-                                eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
-                            }
-                        }
+                    if payload.code == 3
+                        && let Some(data) = &payload.data
+                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
+                    {
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
                     }
                 }
                 eyre::bail!("Failed to estimate gas: {}", err)
@@ -475,12 +465,12 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
     {
         let mut decoded_error = known_error.name.clone();
-        if !known_error.inputs.is_empty() {
-            if let Ok(error) = known_error.decode_error(&err_data) {
-                write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
-            }
+        if !known_error.inputs.is_empty()
+            && let Ok(error) = known_error.decode_error(&err_data)
+        {
+            write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
         }
-        return Ok(Some(decoded_error))
+        return Ok(Some(decoded_error));
     }
     Ok(None)
 }

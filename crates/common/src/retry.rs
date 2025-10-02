@@ -1,7 +1,7 @@
 //! Retry utilities.
 
 use eyre::{Error, Report, Result};
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
 /// Error type for Retry.
 #[derive(Debug, thiserror::Error)]

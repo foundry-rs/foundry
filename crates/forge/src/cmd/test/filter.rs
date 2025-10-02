@@ -1,7 +1,7 @@
 use clap::Parser;
 use foundry_common::TestFilter;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
-use foundry_config::{filter::GlobMatcher, Config};
+use foundry_config::{Config, filter::GlobMatcher};
 use std::{fmt, path::Path};
 
 /// The filter to use during testing.
@@ -47,12 +47,12 @@ pub struct FilterArgs {
 impl FilterArgs {
     /// Returns true if the filter is empty.
     pub fn is_empty(&self) -> bool {
-        self.test_pattern.is_none() &&
-            self.test_pattern_inverse.is_none() &&
-            self.contract_pattern.is_none() &&
-            self.contract_pattern_inverse.is_none() &&
-            self.path_pattern.is_none() &&
-            self.path_pattern_inverse.is_none()
+        self.test_pattern.is_none()
+            && self.test_pattern_inverse.is_none()
+            && self.contract_pattern.is_none()
+            && self.contract_pattern_inverse.is_none()
+            && self.path_pattern.is_none()
+            && self.path_pattern_inverse.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -106,13 +106,13 @@ impl FileFilter for FilterArgs {
 }
 
 impl TestFilter for FilterArgs {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_signature: &str) -> bool {
         let mut ok = true;
         if let Some(re) = &self.test_pattern {
-            ok = ok && re.is_match(test_name);
+            ok = ok && re.is_match(test_signature);
         }
         if let Some(re) = &self.test_pattern_inverse {
-            ok = ok && !re.is_match(test_name);
+            ok = ok && !re.is_match(test_signature);
         }
         ok
     }
@@ -207,8 +207,8 @@ impl FileFilter for ProjectPathsAwareFilter {
 }
 
 impl TestFilter for ProjectPathsAwareFilter {
-    fn matches_test(&self, test_name: &str) -> bool {
-        self.args_filter.matches_test(test_name)
+    fn matches_test(&self, test_signature: &str) -> bool {
+        self.args_filter.matches_test(test_signature)
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {

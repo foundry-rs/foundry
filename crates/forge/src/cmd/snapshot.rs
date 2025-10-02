@@ -1,9 +1,13 @@
 use super::test;
 use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
-use alloy_primitives::{map::HashMap, U256};
-use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
+use alloy_primitives::{U256, map::HashMap};
+use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
+use comfy_table::{
+    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+};
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
+use foundry_common::shell;
 use regex::Regex;
 use std::{
     cmp::Ordering,
@@ -94,7 +98,7 @@ impl GasSnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let outcome = self.test.execute_tests().await?;
+        let outcome = self.test.compile_and_run().await?;
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -111,13 +115,17 @@ impl GasSnapshotArgs {
                 std::process::exit(1)
             }
         } else {
+            if matches!(self.format, Some(Format::Table)) {
+                let table = build_gas_snapshot_table(&tests);
+                sh_println!("\n{}", table)?;
+            }
             write_to_gas_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
 }
 
-// TODO implement pretty tables
+// Gas report format on stdout.
 #[derive(Clone, Debug)]
 pub enum Format {
     Table,
@@ -156,15 +164,15 @@ struct GasSnapshotConfig {
 
 impl GasSnapshotConfig {
     fn is_in_gas_range(&self, gas_used: u64) -> bool {
-        if let Some(min) = self.min {
-            if gas_used < min {
-                return false
-            }
+        if let Some(min) = self.min
+            && gas_used < min
+        {
+            return false;
         }
-        if let Some(max) = self.max {
-            if gas_used > max {
-                return false
-            }
+        if let Some(max) = self.max
+            && gas_used > max
+        {
+            return false;
         }
         true
     }
@@ -225,6 +233,7 @@ impl FromStr for GasSnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         median_gas: med.as_str().parse().unwrap(),
                                         mean_gas: avg.as_str().parse().unwrap(),
+                                        failed_corpus_replays: 0,
                                     },
                                 })
                         } else {
@@ -242,6 +251,7 @@ impl FromStr for GasSnapshotEntry {
                                         calls: calls.as_str().parse().unwrap(),
                                         reverts: reverts.as_str().parse().unwrap(),
                                         metrics: HashMap::default(),
+                                        failed_corpus_replays: 0,
                                     },
                                 })
                         }
@@ -286,6 +296,31 @@ fn write_to_gas_snapshot_file(
 
     let content = reports.join("\n");
     Ok(fs::write(path, content)?)
+}
+
+fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
+    let mut table = Table::new();
+    if shell::is_markdown() {
+        table.load_preset(ASCII_MARKDOWN);
+    } else {
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+    }
+
+    table.set_header(vec![
+        Cell::new("Contract").fg(Color::Cyan),
+        Cell::new("Signature").fg(Color::Cyan),
+        Cell::new("Report").fg(Color::Cyan),
+    ]);
+
+    for test in tests {
+        let mut row = Row::new();
+        row.add_cell(Cell::new(test.contract_name()));
+        row.add_cell(Cell::new(&test.signature));
+        row.add_cell(Cell::new(test.result.kind.report().to_string()));
+        table.add_row(row);
+    }
+
+    table
 }
 
 /// A Gas snapshot entry diff.
@@ -470,7 +505,12 @@ mod tests {
             GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
+                gas_used: TestKindReport::Fuzz {
+                    runs: 256,
+                    median_gas: 200,
+                    mean_gas: 100,
+                    failed_corpus_replays: 0
+                }
             }
         );
     }
@@ -488,7 +528,8 @@ mod tests {
                     runs: 256,
                     calls: 100,
                     reverts: 200,
-                    metrics: HashMap::default()
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: 0,
                 }
             }
         );
@@ -507,7 +548,8 @@ mod tests {
                     runs: 256,
                     calls: 3840,
                     reverts: 2388,
-                    metrics: HashMap::default()
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: 0,
                 }
             }
         );

@@ -18,6 +18,9 @@ contract A {
 }
 
 contract Issue10527Test is DSTest {
+    event Event1();
+    event Event2();
+
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     A a;
@@ -28,14 +31,14 @@ contract Issue10527Test is DSTest {
 
     function test_foo_Event1() public {
         vm.expectEmit(address(a));
-        emit A.Event1();
+        emit Event1();
 
         a.foo();
     }
 
     function test_foo_Event2() public {
         vm.expectEmit({emitter: address(a), count: 0});
-        emit A.Event2();
+        emit Event2();
 
         a.foo();
     }

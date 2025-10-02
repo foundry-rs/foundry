@@ -1,4 +1,5 @@
 use crate::{
+    EthereumHardfork, FeeManager, PrecompileFactory,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -11,36 +12,36 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    hardfork::{ethereum_hardfork_from_block_tag, spec_id_from_ethereum_hardfork, ChainHardfork},
+    hardfork::{ChainHardfork, ethereum_hardfork_from_block_tag, spec_id_from_ethereum_hardfork},
     mem::{self, in_memory_db::MemDb},
-    EthereumHardfork, FeeManager, PrecompileFactory,
 };
+use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_op_hardforks::OpHardfork;
-use alloy_primitives::{hex, map::HashMap, utils::Unit, BlockNumber, TxHash, U256};
+use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
 use alloy_signer::Signer;
 use alloy_signer_local::{
-    coins_bip39::{English, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
+    coins_bip39::{English, Mnemonic},
 };
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::{ProviderBuilder, RetryProvider},
 };
 use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    utils::apply_chain_and_block_specific_env_changes,
+    core::AsEnvMut,
+    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
-use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
@@ -50,7 +51,7 @@ use revm::{
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
     fs::File,
@@ -64,6 +65,8 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -96,6 +99,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
@@ -182,16 +187,16 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
-    /// Enable Optimism deposit transaction
-    pub enable_optimism: bool,
+    /// Disable pool balance checks
+    pub disable_pool_balance_checks: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Odyssey features.
-    pub odyssey: bool,
+    /// Networks to enable features for.
+    pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -232,7 +237,7 @@ Private Keys
             let _ = write!(s, "\n({idx}) 0x{hex}");
         }
 
-        if let Some(ref gen) = self.account_generator {
+        if let Some(generator) = &self.account_generator {
             let _ = write!(
                 s,
                 r#"
@@ -242,8 +247,8 @@ Wallet
 Mnemonic:          {}
 Derivation path:   {}
 "#,
-                gen.phrase,
-                gen.get_derivation_path()
+                generator.phrase,
+                generator.get_derivation_path()
             );
         }
 
@@ -365,9 +370,9 @@ Genesis Number
             private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
         }
 
-        if let Some(ref gen) = self.account_generator {
-            let phrase = gen.get_phrase().to_string();
-            let derivation_path = gen.get_derivation_path().to_string();
+        if let Some(generator) = &self.account_generator {
+            let phrase = generator.get_phrase().to_string();
+            let derivation_path = generator.get_derivation_path().to_string();
 
             wallet_description.insert("derivation_path".to_string(), derivation_path);
             wallet_description.insert("mnemonic".to_string(), phrase);
@@ -429,12 +434,15 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts =
-            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen().expect("Invalid mnemonic.");
+        let genesis_accounts = AccountGenerator::new(10)
+            .phrase(DEFAULT_MNEMONIC)
+            .generate()
+            .expect("Invalid mnemonic.");
         Self {
             chain_id: None,
             gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -447,7 +455,6 @@ impl Default for NodeConfig {
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
-            // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             eth_rpc_url: None,
             fork_choice: None,
@@ -480,11 +487,11 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
-            enable_optimism: false,
+            disable_pool_balance_checks: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            odyssey: false,
+            networks: Default::default(),
             silent: false,
             cache_path: None,
         }
@@ -511,26 +518,27 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
-            *blob_excess_gas_and_price
-        } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
-        {
-            BlobExcessGasAndPrice::new(excess_blob_gas, false)
+        if let Some(value) = self.blob_excess_gas_and_price {
+            value
         } else {
-            // If no excess blob gas is configured, default to 0
-            BlobExcessGasAndPrice::new(0, false)
+            let excess_blob_gas =
+                self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
+            BlobExcessGasAndPrice::new(
+                excess_blob_gas,
+                get_blob_base_fee_update_fraction(
+                    self.chain_id.unwrap_or(Chain::mainnet().id()),
+                    self.get_genesis_timestamp(),
+                ),
+            )
         }
     }
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::default());
-        }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.enable_optimism {
+        if self.networks.optimism {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
@@ -584,6 +592,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
+        self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -605,6 +614,15 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
+        self
+    }
+
+    /// Enable tx gas limit check
+    ///
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    #[must_use]
+    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+        self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
@@ -719,7 +737,7 @@ impl NodeConfig {
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
-        let accounts = generator.gen()?;
+        let accounts = generator.generate()?;
         self.account_generator = Some(generator);
         Ok(self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts))
     }
@@ -974,7 +992,7 @@ impl NodeConfig {
     /// Sets whether to enable optimism support
     #[must_use]
     pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.enable_optimism = enable_optimism;
+        self.networks.optimism = enable_optimism;
         self
     }
 
@@ -985,6 +1003,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable pool balance checks
+    #[must_use]
+    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+        self.disable_pool_balance_checks = yes;
+        self
+    }
+
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
     pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
@@ -992,10 +1017,21 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
+    /// Enable features for provided networks.
     #[must_use]
-    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
-        self.odyssey = odyssey;
+    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+        self.networks = networks;
+        self
+    }
+
+    /// Sets whether to enable Celo support
+    #[must_use]
+    pub fn with_celo(mut self, celo: bool) -> Self {
+        self.networks.celo = celo;
+        if celo {
+            // Celo requires Optimism support
+            self.networks.optimism = true;
+        }
         self
     }
 
@@ -1036,6 +1072,10 @@ impl NodeConfig {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
+
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
         }
@@ -1052,7 +1092,7 @@ impl NodeConfig {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()
             },
-            self.enable_optimism,
+            self.networks,
         );
 
         let fees = FeeManager::new(
@@ -1077,12 +1117,12 @@ impl NodeConfig {
             if self.chain_id.is_none() {
                 env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.evm_env.block_env.timestamp = genesis.timestamp;
+            env.evm_env.block_env.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.evm_env.block_env.number = number;
+                env.evm_env.block_env.number = U256::from(number);
             }
             env.evm_env.block_env.beneficiary = genesis.coinbase;
         }
@@ -1095,6 +1135,15 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        if self.print_traces {
+            // if traces should get printed we configure the decoder with the signatures cache
+            if let Ok(identifier) = SignaturesIdentifier::new(false) {
+                debug!(target: "node", "using signature identifier");
+                decoder_builder = decoder_builder.with_signature_identifier(identifier);
+            }
+        }
+
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
@@ -1105,7 +1154,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
-            self.odyssey,
+            Arc::new(decoder_builder.build()),
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,
@@ -1235,8 +1284,8 @@ latest block number: {latest_block}"
         self.gas_limit = Some(gas_limit);
 
         env.evm_env.block_env = BlockEnv {
-            number: fork_block_number,
-            timestamp: block.header.timestamp,
+            number: U256::from(fork_block_number),
+            timestamp: U256::from(block.header.timestamp),
             difficulty: block.header.difficulty,
             // ensures prevrandao is set
             prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
@@ -1266,23 +1315,34 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                env.evm_env.block_env.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
+                let blob_base_fee_update_fraction = get_blob_base_fee_update_fraction(
+                    fork_chain_id
+                        .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
+                        .saturating_to(),
+                    block.header.timestamp,
+                );
+
+                env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                    blob_excess_gas,
+                    blob_base_fee_update_fraction,
+                ));
+
                 let next_block_blob_excess_gas =
                     fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
-                    false,
+                    blob_base_fee_update_fraction,
                 ));
             }
         }
 
         // use remote gas price
-        if self.gas_price.is_none() {
-            if let Ok(gas_price) = provider.get_gas_price().await {
-                self.gas_price = Some(gas_price);
-                fees.set_gas_price(gas_price);
-            }
+        if self.gas_price.is_none()
+            && let Ok(gas_price) = provider.get_gas_price().await
+        {
+            self.gas_price = Some(gas_price);
+            fees.set_gas_price(gas_price);
         }
 
         let block_hash = block.header.hash;
@@ -1315,11 +1375,12 @@ latest block number: {latest_block}"
 
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
-        let backend = SharedBackend::spawn_backend_thread(
+        let backend = SharedBackend::spawn_backend(
             Arc::clone(&provider),
             block_chain_db.clone(),
             Some(fork_block_number.into()),
-        );
+        )
+        .await;
 
         let config = ClientForkConfig {
             eth_rpc_url,
@@ -1406,7 +1467,9 @@ async fn derive_block_and_transactions(
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
-            let transaction_block_number = transaction.block_number.unwrap();
+            let transaction_block_number = transaction.block_number.ok_or_else(|| {
+                eyre::eyre!("fork transaction is not mined yet (no block number)")
+            })?;
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
@@ -1551,7 +1614,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
+    pub fn generate(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
@@ -1590,10 +1653,10 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num.into()).await? {
-            if !block.header.hash.is_zero() {
-                break;
-            }
+        if let Some(block) = provider.get_block(num.into()).await?
+            && !block.header.hash.is_zero()
+        {
+            break;
         }
         // block not actually finalized, so we try the block before
         num = num.saturating_sub(1)

@@ -1,17 +1,20 @@
-use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
+use super::interface::load_abi_from_file;
 use crate::SimpleCast;
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::{ext::TraceApi, Provider};
+use alloy_provider::{Provider, ext::TraceApi};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
-use clap::{command, Parser};
-use eyre::{eyre, OptionExt, Result};
+use clap::Parser;
+use eyre::{OptionExt, Result, eyre};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
 use foundry_common::provider::RetryProvider;
+use foundry_config::Config;
+
+foundry_config::impl_figment_convert!(CreationCodeArgs, etherscan, rpc);
 
 /// CLI arguments for `cast creation-code`.
 #[derive(Parser)]
@@ -45,20 +48,21 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, mut etherscan, rpc, disassemble, without_args, only_args, abi_path } =
+        let mut config = self.load_config()?;
+
+        let Self { contract, disassemble, without_args, only_args, abi_path, etherscan: _, rpc: _ } =
             self;
 
-        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let chain = provider.get_chain_id().await?;
-        etherscan.chain = Some(chain.into());
+        config.chain = Some(chain.into());
 
-        let bytecode = fetch_creation_code_from_etherscan(contract, &etherscan, provider).await?;
+        let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
 
         let bytecode = parse_code_output(
             bytecode,
             contract,
-            &etherscan,
+            &config,
             abi_path.as_deref(),
             without_args,
             only_args,
@@ -82,7 +86,7 @@ impl CreationCodeArgs {
 pub async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
-    etherscan: &EtherscanOpts,
+    config: &Config,
     abi_path: Option<&str>,
     without_args: bool,
     only_args: bool,
@@ -94,7 +98,7 @@ pub async fn parse_code_output(
     let abi = if let Some(abi_path) = abi_path {
         load_abi_from_file(abi_path, None)?
     } else {
-        fetch_abi_from_etherscan(contract, etherscan).await?
+        fetch_abi_from_etherscan(contract, config).await?
     };
 
     let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
@@ -131,14 +135,12 @@ pub async fn parse_code_output(
 /// Fetches the creation code of a contract from Etherscan and RPC.
 pub async fn fetch_creation_code_from_etherscan(
     contract: Address,
-    etherscan: &EtherscanOpts,
+    config: &Config,
     provider: RetryProvider,
 ) -> Result<Bytes> {
-    let config = etherscan.load_config()?;
     let chain = config.chain.unwrap_or_default();
-    let api_version = config.get_etherscan_api_version(Some(chain));
     let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new_with_api_version(chain, api_key, api_version)?;
+    let client = Client::new(chain, api_key)?;
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
@@ -157,13 +159,13 @@ pub async fn fetch_creation_code_from_etherscan(
         })?;
 
         for trace in traces {
-            if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result {
-                if address == contract {
-                    creation_bytecode = match trace.trace.action {
-                        Action::Create(CreateAction { init, .. }) => Some(init),
-                        _ => None,
-                    };
-                }
+            if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result
+                && address == contract
+            {
+                creation_bytecode = match trace.trace.action {
+                    Action::Create(CreateAction { init, .. }) => Some(init),
+                    _ => None,
+                };
             }
         }
 

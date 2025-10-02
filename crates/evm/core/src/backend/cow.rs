@@ -2,12 +2,12 @@
 
 use super::BackendError;
 use crate::{
+    AsEnvMut, Env, EnvMut, InspectorExt,
     backend::{
-        diagnostic::RevertDiagnostic, Backend, DatabaseExt, JournaledState, LocalForkId,
-        RevertStateSnapshotAction,
+        Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
+        diagnostic::RevertDiagnostic,
     },
     fork::{CreateFork, ForkId},
-    AsEnvMut, Env, EnvMut, InspectorExt,
 };
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
@@ -16,12 +16,12 @@ use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{hardfork::SpecId, HashMap as Map},
+    primitives::{HashMap as Map, hardfork::SpecId},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -67,7 +67,7 @@ impl<'a> CowBackend<'a> {
     pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut Env,
-        inspector: &mut I,
+        inspector: I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
@@ -100,7 +100,7 @@ impl<'a> CowBackend<'a> {
             env.evm_env.cfg_env.spec = self.spec_id;
             backend.initialize(&env);
             self.is_initialized = true;
-            return backend
+            return backend;
         }
         self.backend.to_mut()
     }
@@ -108,7 +108,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend if it is initialized.
     fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
         if self.is_initialized {
-            return Some(self.backend.to_mut())
+            return Some(self.backend.to_mut());
         }
         None
     }
@@ -132,7 +132,7 @@ impl DatabaseExt for CowBackend<'_> {
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
         // delete state snapshot requires a previous snapshot to be initialized
         if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_state_snapshot(id)
+            return backend.delete_state_snapshot(id);
         }
         false
     }

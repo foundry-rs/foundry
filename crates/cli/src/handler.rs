@@ -38,7 +38,7 @@ impl EyreHandler for Handler {
         }
 
         if f.alternate() {
-            return fmt::Debug::fmt(error, f)
+            return fmt::Debug::fmt(error, f);
         }
         let errors = foundry_common::errors::dedup_chain(error);
 
@@ -80,7 +80,9 @@ impl EyreHandler for Handler {
 /// Panics are always caught by the more debug-centric handler.
 pub fn install() {
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        std::env::set_var("RUST_BACKTRACE", "1");
+        unsafe {
+            std::env::set_var("RUST_BACKTRACE", "1");
+        }
     }
 
     let panic_section =

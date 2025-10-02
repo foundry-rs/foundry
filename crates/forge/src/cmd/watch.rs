@@ -11,20 +11,23 @@ use parking_lot::Mutex;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Arc,
+        atomic::{AtomicU8, Ordering},
     },
     time::Duration,
 };
 use tokio::process::Command as TokioCommand;
 use watchexec::{
+    Watchexec,
     action::ActionHandler,
     command::{Command, Program},
     job::{CommandState, Job},
     paths::summarise_events_to_env,
-    Watchexec,
 };
-use watchexec_events::{Event, Priority, ProcessEnd};
+use watchexec_events::{
+    Event, Priority, ProcessEnd, Tag,
+    filekind::{AccessKind, FileEventKind},
+};
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
 
@@ -179,6 +182,34 @@ impl WatchArgs {
                 return action;
             }
 
+            if cfg!(target_os = "linux") {
+                // Reading a file now triggers `Access(Open)` events on Linux due to:
+                // https://github.com/notify-rs/notify/pull/612
+                // This causes an infinite rebuild loop: the build reads a file,
+                // which triggers a notification, which restarts the build, and so on.
+                // To prevent this, we ignore `Access(Open)` events during event processing.
+                let mut has_file_events = false;
+                let mut has_synthetic_events = false;
+                'outer: for e in action.events.iter() {
+                    if e.is_empty() {
+                        has_synthetic_events = true;
+                        break;
+                    } else {
+                        for tag in &e.tags {
+                            if let Tag::FileEventKind(kind) = tag
+                                && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
+                                    has_file_events = true;
+                                    break 'outer;
+                                }
+                        }
+                    }
+                }
+                if !has_file_events && !has_synthetic_events {
+                    debug!("no filesystem events (other than Access(Open)) or synthetic events, skip without doing more");
+                    return action;
+                }
+            }
+
             job.run({
                 let job = job.clone();
                 move |context| {
@@ -265,10 +296,10 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build.load_config()?;
     let filter = args.filter(&config)?;
     // Marker to check whether to override the command.
-    let no_reconfigure = filter.args().test_pattern.is_some() ||
-        filter.args().path_pattern.is_some() ||
-        filter.args().contract_pattern.is_some() ||
-        args.watch.run_all;
+    let no_reconfigure = filter.args().test_pattern.is_some()
+        || filter.args().path_pattern.is_some()
+        || filter.args().contract_pattern.is_some()
+        || args.watch.run_all;
 
     let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.to_string_lossy().into_owned();
@@ -373,11 +404,11 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
             let mut iter = arg.chars().peekable();
             if *iter.peek()? != '-' {
-                return None
+                return None;
             }
             iter.next();
             if *iter.peek()? == '-' {
-                return None
+                return None;
             }
             Some(iter.any(|c| c == 'w'))
         }

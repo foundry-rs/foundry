@@ -1,22 +1,16 @@
-//! The TUI implementation.
+//! The debugger TUI.
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use eyre::Result;
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
     Terminal,
+    backend::{Backend, CrosstermBackend},
 };
-use std::{
-    io,
-    ops::ControlFlow,
-    sync::{mpsc, Arc},
-    thread,
-    time::{Duration, Instant},
-};
+use std::{io, ops::ControlFlow, sync::Arc};
 
 mod context;
 use crate::debugger::DebuggerContext;
@@ -33,7 +27,7 @@ pub enum ExitReason {
     CharExit,
 }
 
-/// The TUI debugger.
+/// The debugger TUI.
 pub struct TUI<'a> {
     debugger_context: &'a mut DebuggerContext,
 }
@@ -48,60 +42,24 @@ impl<'a> TUI<'a> {
     pub fn try_run(&mut self) -> Result<ExitReason> {
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
-        TerminalGuard::with(terminal, |terminal| self.try_run_real(terminal))
+        TerminalGuard::with(terminal, |terminal| self.run_inner(terminal))
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
-    fn try_run_real(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
-        // Create the context.
+    fn run_inner(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
         let mut cx = TUIContext::new(self.debugger_context);
-
         cx.init();
-
-        // Create an event listener in a different thread.
-        let (tx, rx) = mpsc::channel();
-        thread::Builder::new()
-            .name("event-listener".into())
-            .spawn(move || Self::event_listener(tx))
-            .expect("failed to spawn thread");
-
-        // Start the event loop.
         loop {
             cx.draw(terminal)?;
-            match cx.handle_event(rx.recv()?) {
+            match cx.handle_event(event::read()?) {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(reason) => return Ok(reason),
             }
         }
     }
-
-    fn event_listener(tx: mpsc::Sender<Event>) {
-        // This is the recommend tick rate from `ratatui`, based on their examples
-        let tick_rate = Duration::from_millis(200);
-
-        let mut last_tick = Instant::now();
-        loop {
-            // Poll events since last tick - if last tick is greater than tick_rate, we
-            // demand immediate availability of the event. This may affect interactivity,
-            // but I'm not sure as it is hard to test.
-            if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-                let event = event::read().unwrap();
-                if tx.send(event).is_err() {
-                    return;
-                }
-            }
-
-            // Force update if time has passed
-            if last_tick.elapsed() > tick_rate {
-                last_tick = Instant::now();
-            }
-        }
-    }
 }
 
-// TODO: Update once on 1.82
-#[expect(deprecated)]
-type PanicHandler = Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>;
+type PanicHandler = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + 'static + Sync + Send>;
 
 /// Handles terminal state.
 #[must_use]

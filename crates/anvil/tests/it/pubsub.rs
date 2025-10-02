@@ -8,7 +8,7 @@ use alloy_pubsub::Subscription;
 use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]

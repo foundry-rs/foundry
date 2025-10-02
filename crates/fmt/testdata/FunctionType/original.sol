@@ -28,4 +28,12 @@ library ArrayUtils {
             r[i] = i;
         }
     }
+
+    function _castToPure(function(bytes memory) internal view fnIn)
+returns (function(bytes memory) pure fnOut)
+   {
+       assembly {
+           fnOut := fnIn
+           }
+        }
 }

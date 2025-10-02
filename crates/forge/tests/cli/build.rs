@@ -42,11 +42,10 @@ contract Dummy {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     // set up command
-    cmd.args(["compile", "--format-json"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["compile", "--format-json"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
 {
   "errors": [
     {
@@ -71,7 +70,7 @@ contract Dummy {
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
-    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -99,6 +98,16 @@ Compiler run successful!
 "#]]
         .is_json(),
     );
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|---------------|------------------|-------------------|--------------------|---------------------|
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+
+
+"#]]);
 
     // Ignore EIP-3860
 
@@ -132,6 +141,19 @@ No files changed, compilation skipped
 "#]]
             .is_json(),
         );
+
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--ignore-eip-3860", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|---------------|------------------|-------------------|--------------------|---------------------|
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+
+
+"#]]);
 });
 
 // tests build output is as expected
@@ -175,6 +197,16 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 "#]]
         .is_json(),
     );
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  | 481              | 509               | 24,095             | 48,643              |
+
+
+"#]]);
 });
 
 // tests build output --sizes handles multiple contracts with the same name
@@ -185,8 +217,7 @@ forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
 contract Foo {
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "a/Counter",
@@ -198,8 +229,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "b/Counter",
@@ -211,8 +241,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -231,6 +260,19 @@ contract Counter {
 
 
 "#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+...
+
+| Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|-----------------------------|------------------|-------------------|--------------------|---------------------|
+| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
+| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
+| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
+| Foo                         | 62               | 88                | 24,514             | 49,064              |
+
+
+"#]]);
 });
 
 // tests build output --sizes --json handles multiple contracts with the same name
@@ -241,8 +283,7 @@ forgetest_init!(build_sizes_multiple_contracts_json, |prj, cmd| {
 contract Foo {
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "a/Counter",
@@ -254,8 +295,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "b/Counter",
@@ -267,8 +307,7 @@ contract Counter {
     }
 }
 ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
@@ -312,20 +351,59 @@ contract InvalidContract {
     some_invalid_syntax
 }
 ",
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "ValidContract",
         r"
 contract ValidContract {}
 ",
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.skip = vec![Glob::new("src/InvalidContract.sol").unwrap().into()];
     });
 
     cmd.args(["build"]).assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11149>
+forgetest_init!(test_consistent_build_output, |prj, cmd| {
+    prj.add_source(
+        "AContract.sol",
+        r#"
+import {B} from "/badpath/B.sol";
+
+contract A is B {}
+   "#,
+    );
+
+    prj.add_source(
+        "CContract.sol",
+        r#"
+import {B} from "badpath/B.sol";
+
+contract C is B {}
+   "#,
+    );
+
+    cmd.args(["build", "src/AContract.sol"]).assert_failure().stdout_eq(str![[r#"
+...
+Unable to resolve imports:
+      "/badpath/B.sol" in "[..]"
+with remappings:
+      forge-std/=[..]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]);
+    cmd.forge_fuse().args(["build", "src/CContract.sol"]).assert_failure().stdout_eq(str![[r#"
+Unable to resolve imports:
+      "badpath/B.sol" in "[..]"
+with remappings:
+      forge-std/=[..]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]);
 });

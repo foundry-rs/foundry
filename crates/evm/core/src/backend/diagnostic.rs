@@ -1,5 +1,5 @@
 use crate::backend::LocalForkId;
-use alloy_primitives::{map::AddressHashMap, Address};
+use alloy_primitives::{Address, map::AddressHashMap};
 use itertools::Itertools;
 
 /// Represents possible diagnostic cases on revert
@@ -41,7 +41,9 @@ impl RevertDiagnostic {
                 if *persistent {
                     format!("Contract {contract_label} does not exist")
                 } else {
-                    format!("Contract {contract_label} does not exist and is not marked as persistent, see `vm.makePersistent()`")
+                    format!(
+                        "Contract {contract_label} does not exist and is not marked as persistent, see `vm.makePersistent()`"
+                    )
                 }
             }
         }

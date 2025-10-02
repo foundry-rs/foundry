@@ -2,6 +2,8 @@
 
 name: nextest
 
+permissions: {}
+
 on:
   workflow_call:
     inputs:
@@ -16,16 +18,21 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       test-matrix: ${{ steps.gen.outputs.test-matrix }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Generate matrices
@@ -33,47 +40,55 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PROFILE: ${{ inputs.profile }}
+        shell: bash
         run: |
           output=$(python3 .github/scripts/matrices.py)
-          echo "::debug::test-matrix=$output"
-          echo "test-matrix=$output" >> $GITHUB_OUTPUT
+          printf '::debug::test-matrix=%s\n' "$output"
+          printf 'test-matrix=%s\n' "$output" >> "$GITHUB_OUTPUT"
 
   test:
     name: test ${{ matrix.name }}
     runs-on: ${{ matrix.runner_label }}
     timeout-minutes: 60
+    permissions:
+      contents: read
     needs: matrices
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     env:
-      ETH_RPC_URL: https://reth-ethereum.ithaca.xyz/rpc
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
           target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@nextest
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      - uses: taiki-e/install-action@d0f4f69b07c0804d1003ca9a5a5f853423872ed9 # v2
+        with:
+          tool: nextest
 
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
       - name: Install Bun
         if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.11
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
-        run: pip --version && pip install vyper==0.4.0
+        run: pip --version && pip install vyper==0.4.3
 
       - name: Forge RPC cache
         uses: actions/cache@v4
@@ -82,9 +97,7 @@ jobs:
             ~/.foundry/cache
             ~/.config/.foundry/cache
           key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"
