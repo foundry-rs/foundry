@@ -250,8 +250,7 @@ impl ScriptArgs {
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume
-        {
+        let bundled = if compiled.args.resume {
             compiled.resume().await?
         } else if compiled.args.verify && !compiled.args.broadcast {
             // If we're verifying without broadcasting, we need to show console logs
@@ -271,7 +270,7 @@ impl ScriptArgs {
             } else {
                 pre_simulation.show_traces().await?;
             }
-            
+
             // Now bundle to get the bundled state for verification
             pre_simulation.bundle().await?
         } else {
