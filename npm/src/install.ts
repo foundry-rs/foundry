@@ -105,7 +105,7 @@ function extractFileFromTarball(
     if (fileName === filepath)
       return tarballBuffer.subarray(offset, offset + fileSize)
 
-    // Clamp offset to the uppoer multiple of 512
+    // Clamp offset to the upper multiple of 512
     offset = (offset + fileSize + 511) & ~511
   }
   throw new Error(`File ${filepath} not found in tarball`)

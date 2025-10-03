@@ -51,7 +51,7 @@ impl Default for SolidityHelper {
 
 impl fmt::Debug for SolidityHelper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = self.inner.borrow_mut();
+        let this = self.inner.borrow();
         f.debug_struct("SolidityHelper")
             .field("errored", &this.errored)
             .field("do_paint", &this.do_paint)

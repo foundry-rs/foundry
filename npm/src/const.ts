@@ -16,13 +16,8 @@ export type Platform = Extract<
   'darwin' | 'linux' | 'win32'
 >
 
-/**
- * foundry doesn't ship arm64 binaries for windows
- */
-export type ArchitecturePlatform = Exclude<
-  `${Platform}-${Architecture}`,
-  'win32-arm64'
->
+// Note: we intentionally don't export a combined `Platform-Architecture` alias here,
+// since only specific pairs are supported (see `BINARY_DISTRIBUTION_PACKAGES`).
 
 export const BINARY_DISTRIBUTION_PACKAGES = {
   darwin: {
