@@ -76,6 +76,7 @@ contract DSTest {
             status; // Silence compiler warnings
         }
         _failed = true;
+        revert();
     }
 
     function hasHEVMContext() internal view returns (bool) {

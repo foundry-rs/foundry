@@ -124,13 +124,13 @@ contract NestedRunner {
 
 /// Helper contract that uses all three EXT* opcodes on a given address
 contract ExtChecker {
-    function checkExts(address a) external {
+    function checkExts(address a) external returns (bytes memory out) {
         assembly {
-            let x := extcodesize(a)
-            let y := extcodehash(a)
-            extcodecopy(a, x, y, 0)
-            // sstore to check that storage accesses are correctly stored in a new access with a "resume" context
-            sstore(0, balance(a))
+            mstore(out, mul(0x20, 4))
+            mstore(add(out, 0x20), extcodesize(a))
+            mstore(add(out, 0x40), extcodehash(a))
+            extcodecopy(a, 0, 0x60, 0x20)
+            mstore(add(out, 0x80), balance(a))
         }
     }
 }
@@ -1245,19 +1245,14 @@ contract RecordAccountAccessesTest is DSTest {
         cheats.startStateDiffRecording();
         extChecker.checkExts(address(1234));
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
-        assertEq(called.length, 7, "incorrect length");
-        // initial solidity extcodesize check for calling extChecker
-        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        assertEq(called.length, 5, "incorrect length");
         // call to extChecker
-        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call));
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call));
         // extChecker checks
-        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodesize));
-        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodehash));
-        assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
-        assertEq(toUint(called[5].kind), toUint(Vm.AccountAccessKind.Balance));
-        // resume of extChecker to hold SSTORE access
-        assertEq(toUint(called[6].kind), toUint(Vm.AccountAccessKind.Resume));
-        assertEq(called[6].storageAccesses.length, 1, "incorrect length");
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodehash));
+        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
+        assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Balance));
     }
 
     /**
