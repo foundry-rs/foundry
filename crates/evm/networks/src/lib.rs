@@ -27,11 +27,6 @@ pub struct NetworkConfigs {
 }
 
 impl NetworkConfigs {
-    pub fn celo(mut self, celo: bool) -> Self {
-        self.celo = celo;
-        self
-    }
-
     pub fn with_optimism() -> Self {
         Self { optimism: true, ..Default::default() }
     }

@@ -407,18 +407,32 @@ impl<'ast> State<'_, 'ast> {
 
             print(self, value);
 
+            let next_span = if is_last { None } else { Some(get_span(&values[i + 1])) };
+            let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
+            let cmnt_before_next =
+                self.peek_comment_before(next_pos).map(|cmnt| (cmnt.span, cmnt.style));
+
             if !is_last {
+                // Handle disabled lines with comments after the value, but before the comma.
+                if cmnt_before_next.is_some_and(|(cmnt_span, _)| {
+                    let span = self.cursor.span(cmnt_span.lo());
+                    self.inline_config.is_disabled(span)
+                        // NOTE: necessary workaround to patch this edgecase due to lack of spans for the commas.
+                        && self.sm.span_to_snippet(span).is_ok_and(|snip| !snip.contains(','))
+                }) {
+                    self.print_comments(
+                        next_pos,
+                        CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                    );
+                }
                 self.print_word(",");
             }
 
-            let next_span = if is_last { None } else { Some(get_span(&values[i + 1])) };
-            let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
-
             if !is_last
                 && format.breaks_cmnts
-                && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
-                    let disabled = self.inline_config.is_disabled(cmnt.span);
-                    (cmnt.style.is_mixed() && !disabled) || (cmnt.style.is_isolated() && disabled)
+                && cmnt_before_next.is_some_and(|(cmnt_span, cmnt_style)| {
+                    let disabled = self.inline_config.is_disabled(cmnt_span);
+                    (cmnt_style.is_mixed() && !disabled) || (cmnt_style.is_isolated() && disabled)
                 })
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
