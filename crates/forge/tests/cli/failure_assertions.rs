@@ -19,15 +19,21 @@ forgetest!(test_fail_deprecation, |prj, cmd| {
     "#,
     );
 
-    cmd.forge_fuse().args(["test", "--mc", "DeprecationTestFail"]).assert_failure().stdout_eq(
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.forge_fuse()
+        .args(["test", "--mc", "DeprecationTestFail"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] Found 2 instances: testFail_deprecated, testFail_deprecated2 ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#,
-    );
+Failing tests:
+Encountered 2 failing tests in src/DeprecationTestFail.t.sol:DeprecationTestFail
+[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] testFail_deprecated() ([GAS])
+[FAIL: `testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert] testFail_deprecated2() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+"#]]);
 });
 
 forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
