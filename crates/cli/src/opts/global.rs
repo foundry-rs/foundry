@@ -117,8 +117,7 @@ impl GlobalArgs {
 pub fn init_thread_pool(threads: usize) -> eyre::Result<()> {
     // If threads == 0, do not set num_threads explicitly so Rayon uses the default
     // (number of logical cores). This aligns with the CLI help text for --threads.
-    let mut builder = rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("foundry-{i}"));
+    let mut builder = rayon::ThreadPoolBuilder::new().thread_name(|i| format!("foundry-{i}"));
     if threads > 0 {
         builder = builder.num_threads(threads);
     }
