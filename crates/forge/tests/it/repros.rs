@@ -193,7 +193,10 @@ test_repro!(4586);
 test_repro!(4630);
 
 // https://github.com/foundry-rs/foundry/issues/4640
-test_repro!(4640);
+test_repro!(
+    #[ignore = "flaky Arbitrum RPC - l1BlockNumber field not always returned"]
+    4640
+);
 
 // https://github.com/foundry-rs/foundry/issues/4832
 // 1.0 related
