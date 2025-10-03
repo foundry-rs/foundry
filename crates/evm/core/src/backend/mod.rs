@@ -2044,7 +2044,7 @@ mod tests {
     async fn can_read_write_cache() {
         let Some(endpoint) = ENDPOINT else { return };
 
-        let provider = get_http_provider(endpoint);
+        let provider = get_http_provider(endpoint, false);
 
         let block_num = provider.get_block_number().await.unwrap();
 

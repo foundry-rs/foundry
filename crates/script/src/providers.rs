@@ -17,11 +17,12 @@ impl ProvidersManager {
         &mut self,
         rpc: &str,
         is_legacy: bool,
+        accept_invalid_certs: bool,
     ) -> Result<&ProviderInfo> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, is_legacy).await?;
+                let info = ProviderInfo::new(rpc, is_legacy, accept_invalid_certs).await?;
                 entry.insert(info)
             }
         })
@@ -52,8 +53,8 @@ pub enum GasPrice {
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
-        let provider = Arc::new(get_http_provider(rpc));
+    pub async fn new(rpc: &str, mut is_legacy: bool, accept_invalid_certs: bool) -> Result<Self> {
+        let provider = Arc::new(get_http_provider(rpc, accept_invalid_certs));
         let chain = provider.get_chain_id().await?;
 
         if let Some(chain) = Chain::from(chain).named() {

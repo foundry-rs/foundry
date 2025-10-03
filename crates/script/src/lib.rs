@@ -234,6 +234,7 @@ impl ScriptArgs {
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         }
+        evm_opts.eth_rpc_accept_invalid_certs = config.eth_rpc_accept_invalid_certs;
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
@@ -243,7 +244,6 @@ impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
-
         let state = self.preprocess().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
@@ -584,7 +584,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
+            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number, config.eth_rpc_accept_invalid_certs).await?
         } else {
             // dapptools compatibility
             1
@@ -595,7 +595,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url, None, self.config.eth_rpc_accept_invalid_certs).await?
         } else {
             // dapptools compatibility
             1
