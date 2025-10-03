@@ -35,9 +35,7 @@ use std::{
     sync::Arc,
 };
 
-// TODO(rusowsky): impl dummy `Debug` trait for solar `Compiler`
-// #[derive(Clone, Debug, Default)]
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities

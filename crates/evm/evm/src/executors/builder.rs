@@ -2,9 +2,6 @@ use crate::{executors::Executor, inspectors::InspectorStackBuilder};
 use foundry_evm_core::{Env, backend::Backend};
 use revm::primitives::hardfork::SpecId;
 
-// TODO(rusowsky): impl dummy `Debug` trait on `solar::sema::Compiler`
-// #[derive(Clone, Debug)]
-
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
 ///
@@ -12,7 +9,7 @@ use revm::primitives::hardfork::SpecId;
 ///
 /// [`Cheatcodes`]: super::Cheatcodes
 /// [`InspectorStack`]: super::InspectorStack
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct ExecutorBuilder {
     /// The configuration used to build an `InspectorStack`.

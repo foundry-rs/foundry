@@ -133,29 +133,38 @@ pub fn configure_pcx_from_compile_output(
     }
     // Otherwise, find the latest version among all compiled files.
     else {
-        let (version, paths) = output
-            .output()
-            .sources
-            .sources_with_version()
-            .filter(|(path, _, _)| {
-                // Only process Solidity files.
-                output
-                    .graph()
-                    .get_parsed_source(path)
-                    .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
-            })
-            .fold((Version::new(0, 0, 0), Vec::new()), |(max_v, mut paths), (path, _, version)| {
-                match version.cmp(&max_v) {
-                    core::cmp::Ordering::Less => (version.clone(), vec![path]),
-                    core::cmp::Ordering::Equal => {
-                        paths.push(path);
-                        (max_v, paths)
-                    }
-                    core::cmp::Ordering::Greater => (max_v, paths),
-                }
-            });
+        let (mut max_version, mut latest_paths) = (Version::new(0, 0, 0), Vec::new());
+        for (path, _, version) in output.output().sources.sources_with_version() {
+            // Only process Solidity files.
+            if !output
+                .graph()
+                .get_parsed_source(path)
+                .is_some_and(|ps| matches!(ps, MultiCompilerParsedSource::Solc(..)))
+            {
+                continue;
+            }
 
-        (version, paths.into_iter().filter_map(|p| dunce::canonicalize(p).ok()).collect())
+            match version.cmp(&max_version) {
+                // A newer version was found --> reset the list of paths
+                std::cmp::Ordering::Greater => {
+                    max_version = version.clone();
+                    latest_paths.clear();
+                    if let Ok(canonical_path) = dunce::canonicalize(path) {
+                        latest_paths.push(canonical_path);
+                    }
+                }
+                // A file with the same version was found --> add it to the list
+                std::cmp::Ordering::Equal => {
+                    if let Ok(canonical_path) = dunce::canonicalize(path) {
+                        latest_paths.push(canonical_path);
+                    }
+                }
+                // A file with an older version was found --> ignore
+                std::cmp::Ordering::Less => {}
+            }
+        }
+
+        (max_version, latest_paths)
     };
 
     // Read the file content for each of the determined paths.

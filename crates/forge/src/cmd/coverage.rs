@@ -90,14 +90,18 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
-        let (project, mut output) = self.build(&config)?;
-        self.populate_reporters(&project.paths.root);
+        let (paths, mut output) = {
+            let (project, output) = self.build(&config)?;
+            (project.paths, output)
+        };
+
+        self.populate_reporters(&paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&project.paths, &mut output)?;
+        let report = self.prepare(&paths, &mut output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(project.root(), &output, report, config, evm_opts).await
+        self.collect(&paths.root, &output, report, config, evm_opts).await
     }
 
     fn populate_reporters(&mut self, root: &Path) {
