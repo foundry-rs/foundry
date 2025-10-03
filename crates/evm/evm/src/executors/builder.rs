@@ -9,7 +9,7 @@ use revm::primitives::hardfork::SpecId;
 ///
 /// [`Cheatcodes`]: super::Cheatcodes
 /// [`InspectorStack`]: super::InspectorStack
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct ExecutorBuilder {
     /// The configuration used to build an `InspectorStack`.

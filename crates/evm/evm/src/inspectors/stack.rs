@@ -7,7 +7,7 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
 };
-use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
+use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -38,6 +38,8 @@ use std::{
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Option<Arc<solar::sema::Compiler>>,
     /// The block environment.
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -79,6 +81,13 @@ impl InspectorStackBuilder {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the solar compiler instance that grants syntactic and semantic analysis capabilities
+    #[inline]
+    pub fn set_analysis(mut self, analysis: Arc<solar::sema::Compiler>) -> Self {
+        self.analysis = Some(analysis);
+        self
     }
 
     /// Set the block environment.
@@ -178,6 +187,7 @@ impl InspectorStackBuilder {
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
+            analysis,
             block,
             gas_price,
             cheatcodes,
@@ -197,6 +207,10 @@ impl InspectorStackBuilder {
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            // Set analysis capabilities if they are provided
+            if let Some(analysis) = analysis {
+                cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
+            }
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
                 cheatcodes.set_wallets(wallets);

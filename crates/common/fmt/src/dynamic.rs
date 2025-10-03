@@ -2,8 +2,11 @@ use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
 use eyre::Result;
-use serde_json::Value;
-use std::fmt;
+use serde_json::{Map, Value};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+};
 
 /// [`DynSolValue`] formatter.
 struct DynValueFormatter {
@@ -147,7 +150,18 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 }
 
 /// Serializes given [DynSolValue] into a [serde_json::Value].
-pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
+pub fn serialize_value_as_json(
+    value: DynSolValue,
+    defs: Option<&StructDefinitions>,
+) -> Result<Value> {
+    if let Some(defs) = defs {
+        _serialize_value_as_json(value, defs)
+    } else {
+        _serialize_value_as_json(value, &StructDefinitions::default())
+    }
+}
+
+fn _serialize_value_as_json(value: DynSolValue, defs: &StructDefinitions) -> Result<Value> {
     match value {
         DynSolValue::Bool(b) => Ok(Value::Bool(b)),
         DynSolValue::String(s) => {
@@ -182,20 +196,89 @@ pub fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
             }
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
-        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
-            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?))
-        }
-        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
-            let values =
-                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
-            let map = prop_names.into_iter().zip(values).collect();
+        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => Ok(Value::Array(
+            e.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
+        )),
+        DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            let values = tuple
+                .into_iter()
+                .map(|v| _serialize_value_as_json(v, defs))
+                .collect::<Result<Vec<_>>>()?;
+            let mut map: HashMap<String, Value> = prop_names.into_iter().zip(values).collect();
 
-            Ok(Value::Object(map))
+            // If the struct def is known, manually build a `Map` to preserve the order.
+            if let Some(fields) = defs.get(&name)? {
+                let mut ordered_map = Map::with_capacity(fields.len());
+                for (field_name, _) in fields {
+                    if let Some(serialized_value) = map.remove(field_name) {
+                        ordered_map.insert(field_name.clone(), serialized_value);
+                    }
+                }
+                // Explicitly return a `Value::Object` to avoid ambiguity.
+                return Ok(Value::Object(ordered_map));
+            }
+
+            // Otherwise, fall back to alphabetical sorting for deterministic output.
+            Ok(Value::Object(map.into_iter().collect::<Map<String, Value>>()))
         }
         DynSolValue::Tuple(values) => Ok(Value::Array(
-            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
+            values.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
         )),
         DynSolValue::Function(_) => eyre::bail!("cannot serialize function pointer"),
+    }
+}
+
+// -- STRUCT DEFINITIONS -------------------------------------------------------
+
+pub type TypeDefMap = BTreeMap<String, Vec<(String, String)>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct StructDefinitions(TypeDefMap);
+
+impl From<TypeDefMap> for StructDefinitions {
+    fn from(map: TypeDefMap) -> Self {
+        Self::new(map)
+    }
+}
+
+impl StructDefinitions {
+    pub fn new(map: TypeDefMap) -> Self {
+        Self(map)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.keys()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &[(String, String)]> {
+        self.0.values().map(|v| v.as_slice())
+    }
+
+    pub fn get(&self, key: &str) -> eyre::Result<Option<&[(String, String)]>> {
+        if let Some(value) = self.0.get(key) {
+            return Ok(Some(value));
+        }
+
+        let matches: Vec<&[(String, String)]> = self
+            .0
+            .iter()
+            .filter_map(|(k, v)| {
+                if let Some((_, struct_name)) = k.split_once('.')
+                    && struct_name == key
+                {
+                    return Some(v.as_slice());
+                }
+                None
+            })
+            .collect();
+
+        match matches.len() {
+            0 => Ok(None),
+            1 => Ok(Some(matches[0])),
+            _ => eyre::bail!(
+                "there are several structs with the same name. Use `<contract_name>.{key}` instead."
+            ),
+        }
     }
 }
 
