@@ -30,6 +30,7 @@ use foundry_evm_networks::NetworkConfigs;
 
 pub mod backend;
 pub mod buffer;
+pub mod bytecode;
 pub mod constants;
 pub mod decode;
 pub mod either_evm;

@@ -35,7 +35,7 @@ use foundry_common::{
     fs, get_pretty_tx_receipt_attr, shell,
 };
 use foundry_config::Chain;
-use foundry_evm::core::ic::decode_instructions;
+use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -2222,23 +2222,9 @@ impl SimpleCast {
     /// ```
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
-
-        for step in decode_instructions(code)? {
-            write!(output, "{:08x}: ", step.pc)?;
-
-            if let Some(op) = step.op {
-                write!(output, "{op}")?;
-            } else {
-                write!(output, "INVALID")?;
-            }
-
-            if !step.immediate.is_empty() {
-                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
-            }
-
-            writeln!(output)?;
+        for (pc, inst) in InstIter::new(code).with_pc() {
+            writeln!(output, "{pc:08x}: {inst}")?;
         }
-
         Ok(output)
     }
 
