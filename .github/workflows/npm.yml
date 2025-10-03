@@ -76,17 +76,6 @@ jobs:
           mkdir -p "$ARTIFACT_DIR"
           ls -la "$ARTIFACT_DIR" || true
 
-      - name: Download Release Assets
-        uses: actions/download-artifact@v5
-        with:
-          merge-multiple: true
-          # Download all foundry artifacts from the triggering release run
-          pattern: "foundry_*"
-          # Extract artifacts into an isolated temp directory, not the workspace
-          path: ${{ steps.paths.outputs.artifact_dir }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
@@ -105,6 +94,17 @@ jobs:
       - name: Transpile TS -> JS
         working-directory: ./npm
         run: bun run build
+
+      - name: Download Release Assets
+        uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+          # Download all foundry artifacts from the triggering release run
+          pattern: "foundry_*"
+          # Extract artifacts into an isolated temp directory, not the workspace
+          path: ${{ steps.paths.outputs.artifact_dir }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Derive RELEASE_VERSION
         id: release-version
