@@ -256,15 +256,14 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let db_accounts = self.cache.accounts.clone();
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
-        for (addr, acc) in db_accounts {
-            account_storage.insert(addr, acc.storage.clone());
-            let mut info = acc.info;
+        for (addr, acc) in &self.cache.accounts {
+            account_storage.insert(*addr, acc.storage.clone());
+            let mut info = acc.info.clone();
             info.code = self.cache.contracts.get(&info.code_hash).cloned();
-            accounts.insert(addr, info);
+            accounts.insert(*addr, info);
         }
 
         let block_hashes = self.cache.block_hashes.clone();
