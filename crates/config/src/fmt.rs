@@ -39,6 +39,8 @@ pub struct FormatterConfig {
     pub pow_no_space: bool,
     /// Whether to compact call args in a single line when possible
     pub call_compact_args: bool,
+    /// Style of doc comments
+    pub docs_style: DocCommentStyle,
 }
 
 /// Style of integer types.
@@ -99,6 +101,19 @@ pub enum HexUnderscore {
     Remove,
     /// Add underscore as separator between byte boundaries
     Bytes,
+}
+
+/// Style of doc comments
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocCommentStyle {
+    /// Preserve the source code style
+    #[default]
+    Preserve,
+    /// Use single-line style (`///`)
+    Line,
+    /// Use block style (`/** .. */`)
+    Block,
 }
 
 /// Style of string quotes
@@ -200,6 +215,7 @@ impl Default for FormatterConfig {
             sort_imports: false,
             pow_no_space: false,
             call_compact_args: true,
+            docs_style: DocCommentStyle::default(),
         }
     }
 }
