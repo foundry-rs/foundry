@@ -37,66 +37,54 @@ impl FsPermissions {
     /// Caution: This should be called with normalized paths if the `allowed_paths` are also
     /// normalized.
     pub fn is_path_allowed(&self, path: &Path, kind: FsAccessKind) -> bool {
-        self.find_all_permissions(path).iter().any(|perm| perm.is_granted(kind))
+        self.find_permission(path).map_or(false, |perm| perm.is_granted(kind))
     }
 
     /// Returns the permission for the matching path.
     ///
-    /// This finds the longest matching path with resolved sym links, e.g. if we have the following
-    /// permissions:
+    /// This finds the longest matching path with resolved sym links and returns the highest
+    /// privilege permission. The algorithm works as follows:
     ///
-    /// `./out` = `read`
-    /// `./out/contracts` = `read-write`
+    /// 1. Find all permissions where the path matches (using longest path match)
+    /// 2. Return the highest privilege permission from those matches
     ///
-    /// And we check for `./out/contracts/MyContract.sol` we will get `read-write` as permission.
+    /// Example scenarios:
+    ///
+    /// ```text
+    /// ./out = read
+    /// ./out/contracts = read-write
+    /// ```
+    /// Checking `./out/contracts/MyContract.sol` returns `read-write` (longest path match)
+    ///
+    /// ```text
+    /// ./out/contracts = read
+    /// ./out/contracts = write
+    /// ```
+    /// Checking `./out/contracts/MyContract.sol` returns `write` (highest privilege, which also
+    /// grants read access)
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
-        let mut permission: Option<&PathPermission> = None;
-        for perm in &self.permissions {
-            let permission_path = dunce::canonicalize(&perm.path).unwrap_or(perm.path.clone());
-            if path.starts_with(permission_path) {
-                if let Some(active_perm) = permission.as_ref() {
-                    // the longest path takes precedence
-                    if perm.path < active_perm.path {
-                        continue;
-                    }
-                }
-                permission = Some(perm);
-            }
-        }
-        permission.map(|perm| perm.access)
-    }
-
-    /// Returns all permissions for the matching path.
-    ///
-    /// This finds the longest matching paths with resolved sym links, e.g. if we have the following
-    /// permissions:
-    ///
-    /// `./out` = `read`
-    /// `./out/contracts` = `read`
-    /// `./out/contracts` = `write`
-    ///
-    /// And we check for `./out/contracts/MyContract.sol`, we will get both `read` and
-    /// `write` permissions.
-    pub fn find_all_permissions(&self, path: &Path) -> Vec<FsAccessPermission> {
-        let mut matching_permissions = Vec::new();
         let mut max_path_len = 0;
+        let mut highest_permission = FsAccessPermission::None;
 
-        // First pass: find all matching permissions and determine the maximum path length
+        // Find all matching permissions at the longest matching path
         for perm in &self.permissions {
             let permission_path = dunce::canonicalize(&perm.path).unwrap_or(perm.path.clone());
             if path.starts_with(&permission_path) {
                 let path_len = permission_path.components().count();
                 if path_len > max_path_len {
+                    // Found a longer matching path, reset to this permission
                     max_path_len = path_len;
-                    matching_permissions.clear();
-                    matching_permissions.push(perm.access);
+                    highest_permission = perm.access;
                 } else if path_len == max_path_len {
-                    matching_permissions.push(perm.access);
+                    // Same path length, keep the highest privilege
+                    if perm.access > highest_permission {
+                        highest_permission = perm.access;
+                    }
                 }
             }
         }
 
-        matching_permissions
+        if max_path_len > 0 { Some(highest_permission) } else { None }
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
@@ -188,27 +176,29 @@ impl fmt::Display for FsAccessKind {
 }
 
 /// Determines the status of file system access
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FsAccessPermission {
     /// FS access is _not_ allowed
     #[default]
     None,
-    /// FS access is allowed, this includes `read` + `write`
-    ReadWrite,
     /// Only reading is allowed
     Read,
     /// Only writing is allowed
     Write,
+    /// FS access is allowed, this includes `read` + `write`
+    ReadWrite,
 }
 
 impl FsAccessPermission {
     /// Returns true if the access is allowed
+    ///
+    /// Note: Write access implies Read access, so Write grants both Read and Write operations.
     pub fn is_granted(&self, kind: FsAccessKind) -> bool {
         match (self, kind) {
             (Self::ReadWrite, _) => true,
-            (Self::None, _) => false,
+            (Self::Write, _) => true, // Write grants both Read and Write access
             (Self::Read, FsAccessKind::Read) => true,
-            (Self::Write, FsAccessKind::Write) => true,
+            (Self::None, _) => false,
             _ => false,
         }
     }
@@ -305,17 +295,41 @@ mod tests {
     }
 
     #[test]
-    fn find_all_permissions() {
+    fn highest_privilege_wins() {
+        // When multiple permissions are defined for the same path, highest privilege wins
         let permissions = FsPermissions::new(vec![
-            PathPermission::read("./out"),
             PathPermission::read("./out/contracts"),
             PathPermission::write("./out/contracts"),
         ]);
 
-        let found_permissions =
-            permissions.find_all_permissions(Path::new("./out/contracts/MyContract.sol"));
-        assert_eq!(found_permissions.len(), 2);
-        assert!(found_permissions.contains(&FsAccessPermission::Write));
-        assert!(found_permissions.contains(&FsAccessPermission::Read));
+        let permission =
+            permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
+        assert_eq!(FsAccessPermission::Write, permission);
+    }
+
+    #[test]
+    fn write_grants_read_access() {
+        let permissions = FsPermissions::new(vec![PathPermission::write("./out")]);
+
+        // Write permission should grant both read and write access
+        assert!(permissions.is_path_allowed(Path::new("./out/file.txt"), FsAccessKind::Read));
+        assert!(permissions.is_path_allowed(Path::new("./out/file.txt"), FsAccessKind::Write));
+    }
+
+    #[test]
+    fn longest_path_takes_precedence() {
+        let permissions = FsPermissions::new(vec![
+            PathPermission::read_write("./out"),
+            PathPermission::read("./out/contracts"),
+        ]);
+
+        // More specific path (./out/contracts) takes precedence even with lower privilege
+        let permission =
+            permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
+        assert_eq!(FsAccessPermission::Read, permission);
+
+        // Broader path still applies to its own files
+        let permission = permissions.find_permission(Path::new("./out/other.sol")).unwrap();
+        assert_eq!(FsAccessPermission::ReadWrite, permission);
     }
 }
