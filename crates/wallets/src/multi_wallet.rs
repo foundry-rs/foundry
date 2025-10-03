@@ -308,16 +308,18 @@ impl MultiWalletOpts {
             let mut signers = Vec::new();
 
             let mut passwords_iter =
-                self.keystore_passwords.clone().unwrap_or_default().into_iter();
+                self.keystore_passwords.iter().flat_map(|passwords| passwords.iter());
 
-            let mut password_files_iter =
-                self.keystore_password_files.clone().unwrap_or_default().into_iter();
+            let mut password_files_iter = self
+                .keystore_password_files
+                .iter()
+                .flat_map(|password_files| password_files.iter());
 
             for path in &keystore_paths {
                 let (maybe_signer, maybe_pending) = utils::create_keystore_signer(
                     path,
-                    passwords_iter.next().as_deref(),
-                    password_files_iter.next().as_deref(),
+                    passwords_iter.next().map(|password| password.as_str()),
+                    password_files_iter.next().map(|password_file| password_file.as_str()),
                 )?;
                 if let Some(pending_signer) = maybe_pending {
                     pending.push(pending_signer);
@@ -334,18 +336,22 @@ impl MultiWalletOpts {
         if let Some(ref mnemonics) = self.mnemonics {
             let mut wallets = vec![];
 
-            let mut hd_paths_iter = self.hd_paths.clone().unwrap_or_default().into_iter();
+            let mut hd_paths_iter =
+                self.hd_paths.iter().flat_map(|paths| paths.iter().map(String::as_str));
 
-            let mut passphrases_iter =
-                self.mnemonic_passphrases.clone().unwrap_or_default().into_iter();
+            let mut passphrases_iter = self
+                .mnemonic_passphrases
+                .iter()
+                .flat_map(|passphrases| passphrases.iter().map(String::as_str));
 
-            let mut indexes_iter = self.mnemonic_indexes.clone().unwrap_or_default().into_iter();
+            let mut indexes_iter =
+                self.mnemonic_indexes.iter().flat_map(|indexes| indexes.iter().copied());
 
             for mnemonic in mnemonics {
                 let wallet = utils::create_mnemonic_signer(
                     mnemonic,
-                    passphrases_iter.next().as_deref(),
-                    hd_paths_iter.next().as_deref(),
+                    passphrases_iter.next(),
+                    hd_paths_iter.next(),
                     indexes_iter.next().unwrap_or(0),
                 )?;
                 wallets.push(wallet);
