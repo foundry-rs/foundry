@@ -388,7 +388,7 @@ impl<'a> ContractRunner<'a> {
             .filter_map(|func| {
                 TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
                     .is_any_test_fail()
-                    .then_some(func.name.clone())
+                    .then(|| func.name.clone())
             })
             .collect::<Vec<_>>();
 
