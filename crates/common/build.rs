@@ -30,6 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|_| String::from("dev"));
     let (is_nightly, version_suffix) = if tag_name.contains("nightly") {
         (true, "-nightly".to_string())
+    } else if let Some((_, rc_number)) = tag_name.split_once("rc") {
+        (false, format!("-rc{rc_number}"))
     } else {
         (false, format!("-{tag_name}"))
     };
