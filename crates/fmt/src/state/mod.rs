@@ -10,7 +10,7 @@ use foundry_common::{
 };
 use foundry_config::fmt::{DocCommentStyle, IndentStyle};
 use solar::parse::{
-    ast::{self, CommentKind, Span},
+    ast::{self, Span},
     interface::{BytePos, SourceMap},
     token,
 };
@@ -486,12 +486,12 @@ impl<'sess> State<'sess, '_> {
             // Merge consecutive line doc comments when converting to block style
             if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
                 && cmnt.is_doc
-                && cmnt.kind == CommentKind::Line
+                && cmnt.kind == ast::CommentKind::Line
             {
                 let mut ref_line = self.sm.lookup_char_pos(cmnt.span.hi()).line;
                 while let Some(next_cmnt) = self.peek_comment() {
                     if !next_cmnt.is_doc
-                        || next_cmnt.kind != CommentKind::Line
+                        || next_cmnt.kind != ast::CommentKind::Line
                         || ref_line + 1 != self.sm.lookup_char_pos(next_cmnt.span.lo()).line
                     {
                         break;
@@ -1088,15 +1088,15 @@ fn snippet_with_tabs(s: String, tab_width: usize) -> String {
 /// NOTE: assumes comments have already been normalized.
 fn style_doc_comment(style: DocCommentStyle, mut cmnt: Comment) -> Comment {
     match style {
-        DocCommentStyle::Line if cmnt.kind == CommentKind::Block => {
+        DocCommentStyle::Line if cmnt.kind == ast::CommentKind::Block => {
             let mut new_lines = Vec::new();
             for (pos, line) in cmnt.lines.iter().delimited() {
                 if pos.is_first || pos.is_last {
-                    // Skip the opening "/**" and closing "*/" lines
+                    // Skip the opening '/**' and closing '*/' lines
                     continue;
                 }
 
-                // Convert " * {content}" to "/// {content}"
+                // Convert ' * {content}' to '/// {content}'
                 let trimmed = line.trim_start();
                 if let Some(content) = trimmed.strip_prefix('*') {
                     new_lines.push(format!("///{content}"));
@@ -1106,20 +1106,20 @@ fn style_doc_comment(style: DocCommentStyle, mut cmnt: Comment) -> Comment {
             }
 
             cmnt.lines = new_lines;
-            cmnt.kind = CommentKind::Line;
+            cmnt.kind = ast::CommentKind::Line;
             cmnt
         }
-        DocCommentStyle::Block if cmnt.kind == CommentKind::Line => {
+        DocCommentStyle::Block if cmnt.kind == ast::CommentKind::Line => {
             let mut new_lines = vec!["/**".to_string()];
 
             for line in &cmnt.lines {
-                // Convert "/// {content}" to " * {content}"
+                // Convert '/// {content}' to ' * {content}'
                 new_lines.push(format!(" *{content}", content = &line[3..]))
             }
 
             new_lines.push(" */".to_string());
             cmnt.lines = new_lines;
-            cmnt.kind = CommentKind::Block;
+            cmnt.kind = ast::CommentKind::Block;
             cmnt
         }
         // Otherwise, no conversion needed.
