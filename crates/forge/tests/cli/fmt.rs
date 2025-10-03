@@ -117,16 +117,12 @@ multiline_func_header = 'params_first'
     cmd.forge_fuse().args(["fmt", "--check"]).arg("src/FmtTest.sol");
     cmd.assert_failure().stdout_eq(str![[r#"
 Diff in src/FmtTest.sol:
-4   4    | contract Test {
-5   5    |     uint256 public value;
-6   6    | 
+...
 7        |-    function setValue(uint256 _value) public {
     7    |+    function setValue(
     8    |+        uint256 _value
     9    |+    ) public {
-8   10   |         value = _value;
-9   11   |     }
-10  12   | }
+...
 
 "#]]);
 });
