@@ -37,7 +37,7 @@ impl FsPermissions {
     /// Caution: This should be called with normalized paths if the `allowed_paths` are also
     /// normalized.
     pub fn is_path_allowed(&self, path: &Path, kind: FsAccessKind) -> bool {
-        self.find_permission(path).map_or(false, |perm| perm.is_granted(kind))
+        self.find_permission(path).is_some_and(|perm| perm.is_granted(kind))
     }
 
     /// Returns the permission for the matching path.
@@ -176,7 +176,7 @@ impl fmt::Display for FsAccessKind {
 }
 
 /// Determines the status of file system access
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd)]
 pub enum FsAccessPermission {
     /// FS access is _not_ allowed
     #[default]
