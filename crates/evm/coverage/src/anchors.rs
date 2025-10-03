@@ -3,7 +3,7 @@ use crate::analysis::SourceAnalysis;
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_core::ic::IcPcMap;
+use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
 use revm::bytecode::opcode;
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -93,54 +93,42 @@ pub fn find_anchor_branch(
     loc: &SourceLocation,
 ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
     let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
-    let mut pc = 0;
-    let mut cumulative_push_size = 0;
-    while pc < bytecode.len() {
-        let op = bytecode[pc];
-
+    for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
         // We found a push, so we do some PC -> IC translation accounting, but we also check if
         // this push is coupled with the JUMPI we are interested in.
 
         // Check if Opcode is PUSH
-        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
-            let element = if let Some(element) = source_map.get(pc - cumulative_push_size) {
-                element
-            } else {
+        if (opcode::PUSH1..=opcode::PUSH32).contains(&inst.opcode.get()) {
+            let Some(element) = source_map.get(ic) else {
                 // NOTE(onbjerg): For some reason the last few bytes of the bytecode do not have
                 // a source map associated, so at that point we just stop searching
                 break;
             };
 
-            // Do push byte accounting
-            let push_size = (op - opcode::PUSH1 + 1) as usize;
-            pc += push_size;
-            cumulative_push_size += push_size;
-
             // Check if we are in the source range we are interested in, and if the next opcode
             // is a JUMPI
-            if is_in_source_range(element, loc) && bytecode[pc + 1] == opcode::JUMPI {
-                // We do not support program counters bigger than usize. This is also an
-                // assumption in REVM, so this is just a sanity check.
-                ensure!(push_size <= 8, "jump destination overflow");
+            let next_pc = pc + inst.immediate.len() + 1;
+            let push_size = inst.immediate.len();
+            if bytecode.get(next_pc).copied() == Some(opcode::JUMPI)
+                && is_in_source_range(element, loc)
+            {
+                // We do not support program counters bigger than u32.
+                ensure!(push_size <= 4, "jump destination overflow");
 
-                // Convert the push bytes for the second branch's PC to a usize
-                let push_bytes_start = pc - push_size + 1;
-                let push_bytes = &bytecode[push_bytes_start..push_bytes_start + push_size];
-                let mut pc_bytes = [0u8; 8];
-                pc_bytes[8 - push_size..].copy_from_slice(push_bytes);
-                let pc_jump = u64::from_be_bytes(pc_bytes);
-                let pc_jump = u32::try_from(pc_jump).expect("PC is too big");
+                // Convert the push bytes for the second branch's PC to a u32.
+                let mut pc_bytes = [0u8; 4];
+                pc_bytes[4 - push_size..].copy_from_slice(inst.immediate);
+                let pc_jump = u32::from_be_bytes(pc_bytes);
                 anchors = Some((
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: (pc + 2) as u32,
+                        instruction: (next_pc + 1) as u32,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));
             }
         }
-        pc += 1;
     }
 
     anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
