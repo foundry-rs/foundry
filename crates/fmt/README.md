@@ -122,6 +122,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `single_line_statement_blocks` | `preserve` | The style of single-line blocks in statements. Options: `preserve`, `single`, `multi`. |
 | `override_spacing` | `false` | Print a space in the `override` attribute. |
 | `wrap_comments` | `false` | Wrap comments when `line_length` is reached. |
+| `docs_style` | `preserve` | Enforces the style of doc (natspec) comments. Options: `preserve`, `line`, `block`. |
 | `ignore` | `[]` | Globs to ignore. |
 | `contract_new_lines` | `false` | Add a new line at the start and end of contract declarations. |
 | `sort_imports` | `false` | Sort import statements alphabetically in groups. A group is a set of imports separated by a newline. |
