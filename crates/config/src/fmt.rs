@@ -29,6 +29,8 @@ pub struct FormatterConfig {
     pub override_spacing: bool,
     /// Wrap comments on `line_length` reached
     pub wrap_comments: bool,
+    /// Style of doc comments
+    pub docs_style: DocCommentStyle,
     /// Globs to ignore
     pub ignore: Vec<String>,
     /// Add new line at start and end of contract declarations
@@ -39,8 +41,6 @@ pub struct FormatterConfig {
     pub pow_no_space: bool,
     /// Whether to compact call args in a single line when possible
     pub call_compact_args: bool,
-    /// Style of doc comments
-    pub docs_style: DocCommentStyle,
 }
 
 /// Style of integer types.

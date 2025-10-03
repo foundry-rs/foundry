@@ -132,6 +132,7 @@ hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
 override_spacing = false
 wrap_comments = false
+docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
@@ -1306,6 +1307,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,
