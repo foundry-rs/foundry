@@ -119,7 +119,7 @@ multiline_func_header = 'params_first'
 Diff in src/FmtTest.sol:
 4   4    | contract Test {
 5   5    |     uint256 public value;
-6   6    |
+6   6    | 
 7        |-    function setValue(uint256 _value) public {
     7    |+    function setValue(
     8    |+        uint256 _value
