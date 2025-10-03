@@ -1093,19 +1093,19 @@ pub enum CastSubcommand {
     Rpc(RpcArgs),
 
     /// Formats a string into bytes32 encoding.
-    #[command(name = "format-bytes32-string", visible_aliases = &["--format-bytes32-string"])]
+    #[command(name = "format-bytes32-string", visible_aliases = &["format-bytes32-string"])]
     FormatBytes32String {
         /// The string to format.
         string: Option<String>,
     },
 
     /// Parses a string from bytes32 encoding.
-    #[command(name = "parse-bytes32-string", visible_aliases = &["--parse-bytes32-string"])]
+    #[command(name = "parse-bytes32-string", visible_aliases = &["parse-bytes32-string"])]
     ParseBytes32String {
         /// The string to parse.
         bytes: Option<String>,
     },
-    #[command(name = "parse-bytes32-address", visible_aliases = &["--parse-bytes32-address"])]
+    #[command(name = "parse-bytes32-address", visible_aliases = &["parse-bytes32-address"])]
     #[command(about = "Parses a checksummed address from bytes32 encoding.")]
     ParseBytes32Address {
         #[arg(value_name = "BYTES")]
