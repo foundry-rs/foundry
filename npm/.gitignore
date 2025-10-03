@@ -39,3 +39,4 @@ cast/*/bin/cast
 chisel/*/bin/chisel
 @foundry-rs/*/bin/
 _
+build
