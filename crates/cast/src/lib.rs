@@ -2553,23 +2553,21 @@ mod tests {
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
         let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
+        assert_eq!(disassembled, "00000000: PUSH1\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-
         let disassembled = Cast::disassemble(incomplete).unwrap();
-
-        assert_eq!(
-            disassembled,
-            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
-        );
+        assert_eq!(disassembled, "00000000: PUSH32\n");
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+        );
     }
 }
