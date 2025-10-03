@@ -107,24 +107,23 @@ pub fn find_anchor_branch(
 
             // Check if we are in the source range we are interested in, and if the next opcode
             // is a JUMPI
-            if bytecode.get(pc + 1).copied() == Some(opcode::JUMPI)
+            let next_pc = pc + inst.immediate.len() + 1;
+            let push_size = inst.immediate.len();
+            if bytecode.get(next_pc).copied() == Some(opcode::JUMPI)
                 && is_in_source_range(element, loc)
             {
-                // We do not support program counters bigger than u32. This is also an
-                // assumption in REVM, so this is just a sanity check.
-                let push_size = inst.immediate.len();
+                // We do not support program counters bigger than u32.
                 ensure!(push_size <= 4, "jump destination overflow");
 
                 // Convert the push bytes for the second branch's PC to a u32.
-                let mut pc_bytes = [0u8; 8];
-                pc_bytes[8 - push_size..].copy_from_slice(inst.immediate);
-                let pc_jump = u64::from_be_bytes(pc_bytes);
-                let pc_jump = u32::try_from(pc_jump).expect("PC is too big");
+                let mut pc_bytes = [0u8; 4];
+                pc_bytes[4 - push_size..].copy_from_slice(inst.immediate);
+                let pc_jump = u32::from_be_bytes(pc_bytes);
                 anchors = Some((
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: (pc + 2) as u32,
+                        instruction: (next_pc + 1) as u32,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));
