@@ -460,7 +460,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(-self.ind);
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
-            MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {

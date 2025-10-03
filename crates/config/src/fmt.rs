@@ -142,8 +142,9 @@ pub enum SingleLineBlockStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
-    /// Write function parameters multiline first.
-    ParamsFirst,
+    /// Always write function parameters multiline.
+    #[serde(alias = "params_first")] // alias for backwards compatibility
+    ParamsAlways,
     /// Write function parameters multiline first when there is more than one param.
     ParamsFirstMulti,
     /// Write function attributes multiline first.
@@ -162,7 +163,7 @@ impl MultilineFuncHeaderStyle {
     }
 
     pub fn params_first(&self) -> bool {
-        matches!(self, Self::ParamsFirst | Self::ParamsFirstMulti)
+        matches!(self, Self::ParamsAlways | Self::ParamsFirstMulti)
     }
 
     pub fn attrib_first(&self) -> bool {
