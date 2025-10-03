@@ -78,14 +78,14 @@ Diff in stdin:
 1   1    | // SPDX-License-Identifier: MIT
 2        |-pragma         solidity  =0.8.30    ;
     2    |+pragma solidity =0.8.30;
-3   3    |
+...
 4        |-contract  Test  {
 5        |-    uint256    public    value ;
 6        |-    function   setValue ( uint256   _value )   public   {
 7        |-        value   =   _value ;
     4    |+contract Test {
     5    |+    uint256 public value;
-    6    |+
+...
     7    |+    function setValue(uint256 _value) public {
     8    |+        value = _value;
 8   9    |     }
