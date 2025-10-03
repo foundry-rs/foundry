@@ -208,10 +208,12 @@ contract FuzzerDictTest is Test {
     );
 
     // Test that immutable address is used as fuzzed input, causing test to fail.
-    cmd.args(["test", "--fuzz-seed", "119", "--mt", "testImmutableOwner"]).assert_failure();
+    // Use --jobs 1 to force single worker for deterministic behavior with seed
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "testImmutableOwner", "--jobs", "1"])
+        .assert_failure();
     // Test that storage address is used as fuzzed input, causing test to fail.
     cmd.forge_fuse()
-        .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
+        .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner", "--jobs", "1"])
         .assert_failure();
 });
 
@@ -260,7 +262,8 @@ contract FuzzTimeoutTest is Test {
    "#,
     );
 
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    // Use single worker for deterministic timeout behavior
+    cmd.args(["test", "--jobs", "1"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
