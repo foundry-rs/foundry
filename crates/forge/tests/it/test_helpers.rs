@@ -1,6 +1,5 @@
 //! Test helpers for Forge integration tests.
 
-use alloy_chains::NamedChain;
 use alloy_primitives::U256;
 use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_cli::utils::install_crypto_provider;
@@ -11,14 +10,10 @@ use foundry_compilers::{
 };
 use foundry_config::{
     Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InvariantConfig,
-    RpcEndpointUrl, RpcEndpoints, fs_permissions::PathPermission,
+    fs_permissions::PathPermission,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
-use foundry_test_utils::{
-    init_tracing,
-    rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
-    util::get_compiled,
-};
+use foundry_test_utils::{init_tracing, rpc::rpc_endpoints, util::get_compiled};
 use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
@@ -266,22 +261,6 @@ pub fn manifest_root() -> &'static Path {
         root = root.parent().unwrap();
     }
     root
-}
-
-/// the RPC endpoints used during tests
-pub fn rpc_endpoints() -> RpcEndpoints {
-    RpcEndpoints::new([
-        ("mainnet", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
-        ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
-        ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
-        ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
-        ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
-        ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
-        ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
-        ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
-        ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
-        ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
-    ])
 }
 
 fn config_evm_opts(config: &Config) -> EvmOpts {

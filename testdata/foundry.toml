@@ -3,7 +3,7 @@ src = "/dev/null"
 test = "./"
 optimizer = true
 optimizer_runs = 200
-via_ir = true
+via_ir = false
 ignored_error_codes = [
     1878, # SPDX license identifier not provided
     2018, # Function state mutability can be restricted
@@ -17,11 +17,8 @@ ignored_error_codes = [
 
 ffi = true
 fs_permissions = [{ access = "read-write", path = "./" }]
-# verbosity = 3
-prompt_timeout = 1
-
-# TODO(dani): stack too deep
-skip = ["default/repros/Issue8383.t.sol"]
+verbosity = 3
+prompt_timeout = 0
 
 [profile.default.rpc_storage_caching]
 chains = "all"
@@ -35,3 +32,15 @@ ignore = ["cheats/Vm.sol"]
 
 [lint]
 lint_on_build = false
+
+[profile.default.rpc_endpoints]
+mainnet = "${RPC_MAINNET}"
+mainnet2 = "${RPC_MAINNET2}"
+sepolia = "${RPC_SEPOLIA}"
+optimism = "${RPC_OPTIMISM}"
+arbitrum = "${RPC_ARBITRUM}"
+polygon = "${RPC_POLYGON}"
+bsc = "${RPC_BSC}"
+avaxTestnet = "https://api.avax-test.network/ext/bc/C/rpc"
+moonbeam = "https://moonbeam-rpc.publicnode.com"
+rpcEnvAlias = "${RPC_ENV_ALIAS}"

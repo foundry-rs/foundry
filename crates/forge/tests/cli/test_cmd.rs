@@ -3,11 +3,30 @@
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
-    TestCommand, rpc, str,
+    TestCommand,
+    rpc::{self, rpc_endpoints},
+    str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{path::PathBuf, str::FromStr};
+use std::{io::Write, path::PathBuf, str::FromStr};
+
+forgetest!(testdata, |_prj, cmd| {
+    let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
+    cmd.current_dir(&testdata);
+
+    let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
+    for (name, endpoint) in rpc_endpoints().iter() {
+        if let Some(url) = endpoint.endpoint.as_url() {
+            let key = format!("RPC_{}", name.to_uppercase());
+            cmd.env(&key, url);
+            writeln!(dotenv, "{key}={url}").unwrap();
+        }
+    }
+    drop(dotenv);
+
+    cmd.arg("test").assert_success();
+});
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj, cmd| {
