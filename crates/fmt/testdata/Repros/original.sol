@@ -167,6 +167,7 @@ contract DbgFmtTest is Test {
     }
 }
 
+// https://github.com/foundry-rs/foundry/issues/8557
 // https://github.com/foundry-rs/foundry/issues/11249
 function argListRepro(address tokenIn, uint256 amountIn, bool data) {
     maverickV2SwapCallback(
