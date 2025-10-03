@@ -592,8 +592,7 @@ impl WorkerCorpus {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
-            let new_seq = corpus.tx_seq.clone();
-            let mut tx = new_seq.first().unwrap().clone();
+            let mut tx = corpus.tx_seq.first().unwrap().clone();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
             tx
         } else {
@@ -660,7 +659,6 @@ impl WorkerCorpus {
                 self.worker_dir
                     .clone()
                     .unwrap()
-                    .join(format!("{WORKER}{}", self.id)) // Worker dir
                     .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
                     .as_path(),
                 &corpus,
@@ -1115,9 +1113,10 @@ mod tests {
         let corpus = CorpusEntry::from_tx_seq(&tx_seq);
         let seed_uuid = corpus.uuid;
 
-        // Create worker dir
-        let worker_dir = temp_corpus_dir().join("worker0");
-        let _ = fs::create_dir_all(&worker_dir);
+        // Create corpus root dir and worker subdirectory
+        let corpus_root = config.corpus_dir.clone().unwrap();
+        let worker_subdir = corpus_root.join("worker0");
+        let _ = fs::create_dir_all(&worker_subdir);
 
         let manager = WorkerCorpus {
             id: 0,
@@ -1131,7 +1130,7 @@ mod tests {
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
-            worker_dir: Some(temp_corpus_dir().join("worker0")),
+            worker_dir: Some(corpus_root),
             last_sync_metrics: CorpusMetrics::default(),
         };
 

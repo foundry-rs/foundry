@@ -301,7 +301,7 @@ impl FuzzedExecutor {
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ]
-        .prop_map(move |calldata| BasicTxDetails {
+        .prop_map(|calldata| BasicTxDetails {
             sender: Default::default(),
             call_details: CallDetails { target: Default::default(), calldata },
         });
