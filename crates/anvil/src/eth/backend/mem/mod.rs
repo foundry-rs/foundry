@@ -2166,12 +2166,8 @@ impl Backend {
         }
 
         for number in from..=to {
-            let storage = self.blockchain.storage.read();
-            if let Some(&block_hash) = storage.hashes.get(&number)
-                && let Some(block) = storage.blocks.get(&block_hash).cloned()
-            {
-                drop(storage);
-                all_logs.extend(self.mined_logs_for_block(filter.clone(), block, block_hash));
+            if let Some((block, hash)) = self.get_block_with_hash(number) {
+                all_logs.extend(self.mined_logs_for_block(filter.clone(), block, hash));
             }
         }
 
