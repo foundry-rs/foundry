@@ -77,8 +77,14 @@ impl FsPermissions {
                     highest_permission = perm.access;
                 } else if path_len == max_path_len {
                     // Same path length, keep the highest privilege
-                    if perm.access > highest_permission {
-                        highest_permission = perm.access;
+                    highest_permission = match (highest_permission, perm.access) {
+                        (FsAccessPermission::ReadWrite, _)
+                        | (FsAccessPermission::Read, FsAccessPermission::Write)
+                        | (FsAccessPermission::Write, FsAccessPermission::Read) => {
+                            FsAccessPermission::ReadWrite
+                        }
+                        (FsAccessPermission::None, perm) => perm,
+                        (existing_perm, _) => existing_perm,
                     }
                 }
             }
@@ -176,7 +182,7 @@ impl fmt::Display for FsAccessKind {
 }
 
 /// Determines the status of file system access
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FsAccessPermission {
     /// FS access is _not_ allowed
     #[default]
@@ -191,12 +197,10 @@ pub enum FsAccessPermission {
 
 impl FsAccessPermission {
     /// Returns true if the access is allowed
-    ///
-    /// Note: Write access implies Read access, so Write grants both Read and Write operations.
     pub fn is_granted(&self, kind: FsAccessKind) -> bool {
         match (self, kind) {
             (Self::ReadWrite, _) => true,
-            (Self::Write, _) => true, // Write grants both Read and Write access
+            (Self::Write, FsAccessKind::Write) => true,
             (Self::Read, FsAccessKind::Read) => true,
             (Self::None, _) => false,
             _ => false,
@@ -295,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn highest_privilege_wins() {
+    fn read_write_permission_combination() {
         // When multiple permissions are defined for the same path, highest privilege wins
         let permissions = FsPermissions::new(vec![
             PathPermission::read("./out/contracts"),
@@ -304,16 +308,7 @@ mod tests {
 
         let permission =
             permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
-        assert_eq!(FsAccessPermission::Write, permission);
-    }
-
-    #[test]
-    fn write_grants_read_access() {
-        let permissions = FsPermissions::new(vec![PathPermission::write("./out")]);
-
-        // Write permission should grant both read and write access
-        assert!(permissions.is_path_allowed(Path::new("./out/file.txt"), FsAccessKind::Read));
-        assert!(permissions.is_path_allowed(Path::new("./out/file.txt"), FsAccessKind::Write));
+        assert_eq!(FsAccessPermission::ReadWrite, permission);
     }
 
     #[test]
