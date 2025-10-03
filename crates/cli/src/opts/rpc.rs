@@ -1,4 +1,4 @@
-use crate::opts::ChainValueParser;
+use crate::opts::{ChainValueParser, RpcCommonOpts};
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
@@ -18,16 +18,8 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
-    /// The RPC endpoint, default value is http://localhost:8545.
-    #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
-    pub url: Option<String>,
-
-    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
-    ///
-    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
-    /// client to accept invalid certificates.
-    #[arg(short = 'k', long = "insecure", default_value = "false")]
-    pub accept_invalid_certs: bool,
+    #[command(flatten)]
+    pub common: RpcCommonOpts,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -36,30 +28,6 @@ pub struct RpcOpts {
     /// See: <https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions>
     #[arg(long)]
     pub flashbots: bool,
-
-    /// JWT Secret for the RPC endpoint.
-    ///
-    /// The JWT secret will be used to create a JWT for a RPC. For example, the following can be
-    /// used to simulate a CL `engine_forkchoiceUpdated` call:
-    ///
-    /// cast rpc --jwt-secret <JWT_SECRET> engine_forkchoiceUpdatedV2
-    /// '["0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
-    /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
-    /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
-    #[arg(long, env = "ETH_RPC_JWT_SECRET")]
-    pub jwt_secret: Option<String>,
-
-    /// Timeout for the RPC request in seconds.
-    ///
-    /// The specified timeout will be used to override the default timeout for RPC requests.
-    ///
-    /// Default value: 45
-    #[arg(long, env = "ETH_RPC_TIMEOUT")]
-    pub rpc_timeout: Option<u64>,
-
-    /// Specify custom headers for RPC requests.
-    #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
-    pub rpc_headers: Option<Vec<String>>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -77,7 +45,7 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.flashbots, self.url.as_deref(), config) {
+        let url = match (self.flashbots, self.common.url.as_deref(), config) {
             (true, ..) => Some(Cow::Borrowed(FLASHBOTS_URL)),
             (false, Some(url), _) => Some(Cow::Borrowed(url)),
             (false, None, Some(config)) => config.get_rpc_url().transpose()?,
@@ -88,31 +56,12 @@ impl RpcOpts {
 
     /// Returns the JWT secret.
     pub fn jwt<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let jwt = match (self.jwt_secret.as_deref(), config) {
-            (Some(jwt), _) => Some(Cow::Borrowed(jwt)),
-            (None, Some(config)) => config.get_rpc_jwt_secret()?,
-            (None, None) => None,
-        };
-        Ok(jwt)
+        self.common.jwt(config)
     }
 
     pub fn dict(&self) -> Dict {
-        let mut dict = Dict::new();
-        if let Ok(Some(url)) = self.url(None) {
-            dict.insert("eth_rpc_url".into(), url.into_owned().into());
-        }
-        if let Ok(Some(jwt)) = self.jwt(None) {
-            dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
-        }
-        if let Some(rpc_timeout) = self.rpc_timeout {
-            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
-        }
-        if let Some(headers) = &self.rpc_headers {
-            dict.insert("eth_rpc_headers".into(), headers.clone().into());
-        }
-        if self.accept_invalid_certs {
-            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
-        }
+        let dict = self.common.dict();
+        // Flashbots URL is handled in the url() method, not in dict()
         dict
     }
 
