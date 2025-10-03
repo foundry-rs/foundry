@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-
-interface Vm {
-    function etch(address target, bytes calldata newRuntimeBytecode) external;
-}
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/5625
 // https://github.com/foundry-rs/foundry/issues/6166
@@ -23,14 +19,13 @@ contract Target {
     }
 }
 
-contract Handler is DSTest {
+contract Handler is Test {
     function increment() public {
         Target(0x6B175474E89094C44Da98b954EedeAC495271d0F).goodSelector();
     }
 }
 
-contract ExplicitTargetContract is DSTest {
-    Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+contract ExplicitTargetContract is Test {
     Handler handler;
 
     function setUp() public {
@@ -50,8 +45,7 @@ contract ExplicitTargetContract is DSTest {
     function invariant_explicit_target() public {}
 }
 
-contract DynamicTargetContract is DSTest {
-    Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+contract DynamicTargetContract is Test {
     Handler handler;
 
     function setUp() public {

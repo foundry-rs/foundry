@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "../logs/console.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct MyStruct {
     uint256 value;
@@ -27,9 +25,7 @@ contract MyContract {
     }
 }
 
-contract ForkTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ForkTest is Test {
     uint256 mainnetFork;
     uint256 optimismFork;
 

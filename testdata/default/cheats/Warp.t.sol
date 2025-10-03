@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract WarpTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WarpTest is Test {
     function testWarp() public {
         vm.warp(10);
         assertEq(vm.getBlockTimestamp(), 10, "warp failed");

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public number;
@@ -31,7 +30,7 @@ contract Handler {
     }
 }
 
-contract Invariant is DSTest {
+contract Invariant is Test {
     Handler h;
 
     function setUp() public {

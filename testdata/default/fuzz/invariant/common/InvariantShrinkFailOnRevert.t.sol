@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract ShrinkFailOnRevert {
     uint256 cond;
@@ -15,7 +14,7 @@ contract ShrinkFailOnRevert {
     }
 }
 
-contract ShrinkFailOnRevertTest is DSTest {
+contract ShrinkFailOnRevertTest is Test {
     ShrinkFailOnRevert target;
 
     function setUp() public {

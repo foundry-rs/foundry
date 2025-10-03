@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.6.12;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 import "./DssExecLib.sol";
-
-interface Vm {
-    function store(address account, bytes32 slot, bytes32 value) external;
-    function activeFork() external returns (uint256);
-}
 
 interface IWETH {
     function deposit() external payable;
@@ -23,7 +18,7 @@ contract DummyContract {
     }
 }
 
-contract ForkTest is DSTest {
+contract ForkTest is Test {
     address constant DAI_TOKEN_ADDR = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public count;
@@ -12,9 +11,7 @@ contract Counter {
     }
 }
 
-contract NonceIsolatedTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract NonceIsolatedTest is Test {
     function testIncrementNonce() public {
         address bob = address(14);
         vm.startPrank(bob);

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 contract Box {
     uint256 public number;
@@ -14,9 +12,7 @@ contract Box {
 }
 
 // https://github.com/foundry-rs/foundry/issues/6634
-contract Issue6634Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue6634Test is Test {
     function test_Create2FactoryCallRecordedInStandardTest() public {
         address CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public number;
@@ -15,7 +15,7 @@ contract Counter {
     }
 }
 
-contract InvariantShrinkWithAssert is DSTest {
+contract InvariantShrinkWithAssert is Test {
     Counter public counter;
 
     function setUp() public {

@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 // All `prompt` functions should revert in CI and testing environments either
 // with a timeout or because no terminal is available.
-contract PromptTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract PromptTest is Test {
     function testPrompt_revertNotATerminal() public {
         checkTty();
 

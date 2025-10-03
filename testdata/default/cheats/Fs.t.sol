@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract FsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract FsTest is Test {
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "access to foundry.toml is not allowed";
     bytes constant FOUNDRY_READ_ERR = "the path /etc/hosts is not allowed to be accessed for read operations";
     bytes constant FOUNDRY_READ_DIR_ERR = "the path /etc is not allowed to be accessed for read operations";

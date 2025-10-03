@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3055
-contract Issue3055Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue3055Test is Test {
     function test_snapshot() external {
         uint256 snapshotId = vm.snapshotState();
         assertEq(uint256(0), uint256(1));

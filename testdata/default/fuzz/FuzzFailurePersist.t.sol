@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct TestTuple {
     address user;
     uint256 amount;
 }
 
-contract FuzzFailurePersistTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract FuzzFailurePersistTest is Test {
     function test_persist_fuzzed_failure(
         uint256 x,
         int256 y,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 // Will get automatically excluded. Otherwise it would throw error.
 contract NoMutFunctions {
@@ -24,7 +24,7 @@ contract Hello {
     }
 }
 
-contract ExcludeArtifacts is DSTest {
+contract ExcludeArtifacts is Test {
     Excluded excluded;
 
     function setUp() public {

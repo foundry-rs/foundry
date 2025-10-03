@@ -1,7 +1,6 @@
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract ReturnsNothing {
     function func() public pure {}
@@ -19,7 +18,7 @@ contract ReturnsUint {
     }
 }
 
-contract ConflictingSignaturesTest is DSTest {
+contract ConflictingSignaturesTest is Test {
     ReturnsNothing retsNothing;
     ReturnsString retsString;
     ReturnsUint retsUint;

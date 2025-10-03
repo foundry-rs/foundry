@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract NoAssertionsRevertTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract NoAssertionsRevertTest is Test {
     function testMultipleAssertFailures() public {
         vm.assertEq(uint256(1), uint256(2));
         vm.assertLt(uint256(5), uint256(4));

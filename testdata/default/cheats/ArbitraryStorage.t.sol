@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public a;
@@ -27,9 +26,7 @@ contract Counter {
     }
 }
 
-contract CounterArbitraryStorageWithSeedTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract CounterArbitraryStorageWithSeedTest is Test {
     function test_fresh_storage() public {
         uint256 index = 55;
         Counter counter = new Counter();
@@ -77,9 +74,7 @@ contract AContract {
     bytes32[] public d;
 }
 
-contract AContractArbitraryStorageWithSeedTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract AContractArbitraryStorageWithSeedTest is Test {
     function test_arbitrary_storage_with_seed() public {
         AContract target = new AContract();
         vm.setArbitraryStorage(address(target));
@@ -96,9 +91,7 @@ contract SymbolicStore {
     constructor() {}
 }
 
-contract SymbolicStorageWithSeedTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract SymbolicStorageWithSeedTest is Test {
     function test_SymbolicStorage() public {
         uint256 slot = vm.randomUint(0, 100);
         address addr = 0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8;
@@ -125,8 +118,7 @@ contract SymbolicStorageWithSeedTest is DSTest {
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10084>
-contract ArbitraryStorageOverwriteWithSeedTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
+contract ArbitraryStorageOverwriteWithSeedTest is Test {
     uint256 _value;
 
     function testArbitraryStorageFalse(uint256 value) public {

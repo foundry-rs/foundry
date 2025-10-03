@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract B {
     function a() public returns (uint256) {
@@ -10,9 +9,7 @@ contract B {
     }
 }
 
-contract GasMeteringTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GasMeteringTest is Test {
     function testGasMetering() public {
         uint256 gas_start = gasleft();
 

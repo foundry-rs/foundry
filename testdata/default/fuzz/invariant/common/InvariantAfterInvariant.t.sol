@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 struct FuzzSelector {
     address addr;
@@ -16,7 +16,7 @@ contract AfterInvariantHandler {
     }
 }
 
-contract InvariantAfterInvariantTest is DSTest {
+contract InvariantAfterInvariantTest is Test {
     AfterInvariantHandler handler;
 
     function setUp() public {

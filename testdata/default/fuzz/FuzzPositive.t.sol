@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
-contract FuzzPositive is DSTest {
+contract FuzzPositive is Test {
     function testSuccessChecker(uint256 val) public {
         assertTrue(true);
     }

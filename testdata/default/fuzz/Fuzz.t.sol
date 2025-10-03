@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract FuzzTest is DSTest {
+contract FuzzTest is Test {
     constructor() {
         emit log("constructor");
     }
-
-    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         emit log("setUp");

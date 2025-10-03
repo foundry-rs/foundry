@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import {DSTest} from "lib/ds-test/src/test.sol";
-import {Vm} from "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Greeter {
     string name;
@@ -22,9 +21,7 @@ contract Greeter {
     }
 }
 
-contract Deploy is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Deploy is Test {
     Greeter greeter;
     string greeting;
 

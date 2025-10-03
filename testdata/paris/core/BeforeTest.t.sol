@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract SelfDestructor {
     function kill() external {
@@ -10,7 +10,7 @@ contract SelfDestructor {
 }
 
 // https://github.com/foundry-rs/foundry/issues/1543
-contract BeforeTestSelfDestructTest is DSTest {
+contract BeforeTestSelfDestructTest is Test {
     SelfDestructor killer;
     uint256 a;
     uint256 b;

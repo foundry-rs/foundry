@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/5948
-contract Issue5948Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue5948Test is Test {
     /// forge-config: default.fuzz.runs = 2
     function testSleepFuzzed(uint256 _milliseconds) public {
         // Limit sleep time to 2 seconds to decrease test time

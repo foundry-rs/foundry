@@ -1,11 +1,8 @@
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract DebugLogsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract DebugLogsTest is Test {
     constructor() {
         emit log_uint(0);
     }
@@ -97,7 +94,7 @@ contract DebugLogsTest is DSTest {
     }
 }
 
-contract Fails is DSTest {
+contract Fails is Test {
     function failure() public {
         emit log_uint(100);
         revert();

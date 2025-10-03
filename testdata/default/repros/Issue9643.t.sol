@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Mock {
     uint256 private counter;
@@ -33,9 +32,7 @@ contract DelegateProxy {
     }
 }
 
-contract Issue9643Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue9643Test is Test {
     function test_storage_json_diff() public {
         vm.startStateDiffRecording();
         Mock proxied = Mock(address(new DelegateProxy(address(new Mock()))));

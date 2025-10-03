@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Malicious {
     function world() public {
@@ -32,7 +32,7 @@ contract Vulnerable {
     }
 }
 
-contract InvariantReentrancy is DSTest {
+contract InvariantReentrancy is Test {
     Vulnerable vuln;
     Malicious mal;
 

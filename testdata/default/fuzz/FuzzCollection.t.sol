@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract SampleContract {
     uint256 public counter;
@@ -36,14 +36,7 @@ contract SampleContract {
     }
 }
 
-interface Vm {
-    function startPrank(address) external;
-    function expectRevert(bytes calldata msg) external;
-}
-
-contract SampleContractTest is DSTest {
-    Vm hevm = Vm(HEVM_ADDRESS);
-
+contract SampleContractTest is Test {
     event Incremented(uint256 counter);
 
     SampleContract public sample;
@@ -53,9 +46,9 @@ contract SampleContractTest is DSTest {
     }
 
     function testIncrement(address caller) public {
-        hevm.startPrank(address(caller));
+        vm.startPrank(address(caller));
 
-        hevm.expectRevert("ONLY_OWNER");
+        vm.expectRevert("ONLY_OWNER");
         sample.incrementBy(1);
     }
 

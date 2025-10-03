@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct FuzzSelector {
     address addr;
@@ -37,8 +36,7 @@ contract Owned {
     }
 }
 
-contract Handler is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Handler is Test {
     Owned owned;
 
     constructor(Owned _owned) {
@@ -58,7 +56,7 @@ contract Handler is DSTest {
     }
 }
 
-contract InvariantCalldataDictionary is DSTest {
+contract InvariantCalldataDictionary is Test {
     address owner;
     Owned owned;
     Handler handler;

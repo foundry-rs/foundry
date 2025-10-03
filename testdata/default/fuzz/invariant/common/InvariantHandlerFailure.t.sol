@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.0;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 struct FuzzSelector {
     address addr;
     bytes4[] selectors;
 }
 
-contract Handler is DSTest {
+contract Handler is Test {
     function doSomething() public {
         require(false, "failed on revert");
     }
 }
 
-contract InvariantHandlerFailure is DSTest {
+contract InvariantHandlerFailure is Test {
     bytes4[] internal selectors;
 
     Handler handler;

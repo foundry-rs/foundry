@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract InvariantBreaker {
     bool public flag0 = true;
@@ -22,7 +22,7 @@ contract InvariantBreaker {
     }
 }
 
-contract InvariantTest is DSTest {
+contract InvariantTest is Test {
     InvariantBreaker inv;
 
     function setUp() public {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract SequenceNoReverts {
     uint256 public count;
@@ -12,7 +12,7 @@ contract SequenceNoReverts {
     }
 }
 
-contract SequenceNoRevertsTest is DSTest {
+contract SequenceNoRevertsTest is Test {
     SequenceNoReverts target;
 
     function setUp() public {

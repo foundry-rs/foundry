@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract RevertingTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract RevertingTest is Test {
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevert() public {
         vm.expectRevert("should revert here");

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract ShrinkBigSequence {
     uint256 cond;
@@ -18,7 +17,7 @@ contract ShrinkBigSequence {
     }
 }
 
-contract ShrinkBigSequenceTest is DSTest {
+contract ShrinkBigSequenceTest is Test {
     ShrinkBigSequence target;
 
     function setUp() public {

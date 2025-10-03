@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.0;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Target {
     bool ownerFound;
@@ -37,7 +37,7 @@ contract Target {
 }
 
 /// Try to compromise target contract by finding all accepted values using fixtures.
-contract InvariantFixtures is DSTest {
+contract InvariantFixtures is Test {
     Target target;
     address[] public fixture_owner_ = [address(0x6B175474E89094C44Da98b954EedeAC495271d0F)];
     uint256[] public fixture_amount = [1, 2, 1122334455];
