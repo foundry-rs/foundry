@@ -42,7 +42,7 @@ impl BuildData {
     pub async fn link(self, script_config: &ScriptConfig) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
-            let provider = try_get_http_provider(fork_url)?;
+            let provider = try_get_http_provider(fork_url, script_config.config.eth_rpc_accept_invalid_certs)?;
             let deployer_code = provider.get_code_at(create2_deployer).await?;
 
             !deployer_code.is_empty()
@@ -260,7 +260,7 @@ impl CompiledState {
             None
         } else {
             let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
-            let provider = Arc::new(try_get_http_provider(fork_url)?);
+            let provider = Arc::new(try_get_http_provider(fork_url, self.args.evm.accept_invalid_certs)?);
             Some(provider.get_chain_id().await?)
         };
 

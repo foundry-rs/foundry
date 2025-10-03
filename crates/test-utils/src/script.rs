@@ -64,7 +64,7 @@ impl ScriptTester {
 
         let mut provider = None;
         if let Some(endpoint) = endpoint {
-            provider = Some(get_http_provider(endpoint))
+            provider = Some(get_http_provider(endpoint, false))
         }
 
         Self {

@@ -40,6 +40,14 @@ use foundry_common::shell;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
+    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
+    ///
+    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
+    /// client to accept invalid certificates.
+    #[arg(short = 'k', long = "insecure", default_value = "false")]
+    #[serde(rename = "eth_rpc_accept_invalid_certs")]
+    pub accept_invalid_certs: bool,
+
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
@@ -188,6 +196,10 @@ impl Provider for EvmArgs {
 
         if let Some(fork_url) = &self.fork_url {
             dict.insert("eth_rpc_url".to_string(), fork_url.clone().into());
+        }
+
+        if self.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".to_string(), self.accept_invalid_certs.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

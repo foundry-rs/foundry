@@ -8,7 +8,7 @@ use foundry_common::provider::{
 };
 
 pub fn http_provider(http_endpoint: &str) -> RetryProvider {
-    get_http_provider(http_endpoint)
+    get_http_provider(http_endpoint, false)
 }
 
 pub fn http_provider_with_signer(

@@ -234,9 +234,9 @@ impl RpcData {
     }
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
-    async fn check_shanghai_support(&self) -> Result<()> {
+    async fn check_shanghai_support(&self, accept_invalid_certs: bool) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = get_http_provider(rpc);
+            let provider = get_http_provider(rpc, accept_invalid_certs);
             let id = provider.get_chain_id().await.ok()?;
             NamedChain::try_from(id).ok()
         });
@@ -307,7 +307,7 @@ impl ExecutedState {
                 )
             }
         }
-        rpc_data.check_shanghai_support().await?;
+        rpc_data.check_shanghai_support(self.args.evm.accept_invalid_certs).await?;
 
         Ok(PreSimulationState {
             args: self.args,

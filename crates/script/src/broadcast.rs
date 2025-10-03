@@ -49,8 +49,9 @@ pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block_number: Option<u64>,
+    accept_invalid_certs: bool,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
+    let provider = try_get_http_provider(provider_url, accept_invalid_certs)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
 
     let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
@@ -192,7 +193,7 @@ impl BundledState {
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(get_http_provider(rpc_url));
+                let provider = Arc::new(get_http_provider(rpc_url, self.args.evm.accept_invalid_certs));
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -268,7 +269,7 @@ impl BundledState {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
+            let provider = Arc::new(try_get_http_provider(sequence.rpc_url(),self.args.evm.accept_invalid_certs)?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);

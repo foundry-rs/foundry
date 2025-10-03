@@ -82,6 +82,9 @@ pub struct EvmOpts {
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
+
+    /// Whether to accept invalid certificates for the rpc server.
+    pub eth_rpc_accept_invalid_certs: bool,
 }
 
 impl Default for EvmOpts {
@@ -107,6 +110,7 @@ impl Default for EvmOpts {
             enable_tx_gas_limit: false,
             networks: NetworkConfigs::default(),
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
+            eth_rpc_accept_invalid_certs: false,
         }
     }
 }
@@ -129,6 +133,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
+            .accept_invalid_certs(self.eth_rpc_accept_invalid_certs)
             .build()?;
         environment(
             &provider,

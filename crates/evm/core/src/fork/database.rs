@@ -278,7 +278,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_db_insert_basic_default() {
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
-        let provider = get_http_provider(rpc.clone());
+        let provider = get_http_provider(rpc.clone(), false);
         let meta = BlockchainDbMeta::new(Default::default(), rpc);
 
         let db = BlockchainDb::new(meta, None);
