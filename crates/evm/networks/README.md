@@ -13,7 +13,7 @@ To add configuration support for a custom network (e.g. `my_network`), add a new
     pub my_network: bool,
 ```
 
-This automatically enables::
+This automatically enables:
 - `my_network = true` in foundry.toml
 - `--my-network` anvil CLI flag
 ```
