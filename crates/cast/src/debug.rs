@@ -56,7 +56,7 @@ pub(crate) async fn handle_traces(
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label);
-    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    let mut identifier = TraceIdentifiers::new().with_external(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
         identifier = identifier.with_local_and_bytecodes(contracts, contracts_bytecode);
@@ -69,7 +69,7 @@ pub(crate) async fn handle_traces(
     }
 
     if decode_internal || debug {
-        if let Some(ref etherscan_identifier) = identifier.etherscan {
+        if let Some(ref etherscan_identifier) = identifier.external {
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
 
