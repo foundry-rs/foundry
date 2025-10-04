@@ -167,8 +167,8 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            // TODO: Avoid process::exit
-            std::process::exit(1);
+            // Return an error instead of exiting the process; caller decides how to handle it.
+            return Err(eyre::eyre!("test failures encountered"));
         }
 
         sh_println!("\nFailing tests:")?;
@@ -192,8 +192,8 @@ impl TestOutcome {
             successes.to_string().green()
         )?;
 
-        // TODO: Avoid process::exit
-        std::process::exit(1);
+        // Return an error instead of exiting the process; caller decides how to handle it.
+        Err(eyre::eyre!("test failures encountered"))
     }
 
     /// Removes first test result, if any.
