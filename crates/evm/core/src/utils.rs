@@ -16,9 +16,10 @@ pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
-#[inline(always)]
 pub fn cold_path() {
-    // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+    // Hint LLVM that this branch is cold. Replace with `std::hint::cold_path()` once stabilized.
+    // Using `std::hint::cold()` is a no-op with the intended effect on current stable.
+    std::hint::cold();
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes
