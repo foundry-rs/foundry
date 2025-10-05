@@ -14,7 +14,7 @@ use foundry_config::{
 use serde::Serialize;
 
 use foundry_common::shell;
-use crate::opts::RpcCommonOpts;
+use crate::opts::EvmRpcOpts;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -44,7 +44,7 @@ pub struct EvmArgs {
     /// Common RPC options
     #[command(flatten)]
     #[serde(flatten)]
-    pub rpc: RpcCommonOpts,
+    pub rpc: EvmRpcOpts,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
@@ -281,15 +281,15 @@ mod tests {
     }
 
     #[test]
-    fn compute_units_per_second_present_when_some() {
+    fn rpc_url_present_when_some() {
         let args = EvmArgs { 
-            rpc: RpcCommonOpts { compute_units_per_second: Some(1000), ..Default::default() },
+            rpc: EvmRpcOpts { url: Some("http://localhost:8545".to_string()), ..Default::default() },
             ..Default::default() 
         };
         let data = args.data().expect("provider data");
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
-        let val = dict.get("compute_units_per_second").expect("cups present");
-        assert_eq!(val, &Value::from(1000u64));
+        let val = dict.get("eth_rpc_url").expect("rpc url present");
+        assert_eq!(val, &Value::from("http://localhost:8545"));
     }
 
     #[test]
