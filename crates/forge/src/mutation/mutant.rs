@@ -49,10 +49,10 @@ pub enum OwnedLiteral {
 impl From<&LitKind<'_>> for OwnedLiteral {
     fn from(lit_kind: &LitKind<'_>) -> Self {
         match lit_kind {
-            LitKind::Bool(b) => OwnedLiteral::Bool(*b),
-            LitKind::Number(n) => OwnedLiteral::Number(*n),
-            LitKind::Rational(r) => OwnedLiteral::Rational(r.to_string()),
-            LitKind::Address(addr) => OwnedLiteral::Address(addr.to_string()),
+            LitKind::Bool(b) => Self::Bool(*b),
+            LitKind::Number(n) => Self::Number(*n),
+            LitKind::Rational(r) => Self::Rational(r.to_string()),
+            LitKind::Address(addr) => Self::Address(addr.to_string()),
             LitKind::Str(sk, bytesym, _extras) => {
                 let text = String::from_utf8_lossy(bytesym.as_byte_str()).into_owned();
                 let kind = match sk {
@@ -60,9 +60,9 @@ impl From<&LitKind<'_>> for OwnedLiteral {
                     StrKind::Unicode => OwnedStrKind::Unicode,
                     StrKind::Hex => OwnedStrKind::Hex,
                 };
-                OwnedLiteral::Str { kind, text }
+                Self::Str { kind, text }
             }
-            LitKind::Err(_) => OwnedLiteral::Err("parse_error".to_string()),
+            LitKind::Err(_) => Self::Err("parse_error".to_string()),
         }
     }
 }
@@ -70,16 +70,16 @@ impl From<&LitKind<'_>> for OwnedLiteral {
 impl Display for OwnedLiteral {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OwnedLiteral::Bool(val) => write!(f, "{val}"),
-            OwnedLiteral::Number(val) => write!(f, "{val}"),
-            OwnedLiteral::Rational(s) => write!(f, "{s}"),
-            OwnedLiteral::Address(s) => write!(f, "{s}"),
-            OwnedLiteral::Str { kind, text } => match kind {
-                OwnedStrKind::Str => write!(f, "\"{}\"", text),
-                OwnedStrKind::Unicode => write!(f, "unicode\"{}\"", text),
-                OwnedStrKind::Hex => write!(f, "hex\"{}\"", text),
+            Self::Bool(val) => write!(f, "{val}"),
+            Self::Number(val) => write!(f, "{val}"),
+            Self::Rational(s) => write!(f, "{s}"),
+            Self::Address(s) => write!(f, "{s}"),
+            Self::Str { kind, text } => match kind {
+                OwnedStrKind::Str => write!(f, "\"{text}\""),
+                OwnedStrKind::Unicode => write!(f, "unicode\"{text}\""),
+                OwnedStrKind::Hex => write!(f, "hex\"{text}\""),
             },
-            OwnedLiteral::Err(s) => write!(f, "{s}"),
+            Self::Err(s) => write!(f, "{s}"),
         }
     }
 }

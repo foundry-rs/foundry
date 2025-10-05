@@ -21,27 +21,24 @@ pub use crate::mutation::reporter::MutationReporter;
 
 use crate::result::TestOutcome;
 use dunce;
-use foundry_common::fs;
-use foundry_compilers::{
-    ProjectCompileOutput, cache::SOLIDITY_FILES_CACHE_FILENAME, project::ProjectCompiler,
-};
-use foundry_config::Config;
 use rayon::prelude::*;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use solar_interface::BytePos;
 use solar_parse::ast::visit::Visit;
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 pub struct MutationsSummary {
     total: usize,
     dead: Vec<Mutant>,
     survived: Vec<Mutant>,
     invalid: Vec<Mutant>,
+}
+
+impl Default for MutationsSummary {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MutationsSummary {
@@ -169,8 +166,7 @@ impl MutationHandler {
             .into_owned();
         mapping.insert(contract_path, hash.to_string());
 
-        let mapping_json = serde_json::to_string_pretty(&mapping)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let mapping_json = serde_json::to_string_pretty(&mapping).map_err(std::io::Error::other)?;
         std::fs::write(&mapping_path, mapping_json)?;
 
         // Write <hash>.mutants with a simple JSON array
@@ -236,8 +232,7 @@ impl MutationHandler {
             .unwrap_or("contract")
             .to_string();
         let mutants_file = mutation_cache_dir.join(format!("{contract_name}.mutants"));
-        let json = serde_json::to_string_pretty(&dtos)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(&dtos).map_err(std::io::Error::other)?;
         std::fs::write(mutants_file, json)?;
 
         Ok(())
@@ -282,8 +277,7 @@ impl MutationHandler {
             .unwrap_or("contract")
             .to_string();
         let results_file = mutation_cache_dir.join(format!("{contract_name}.results"));
-        let json = serde_json::to_string_pretty(&serialized)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(&serialized).map_err(std::io::Error::other)?;
         std::fs::write(results_file, json)?;
 
         Ok(())
@@ -355,13 +349,9 @@ impl MutationHandler {
         let mapping_path = mutation_cache_dir.join("mapping.json");
 
         // Read mapping file `{contract_absolute_path -> build_hash}`
-        let mapping: HashMap<String, String> = match std::fs::read_to_string(&mapping_path)
+        let mapping: HashMap<String, String> = std::fs::read_to_string(&mapping_path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(map) => map,
-            None => return None,
-        };
+            .and_then(|s| serde_json::from_str(&s).ok())?;
 
         // Canonicalize the contract path to match mapping keys
         let contract_path = dunce::canonicalize(&self.contract_to_mutate)
@@ -379,134 +369,125 @@ impl MutationHandler {
                     .unwrap_or("contract")
                     .to_string();
                 let mutants_file = mutation_cache_dir.join(format!("{contract_name}.mutants"));
-                if mutants_file.exists() {
-                    if let Ok(data) = std::fs::read_to_string(&mutants_file) {
-                        #[derive(Deserialize)]
-                        #[serde(tag = "kind")]
-                        enum MutationDtoKindRead {
-                            AssignmentLiteral { lit: String },
-                            AssignmentIdentifier { ident: String },
-                            BinaryOp { op: String },
-                            DeleteExpression,
-                            ElimDelegate,
-                            FunctionCall,
-                            Require,
-                            SwapArgumentsFunction,
-                            SwapArgumentsOperator,
-                            UnaryOperator { expr: String, op: String },
-                        }
-                        #[derive(Deserialize)]
-                        struct MutantDtoRead {
-                            path: String,
-                            lo: u64,
-                            hi: u64,
-                            mutation: MutationDtoKindRead,
-                        }
+                if mutants_file.exists()
+                    && let Ok(data) = std::fs::read_to_string(&mutants_file)
+                {
+                    #[derive(Deserialize)]
+                    #[serde(tag = "kind")]
+                    enum MutationDtoKindRead {
+                        AssignmentLiteral { lit: String },
+                        AssignmentIdentifier { ident: String },
+                        BinaryOp { op: String },
+                        DeleteExpression,
+                        ElimDelegate,
+                        FunctionCall,
+                        Require,
+                        SwapArgumentsFunction,
+                        SwapArgumentsOperator,
+                        UnaryOperator { expr: String, op: String },
+                    }
+                    #[derive(Deserialize)]
+                    struct MutantDtoRead {
+                        path: String,
+                        lo: u64,
+                        hi: u64,
+                        mutation: MutationDtoKindRead,
+                    }
 
-                        if let Ok(raw_mutants) = serde_json::from_str::<Vec<MutantDtoRead>>(&data) {
-                            let mut out: Vec<Mutant> = Vec::new();
-                            for m in raw_mutants {
-                                let span = solar_parse::ast::Span::new(
-                                    BytePos(m.lo as u32),
-                                    BytePos(m.hi as u32),
-                                );
-                                let mutation = match m.mutation {
-                                    MutationDtoKindRead::AssignmentLiteral { lit } => {
-                                        let lit_val = match lit.as_str() {
-                                            "true" => {
-                                                crate::mutation::mutant::OwnedLiteral::Bool(true)
-                                            }
-                                            "false" => {
-                                                crate::mutation::mutant::OwnedLiteral::Bool(false)
-                                            }
-                                            _ => crate::mutation::mutant::OwnedLiteral::Number(
-                                                U256::ZERO,
-                                            ),
-                                        };
-                                        crate::mutation::mutant::MutationType::Assignment(
-                                            crate::mutation::visitor::AssignVarTypes::Literal(
-                                                lit_val,
-                                            ),
-                                        )
-                                    }
-                                    MutationDtoKindRead::AssignmentIdentifier { ident } => {
-                                        crate::mutation::mutant::MutationType::Assignment(
-                                            crate::mutation::visitor::AssignVarTypes::Identifier(
-                                                ident,
-                                            ),
-                                        )
-                                    }
-                                    MutationDtoKindRead::BinaryOp { op } => {
-                                        let kind = match op.as_str() {
-                                            "+" => solar_parse::ast::BinOpKind::Add,
-                                            "-" => solar_parse::ast::BinOpKind::Sub,
-                                            "*" => solar_parse::ast::BinOpKind::Mul,
-                                            "/" => solar_parse::ast::BinOpKind::Div,
-                                            "&" => solar_parse::ast::BinOpKind::BitAnd,
-                                            "|" => solar_parse::ast::BinOpKind::BitOr,
-                                            "^" => solar_parse::ast::BinOpKind::BitXor,
-                                            "&&" => solar_parse::ast::BinOpKind::And,
-                                            "||" => solar_parse::ast::BinOpKind::Or,
-                                            "==" => solar_parse::ast::BinOpKind::Eq,
-                                            "!=" => solar_parse::ast::BinOpKind::Ne,
-                                            ">" => solar_parse::ast::BinOpKind::Gt,
-                                            ">=" => solar_parse::ast::BinOpKind::Ge,
-                                            "<" => solar_parse::ast::BinOpKind::Lt,
-                                            "<=" => solar_parse::ast::BinOpKind::Le,
-                                            other => panic!(
-                                                "Unknown binary operator token in cache: {}",
-                                                other
-                                            ),
-                                        };
-                                        crate::mutation::mutant::MutationType::BinaryOp(kind)
-                                    }
-                                    MutationDtoKindRead::DeleteExpression => {
-                                        crate::mutation::mutant::MutationType::DeleteExpression
-                                    }
-                                    MutationDtoKindRead::ElimDelegate => {
-                                        crate::mutation::mutant::MutationType::ElimDelegate
-                                    }
-                                    MutationDtoKindRead::FunctionCall => {
-                                        crate::mutation::mutant::MutationType::FunctionCall
-                                    }
-                                    MutationDtoKindRead::Require => {
-                                        crate::mutation::mutant::MutationType::Require
-                                    }
-                                    MutationDtoKindRead::SwapArgumentsFunction => {
-                                        crate::mutation::mutant::MutationType::SwapArgumentsFunction
-                                    }
-                                    MutationDtoKindRead::SwapArgumentsOperator => {
-                                        crate::mutation::mutant::MutationType::SwapArgumentsOperator
-                                    }
-                                    MutationDtoKindRead::UnaryOperator { expr, op } => {
-                                        let resulting = match op.as_str() {
-                                            "PreInc" => solar_parse::ast::UnOpKind::PreInc,
-                                            "PostInc" => solar_parse::ast::UnOpKind::PostInc,
-                                            "PreDec" => solar_parse::ast::UnOpKind::PreDec,
-                                            "PostDec" => solar_parse::ast::UnOpKind::PostDec,
-                                            "Not" => solar_parse::ast::UnOpKind::Not,
-                                            "BitNot" => solar_parse::ast::UnOpKind::BitNot,
-                                            "Neg" => solar_parse::ast::UnOpKind::Neg,
-                                            other => panic!(
-                                                "Unknown unary operator token in cache: {}",
-                                                other
-                                            ),
-                                        };
-                                        crate::mutation::mutant::MutationType::UnaryOperator(
-                                            crate::mutation::mutant::UnaryOpMutated::new(
-                                                expr, resulting,
-                                            ),
-                                        )
-                                    }
-                                };
-                                out.push(Mutant { path: PathBuf::from(m.path), span, mutation });
-                            }
-                            return Some(out);
+                    if let Ok(raw_mutants) = serde_json::from_str::<Vec<MutantDtoRead>>(&data) {
+                        let mut out: Vec<Mutant> = Vec::new();
+                        for m in raw_mutants {
+                            let span = solar_parse::ast::Span::new(
+                                BytePos(m.lo as u32),
+                                BytePos(m.hi as u32),
+                            );
+                            let mutation = match m.mutation {
+                                MutationDtoKindRead::AssignmentLiteral { lit } => {
+                                    let lit_val = match lit.as_str() {
+                                        "true" => crate::mutation::mutant::OwnedLiteral::Bool(true),
+                                        "false" => {
+                                            crate::mutation::mutant::OwnedLiteral::Bool(false)
+                                        }
+                                        _ => crate::mutation::mutant::OwnedLiteral::Number(
+                                            U256::ZERO,
+                                        ),
+                                    };
+                                    crate::mutation::mutant::MutationType::Assignment(
+                                        crate::mutation::visitor::AssignVarTypes::Literal(lit_val),
+                                    )
+                                }
+                                MutationDtoKindRead::AssignmentIdentifier { ident } => {
+                                    crate::mutation::mutant::MutationType::Assignment(
+                                        crate::mutation::visitor::AssignVarTypes::Identifier(ident),
+                                    )
+                                }
+                                MutationDtoKindRead::BinaryOp { op } => {
+                                    let kind = match op.as_str() {
+                                        "+" => solar_parse::ast::BinOpKind::Add,
+                                        "-" => solar_parse::ast::BinOpKind::Sub,
+                                        "*" => solar_parse::ast::BinOpKind::Mul,
+                                        "/" => solar_parse::ast::BinOpKind::Div,
+                                        "&" => solar_parse::ast::BinOpKind::BitAnd,
+                                        "|" => solar_parse::ast::BinOpKind::BitOr,
+                                        "^" => solar_parse::ast::BinOpKind::BitXor,
+                                        "&&" => solar_parse::ast::BinOpKind::And,
+                                        "||" => solar_parse::ast::BinOpKind::Or,
+                                        "==" => solar_parse::ast::BinOpKind::Eq,
+                                        "!=" => solar_parse::ast::BinOpKind::Ne,
+                                        ">" => solar_parse::ast::BinOpKind::Gt,
+                                        ">=" => solar_parse::ast::BinOpKind::Ge,
+                                        "<" => solar_parse::ast::BinOpKind::Lt,
+                                        "<=" => solar_parse::ast::BinOpKind::Le,
+                                        other => panic!(
+                                            "Unknown binary operator token in cache: {other}"
+                                        ),
+                                    };
+                                    crate::mutation::mutant::MutationType::BinaryOp(kind)
+                                }
+                                MutationDtoKindRead::DeleteExpression => {
+                                    crate::mutation::mutant::MutationType::DeleteExpression
+                                }
+                                MutationDtoKindRead::ElimDelegate => {
+                                    crate::mutation::mutant::MutationType::ElimDelegate
+                                }
+                                MutationDtoKindRead::FunctionCall => {
+                                    crate::mutation::mutant::MutationType::FunctionCall
+                                }
+                                MutationDtoKindRead::Require => {
+                                    crate::mutation::mutant::MutationType::Require
+                                }
+                                MutationDtoKindRead::SwapArgumentsFunction => {
+                                    crate::mutation::mutant::MutationType::SwapArgumentsFunction
+                                }
+                                MutationDtoKindRead::SwapArgumentsOperator => {
+                                    crate::mutation::mutant::MutationType::SwapArgumentsOperator
+                                }
+                                MutationDtoKindRead::UnaryOperator { expr, op } => {
+                                    let resulting = match op.as_str() {
+                                        "PreInc" => solar_parse::ast::UnOpKind::PreInc,
+                                        "PostInc" => solar_parse::ast::UnOpKind::PostInc,
+                                        "PreDec" => solar_parse::ast::UnOpKind::PreDec,
+                                        "PostDec" => solar_parse::ast::UnOpKind::PostDec,
+                                        "Not" => solar_parse::ast::UnOpKind::Not,
+                                        "BitNot" => solar_parse::ast::UnOpKind::BitNot,
+                                        "Neg" => solar_parse::ast::UnOpKind::Neg,
+                                        other => {
+                                            panic!("Unknown unary operator token in cache: {other}")
+                                        }
+                                    };
+                                    crate::mutation::mutant::MutationType::UnaryOperator(
+                                        crate::mutation::mutant::UnaryOpMutated::new(
+                                            expr, resulting,
+                                        ),
+                                    )
+                                }
+                            };
+                            out.push(Mutant { path: PathBuf::from(m.path), span, mutation });
                         }
+                        return Some(out);
                     }
                 }
                 // If the mutants file doesn't exist, treat as cache miss
-                return None;
             } else {
                 // Stale entry: remove from mapping file
                 let mut updated = mapping.clone();
@@ -515,8 +496,8 @@ impl MutationHandler {
                     let _ = std::fs::create_dir_all(&mutation_cache_dir);
                     let _ = std::fs::write(&mapping_path, json);
                 }
-                return None;
             }
+            return None;
         }
 
         None
@@ -530,78 +511,71 @@ impl MutationHandler {
         let mutation_cache_dir = self.config.root.join(&self.config.mutation_dir);
         let mapping_path = mutation_cache_dir.join("mapping.json");
 
-        let mapping: HashMap<String, String> = match std::fs::read_to_string(&mapping_path)
+        let mapping: HashMap<String, String> = std::fs::read_to_string(&mapping_path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(map) => map,
-            None => return None,
-        };
+            .and_then(|s| serde_json::from_str(&s).ok())?;
 
         let contract_path = dunce::canonicalize(&self.contract_to_mutate)
             .unwrap_or_else(|_| self.contract_to_mutate.clone())
             .to_string_lossy()
             .into_owned();
 
-        if let Some(stored_hash) = mapping.get(&contract_path) {
-            if stored_hash == hash {
-                let contract_name = self
-                    .contract_to_mutate
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("contract")
-                    .to_string();
-                let results_file = mutation_cache_dir.join(format!("{contract_name}.results"));
-                if results_file.exists() {
-                    if let Ok(data) = std::fs::read_to_string(&results_file) {
-                        #[derive(Deserialize)]
-                        struct ResultDto {
-                            path: String,
-                            lo: u64,
-                            hi: u64,
-                            status: String,
-                        }
+        if let Some(stored_hash) = mapping.get(&contract_path)
+            && stored_hash == hash
+        {
+            let contract_name = self
+                .contract_to_mutate
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("contract")
+                .to_string();
+            let results_file = mutation_cache_dir.join(format!("{contract_name}.results"));
+            if results_file.exists()
+                && let Ok(data) = std::fs::read_to_string(&results_file)
+            {
+                #[derive(Deserialize)]
+                struct ResultDto {
+                    path: String,
+                    lo: u64,
+                    hi: u64,
+                    status: String,
+                }
 
-                        if let Ok(entries) = serde_json::from_str::<Vec<ResultDto>>(&data) {
-                            let mut out = Vec::with_capacity(entries.len());
-                            for e in entries {
-                                let span = solar_parse::ast::Span::new(
-                                    BytePos(e.lo as u32),
-                                    BytePos(e.hi as u32),
-                                );
-                                let status = match e.status.as_str() {
-                                    "dead" => crate::mutation::mutant::MutationResult::Dead,
-                                    "alive" => crate::mutation::mutant::MutationResult::Alive,
-                                    _ => crate::mutation::mutant::MutationResult::Invalid,
-                                };
-                                // We need the full mutation to be able to reuse; find it via
-                                // mutants cache if available
-                                // Fallback: create a placeholder minimal Mutant with empty mutation
-                                // (should not happen since we also cache full mutants)
-                                // Here we try to match from cached mutants file
-                                if let Some(mutants) = self.retrieve_cached_mutants(hash) {
-                                    if let Some(m) = mutants.into_iter().find(|m| {
-                                        m.path == PathBuf::from(&e.path)
-                                            && m.span.lo().0 as u64 == e.lo
-                                            && m.span.hi().0 as u64 == e.hi
-                                    }) {
-                                        out.push((m, status));
-                                        continue;
-                                    }
-                                }
-                                out.push((
-                                    Mutant {
-                                        path: PathBuf::from(e.path),
-                                        span,
-                                        mutation:
-                                            crate::mutation::mutant::MutationType::DeleteExpression,
-                                    },
-                                    status,
-                                ));
-                            }
-                            return Some(out);
+                if let Ok(entries) = serde_json::from_str::<Vec<ResultDto>>(&data) {
+                    let mut out = Vec::with_capacity(entries.len());
+                    for e in entries {
+                        let span =
+                            solar_parse::ast::Span::new(BytePos(e.lo as u32), BytePos(e.hi as u32));
+                        let status = match e.status.as_str() {
+                            "dead" => crate::mutation::mutant::MutationResult::Dead,
+                            "alive" => crate::mutation::mutant::MutationResult::Alive,
+                            _ => crate::mutation::mutant::MutationResult::Invalid,
+                        };
+                        // We need the full mutation to be able to reuse; find it via
+                        // mutants cache if available
+                        // Fallback: create a placeholder minimal Mutant with empty mutation
+                        // (should not happen since we also cache full mutants)
+                        // Here we try to match from cached mutants file
+                        if let Some(mutants) = self.retrieve_cached_mutants(hash)
+                            && let Some(m) = mutants.into_iter().find(|m| {
+                                m.path == PathBuf::from(&e.path)
+                                    && m.span.lo().0 as u64 == e.lo
+                                    && m.span.hi().0 as u64 == e.hi
+                            })
+                        {
+                            out.push((m, status));
+                            continue;
                         }
+                        out.push((
+                            Mutant {
+                                path: PathBuf::from(e.path),
+                                span,
+                                mutation: crate::mutation::mutant::MutationType::DeleteExpression,
+                            },
+                            status,
+                        ));
                     }
+                    return Some(out);
                 }
             }
         }

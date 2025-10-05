@@ -3,7 +3,7 @@ use crate::mutation::mutant::{Mutant, MutationType};
 
 use eyre::Result;
 use solar_parse::ast::ExprKind;
-use std::{fmt::Display, path::PathBuf};
+use std::fmt::Display;
 
 pub struct ElimDelegateMutator;
 

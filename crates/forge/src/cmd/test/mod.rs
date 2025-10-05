@@ -491,7 +491,7 @@ impl TestArgs {
                 let build_id = output
                     .artifact_ids()
                     .find_map(
-                        |(id, _)| if id.source == path { Some(id.build_id.clone()) } else { None },
+                        |(id, _)| if id.source == path { Some(id.build_id) } else { None },
                     )
                     .unwrap_or_default();
 
@@ -532,7 +532,7 @@ impl TestArgs {
                 for (i, mutant) in mutants.iter().enumerate() {
                     sh_println!("Testing mutant {} out of {}", i + 1, mutants.len()).unwrap();
 
-                    handler.generate_mutated_solidity(&mutant);
+                    handler.generate_mutated_solidity(mutant);
                     let new_filter = self.filter(&config).unwrap();
                     let compiler = ProjectCompiler::new()
                         .dynamic_test_linking(config.dynamic_test_linking)
@@ -583,7 +583,7 @@ impl TestArgs {
                 handler.restore_original_source();
 
                 // If we generated fresh mutants, persist them for this build id
-                if handler.mutations.len() > 0 && !build_id.is_empty() {
+                if !handler.mutations.is_empty() && !build_id.is_empty() {
                     let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
                     let _ = handler.persist_cached_results(&build_id, &results_vec);
                 }

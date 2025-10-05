@@ -1,7 +1,13 @@
 use crate::mutation::MutationsSummary;
-use comfy_table::{Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS};
 pub struct MutationReporter {
     table: Table,
+}
+
+impl Default for MutationReporter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MutationReporter {
@@ -47,9 +53,9 @@ impl MutationReporter {
             )));
         self.table.add_row(row);
 
-        sh_println!("Total number of mutants generated: {}", summary.total_mutants());
-        sh_println!("\n{}\n", self.table);
-        sh_println!("Dead mutants: {}\n", summary.dead());
-        sh_println!("Survived mutants: {}\n", summary.survived());
+        let _ = sh_println!("Total number of mutants generated: {}", summary.total_mutants());
+        let _ = sh_println!("\n{}\n", self.table);
+        let _ = sh_println!("Dead mutants: {}\n", summary.dead());
+        let _ = sh_println!("Survived mutants: {}\n", summary.survived());
     }
 }

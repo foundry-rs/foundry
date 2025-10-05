@@ -75,7 +75,7 @@ impl Mutator for AssignmentMutator {
     fn is_applicable(&self, context: &MutationContext<'_>) -> bool {
         if let Some(expr) = context.expr {
             if let ExprKind::Assign(_lhs, _op_opt, rhs_actual_expr) = &expr.kind {
-                matches!((&**rhs_actual_expr).kind, ExprKind::Lit(..) | ExprKind::Ident(..))
+                matches!(rhs_actual_expr.kind, ExprKind::Lit(..) | ExprKind::Ident(..))
             } else {
                 false // Not an assign
             }

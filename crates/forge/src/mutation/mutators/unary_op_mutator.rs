@@ -2,7 +2,6 @@ use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
 use eyre::Result;
 use solar_parse::ast::{ExprKind, LitKind, UnOpKind};
-use std::path::PathBuf;
 
 pub struct UnaryOperatorMutator;
 
@@ -53,7 +52,7 @@ impl Mutator for UnaryOperatorMutator {
             return Ok(vec![Mutant {
                 span: expr.span,
                 mutation: MutationType::UnaryOperator(UnaryOpMutated::new(
-                    target_content.to_string(),
+                    target_content,
                     UnOpKind::Not,
                 )),
                 path: context.path.clone(),
@@ -96,11 +95,10 @@ impl Mutator for UnaryOperatorMutator {
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        if let Some(expr) = ctxt.expr {
-            if let ExprKind::Unary(_, _) = &expr.kind {
+        if let Some(expr) = ctxt.expr
+            && let ExprKind::Unary(_, _) = &expr.kind {
                 return true;
             }
-        }
 
         false
     }
