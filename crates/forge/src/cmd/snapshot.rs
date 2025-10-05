@@ -74,6 +74,10 @@ pub struct GasSnapshotArgs {
     )]
     tolerance: Option<u32>,
 
+    /// How to sort diff results.
+    #[arg(long, value_name = "ORDER")]
+    diff_sort: Option<DiffSortOrder>,
+
     /// All test arguments are supported
     #[command(flatten)]
     pub(crate) test: test::TestArgs,
@@ -105,7 +109,7 @@ impl GasSnapshotArgs {
         if let Some(path) = self.diff {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
-            diff(tests, snaps)?;
+            diff(tests, snaps, self.diff_sort.unwrap_or_default())?;
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
@@ -160,6 +164,20 @@ struct GasSnapshotConfig {
     /// Only include tests that used less gas that the given amount.
     #[arg(long, value_name = "MAX_GAS")]
     max: Option<u64>,
+}
+
+/// Sort order for diff output
+#[derive(Clone, Debug, Default, clap::ValueEnum)]
+enum DiffSortOrder {
+    /// Sort by percentage change (smallest to largest) - default behavior
+    #[default]
+    Percentage,
+    /// Sort by percentage change (largest to smallest)
+    PercentageDesc,
+    /// Sort by absolute gas change (smallest to largest)
+    Absolute,
+    /// Sort by absolute gas change (largest to smallest)
+    AbsoluteDesc,
 }
 
 impl GasSnapshotConfig {
@@ -387,42 +405,114 @@ fn check(
 }
 
 /// Compare the set of tests with an existing gas snapshot.
-fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()> {
+fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: DiffSortOrder) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
         .collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
+    let mut new_tests = Vec::new();
+    
     for test in tests.into_iter() {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
             diffs.push(GasSnapshotDiff {
                 source_gas_used: test.result.kind.report(),
-                signature: test.signature,
+                signature: format!("{}::{}", test.contract_name(), test.signature),
                 target_gas_used,
             });
+        } else {
+            // Track new tests
+            new_tests.push(format!("{}::{}", test.contract_name(), test.signature));
         }
     }
+    
+    let mut increased = 0;
+    let mut decreased = 0;
+    let mut unchanged = 0;
     let mut overall_gas_change = 0i128;
     let mut overall_gas_used = 0i128;
 
-    diffs.sort_by(|a, b| a.gas_diff().abs().total_cmp(&b.gas_diff().abs()));
+    // Sort based on user preference
+    match sort_order {
+        DiffSortOrder::Percentage => {
+            // Default: sort by percentage change (smallest to largest)
+            diffs.sort_by(|a, b| a.gas_diff().abs().total_cmp(&b.gas_diff().abs()));
+        }
+        DiffSortOrder::PercentageDesc => {
+            // Sort by percentage change (largest to smallest)
+            diffs.sort_by(|a, b| b.gas_diff().abs().total_cmp(&a.gas_diff().abs()));
+        }
+        DiffSortOrder::Absolute => {
+            // Sort by absolute gas change (smallest to largest)
+            diffs.sort_by_key(|d| d.gas_change().abs());
+        }
+        DiffSortOrder::AbsoluteDesc => {
+            // Sort by absolute gas change (largest to smallest)
+            diffs.sort_by_key(|d| std::cmp::Reverse(d.gas_change().abs()));
+        }
+    }
 
-    for diff in diffs {
+    for diff in &diffs {
         let gas_change = diff.gas_change();
         overall_gas_change += gas_change;
         overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
+        
+        // Classify changes
+        if gas_change > 0 {
+            increased += 1;
+        } else if gas_change < 0 {
+            decreased += 1;
+        } else {
+            unchanged += 1;
+        }
+        
+        // Display with icon and before/after values
+        let icon = if gas_change > 0 { 
+            "↑".red() 
+        } else if gas_change < 0 { 
+            "↓".green() 
+        } else { 
+            "━".dimmed() 
+        };
+        
         sh_println!(
-            "{} (gas: {} ({})) ",
+            "{} {} (gas: {} → {} | {} {})",
+            icon,
             diff.signature,
+            diff.target_gas_used.gas(),
+            diff.source_gas_used.gas(),
             fmt_change(gas_change),
             fmt_pct_change(gas_diff)
         )?;
     }
 
-    let overall_gas_diff = overall_gas_change as f64 / overall_gas_used as f64;
+    // Display new tests if any
+    if !new_tests.is_empty() {
+        sh_println!("\n{}", "New tests:".yellow())?;
+        for test in new_tests {
+            sh_println!("  {} {}", "+".green(), test)?;
+        }
+    }
+
+    // Summary separator
+    sh_println!("\n{}", "-".repeat(80))?;
+    
+    let overall_gas_diff = if overall_gas_used > 0 {
+        overall_gas_change as f64 / overall_gas_used as f64
+    } else {
+        0.0
+    };
+    
+    sh_println!(
+        "Total tests: {}, {} {}, {} {}, {} {}",
+        diffs.len(),
+        "↑".red(), increased,
+        "↓".green(), decreased,
+        "━".dimmed(), unchanged
+    )?;
     sh_println!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
