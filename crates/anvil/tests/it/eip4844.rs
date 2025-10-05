@@ -468,11 +468,8 @@ async fn test_beacon_api_get_blob_sidecars() {
     let gas_price = provider.get_gas_price().await.unwrap();
 
     // Create multiple blob transactions to be included in the same block
-    let blob_data = vec![
-        b"Hello Beacon API - Blob 1",
-        b"Hello Beacon API - Blob 2",
-        b"Hello Beacon API - Blob 3",
-    ];
+    let blob_data =
+        [b"Hello Beacon API - Blob 1", b"Hello Beacon API - Blob 2", b"Hello Beacon API - Blob 3"];
 
     let mut pending_txs = Vec::new();
 
@@ -514,9 +511,7 @@ async fn test_beacon_api_get_blob_sidecars() {
         assert_eq!(
             receipt.block_number.unwrap(),
             block_number,
-            "Transaction {} was not included in block {}",
-            i,
-            block_number
+            "Transaction {i} was not included in block {block_number}"
         );
     }
 
@@ -540,10 +535,10 @@ async fn test_beacon_api_get_blob_sidecars() {
 
     // Verify blob structure for each blob
     for (i, blob) in blobs.iter().enumerate() {
-        assert!(blob["index"].is_string(), "Blob {} missing index", i);
-        assert!(blob["blob"].is_string(), "Blob {} missing blob data", i);
-        assert!(blob["kzg_commitment"].is_string(), "Blob {} missing kzg_commitment", i);
-        assert!(blob["kzg_proof"].is_string(), "Blob {} missing kzg_proof", i);
+        assert!(blob["index"].is_string(), "Blob {i} missing index");
+        assert!(blob["blob"].is_string(), "Blob {i} missing blob data");
+        assert!(blob["kzg_commitment"].is_string(), "Blob {i} missing kzg_commitment");
+        assert!(blob["kzg_proof"].is_string(), "Blob {i} missing kzg_proof");
     }
 
     // Test filtering with indices query parameter - single index
@@ -556,7 +551,7 @@ async fn test_beacon_api_get_blob_sidecars() {
     let status = response.status();
     if status != reqwest::StatusCode::OK {
         let error_body = response.text().await.unwrap();
-        panic!("Expected OK status, got {}: {}", status, error_body);
+        panic!("Expected OK status, got {status}: {error_body}");
     }
     let body: serde_json::Value = response.json().await.unwrap();
     let filtered_blobs = body["data"].as_array().unwrap();
@@ -601,22 +596,11 @@ async fn test_beacon_api_get_blob_sidecars() {
         let url = format!("{}/eth/v1/beacon/blob_sidecars/{}", handle.http_endpoint(), block_id);
         assert_eq!(client.get(&url).send().await.unwrap().status(), reqwest::StatusCode::OK);
     }
-    assert_eq!(
-        client
-            .get(&format!("{}/eth/v1/beacon/blob_sidecars/pending", handle.http_endpoint()))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::NOT_FOUND
-    );
+    let url = format!("{}/eth/v1/beacon/blob_sidecars/pending", handle.http_endpoint());
+    assert_eq!(client.get(&url).send().await.unwrap().status(), reqwest::StatusCode::NOT_FOUND);
 
     // Test with hex block number
-    let url = format!(
-        "{}/eth/v1/beacon/blob_sidecars/0x{}",
-        handle.http_endpoint(),
-        format!("{:x}", block_number)
-    );
+    let url = format!("{}/eth/v1/beacon/blob_sidecars/0x{block_number:x}", handle.http_endpoint());
     let response = client.get(&url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
 
