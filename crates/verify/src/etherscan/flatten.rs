@@ -2,7 +2,7 @@ use super::{EtherscanSourceProvider, VerifyArgs};
 use crate::provider::VerificationContext;
 use eyre::Result;
 use foundry_block_explorers::verify::CodeFormat;
-use foundry_common::flatten;
+use foundry_common::{errors::sanitize_compiler_diagnostics, flatten};
 use foundry_compilers::{
     AggregatedCompilerOutput,
     artifacts::{BytecodeHash, Source, Sources},
@@ -96,8 +96,9 @@ impl EtherscanFlattenedSource {
 Failed to compile the flattened code locally.
 This could be a bug, please inspect the output of `forge flatten {}` and report an issue.
 To skip this solc dry, pass `--force`.
-Diagnostics: {diags}",
-                contract_path.display()
+Diagnostics: {}",
+                contract_path.display(),
+                sanitize_compiler_diagnostics(&diags.to_string())
             );
         }
 
