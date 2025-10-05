@@ -1,5 +1,5 @@
-use crate::mutation::mutators::Mutator;
-use solar_parse::ast::{Expr, LitKind, SourceUnit, VariableDefinition, visit::Visit};
+use crate::mutation::{mutant::OwnedLiteral, mutators::Mutator};
+use solar_parse::ast::{Expr, VariableDefinition, visit::Visit};
 use std::{ops::ControlFlow, path::PathBuf};
 
 use crate::mutation::{
@@ -9,7 +9,7 @@ use crate::mutation::{
 
 #[derive(Debug, Clone)]
 pub enum AssignVarTypes {
-    Literal(LitKind),
+    Literal(OwnedLiteral),
     Identifier(String), /* not using Ident as the symbol is slow to convert as to_str() <--
                          * maybe will have to switch back if validating more aggressively */
 }

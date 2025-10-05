@@ -3,6 +3,7 @@ mod mutators;
 mod reporter;
 mod visitor;
 
+use alloy_primitives::U256;
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use solar_parse::{
@@ -11,7 +12,10 @@ use solar_parse::{
 };
 use std::sync::Arc;
 
-use crate::mutation::{mutant::Mutant, visitor::MutantVisitor};
+use crate::mutation::{
+    mutant::{Mutant, MutationResult},
+    visitor::MutantVisitor,
+};
 
 pub use crate::mutation::reporter::MutationReporter;
 
@@ -176,9 +180,14 @@ impl MutationHandler {
                 let mutation = match &m.mutation {
                     crate::mutation::mutant::MutationType::Assignment(assign) => match assign {
                         crate::mutation::visitor::AssignVarTypes::Literal(lit) => {
-                            MutationDtoKind::AssignmentLiteral {
-                                lit: lit.description().to_string(),
-                            }
+                            // todo: why not all cases?
+                            let lit_s = match lit {
+                                crate::mutation::mutant::OwnedLiteral::Bool(true) => "true",
+                                crate::mutation::mutant::OwnedLiteral::Bool(false) => "false",
+                                crate::mutation::mutant::OwnedLiteral::Number(_) => "number",
+                                _ => "other",
+                            };
+                            MutationDtoKind::AssignmentLiteral { lit: lit_s.to_string() }
                         }
                         crate::mutation::visitor::AssignVarTypes::Identifier(ident) => {
                             MutationDtoKind::AssignmentIdentifier { ident: ident.clone() }
@@ -237,6 +246,7 @@ impl MutationHandler {
     /// Persists results for mutants for given build hash at `cache/mutation/<hash>.results`.
     pub fn persist_cached_results(
         &self,
+        // todo: why unused?
         hash: &str,
         results: &[(Mutant, crate::mutation::mutant::MutationResult)],
     ) -> std::io::Result<()> {
@@ -296,7 +306,7 @@ impl MutationHandler {
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             let mut mutant_visitor = MutantVisitor::default(path.clone());
-            mutant_visitor.visit_source_unit(&ast);
+            let _ = mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
             Ok(())
         });
@@ -402,14 +412,20 @@ impl MutationHandler {
                                 );
                                 let mutation = match m.mutation {
                                     MutationDtoKindRead::AssignmentLiteral { lit } => {
-                                        let lit_kind = match lit.as_str() {
-                                            "true" => solar_parse::ast::LitKind::Bool(true),
-                                            "false" => solar_parse::ast::LitKind::Bool(false),
-                                            _ => solar_parse::ast::LitKind::Number(0u64.into()),
+                                        let lit_val = match lit.as_str() {
+                                            "true" => {
+                                                crate::mutation::mutant::OwnedLiteral::Bool(true)
+                                            }
+                                            "false" => {
+                                                crate::mutation::mutant::OwnedLiteral::Bool(false)
+                                            }
+                                            _ => crate::mutation::mutant::OwnedLiteral::Number(
+                                                U256::ZERO,
+                                            ),
                                         };
                                         crate::mutation::mutant::MutationType::Assignment(
                                             crate::mutation::visitor::AssignVarTypes::Literal(
-                                                lit_kind,
+                                                lit_val,
                                             ),
                                         )
                                     }
@@ -470,6 +486,7 @@ impl MutationHandler {
                                             "PostDec" => solar_parse::ast::UnOpKind::PostDec,
                                             "Not" => solar_parse::ast::UnOpKind::Not,
                                             "BitNot" => solar_parse::ast::UnOpKind::BitNot,
+                                            "Neg" => solar_parse::ast::UnOpKind::Neg,
                                             other => panic!(
                                                 "Unknown unary operator token in cache: {}",
                                                 other
@@ -509,7 +526,7 @@ impl MutationHandler {
     pub fn retrieve_cached_mutant_results(
         &self,
         hash: &str,
-    ) -> Option<Vec<(Mutant, crate::mutation::mutant::MutationResult)>> {
+    ) -> Option<Vec<(Mutant, MutationResult)>> {
         let mutation_cache_dir = self.config.root.join(&self.config.mutation_dir);
         let mapping_path = mutation_cache_dir.join("mapping.json");
 

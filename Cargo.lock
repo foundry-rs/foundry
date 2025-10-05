@@ -4103,6 +4103,8 @@ dependencies = [
  "similar",
  "similar-asserts",
  "solar-compiler",
+ "solar-interface",
+ "solar-parse",
  "soldeer-commands",
  "strum 0.27.2",
  "svm-rs",

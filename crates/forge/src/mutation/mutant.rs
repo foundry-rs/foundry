@@ -1,8 +1,7 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use super::visitor::AssignVarTypes;
-use solar_interface::SourceMap;
-use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
+use solar_parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind};
 use std::{fmt::Display, path::PathBuf};
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
@@ -30,6 +29,61 @@ impl Display for UnaryOpMutated {
 
 // @todo add a mutation from universalmutator: line swap (swap two lines of code, as it
 // could theoretically uncover untested reentrancies
+#[derive(Debug, Clone, Copy)]
+pub enum OwnedStrKind {
+    Str,
+    Unicode,
+    Hex,
+}
+
+#[derive(Debug, Clone)]
+pub enum OwnedLiteral {
+    Str { kind: OwnedStrKind, text: String },
+    Number(alloy_primitives::U256),
+    Rational(String),
+    Address(String),
+    Bool(bool),
+    Err(String),
+}
+
+impl From<&LitKind<'_>> for OwnedLiteral {
+    fn from(lit_kind: &LitKind<'_>) -> Self {
+        match lit_kind {
+            LitKind::Bool(b) => OwnedLiteral::Bool(*b),
+            LitKind::Number(n) => OwnedLiteral::Number(*n),
+            LitKind::Rational(r) => OwnedLiteral::Rational(r.to_string()),
+            LitKind::Address(addr) => OwnedLiteral::Address(addr.to_string()),
+            LitKind::Str(sk, bytesym, _extras) => {
+                let text = String::from_utf8_lossy(bytesym.as_byte_str()).into_owned();
+                let kind = match sk {
+                    StrKind::Str => OwnedStrKind::Str,
+                    StrKind::Unicode => OwnedStrKind::Unicode,
+                    StrKind::Hex => OwnedStrKind::Hex,
+                };
+                OwnedLiteral::Str { kind, text }
+            }
+            LitKind::Err(_) => OwnedLiteral::Err("parse_error".to_string()),
+        }
+    }
+}
+
+impl Display for OwnedLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OwnedLiteral::Bool(val) => write!(f, "{val}"),
+            OwnedLiteral::Number(val) => write!(f, "{val}"),
+            OwnedLiteral::Rational(s) => write!(f, "{s}"),
+            OwnedLiteral::Address(s) => write!(f, "{s}"),
+            OwnedLiteral::Str { kind, text } => match kind {
+                OwnedStrKind::Str => write!(f, "\"{}\"", text),
+                OwnedStrKind::Unicode => write!(f, "unicode\"{}\"", text),
+                OwnedStrKind::Hex => write!(f, "hex\"{}\"", text),
+            },
+            OwnedLiteral::Err(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MutationType {
     // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
@@ -91,9 +145,18 @@ impl MutationType {
     fn get_name(&self) -> String {
         match self {
             Self::Assignment(var_type) => match var_type {
-                AssignVarTypes::Literal(kind) => {
-                    format!("{}_{}", "Assignment", kind.description())
-                }
+                AssignVarTypes::Literal(lit) => match lit {
+                    OwnedLiteral::Bool(_) => format!("{}_{}", "Assignment", "bool"),
+                    OwnedLiteral::Number(_) => format!("{}_{}", "Assignment", "number"),
+                    OwnedLiteral::Address(_) => format!("{}_{}", "Assignment", "address"),
+                    OwnedLiteral::Str { kind, .. } => match kind {
+                        OwnedStrKind::Str => format!("{}_{}", "Assignment", "str"),
+                        OwnedStrKind::Unicode => format!("{}_{}", "Assignment", "unicode"),
+                        OwnedStrKind::Hex => format!("{}_{}", "Assignment", "hex"),
+                    },
+                    OwnedLiteral::Rational(_) => format!("{}_{}", "Assignment", "rational"),
+                    OwnedLiteral::Err(_) => format!("{}_{}", "Assignment", "err"),
+                },
                 AssignVarTypes::Identifier(ident) => {
                     format!("{}_{}", "Assignment", ident)
                 }
@@ -119,15 +182,7 @@ impl Display for MutationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Assignment(kind) => match kind {
-                AssignVarTypes::Literal(kind) => match kind {
-                    LitKind::Number(val) => write!(f, "{val}"),
-                    LitKind::Bool(val) => write!(f, "{val}"),
-                    LitKind::Address(val) => write!(f, "{val}"),
-                    // Reachable?
-                    LitKind::Rational(val) => write!(f, "{val}"),
-                    LitKind::Str(_, val, _) => write!(f, "{val:?}"),
-                    LitKind::Err(val) => todo!(),
-                },
+                AssignVarTypes::Literal(lit) => write!(f, "{lit}"),
                 AssignVarTypes::Identifier(ident) => write!(f, "{ident}"),
             },
             Self::BinaryOp(kind) => write!(f, "{}", kind.to_str()),
@@ -175,7 +230,7 @@ impl Display for Mutant {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
+    use alloy_primitives::U256;
 
     #[test]
     fn test_mutation_type_get_name() {
@@ -188,7 +243,7 @@ mod tests {
 
         assert_eq!(MutationType::BinaryOp(BinOpKind::Add).get_name(), "BinaryOp_Add");
 
-        let lit_num = LitKind::Number(123.into());
+        let lit_num = OwnedLiteral::Number(U256::from(123));
         assert_eq!(
             MutationType::Assignment(AssignVarTypes::Literal(lit_num)).get_name(),
             "Assignment_number"

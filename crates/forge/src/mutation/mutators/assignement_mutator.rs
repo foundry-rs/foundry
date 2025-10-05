@@ -1,12 +1,12 @@
 use crate::mutation::{
-    mutant::{Mutant, MutationType},
+    mutant::{Mutant, MutationType, OwnedLiteral},
     mutators::{MutationContext, Mutator},
     visitor::AssignVarTypes,
 };
 
+use alloy_primitives::U256;
 use eyre::Result;
-use solar_parse::ast::{Expr, ExprKind, LitKind, Span};
-use std::path::PathBuf;
+use solar_parse::ast::{ExprKind, Span};
 
 pub struct AssignmentMutator;
 
@@ -19,29 +19,34 @@ impl Mutator for AssignmentMutator {
 
         match assign_var_type {
             AssignVarTypes::Literal(lit) => match lit {
-                LitKind::Bool(val) => Ok(vec![Mutant {
+                OwnedLiteral::Bool(val) => Ok(vec![Mutant {
                     span: replacement_span,
-                    mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Bool(
-                        !val,
-                    ))),
+                    mutation: MutationType::Assignment(AssignVarTypes::Literal(
+                        OwnedLiteral::Bool(!val),
+                    )),
                     path: context.path.clone(),
                 }]),
-                LitKind::Number(val) => Ok(vec![
+                OwnedLiteral::Number(val) => Ok(vec![
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            LitKind::Number(num_bigint::BigInt::ZERO),
+                            OwnedLiteral::Number(U256::ZERO),
                         )),
                         path: context.path.clone(),
                     },
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            LitKind::Number(-val),
+                            OwnedLiteral::Number(-val),
                         )),
                         path: context.path.clone(),
                     },
                 ]),
+                // todo: should we bail instead of returning an empty vec?
+                OwnedLiteral::Str { .. } => Ok(vec![]),
+                OwnedLiteral::Rational(_) => Ok(vec![]),
+                OwnedLiteral::Address(_) => Ok(vec![]),
+                OwnedLiteral::Err(_) => Ok(vec![]),
                 _ => {
                     eyre::bail!("AssignmentMutator: unhandled literal kind on RHS: {:?}", lit)
                 }
@@ -49,9 +54,9 @@ impl Mutator for AssignmentMutator {
             AssignVarTypes::Identifier(ident) => Ok(vec![
                 Mutant {
                     span: replacement_span,
-                    mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Number(
-                        num_bigint::BigInt::ZERO,
-                    ))),
+                    mutation: MutationType::Assignment(AssignVarTypes::Literal(
+                        OwnedLiteral::Number(U256::ZERO),
+                    )),
                     path: context.path.clone(),
                 },
                 Mutant {
@@ -86,7 +91,7 @@ impl Mutator for AssignmentMutator {
     }
 }
 
-fn extract_rhs_info(context: &MutationContext<'_>) -> Option<(AssignVarTypes, Span)> {
+fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarTypes, Span)> {
     let relevant_expr_for_rhs = if let Some(var_definition) = context.var_definition {
         var_definition.initializer.as_ref()?
     } else if let Some(expr) = context.expr {
@@ -103,7 +108,8 @@ fn extract_rhs_info(context: &MutationContext<'_>) -> Option<(AssignVarTypes, Sp
 
     match &relevant_expr_for_rhs.kind {
         ExprKind::Lit(kind, _) => {
-            Some((AssignVarTypes::Literal(kind.kind.clone()), relevant_expr_for_rhs.span))
+            let owned = OwnedLiteral::from(&kind.kind);
+            Some((AssignVarTypes::Literal(owned), relevant_expr_for_rhs.span))
         }
         ExprKind::Ident(val) => {
             Some((AssignVarTypes::Identifier(val.to_string()), relevant_expr_for_rhs.span))

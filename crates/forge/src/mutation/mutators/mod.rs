@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use crate::mutation::Mutant;
 
-pub trait Mutator {
+pub trait Mutator: Send + Sync {
     /// Generate all mutant corresponding to a given context
     fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Result<Vec<Mutant>>;
     /// True if a mutator can be applied to an expression/node
