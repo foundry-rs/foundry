@@ -2,14 +2,14 @@ use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{BuildOpts, solar_pcx_from_solc_project},
+    opts::{BuildOpts, configure_pcx_from_solc},
     utils::LoadConfig,
 };
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_compilers::{
     CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
+    multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
@@ -17,12 +17,11 @@ use itertools::Itertools;
 use path_slash::PathExt;
 use rayon::prelude::*;
 use semver::Version;
-use solar_parse::{
+use solar::parse::{
     Parser as SolarParser,
     ast::{self, Arena, FunctionKind, Span, VarMut, interface::source_map::FileName, visit::Visit},
     interface::Session,
 };
-use solar_sema::thread_local::ThreadLocal;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
@@ -54,7 +53,7 @@ impl BindJsonArgs {
 
         // Step 1: Read and preprocess sources
         let sources = project.paths.read_input_files()?;
-        let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
         let (version, mut sources, _) = graph
@@ -104,7 +103,7 @@ impl BindJsonArgs {
     /// in most of the cases.
     fn preprocess_sources(&self, sources: &mut Sources) -> Result<()> {
         let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter_parallel(|| -> solar_parse::interface::Result<()> {
+        let result = sess.enter(|| -> solar::interface::Result<()> {
             sources.0.par_iter_mut().try_for_each(|(path, source)| {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
@@ -146,13 +145,15 @@ impl BindJsonArgs {
         let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
         let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+        sess.dcx.set_flags_mut(|flags| flags.track_diagnostics = false);
+        let mut compiler = solar::sema::Compiler::new(sess);
 
         let mut structs_to_write = Vec::new();
 
-        sess.enter_parallel(|| -> Result<()> {
+        compiler.enter_mut(|compiler| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
-            let mut parsing_context = solar_pcx_from_solc_project(&sess, project, &input, false);
+            let mut pcx = compiler.parse();
+            configure_pcx_from_solc(&mut pcx, project, &input, false);
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
@@ -171,51 +172,50 @@ impl BindJsonArgs {
                     continue;
                 }
 
-                if let Ok(src_file) =
-                    sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                if let Ok(src_file) = compiler
+                    .sess()
+                    .source_map()
+                    .new_source_file(path.clone(), source.content.as_str())
                 {
-                    target_files.insert(src_file.stable_id);
-                    parsing_context.add_file(src_file);
+                    target_files.insert(Arc::clone(&src_file));
+                    pcx.add_file(src_file);
                 }
             }
 
             // Parse and resolve
-            let hir_arena = ThreadLocal::new();
-            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
-                let hir = &gcx.get().hir;
-                let resolver = Resolver::new(gcx);
-                for id in resolver.struct_ids() {
-                    if let Some(schema) = resolver.resolve_struct_eip712(id) {
-                        let def = hir.strukt(id);
-                        let source = hir.source(def.source);
+            pcx.parse();
+            let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+            let gcx = compiler.gcx();
+            let hir = &gcx.hir;
+            let resolver = Resolver::new(gcx);
+            for id in resolver.struct_ids() {
+                if let Some(schema) = resolver.resolve_struct_eip712(id) {
+                    let def = hir.strukt(id);
+                    let source = hir.source(def.source);
 
-                        if !target_files.contains(&source.file.stable_id) {
-                            continue;
-                        }
+                    if !target_files.contains(&source.file) {
+                        continue;
+                    }
 
-                        if let FileName::Real(ref path) = source.file.name {
-                            structs_to_write.push(StructToWrite {
-                                name: def.name.as_str().into(),
-                                contract_name: def
-                                    .contract
-                                    .map(|id| hir.contract(id).name.as_str().into()),
-                                path: path
-                                    .strip_prefix(root)
-                                    .unwrap_or_else(|_| path)
-                                    .to_path_buf(),
-                                schema,
-                                // will be filled later
-                                import_alias: None,
-                                name_in_fns: String::new(),
-                            });
-                        }
+                    if let FileName::Real(path) = &source.file.name {
+                        structs_to_write.push(StructToWrite {
+                            name: def.name.as_str().into(),
+                            contract_name: def
+                                .contract
+                                .map(|id| hir.contract(id).name.as_str().into()),
+                            path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
+                            schema,
+                            // will be filled later
+                            import_alias: None,
+                            name_in_fns: String::new(),
+                        });
                     }
                 }
             }
             Ok(())
         })?;
 
-        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
+        eyre::ensure!(compiler.sess().dcx.has_errors().is_ok(), "errors occurred");
 
         // Resolve import aliases and function names
         self.resolve_conflicts(&mut structs_to_write);
@@ -426,7 +426,7 @@ impl PreprocessorVisitor {
 }
 
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    type BreakValue = solar_parse::interface::data_structures::Never;
+    type BreakValue = solar::interface::data_structures::Never;
 
     fn visit_item_function(
         &mut self,

@@ -1,7 +1,6 @@
 //! Commonly used calculations.
 
 /// Returns the mean of the slice.
-#[inline]
 pub fn mean(values: &[u64]) -> u64 {
     if values.is_empty() {
         return 0;
@@ -11,7 +10,6 @@ pub fn mean(values: &[u64]) -> u64 {
 }
 
 /// Returns the median of a _sorted_ slice.
-#[inline]
 pub fn median_sorted(values: &[u64]) -> u64 {
     if values.is_empty() {
         return 0;

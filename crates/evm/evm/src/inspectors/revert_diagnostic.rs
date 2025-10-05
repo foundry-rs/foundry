@@ -208,11 +208,6 @@ where
 
     /// Handles `REVERT` and `EXTCODESIZE` opcodes for diagnostics.
     fn step(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
-        // Check if an action has already been set (which would null the instruction pointer)
-        if interp.bytecode.action.is_some() {
-            return;
-        }
-
         match interp.bytecode.opcode() {
             opcode::REVERT => self.handle_revert(interp, ctx),
             opcode::EXTCODESIZE => self.handle_extcodesize(interp, ctx),

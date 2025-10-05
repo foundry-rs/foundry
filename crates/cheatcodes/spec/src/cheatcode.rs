@@ -135,7 +135,6 @@ impl Group {
     ///
     /// Some groups are inherently safe or unsafe, while others are ambiguous and will return
     /// `None`.
-    #[inline]
     pub const fn safety(self) -> Option<Safety> {
         match self {
             Self::Evm | Self::Testing => None,
@@ -151,7 +150,6 @@ impl Group {
     }
 
     /// Returns this value as a string.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Evm => "evm",
@@ -184,7 +182,6 @@ pub enum Safety {
 
 impl Safety {
     /// Returns this value as a string.
-    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -193,7 +190,6 @@ impl Safety {
     }
 
     /// Returns whether this value is safe.
-    #[inline]
     pub const fn is_safe(self) -> bool {
         matches!(self, Self::Safe)
     }

@@ -7,8 +7,8 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
+    SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -26,7 +26,184 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    thread,
 };
+
+const DEFAULT_CONFIG: &str = r#"[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+remappings = ["forge-std/=lib/forge-std/src/"]
+auto_detect_remappings = true
+libraries = []
+cache = true
+dynamic_test_linking = false
+cache_path = "cache"
+snapshots = "snapshots"
+gas_snapshot_check = false
+gas_snapshot_emit = true
+broadcast = "broadcast"
+allow_paths = []
+include_paths = []
+skip = []
+force = false
+evm_version = "prague"
+gas_reports = ["*"]
+gas_reports_ignore = []
+gas_reports_include_tests = false
+auto_detect_solc = true
+offline = false
+optimizer = false
+optimizer_runs = 200
+verbosity = 0
+eth_rpc_accept_invalid_certs = false
+ignored_error_codes = [
+    "license",
+    "code-size",
+    "init-code-size",
+    "transient-storage",
+]
+ignored_warnings_from = []
+deny = "never"
+test_failures_file = "cache/test-failures"
+show_progress = false
+ffi = false
+allow_internal_expect_revert = false
+always_use_create_2_factory = false
+prompt_timeout = 120
+sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+initial_balance = "0xffffffffffffffffffffffff"
+block_number = 1
+gas_limit = 1073741824
+block_base_fee_per_gas = 0
+block_coinbase = "0x0000000000000000000000000000000000000000"
+block_timestamp = 1
+block_difficulty = 0
+block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
+memory_limit = 134217728
+extra_output = []
+extra_output_files = []
+names = false
+sizes = false
+via_ir = false
+ast = false
+no_storage_caching = false
+no_rpc_rate_limit = false
+use_literal_content = false
+bytecode_hash = "ipfs"
+cbor_metadata = true
+sparse_mode = false
+build_info = false
+isolate = false
+disable_block_gas_limit = false
+enable_tx_gas_limit = false
+unchecked_cheatcode_artifacts = false
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
+create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+assertions_revert = true
+legacy_assertions = false
+celo = false
+transaction_timeout = 120
+additional_compiler_profiles = []
+compilation_restrictions = []
+script_execution_protection = true
+
+[profile.default.rpc_storage_caching]
+chains = "all"
+endpoints = "all"
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
+
+[fmt]
+line_length = 120
+tab_width = 4
+style = "space"
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "attributes_first"
+quote_style = "double"
+number_underscore = "preserve"
+hex_underscore = "remove"
+single_line_statement_blocks = "preserve"
+override_spacing = false
+wrap_comments = false
+docs_style = "preserve"
+ignore = []
+contract_new_lines = false
+sort_imports = false
+pow_no_space = false
+call_compact_args = true
+
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
+lint_on_build = true
+mixed_case_exceptions = [
+    "ERC",
+    "URI",
+]
+
+[doc]
+out = "docs"
+title = ""
+book = "book.toml"
+homepage = "README.md"
+ignore = []
+
+[fuzz]
+runs = 256
+fail_on_revert = true
+max_test_rejects = 65536
+dictionary_weight = 40
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
+failure_persist_dir = "cache/fuzz"
+show_logs = false
+
+[invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+shrink_run_limit = 5000
+max_assume_rejects = 65536
+gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
+failure_persist_dir = "cache/invariant"
+show_metrics = true
+show_solidity = false
+
+[labels]
+
+[vyper]
+
+[bind_json]
+out = "utils/JsonBindings.sol"
+include = []
+exclude = []
+
+"#;
 
 // tests all config values that are in use
 forgetest!(can_extract_config_values, |prj, cmd| {
@@ -36,6 +213,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         // `profiles` is not serialized.
         profiles: vec![],
         root: ".".into(),
+        extends: None,
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -85,14 +263,16 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            failure_persist_file: Some("failures".to_string()),
             show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            corpus_dir: Some("cache/invariant/corpus".into()),
+            corpus: FuzzCorpusConfig {
+                corpus_dir: Some("cache/invariant/corpus".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ffi: true,
@@ -115,6 +295,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
+        enable_tx_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_accept_invalid_certs: false,
@@ -122,7 +303,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
-        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -131,6 +311,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
+        deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
         via_ir: true,
         ast: false,
@@ -168,7 +349,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        odyssey: false,
+        celo: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -373,8 +554,7 @@ forgetest!(can_set_solc_explicitly, |prj, cmd| {
 pragma solidity *;
 contract Greeter {}
    ",
-    )
-    .unwrap();
+    );
 
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
@@ -396,8 +576,7 @@ forgetest!(can_use_solc, |prj, cmd| {
 pragma solidity *;
 contract Foo {}
    ",
-    )
-    .unwrap();
+    );
 
     cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -453,8 +632,7 @@ contract Foo {
     }
 }
    ",
-    )
-    .unwrap();
+    );
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
@@ -664,6 +842,8 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 // remapping.
 // See <https://github.com/foundry-rs/foundry/issues/9146>
 // Test that
+// - single file remapping is properly added, see
+// <https://github.com/foundry-rs/foundry/issues/6706> and <https://github.com/foundry-rs/foundry/issues/8499>
 // - project defined `@openzeppelin/contracts` remapping is added
 // - library defined `@openzeppelin/contracts-upgradeable` remapping is added
 // - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
@@ -673,6 +853,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let mut config = cmd.config();
     // Add `@utils/` remapping in project config.
     config.remappings = vec![
+        Remapping::from_str("@utils/libraries/Contract.sol=src/Contract.sol").unwrap().into(),
         Remapping::from_str("@utils/=src/").unwrap().into(),
         Remapping::from_str("@openzeppelin/contracts=lib/openzeppelin-contracts/").unwrap().into(),
     ];
@@ -700,6 +881,7 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 
     cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
 Global:
+- @utils/libraries/Contract.sol=src/Contract.sol
 - @utils/=src/
 - @openzeppelin/contracts/=lib/openzeppelin-contracts/
 - @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
@@ -911,8 +1093,7 @@ import "forge-std/Script.sol";
 contract BaseScript is Script {
 }
    "#,
-    )
-    .unwrap();
+    );
     prj.add_script(
         "MyScript.sol",
         r#"
@@ -921,8 +1102,7 @@ import "script/BaseScript.sol";
 contract MyScript is BaseScript {
 }
    "#,
-    )
-    .unwrap();
+    );
 
     let nested = prj.paths().libraries[0].join("another-dep");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -961,180 +1141,14 @@ import "contracts/Counter.sol";
 contract CounterTest {
 }
    "#,
-    )
-    .unwrap();
+    );
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
-    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
-[profile.default]
-src = "src"
-test = "test"
-script = "script"
-out = "out"
-libs = ["lib"]
-remappings = ["forge-std/=lib/forge-std/src/"]
-auto_detect_remappings = true
-libraries = []
-cache = true
-dynamic_test_linking = false
-cache_path = "cache"
-snapshots = "snapshots"
-gas_snapshot_check = false
-gas_snapshot_emit = true
-broadcast = "broadcast"
-allow_paths = []
-include_paths = []
-skip = []
-force = false
-evm_version = "prague"
-gas_reports = ["*"]
-gas_reports_ignore = []
-gas_reports_include_tests = false
-auto_detect_solc = true
-offline = false
-optimizer = false
-optimizer_runs = 200
-verbosity = 0
-eth_rpc_accept_invalid_certs = false
-ignored_error_codes = [
-    "license",
-    "code-size",
-    "init-code-size",
-    "transient-storage",
-]
-ignored_warnings_from = []
-deny_warnings = false
-test_failures_file = "cache/test-failures"
-show_progress = false
-ffi = false
-allow_internal_expect_revert = false
-always_use_create_2_factory = false
-prompt_timeout = 120
-sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
-tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
-initial_balance = "0xffffffffffffffffffffffff"
-block_number = 1
-gas_limit = 1073741824
-block_base_fee_per_gas = 0
-block_coinbase = "0x0000000000000000000000000000000000000000"
-block_timestamp = 1
-block_difficulty = 0
-block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
-memory_limit = 134217728
-extra_output = []
-extra_output_files = []
-names = false
-sizes = false
-via_ir = false
-ast = false
-no_storage_caching = false
-no_rpc_rate_limit = false
-use_literal_content = false
-bytecode_hash = "ipfs"
-cbor_metadata = true
-sparse_mode = false
-build_info = false
-isolate = false
-disable_block_gas_limit = false
-unchecked_cheatcode_artifacts = false
-create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
-create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
-assertions_revert = true
-legacy_assertions = false
-odyssey = false
-transaction_timeout = 120
-additional_compiler_profiles = []
-compilation_restrictions = []
-script_execution_protection = true
-
-[profile.default.rpc_storage_caching]
-chains = "all"
-endpoints = "all"
-
-[[profile.default.fs_permissions]]
-access = "read"
-path = "out"
-
-[fmt]
-line_length = 120
-tab_width = 4
-style = "space"
-bracket_spacing = false
-int_types = "long"
-multiline_func_header = "attributes_first"
-quote_style = "double"
-number_underscore = "preserve"
-hex_underscore = "remove"
-single_line_statement_blocks = "preserve"
-override_spacing = false
-wrap_comments = false
-ignore = []
-contract_new_lines = false
-sort_imports = false
-
-[lint]
-severity = []
-exclude_lints = []
-ignore = []
-lint_on_build = true
-
-[doc]
-out = "docs"
-title = ""
-book = "book.toml"
-homepage = "README.md"
-ignore = []
-
-[fuzz]
-runs = 256
-fail_on_revert = true
-max_test_rejects = 65536
-dictionary_weight = 40
-include_storage = true
-include_push_bytes = true
-max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
-gas_report_samples = 256
-failure_persist_dir = "cache/fuzz"
-failure_persist_file = "failures"
-show_logs = false
-
-[invariant]
-runs = 256
-depth = 500
-fail_on_revert = false
-call_override = false
-dictionary_weight = 80
-include_storage = true
-include_push_bytes = true
-max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
-shrink_run_limit = 5000
-max_assume_rejects = 65536
-gas_report_samples = 256
-corpus_gzip = true
-corpus_min_mutations = 5
-corpus_min_size = 0
-failure_persist_dir = "cache/invariant"
-show_metrics = true
-show_solidity = false
-show_edge_coverage = false
-
-[labels]
-
-[vyper]
-
-[bind_json]
-out = "utils/JsonBindings.sol"
-include = []
-exclude = []
-
-
-"#]]);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
 
     cmd.forge_fuse().args(["config", "--json"]).assert_success().stdout_eq(str![[r#"
 {
@@ -1181,7 +1195,6 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
-  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1189,7 +1202,7 @@ exclude = []
     "transient-storage"
   ],
   "ignored_warnings_from": [],
-  "deny_warnings": false,
+  "deny": "never",
   "match_test": null,
   "no_match_test": null,
   "match_contract": null,
@@ -1211,8 +1224,12 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/fuzz",
-    "failure_persist_file": "failures",
     "show_logs": false,
     "timeout": null
   },
@@ -1233,11 +1250,11 @@ exclude = []
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false,
-    "show_edge_coverage": false
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1291,15 +1308,22 @@ exclude = []
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
-    "sort_imports": false
+    "sort_imports": false,
+    "pow_no_space": false,
+    "call_compact_args": true
   },
   "lint": {
     "severity": [],
     "exclude_lints": [],
     "ignore": [],
-    "lint_on_build": true
+    "lint_on_build": true,
+    "mixed_case_exceptions": [
+      "ERC",
+      "URI"
+    ]
   },
   "doc": {
     "out": "docs",
@@ -1321,6 +1345,7 @@ exclude = []
   ],
   "isolate": false,
   "disable_block_gas_limit": false,
+  "enable_tx_gas_limit": false,
   "labels": {},
   "unchecked_cheatcode_artifacts": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -1330,7 +1355,7 @@ exclude = []
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
-  "odyssey": false,
+  "celo": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
@@ -1437,8 +1462,7 @@ contract Flare {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     let test_contract = |n: u32| {
         format!(
@@ -1471,7 +1495,7 @@ contract GasSnapshotCheckTest is DSTest {{
     };
 
     // Assert that gas_snapshot_check is disabled by default.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1));
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
@@ -1490,7 +1514,7 @@ gas_snapshot_check = true
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas snapshot check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1522,7 +1546,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // Replace the test contract with a new one that will fail the gas_snapshot_check.
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3));
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
 [GasSnapshotCheckTest] Failed to match snapshots:
@@ -1547,7 +1571,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
     // Assert that this will override the config file value.
     prj.update_config(|config| config.gas_snapshot_check = false);
-    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4));
     cmd.forge_fuse();
     cmd.env("FORGE_SNAPSHOT_CHECK", "true");
     cmd.args(["test"]).assert_failure().stderr_eq(str![[r#"
@@ -1615,8 +1639,7 @@ contract GasSnapshotEmitTest is DSTest {
     }
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Assert that gas_snapshot_emit is enabled by default.
     cmd.forge_fuse().args(["test"]).assert_success();
@@ -1695,8 +1718,7 @@ forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v2/Counter.sol",
@@ -1704,8 +1726,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     prj.add_source(
         "v3/Counter.sol",
@@ -1713,8 +1734,7 @@ contract Counter {
 contract Counter {
 }
     "#,
-    )
-    .unwrap();
+    );
 
     // Additional profiles are defined with optimizer runs but without explicitly enabling
     // optimizer
@@ -1843,4 +1863,111 @@ contract Counter {
     assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("800", runs.unwrap().to_string());
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11227>
+forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+    prj.update_config(|config| {
+        config.lint.exclude_lints = vec![
+            "asm-keccak256".to_string(),
+            "incorrect-shift".to_string(),
+            "divide-before-multiply".to_string(),
+            "mixed-case-variable".to_string(),
+            "mixed-case-function".to_string(),
+            "screaming-snake-case-const".to_string(),
+            "screaming-snake-case-immutable".to_string(),
+            "unwrapped-modifier-logic".to_string(),
+        ]
+    });
+    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6529>
+forgetest_init!(test_fail_fast_config, |prj, cmd| {
+    // Skip if we don't have at least 2 CPUs to run both tests in parallel.
+    if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        // Set large timeout for fuzzed tests so test campaign won't stop if fail fast not passed.
+        config.fuzz.timeout = Some(3600);
+    });
+    prj.add_test(
+        "AnotherCounterTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AnotherCounterTest is Test {
+    // This failure should stop all other tests.
+    function test_Failure() public pure {
+        require(false);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--fail-fast"]).assert_failure();
+});
+
+forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
+    cmd.git_init();
+
+    let faulty_toml = DEFAULT_CONFIG.replace(r#"deny = "never""#, "deny_warnings = true");
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/5866>
+forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+    cmd.git_init();
+
+    let toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+
+    # Custom sections for other tools
+    [external.scopelint]
+    some_flag = 1
+
+    [external.forge_deploy]
+    another_setting = 123";
+
+    fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10550>
+forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
+    cmd.git_init();
+
+    let faulty_toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+    solc_version = '0.8.18'
+    foo = 'unknown'
+
+    [profile.another]
+    src = 'src'
+    out = 'out'
+    bar = 'another_unknown'";
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Found unknown `bar` config for profile `another` defined in foundry.toml.
+Warning: Found unknown `foo` config for profile `default` defined in foundry.toml.
+
+"#]]);
 });

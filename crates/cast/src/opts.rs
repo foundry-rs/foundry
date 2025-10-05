@@ -1,9 +1,10 @@
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
-    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
-    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
-    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
+    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
+    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, estimate::EstimateArgs,
+    find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -149,6 +150,25 @@ pub enum CastSubcommand {
     ToBytes32 {
         /// The hex data to convert.
         bytes: Option<String>,
+    },
+
+    /// Pads hex data to a specified length.
+    #[command(visible_aliases = &["pd"])]
+    Pad {
+        /// The hex data to pad.
+        data: Option<String>,
+
+        /// Right-pad the data (instead of left-pad).
+        #[arg(long)]
+        right: bool,
+
+        /// Left-pad the data (default).
+        #[arg(long, conflicts_with = "right")]
+        left: bool,
+
+        /// Target length in bytes (default: 32).
+        #[arg(long, default_value = "32")]
+        len: usize,
     },
 
     /// Convert an integer into a fixed point number.
@@ -496,6 +516,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
+        #[arg(long)]
+        to_request: bool,
     },
 
     /// Get the transaction receipt for a transaction.
@@ -551,7 +575,12 @@ pub enum CastSubcommand {
         sig: String,
 
         /// The ABI-encoded calldata.
-        calldata: String,
+        #[arg(required_unless_present = "file", index = 2)]
+        calldata: Option<String>,
+
+        /// Load ABI-encoded calldata from a file instead.
+        #[arg(long = "file", short = 'f', conflicts_with = "calldata")]
+        file: Option<PathBuf>,
     },
 
     /// Decode ABI-encoded string.
@@ -612,6 +641,17 @@ pub enum CastSubcommand {
         packed: bool,
 
         /// The arguments of the function.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// ABI encode an event and its arguments to generate topics and data.
+    #[command(visible_alias = "aee")]
+    AbiEncodeEvent {
+        /// The event signature.
+        sig: String,
+
+        /// The arguments of the event.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -1015,6 +1055,10 @@ pub enum CastSubcommand {
     #[command(visible_alias = "bi")]
     Bind(BindArgs),
 
+    /// Convert Beacon payload to execution payload.
+    #[command(visible_alias = "b2e")]
+    B2EPayload(B2EPayloadArgs),
+
     /// Get the selector for a function.
     #[command(visible_alias = "si")]
     Sig {
@@ -1037,12 +1081,8 @@ pub enum CastSubcommand {
     #[command(visible_alias = "com")]
     Completions {
         #[arg(value_enum)]
-        shell: clap_complete::Shell,
+        shell: foundry_cli::clap::Shell,
     },
-
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
-    GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.
     #[command(visible_alias = "r")]

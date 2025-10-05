@@ -2,8 +2,11 @@ use alloy_json_abi::{ContractObject, JsonAbi};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_block_explorers::Client;
-use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use forge_fmt::FormatterConfig;
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{LoadConfig, fetch_abi_from_etherscan},
+};
 use foundry_common::{
     ContractsByArtifact,
     compile::{PathOrContractInfo, ProjectCompiler},
@@ -65,7 +68,7 @@ impl InterfaceArgs {
             load_abi_from_file(&contract, name)?
         } else {
             match Address::from_str(&contract) {
-                Ok(address) => fetch_abi_from_etherscan(address, &etherscan).await?,
+                Ok(address) => fetch_abi_from_etherscan(address, &etherscan.load_config()?).await?,
                 Err(_) => load_abi_from_artifact(&contract)?,
             }
         };
@@ -137,32 +140,24 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
     Ok(vec![(abi.clone(), contract.name().unwrap_or(name).to_string())])
 }
 
-/// Fetches the ABI of a contract from Etherscan.
-pub async fn fetch_abi_from_etherscan(
-    address: Address,
-    etherscan: &EtherscanOpts,
-) -> Result<Vec<(JsonAbi, String)>> {
-    let config = etherscan.load_config()?;
-    let chain = config.chain.unwrap_or_default();
-    let api_version = config.get_etherscan_api_version(Some(chain));
-    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new_with_api_version(chain, api_key, api_version)?;
-    let source = client.contract_source_code(address).await?;
-    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
-}
-
 /// Converts a vector of tuples containing the ABI and contract name into a vector of
 /// `InterfaceSource` objects.
 fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> {
     abis.into_iter()
         .map(|(contract_abi, name)| {
-            let source = match foundry_cli::utils::abi_to_solidity(&contract_abi, &name) {
+            let source = match forge_fmt::format(
+                &contract_abi.to_sol(&name, None),
+                FormatterConfig::default(),
+            )
+            .into_result()
+            {
                 Ok(generated_source) => generated_source,
                 Err(e) => {
                     sh_warn!("Failed to format interface for {name}: {e}")?;
                     contract_abi.to_sol(&name, None)
                 }
             };
+
             Ok(InterfaceSource { json_abi: serde_json::to_string_pretty(&contract_abi)?, source })
         })
         .collect()

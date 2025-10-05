@@ -3,11 +3,12 @@
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
-use alloy_primitives::{B64, Bytes, U256, aliases::B32, keccak256, map::HashMap};
+use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
 use alloy_sol_types::SolValue;
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
 use revm::context::JournalTr;
@@ -48,7 +49,7 @@ impl Cheatcode for getLabelCall {
 impl Cheatcode for computeCreateAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { nonce, deployer } = self;
-        ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64 - 1");
+        ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64");
         Ok(deployer.create(nonce.to()).abi_encode())
     }
 }
@@ -71,6 +72,26 @@ impl Cheatcode for ensNamehashCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
         Ok(namehash(name).abi_encode())
+    }
+}
+
+impl Cheatcode for bound_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { current, min, max } = *self;
+        let Some(mutated) = U256::bound(current, min, max, state.test_runner()) else {
+            bail!("cannot bound {current} in [{min}, {max}] range")
+        };
+        Ok(mutated.abi_encode())
+    }
+}
+
+impl Cheatcode for bound_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { current, min, max } = *self;
+        let Some(mutated) = I256::bound(current, min, max, state.test_runner()) else {
+            bail!("cannot bound {current} in [{min}, {max}] range")
+        };
+        Ok(mutated.abi_encode())
     }
 }
 
@@ -157,7 +178,7 @@ impl Cheatcode for pauseTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to pause
             return Ok(Default::default());
         };
@@ -180,7 +201,7 @@ impl Cheatcode for resumeTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to unpause
             return Ok(Default::default());
         };

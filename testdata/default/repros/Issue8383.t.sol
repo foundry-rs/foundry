@@ -222,8 +222,11 @@ contract P256Verifier {
                     yy := mulmod(y2, y2, p)
                     zz := mulmod(z2, z2, p)
                     s := mulmod(4, mulmod(x2, yy, p), p)
-                    m :=
-                        addmod(mulmod(3, mulmod(x2, x2, p), p), mulmod(mload(returndatasize()), mulmod(zz, zz, p), p), p)
+                    m := addmod(
+                        mulmod(3, mulmod(x2, x2, p), p),
+                        mulmod(mload(returndatasize()), mulmod(zz, zz, p), p),
+                        p
+                    )
                     x := addmod(mulmod(m, m, p), sub(p, mulmod(2, s, p)), p)
                     z := mulmod(2, mulmod(y2, z2, p), p)
                     y := addmod(mulmod(m, addmod(s, sub(p, x), p), p), sub(p, mulmod(8, mulmod(yy, yy, p), p)), p)
@@ -266,8 +269,11 @@ contract P256Verifier {
                     yy := mulmod(y2, y2, p)
                     zz := mulmod(z2, z2, p)
                     s := mulmod(4, mulmod(x2, yy, p), p)
-                    m :=
-                        addmod(mulmod(3, mulmod(x2, x2, p), p), mulmod(mload(returndatasize()), mulmod(zz, zz, p), p), p)
+                    m := addmod(
+                        mulmod(3, mulmod(x2, x2, p), p),
+                        mulmod(mload(returndatasize()), mulmod(zz, zz, p), p),
+                        p
+                    )
                     x := addmod(mulmod(m, m, p), sub(p, mulmod(2, s, p)), p)
                     z := mulmod(2, mulmod(y2, z2, p), p)
                     y := addmod(mulmod(m, addmod(s, sub(p, x), p), p), sub(p, mulmod(8, mulmod(yy, yy, p), p)), p)

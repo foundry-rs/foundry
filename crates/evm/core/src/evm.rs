@@ -7,11 +7,7 @@ use crate::{
     Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{
-    Evm, EvmEnv,
-    eth::EthEvmContext,
-    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
-};
+use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -31,18 +27,15 @@ use revm::{
         FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
     },
-    precompile::{
-        PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
 
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
     env: Env,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
+    inspector: I,
+) -> FoundryEvm<'db, I> {
     let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
@@ -68,8 +61,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         ),
     };
 
-    inject_precompiles(&mut evm);
-
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
 }
 
@@ -88,22 +80,8 @@ pub fn new_evm_with_existing_context<'a>(
         ),
     };
 
-    inject_precompiles(&mut evm);
-
+    evm.inspector().get_networks().inject_precompiles(evm.precompiles_mut());
     evm
-}
-
-/// Conditionally inject additional precompiles into the EVM context.
-fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>) {
-    if evm.inspector().is_odyssey() {
-        evm.precompiles_mut().apply_precompile(P256VERIFY.address(), |_| {
-            // Create a wrapper function that adapts the new API
-            let precompile_fn = |input: PrecompileInput<'_>| -> Result<_, _> {
-                P256VERIFY.precompile()(input.data, P256VERIFY_BASE_GAS_FEE)
-            };
-            Some(DynPrecompile::from(precompile_fn))
-        });
-    }
 }
 
 /// Get the precompiles for the given spec.
@@ -178,12 +156,24 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Spec = SpecId;
     type Tx = TxEnv;
 
+    fn block(&self) -> &BlockEnv {
+        &self.inner.block
+    }
+
     fn chain_id(&self) -> u64 {
         self.inner.ctx.cfg.chain_id
     }
 
-    fn block(&self) -> &BlockEnv {
-        &self.inner.block
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
+        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        (
+            &mut self.inner.ctx.journaled_state.database,
+            &mut self.inner.inspector,
+            &mut self.inner.precompiles,
+        )
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
@@ -311,8 +301,9 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
-                            output: Bytes::copy_from_slice(
-                                format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
+                            output: Bytes::from(
+                                format!("missing CREATE2 deployer: {create2_deployer}")
+                                    .into_bytes(),
                             ),
                             gas: Gas::new(gas_limit),
                         },

@@ -463,6 +463,16 @@
           "name": "depth",
           "ty": "uint64",
           "description": "Call depth traversed during the recording of state differences"
+        },
+        {
+          "name": "oldNonce",
+          "ty": "uint64",
+          "description": "The previous nonce of the accessed account."
+        },
+        {
+          "name": "newNonce",
+          "ty": "uint64",
+          "description": "The new nonce of the accessed account."
         }
       ]
     },
@@ -754,9 +764,9 @@
       "func": {
         "id": "accesses",
         "description": "Gets all accessed reads and write slot from a `vm.record` session, for a given address.",
-        "declaration": "function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
+        "declaration": "function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "accesses(address)",
         "selector": "0x65bc9481",
         "selectorBytes": [
@@ -3332,6 +3342,46 @@
     },
     {
       "func": {
+        "id": "bound_0",
+        "description": "Returns an uint256 value bounded in given range and different from the current one.",
+        "declaration": "function bound(uint256 current, uint256 min, uint256 max) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "bound(uint256,uint256,uint256)",
+        "selector": "0x5a6c1eed",
+        "selectorBytes": [
+          90,
+          108,
+          30,
+          237
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "bound_1",
+        "description": "Returns an int256 value bounded in given range and different from the current one.",
+        "declaration": "function bound(int256 current, int256 min, int256 max) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "bound(int256,int256,int256)",
+        "selector": "0x8f48fc07",
+        "selectorBytes": [
+          143,
+          72,
+          252,
+          7
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
         "declaration": "function breakpoint(string calldata char) external pure;",
@@ -3614,9 +3664,9 @@
       "func": {
         "id": "contains",
         "description": "Returns true if `search` is found in `subject`, false otherwise.",
-        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
+        "declaration": "function contains(string calldata subject, string calldata search) external pure returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "contains(string,string)",
         "selector": "0x3fb18aec",
         "selectorBytes": [
@@ -4177,7 +4227,7 @@
     {
       "func": {
         "id": "deriveKey_0",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4197,7 +4247,7 @@
     {
       "func": {
         "id": "deriveKey_1",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4217,7 +4267,7 @@
     {
       "func": {
         "id": "deriveKey_2",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4237,7 +4287,7 @@
     {
       "func": {
         "id": "deriveKey_3",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -5018,9 +5068,9 @@
       "func": {
         "id": "eth_getLogs",
         "description": "Gets all the logs according to specified filter.",
-        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external returns (EthGetLogs[] memory logs);",
+        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
         "selector": "0x35e1349b",
         "selectorBytes": [
@@ -6096,6 +6146,26 @@
     },
     {
       "func": {
+        "id": "getChainId",
+        "description": "Gets the current `block.chainid` of the currently selected environment.\nYou should use this instead of `block.chainid` if you use `vm.selectFork` or `vm.createSelectFork`, as `block.chainid` could be assumed\nto be constant across a transaction, and as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getChainId() external view returns (uint256 blockChainId);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChainId()",
+        "selector": "0x3408e470",
+        "selectorBytes": [
+          52,
+          8,
+          228,
+          112
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getChain_0",
         "description": "Returns a Chain struct for specific alias",
         "declaration": "function getChain(string calldata chainAlias) external view returns (Chain memory chain);",
@@ -6278,9 +6348,9 @@
       "func": {
         "id": "getMappingKeyAndParentOf",
         "description": "Gets the map key and parent of a mapping at a given slot, for a given address.",
-        "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);",
+        "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external view returns (bool found, bytes32 key, bytes32 parent);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingKeyAndParentOf(address,bytes32)",
         "selector": "0x876e24e6",
         "selectorBytes": [
@@ -6298,9 +6368,9 @@
       "func": {
         "id": "getMappingLength",
         "description": "Gets the number of elements in the mapping at the given slot, for a given address.",
-        "declaration": "function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);",
+        "declaration": "function getMappingLength(address target, bytes32 mappingSlot) external view returns (uint256 length);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingLength(address,bytes32)",
         "selector": "0x2f2fd63f",
         "selectorBytes": [
@@ -6318,9 +6388,9 @@
       "func": {
         "id": "getMappingSlotAt",
         "description": "Gets the elements at index idx of the mapping at the given slot, for a given address. The\nindex must be less than the length of the mapping (i.e. the number of keys in the mapping).",
-        "declaration": "function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);",
+        "declaration": "function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingSlotAt(address,bytes32,uint256)",
         "selector": "0xebc73ab4",
         "selectorBytes": [
@@ -6358,9 +6428,9 @@
       "func": {
         "id": "getNonce_1",
         "description": "Get the nonce of a `Wallet`.",
-        "declaration": "function getNonce(Wallet calldata wallet) external returns (uint64 nonce);",
+        "declaration": "function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getNonce((address,uint256,uint256,uint256))",
         "selector": "0xa5748aad",
         "selectorBytes": [
@@ -6376,11 +6446,31 @@
     },
     {
       "func": {
+        "id": "getRawBlockHeader",
+        "description": "Gets the RLP encoded block header for a given block number.\nReturns the block header in the same format as `cast block <block_number> --raw`.",
+        "declaration": "function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getRawBlockHeader(uint256)",
+        "selector": "0x2c667606",
+        "selectorBytes": [
+          44,
+          102,
+          118,
+          6
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
-        "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
+        "declaration": "function getRecordedLogs() external view returns (Log[] memory logs);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getRecordedLogs()",
         "selector": "0x191553a4",
         "selectorBytes": [
@@ -6436,11 +6526,51 @@
     },
     {
       "func": {
+        "id": "getStorageAccesses",
+        "description": "Returns an array of `StorageAccess` from current `vm.stateStateDiffRecording` session",
+        "declaration": "function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageAccesses()",
+        "selector": "0x2899b1d0",
+        "selectorBytes": [
+          40,
+          153,
+          177,
+          208
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getStorageSlots",
+        "description": "Returns an array of storage slots occupied by the specified variable.",
+        "declaration": "function getStorageSlots(address target, string calldata variableName) external view returns (uint256[] memory slots);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStorageSlots(address,string)",
+        "selector": "0xefa136d9",
+        "selectorBytes": [
+          239,
+          161,
+          54,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
-        "declaration": "function getWallets() external returns (address[] memory wallets);",
+        "declaration": "function getWallets() external view returns (address[] memory wallets);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getWallets()",
         "selector": "0xdb7a4605",
         "selectorBytes": [
@@ -8260,9 +8390,9 @@
       "func": {
         "id": "randomAddress",
         "description": "Returns a random `address`.",
-        "declaration": "function randomAddress() external returns (address);",
+        "declaration": "function randomAddress() external view returns (address);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomAddress()",
         "selector": "0xd5bee9f5",
         "selectorBytes": [
@@ -8400,9 +8530,9 @@
       "func": {
         "id": "randomUint_0",
         "description": "Returns a random uint256 value.",
-        "declaration": "function randomUint() external returns (uint256);",
+        "declaration": "function randomUint() external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint()",
         "selector": "0x25124730",
         "selectorBytes": [
@@ -8420,9 +8550,9 @@
       "func": {
         "id": "randomUint_1",
         "description": "Returns random uint256 value between the provided range (=min..=max).",
-        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "declaration": "function randomUint(uint256 min, uint256 max) external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint(uint256,uint256)",
         "selector": "0xd61b051b",
         "selectorBytes": [
@@ -8460,9 +8590,9 @@
       "func": {
         "id": "readCallers",
         "description": "Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.",
-        "declaration": "function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);",
+        "declaration": "function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "readCallers()",
         "selector": "0x4ad0bac9",
         "selectorBytes": [
@@ -8815,6 +8945,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "resolveEnv",
+        "description": "Resolves the env variable placeholders of a given input string.",
+        "declaration": "function resolveEnv(string calldata input) external returns (string memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resolveEnv(string)",
+        "selector": "0xddd2128d",
+        "selectorBytes": [
+          221,
+          210,
+          18,
+          141
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -9934,6 +10084,26 @@
           33,
           27,
           64
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signWithNonceUnsafe",
+        "description": "Signs `digest` with `privateKey` on the secp256k1 curve, using the given `nonce`\nas the raw ephemeral k value in ECDSA (instead of deriving it deterministically).",
+        "declaration": "function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signWithNonceUnsafe(uint256,bytes32,uint256)",
+        "selector": "0x2012783a",
+        "selectorBytes": [
+          32,
+          18,
+          120,
+          58
         ]
       },
       "group": "crypto",
@@ -11165,7 +11335,7 @@
     {
       "func": {
         "id": "writeJson_1",
-        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.",
+        "description": "Write a serialized JSON object to an **existing** JSON file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a JSON file, without having to parse the entire thing.\nThis cheatcode will create new keys if they didn't previously exist.",
         "declaration": "function writeJson(string calldata json, string calldata path, string calldata valueKey) external;",
         "visibility": "external",
         "mutability": "",
@@ -11225,7 +11395,7 @@
     {
       "func": {
         "id": "writeToml_1",
-        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.",
+        "description": "Takes serialized JSON, converts to TOML and write a serialized TOML table to an **existing** TOML file, replacing a value with key = <value_key.>\nThis is useful to replace a specific value of a TOML file, without having to parse the entire thing.\nThis cheatcode will create new keys if they didn't previously exist.",
         "declaration": "function writeToml(string calldata json, string calldata path, string calldata valueKey) external;",
         "visibility": "external",
         "mutability": "",

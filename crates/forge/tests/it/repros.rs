@@ -142,10 +142,6 @@ test_repro!(3347, false, None, |res| {
     );
 });
 
-// https://github.com/foundry-rs/foundry/issues/3437
-// 1.0 related
-// test_repro!(3437);
-
 // https://github.com/foundry-rs/foundry/issues/3596
 test_repro!(3596, true, None);
 
@@ -170,10 +166,6 @@ test_repro!(
 // https://github.com/foundry-rs/foundry/issues/3708
 test_repro!(3708);
 
-// https://github.com/foundry-rs/foundry/issues/3723
-// 1.0 related
-// test_repro!(3723);
-
 // https://github.com/foundry-rs/foundry/issues/3753
 test_repro!(3753);
 
@@ -194,10 +186,6 @@ test_repro!(4630);
 
 // https://github.com/foundry-rs/foundry/issues/4640
 test_repro!(4640);
-
-// https://github.com/foundry-rs/foundry/issues/4832
-// 1.0 related
-// test_repro!(4832);
 
 // https://github.com/foundry-rs/foundry/issues/5038
 test_repro!(5038);
@@ -349,9 +337,9 @@ test_repro!(8004);
 
 // https://github.com/foundry-rs/foundry/issues/2851
 test_repro!(2851, false, None, |res| {
-    let mut res = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
-    let test = res.test_results.remove("invariantNotZero()").unwrap();
-    assert_eq!(test.status, TestStatus::Failure);
+    let mut suite_result = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
+    let tr = suite_result.test_results.remove("invariantNotZero()").unwrap();
+    assert_eq!(tr.status, TestStatus::Failure, "{tr}");
 });
 
 // https://github.com/foundry-rs/foundry/issues/8006
@@ -416,3 +404,9 @@ test_repro!(10586);
 
 // https://github.com/foundry-rs/foundry/issues/10957
 test_repro!(10957);
+
+// https://github.com/foundry-rs/foundry/issues/11353
+test_repro!(11353);
+
+// https://github.com/foundry-rs/foundry/issues/11616
+test_repro!(11616);

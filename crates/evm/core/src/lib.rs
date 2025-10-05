@@ -3,15 +3,18 @@
 //! Core EVM abstractions.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
+
+/// Map keyed by breakpoints char to their location (contract address, pc)
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 #[macro_use]
 extern crate tracing;
@@ -23,8 +26,11 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
+use foundry_evm_networks::NetworkConfigs;
+
 pub mod backend;
 pub mod buffer;
+pub mod bytecode;
 pub mod constants;
 pub mod decode;
 pub mod either_evm;
@@ -57,9 +63,9 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
         let _ = msg;
     }
 
-    /// Returns `true` if the current network is Odyssey.
-    fn is_odyssey(&self) -> bool {
-        false
+    /// Returns configured networks.
+    fn get_networks(&self) -> NetworkConfigs {
+        NetworkConfigs::default()
     }
 
     /// Returns the CREATE2 deployer address.

@@ -44,9 +44,19 @@ impl EtherscanIdentifier {
         if config.offline {
             return Ok(None);
         }
-        let Some(config) = config.get_etherscan_config_with_chain(chain)? else {
-            return Ok(None);
+
+        let config = match config.get_etherscan_config_with_chain(chain) {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                warn!(target: "traces::etherscan", "etherscan config not found");
+                return Ok(None);
+            }
+            Err(err) => {
+                warn!(?err, "failed to get etherscan config");
+                return Ok(None);
+            }
         };
+
         trace!(target: "traces::etherscan", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
         Ok(Some(Self {
             client: Arc::new(config.into_client()?),
@@ -59,7 +69,6 @@ impl EtherscanIdentifier {
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        // TODO: Add caching so we dont double-fetch contracts.
         let outputs_fut = self
             .contracts
             .iter()

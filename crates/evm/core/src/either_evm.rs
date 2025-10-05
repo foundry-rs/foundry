@@ -107,6 +107,13 @@ where
     type Precompiles = P;
     type Spec = SpecId;
 
+    fn block(&self) -> &BlockEnv {
+        match self {
+            Self::Eth(evm) => evm.block(),
+            Self::Op(evm) => evm.block(),
+        }
+    }
+
     fn chain_id(&self) -> u64 {
         match self {
             Self::Eth(evm) => evm.chain_id(),
@@ -114,10 +121,17 @@ where
         }
     }
 
-    fn block(&self) -> &BlockEnv {
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
         match self {
-            Self::Eth(evm) => evm.block(),
-            Self::Op(evm) => evm.block(),
+            Self::Eth(evm) => evm.components(),
+            Self::Op(evm) => evm.components(),
+        }
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        match self {
+            Self::Eth(evm) => evm.components_mut(),
+            Self::Op(evm) => evm.components_mut(),
         }
     }
 

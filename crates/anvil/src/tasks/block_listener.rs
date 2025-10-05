@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A Future that will execute a given `task` for each new block that
+/// A Future that will execute a given `task` for each new block that arrives on the stream.
 pub struct BlockListener<St, F, Fut> {
     stream: St,
     task_factory: F,

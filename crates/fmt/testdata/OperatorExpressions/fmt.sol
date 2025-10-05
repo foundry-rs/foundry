@@ -41,3 +41,38 @@ function test() {
             || op == 0xFF // SELFDESTRUCT
     ) return false;
 }
+
+function test_nested() {
+    require(
+        keccak256(abi.encodePacked("some long string"))
+            == keccak256(abi.encodePacked("some other long string")),
+        "string mismatch"
+    );
+
+    state.zeroForOne = IERC20(Currency.unwrap(state.poolKey1.currency0))
+        == IERC20(Currency.unwrap(state.poolKey0.curerncy1));
+
+    coreAddresses.evc == address(0)
+        && coreAddresses.protocolConfig == address(0)
+        && coreAddresses.sequenceRegistry == address(0)
+        && coreAddresses.balanceTracker == address(0)
+        && coreAddresses.permit2 == address(0);
+
+    return spender == ownerOf(tokenId) || getApproved[tokenId] == spender
+        || isApprovedForAll[ownerOf(tokenId)][spender];
+}
+
+function new_y(
+    uint256 x,
+    uint256 dx,
+    uint256 x_basis,
+    uint256 y,
+    uint256 y_basis
+) external pure returns (uint256) {
+    return _get_y(
+        x * _VELODROME_TOKEN_BASIS / x_basis,
+        dx * _VELODROME_TOKEN_BASIS / x_basis,
+        y * _VELODROME_TOKEN_BASIS / y_basis
+    ) * y_basis / _VELODROME_TOKEN_BASIS
+        * aReallyLongIdentifierThatMakesTheOperatorExpressionBreak;
+}

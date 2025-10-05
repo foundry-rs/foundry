@@ -167,6 +167,7 @@ impl CallTraceDecoder {
         INIT.get_or_init(Self::init)
     }
 
+    #[instrument(name = "CallTraceDecoder::init", level = "debug")]
     fn init() -> Self {
         Self {
             contracts: Default::default(),
@@ -339,9 +340,9 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
-            node.trace.decoded = self.decode_function(&node.trace).await;
+            node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
-                log.decoded = self.decode_event(&log.raw_log).await;
+                log.decoded = Some(Box::new(self.decode_event(&log.raw_log).await));
             }
 
             if let Some(debug) = self.debug_identifier.as_ref()
@@ -410,18 +411,18 @@ impl CallTraceDecoder {
                     None
                 };
 
-                if let Some(func) = functions.first() {
-                    return DecodedCallTrace {
+                return if let Some(func) = functions.first() {
+                    DecodedCallTrace {
                         label,
                         call_data: Some(self.decode_function_input(trace, func)),
                         return_data,
-                    };
+                    }
                 } else {
-                    return DecodedCallTrace {
+                    DecodedCallTrace {
                         label,
                         call_data: self.fallback_call_data(trace),
                         return_data,
-                    };
+                    }
                 };
             }
 

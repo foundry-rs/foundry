@@ -1,20 +1,19 @@
 use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{BuildOpts, solar_pcx_from_build_opts};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_common::{compile::ProjectCompiler, shell};
 use serde::Serialize;
-use solar_parse::interface::Session;
-use solar_sema::{
-    GcxWrapper, Hir,
+use solar::sema::{
+    Gcx, Hir,
     hir::StructId,
-    thread_local::ThreadLocal,
     ty::{Ty, TyKind},
 };
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Result as FmtResult, Write},
+    ops::ControlFlow,
     path::{Path, PathBuf},
-    slice,
 };
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
@@ -25,10 +24,6 @@ pub struct Eip712Args {
     /// The path to the file from which to read struct definitions.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
-
-    /// Output in JSON format.
-    #[arg(long, help = "Output in JSON format")]
-    pub json: bool,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -52,23 +47,13 @@ impl Display for Eip712Output {
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let mut sess = Session::builder().with_stderr_emitter().build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-
-        sess.enter_parallel(|| -> Result<()> {
-            // Set up the parsing context with the project paths and sources.
-            let parsing_context = solar_pcx_from_build_opts(
-                &sess,
-                &self.build,
-                None,
-                Some(slice::from_ref(&self.target_path)),
-            )?;
-
-            // Parse and resolve
-            let hir_arena = ThreadLocal::new();
-            let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) else {
-                return Err(eyre::eyre!("failed parsing"));
-            };
+        let config = self.build.load_config()?;
+        let project = config.solar_project()?;
+        let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        compiler.enter_mut(|compiler| -> Result<()> {
+            let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+            let gcx = compiler.gcx();
             let resolver = Resolver::new(gcx);
 
             let outputs = resolver
@@ -83,7 +68,7 @@ impl Eip712Args {
                 })
                 .collect::<Vec<_>>();
 
-            if self.json {
+            if shell::is_json() {
                 sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
             } else {
                 for output in &outputs {
@@ -94,7 +79,13 @@ impl Eip712Args {
             Ok(())
         })?;
 
-        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
+        // `compiler.sess()` inside of `ProjectCompileOutput` is built with `with_buffer_emitter`.
+        let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
+        if compiler.sess().dcx.has_errors().is_err() {
+            eyre::bail!("{diags}");
+        } else {
+            let _ = sh_print!("{diags}");
+        }
 
         Ok(())
     }
@@ -103,19 +94,19 @@ impl Eip712Args {
 /// Generates the EIP-712 `encodeType` string for a given struct.
 ///
 /// Requires a reference to the source HIR.
-pub struct Resolver<'hir> {
-    gcx: GcxWrapper<'hir>,
+pub struct Resolver<'gcx> {
+    gcx: Gcx<'gcx>,
 }
 
-impl<'hir> Resolver<'hir> {
+impl<'gcx> Resolver<'gcx> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
-    pub fn new(gcx: GcxWrapper<'hir>) -> Self {
+    pub fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx }
     }
 
     #[inline]
-    fn hir(&self) -> &'hir Hir<'hir> {
-        &self.gcx.get().hir
+    fn hir(&self) -> &'gcx Hir<'gcx> {
+        &self.gcx.hir
     }
 
     /// Returns the [`StructId`]s of every user-defined struct in source order.
@@ -128,7 +119,7 @@ impl<'hir> Resolver<'hir> {
         let strukt = self.hir().strukt(id).name.as_str();
         match self.hir().strukt(id).contract {
             Some(cid) => {
-                let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
+                let full_name = self.gcx.contract_fully_qualified_name(cid).to_string();
                 let relevant = Path::new(&full_name)
                     .file_name()
                     .and_then(|s| s.to_str())
@@ -166,7 +157,7 @@ impl<'hir> Resolver<'hir> {
 
         for (idx, field_id) in def.fields.iter().enumerate() {
             let field = self.hir().variable(*field_id);
-            let ty = self.resolve_type(self.gcx.get().type_of_hir_ty(&field.ty), subtypes)?;
+            let ty = self.resolve_type(self.gcx.type_of_hir_ty(&field.ty), subtypes)?;
 
             write!(result, "{ty} {name}", name = field.name?.as_str()).ok()?;
 
@@ -196,7 +187,7 @@ impl<'hir> Resolver<'hir> {
 
     fn resolve_type(
         &self,
-        ty: Ty<'hir>,
+        ty: Ty<'gcx>,
         subtypes: &mut BTreeMap<String, StructId>,
     ) -> Option<String> {
         let ty = ty.peel_refs();
@@ -229,7 +220,7 @@ impl<'hir> Resolver<'hir> {
 
                         // Recursively resolve fields to populate subtypes
                         for &field_id in def.fields {
-                            let field_ty = self.gcx.get().type_of_item(field_id.into());
+                            let field_ty = self.gcx.type_of_item(field_id.into());
                             self.resolve_type(field_ty, subtypes)?;
                         }
                         name

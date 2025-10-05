@@ -2,14 +2,13 @@ use crate::opts::ChainValueParser;
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
-use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, FigmentProviders,
     figment::{
-        self, Metadata, Profile,
+        self, Figment, Metadata, Profile,
         value::{Dict, Map},
     },
-    impl_figment_convert_cast,
+    find_project_root, impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -116,6 +115,13 @@ impl RpcOpts {
         }
         dict
     }
+
+    pub fn into_figment(self, all: bool) -> Figment {
+        let root = find_project_root(None).expect("could not determine project root");
+        Config::with_root(&root)
+            .to_figment(if all { FigmentProviders::All } else { FigmentProviders::Cast })
+            .merge(self)
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Parser)]
@@ -124,16 +130,6 @@ pub struct EtherscanOpts {
     #[arg(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-
-    /// The Etherscan API version.
-    #[arg(
-        short,
-        long = "etherscan-api-version",
-        alias = "api-version",
-        env = "ETHERSCAN_API_VERSION"
-    )]
-    #[serde(rename = "etherscan_api_version", skip_serializing_if = "Option::is_none")]
-    pub api_version: Option<EtherscanApiVersion>,
 
     /// The chain name or EIP-155 chain ID.
     #[arg(
@@ -174,10 +170,6 @@ impl EtherscanOpts {
         let mut dict = Dict::new();
         if let Some(key) = self.key() {
             dict.insert("etherscan_api_key".into(), key.into());
-        }
-
-        if let Some(api_version) = &self.api_version {
-            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(chain) = self.chain {

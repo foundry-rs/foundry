@@ -39,9 +39,9 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
+    core::AsEnvMut,
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
-use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
@@ -65,6 +65,8 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -97,6 +99,8 @@ pub struct NodeConfig {
     pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    pub enable_tx_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
@@ -183,16 +187,16 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
-    /// Enable Optimism deposit transaction
-    pub enable_optimism: bool,
+    /// Disable pool balance checks
+    pub disable_pool_balance_checks: bool,
     /// Slots in an epoch
     pub slots_in_an_epoch: u64,
     /// The memory limit per EVM execution in bytes.
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Odyssey features.
-    pub odyssey: bool,
+    /// Networks to enable features for.
+    pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -438,6 +442,7 @@ impl Default for NodeConfig {
             chain_id: None,
             gas_limit: None,
             disable_block_gas_limit: false,
+            enable_tx_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -450,7 +455,6 @@ impl Default for NodeConfig {
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
-            // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             eth_rpc_url: None,
             fork_choice: None,
@@ -483,11 +487,11 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
-            enable_optimism: false,
+            disable_pool_balance_checks: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            odyssey: false,
+            networks: Default::default(),
             silent: false,
             cache_path: None,
         }
@@ -531,13 +535,10 @@ impl NodeConfig {
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::default());
-        }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.enable_optimism {
+        if self.networks.optimism {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
@@ -591,6 +592,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
+        self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -612,6 +614,15 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
+        self
+    }
+
+    /// Enable tx gas limit check
+    ///
+    /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
+    #[must_use]
+    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+        self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
@@ -981,7 +992,7 @@ impl NodeConfig {
     /// Sets whether to enable optimism support
     #[must_use]
     pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.enable_optimism = enable_optimism;
+        self.networks.optimism = enable_optimism;
         self
     }
 
@@ -992,6 +1003,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable pool balance checks
+    #[must_use]
+    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+        self.disable_pool_balance_checks = yes;
+        self
+    }
+
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
     pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
@@ -999,10 +1017,21 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Odyssey support
+    /// Enable features for provided networks.
     #[must_use]
-    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
-        self.odyssey = odyssey;
+    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+        self.networks = networks;
+        self
+    }
+
+    /// Sets whether to enable Celo support
+    #[must_use]
+    pub fn with_celo(mut self, celo: bool) -> Self {
+        self.networks.celo = celo;
+        if celo {
+            // Celo requires Optimism support
+            self.networks.optimism = true;
+        }
         self
     }
 
@@ -1043,6 +1072,10 @@ impl NodeConfig {
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
+
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
         }
@@ -1059,7 +1092,7 @@ impl NodeConfig {
                 base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
                 ..Default::default()
             },
-            self.enable_optimism,
+            self.networks,
         );
 
         let fees = FeeManager::new(
@@ -1102,6 +1135,15 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        if self.print_traces {
+            // if traces should get printed we configure the decoder with the signatures cache
+            if let Ok(identifier) = SignaturesIdentifier::new(false) {
+                debug!(target: "node", "using signature identifier");
+                decoder_builder = decoder_builder.with_signature_identifier(identifier);
+            }
+        }
+
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
@@ -1112,7 +1154,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
-            self.odyssey,
+            Arc::new(decoder_builder.build()),
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,
@@ -1425,7 +1467,9 @@ async fn derive_block_and_transactions(
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
-            let transaction_block_number = transaction.block_number.unwrap();
+            let transaction_block_number = transaction.block_number.ok_or_else(|| {
+                eyre::eyre!("fork transaction is not mined yet (no block number)")
+            })?;
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider

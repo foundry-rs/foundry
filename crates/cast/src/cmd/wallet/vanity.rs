@@ -149,8 +149,8 @@ impl VanityArgs {
             "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
             timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
-            if nonce.is_some() {
-                wallet.address().create(nonce.unwrap()).to_checksum(None)
+            if let Some(nonce_val) = nonce {
+                wallet.address().create(nonce_val).to_checksum(None)
             } else {
                 String::new()
             },
@@ -193,15 +193,16 @@ pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 
-/// Creates a nonce matcher function, which takes a reference to a [GeneratedWallet] and returns
+/// Creates a matcher function, which takes a reference to a [GeneratedWallet] and returns
 /// whether it found a match or not by using `matcher`.
 #[inline]
 pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet) -> bool {
     move |(_, addr)| matcher.is_match(addr)
 }
 
-/// Creates a nonce matcher function, which takes a reference to a [GeneratedWallet] and a nonce and
-/// returns whether it found a match or not by using `matcher`.
+/// Creates a contract address matcher function that uses the specified nonce.
+/// The returned function takes a reference to a [GeneratedWallet] and returns
+/// whether the contract address created with the nonce matches using `matcher`.
 #[inline]
 pub fn create_nonce_matcher<T: VanityMatcher>(
     matcher: T,

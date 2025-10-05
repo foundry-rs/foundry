@@ -21,7 +21,6 @@ impl TUIContext<'_> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
     }
 
-    #[inline]
     fn draw_layout(&self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
         let area = f.area();

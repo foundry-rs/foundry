@@ -67,7 +67,7 @@ impl<'a> CowBackend<'a> {
     pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut Env,
-        inspector: &mut I,
+        inspector: I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state

@@ -1,6 +1,6 @@
 use alloy_evm::EvmEnv;
-use foundry_evm::EnvMut;
-use foundry_evm_core::AsEnvMut;
+use foundry_evm::{EnvMut, core::AsEnvMut};
+use foundry_evm_networks::NetworkConfigs;
 use op_revm::OpTransaction;
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
 
@@ -9,13 +9,18 @@ use revm::context::{BlockEnv, CfgEnv, TxEnv};
 pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: OpTransaction<TxEnv>,
-    pub is_optimism: bool,
+    pub networks: NetworkConfigs,
 }
 
 /// Helper container type for [`EvmEnv`] and [`OpTransaction<TxEnv>`].
 impl Env {
-    pub fn new(cfg: CfgEnv, block: BlockEnv, tx: OpTransaction<TxEnv>, is_optimism: bool) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism }
+    pub fn new(
+        cfg: CfgEnv,
+        block: BlockEnv,
+        tx: OpTransaction<TxEnv>,
+        networks: NetworkConfigs,
+    ) -> Self {
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, networks }
     }
 }
 

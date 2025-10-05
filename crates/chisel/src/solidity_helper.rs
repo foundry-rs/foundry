@@ -1,7 +1,5 @@
-//! SolidityHelper
-//!
 //! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
-//! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
+//! usage in Chisel. It was originally ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
 use crate::{
     dispatcher::PROMPT_ARROW,
@@ -14,12 +12,13 @@ use rustyline::{
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
 };
-use solar_parse::{
-    Lexer,
+use solar::parse::{
+    Cursor, Lexer,
     interface::Session,
-    token::{Token, TokenKind},
+    lexer::token::{RawLiteralKind, RawTokenKind},
+    token::Token,
 };
-use std::{borrow::Cow, ops::Range, str::FromStr};
+use std::{borrow::Cow, cell::RefCell, fmt, ops::Range, rc::Rc};
 use yansi::{Color, Style};
 
 /// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
@@ -31,8 +30,13 @@ use yansi::{Color, Style};
 /// * 4 - suffix: `\x1B[0m`
 const MAX_ANSI_LEN: usize = 9;
 
-/// A rustyline helper for Solidity code
+/// A rustyline helper for Solidity code.
+#[derive(Clone)]
 pub struct SolidityHelper {
+    inner: Rc<RefCell<Inner>>,
+}
+
+struct Inner {
     errored: bool,
 
     do_paint: bool,
@@ -45,24 +49,36 @@ impl Default for SolidityHelper {
     }
 }
 
+impl fmt::Debug for SolidityHelper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let this = self.inner.borrow();
+        f.debug_struct("SolidityHelper")
+            .field("errored", &this.errored)
+            .field("do_paint", &this.do_paint)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SolidityHelper {
     /// Create a new SolidityHelper.
     pub fn new() -> Self {
         Self {
-            errored: false,
-            do_paint: yansi::is_enabled(),
-            sess: Session::builder().with_silent_emitter(None).build(),
+            inner: Rc::new(RefCell::new(Inner {
+                errored: false,
+                do_paint: yansi::is_enabled(),
+                sess: Session::builder().with_silent_emitter(None).build(),
+            })),
         }
     }
 
     /// Returns whether the helper is in an errored state.
     pub fn errored(&self) -> bool {
-        self.errored
+        self.inner.borrow().errored
     }
 
     /// Set the errored field.
     pub fn set_errored(&mut self, errored: bool) -> &mut Self {
-        self.errored = errored;
+        self.inner.borrow_mut().errored = errored;
         self
     }
 
@@ -73,7 +89,7 @@ impl SolidityHelper {
         }
 
         // Highlight commands separately
-        if input.starts_with(COMMAND_LEADER) {
+        if let Some(full_cmd) = input.strip_prefix(COMMAND_LEADER) {
             let (cmd, rest) = match input.split_once(' ') {
                 Some((cmd, rest)) => (cmd, Some(rest)),
                 None => (input, None),
@@ -84,7 +100,7 @@ impl SolidityHelper {
 
             // cmd
             out.push(COMMAND_LEADER);
-            let cmd_res = ChiselCommand::from_str(cmd);
+            let cmd_res = ChiselCommand::parse(full_cmd);
             let style = (if cmd_res.is_ok() { Color::Green } else { Color::Red }).foreground();
             Self::paint_unchecked(cmd, style, &mut out);
 
@@ -131,21 +147,50 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(&self, input: &str) -> ValidationResult {
-        let mut depth = [0usize; 3];
-        self.enter(|sess| {
-            for token in Lexer::new(sess, input) {
-                match token.kind {
-                    TokenKind::OpenDelim(delim) => {
-                        depth[delim as usize] += 1;
+        use RawLiteralKind::*;
+        use RawTokenKind::*;
+        let mut stack = vec![];
+        for token in Cursor::new(input) {
+            match token.kind {
+                OpenDelim(delim) => stack.push(delim),
+                CloseDelim(delim) => match (stack.pop(), delim) {
+                    (Some(open), close) if open == close => {}
+                    (Some(wanted), _) => {
+                        let wanted = wanted.to_open_str();
+                        return ValidationResult::Invalid(Some(format!(
+                            "Mismatched brackets: `{wanted}` is not properly closed"
+                        )));
                     }
-                    TokenKind::CloseDelim(delim) => {
-                        depth[delim as usize] = depth[delim as usize].saturating_sub(1);
+                    (None, c) => {
+                        let c = c.to_close_str();
+                        return ValidationResult::Invalid(Some(format!(
+                            "Mismatched brackets: `{c}` is unpaired"
+                        )));
                     }
-                    _ => {}
+                },
+
+                Literal { kind: Str { terminated, .. } } => {
+                    if !terminated {
+                        return ValidationResult::Incomplete;
+                    }
                 }
+
+                BlockComment { terminated, .. } => {
+                    if !terminated {
+                        return ValidationResult::Incomplete;
+                    }
+                }
+
+                _ => {}
             }
-        });
-        if depth == [0; 3] { ValidationResult::Valid(None) } else { ValidationResult::Incomplete }
+        }
+
+        // There are open brackets that are not properly closed.
+        if !stack.is_empty() {
+            return ValidationResult::Incomplete;
+        }
+
+        ValidationResult::Valid(None)
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
@@ -168,12 +213,13 @@ impl SolidityHelper {
 
     /// Returns whether to color the output.
     fn do_paint(&self) -> bool {
-        self.do_paint
+        self.inner.borrow().do_paint
     }
 
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
-        self.sess.enter(|| f(&self.sess));
+        let this = self.inner.borrow();
+        this.sess.enter_sequential(|| f(&this.sess));
     }
 }
 
@@ -211,7 +257,7 @@ impl Highlighter for SolidityHelper {
 
         if let Some(i) = out.find(PROMPT_ARROW) {
             let style =
-                if self.errored { Color::Red.foreground() } else { Color::Green.foreground() };
+                if self.errored() { Color::Red.foreground() } else { Color::Green.foreground() };
             out.replace_range(i..=i + 2, &Self::paint_unchecked_owned(PROMPT_ARROW_STR, style));
         }
 
@@ -238,7 +284,7 @@ impl Helper for SolidityHelper {}
 #[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
-    use solar_parse::{
+    use solar::parse::{
         interface::kw::*,
         token::{TokenKind::*, TokenLitKind::*},
     };
@@ -262,5 +308,66 @@ fn token_style(token: &Token) -> Style {
         Comment(..) => Color::Primary.dim(),
 
         _ => Color::Primary.foreground(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate() {
+        let helper = SolidityHelper::new();
+        let dbg_r = |r: ValidationResult| match r {
+            ValidationResult::Incomplete => "Incomplete".to_string(),
+            ValidationResult::Invalid(inner) => format!("Invalid({inner:?})"),
+            ValidationResult::Valid(inner) => format!("Valid({inner:?})"),
+            _ => "Unknown result".to_string(),
+        };
+        let valid = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Valid(None)), "{input:?}: {}", dbg_r(r))
+        };
+        let incomplete = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Incomplete), "{input:?}: {}", dbg_r(r))
+        };
+        let invalid = |input: &str| {
+            let r = helper.validate_closed(input);
+            assert!(matches!(r, ValidationResult::Invalid(Some(_))), "{input:?}: {}", dbg_r(r))
+        };
+
+        valid("1");
+        valid("1 + 2");
+
+        valid("()");
+        valid("{}");
+        valid("[]");
+
+        incomplete("(");
+        incomplete("((");
+        incomplete("[");
+        incomplete("{");
+        incomplete("({");
+        valid("({})");
+
+        invalid(")");
+        invalid("]");
+        invalid("}");
+        invalid("(}");
+        invalid("(})");
+        invalid("[}");
+        invalid("[}]");
+
+        incomplete("\"");
+        incomplete("\'");
+        valid("\"\"");
+        valid("\'\'");
+
+        incomplete("/*");
+        incomplete("/*/*");
+        valid("/* */");
+        valid("/* /* */");
+        valid("/* /* */ */");
     }
 }

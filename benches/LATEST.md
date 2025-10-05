@@ -1,72 +1,73 @@
-# 📊 Foundry Benchmark Results
+# Foundry Benchmark Results
 
-**Generated at**: 2025-07-17 14:25:08 UTC
+**Date**: 2025-10-02 12:14:23
+
+## Repositories Tested
+
+1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
+2. [Vectorized/solady](https://github.com/Vectorized/solady)
+3. [Uniswap/v4-core](https://github.com/Uniswap/v4-core)
+4. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+
+## Foundry Versions
+
+- **v1.3.6**: forge Version: 1.3.6-v1.3.6 (d241588 2025-09-16)
+- **v1.4.0-rc1**: forge Version: 1.4.0-v1.4.0-rc1 (bd0e4a7 2025-10-01)
 
 ## Forge Test
 
-### Repositories Tested
-
-1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
-2. [Vectorized/solady](https://github.com/Vectorized/solady)
-### Foundry Versions
-
-- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
-
-| Repository | stable | nightly |
-|------------|----------|----------|
-| ithacaxyz-account | 5.12 s | 5.15 s |
-| solady | 2.99 s | 2.87 s |
+| Repository           | v1.3.6  | v1.4.0-rc1 |
+| -------------------- | ------- | ---------- |
+| ithacaxyz-account    | 3.17 s  | 2.94 s     |
+| solady               | 2.28 s  | 2.10 s     |
+| Uniswap-v4-core      | 7.27 s  | 6.13 s     |
+| sparkdotfi-spark-psm | 43.04 s | 44.08 s    |
 
 ## Forge Fuzz Test
 
-| Repository | stable | nightly |
-|------------|----------|----------|
-| ithacaxyz-account | 5.45 s | 5.20 s |
-| solady | 3.08 s | 3.00 s |
+| Repository           | v1.3.6 | v1.4.0-rc1 |
+| -------------------- | ------ | ---------- |
+| ithacaxyz-account    | 3.18 s | 3.02 s     |
+| solady               | 2.39 s | 2.24 s     |
+| Uniswap-v4-core      | 6.84 s | 6.20 s     |
+| sparkdotfi-spark-psm | 3.07 s | 2.72 s     |
 
-## Forge Build
+## Forge Test (Isolated)
 
-### Repositories Tested
+| Repository           | v1.3.6  | v1.4.0-rc1 |
+| -------------------- | ------- | ---------- |
+| solady               | 2.26 s  | 2.41 s     |
+| Uniswap-v4-core      | 7.22 s  | 7.71 s     |
+| sparkdotfi-spark-psm | 45.53 s | 50.49 s    |
 
-1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
-2. [Vectorized/solady](https://github.com/Vectorized/solady)
-### Foundry Versions
+## Forge Build (No Cache)
 
-- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+| Repository           | v1.3.6  | v1.4.0-rc1 |
+| -------------------- | ------- | ---------- |
+| ithacaxyz-account    | 9.16 s  | 9.08 s     |
+| solady               | 14.62 s | 14.69 s    |
+| Uniswap-v4-core      | 2m 3.8s | 2m 5.3s    |
+| sparkdotfi-spark-psm | 13.17 s | 13.14 s    |
 
-### No Cache
+## Forge Build (With Cache)
 
-| Repository | stable | nightly |
-|------------|----------|----------|
-| ithacaxyz-account | 2.58 s | 2.83 s |
-| solady | 3.88 s | 3.98 s |
-
-### With Cache
-
-| Repository | stable | nightly |
-|------------|----------|----------|
-| ithacaxyz-account | 0.210 s | 0.443 s |
-| solady | 0.093 s | 0.195 s |
+| Repository           | v1.3.6  | v1.4.0-rc1 |
+| -------------------- | ------- | ---------- |
+| ithacaxyz-account    | 0.156 s | 0.113 s    |
+| solady               | 0.089 s | 0.094 s    |
+| Uniswap-v4-core      | 0.133 s | 0.127 s    |
+| sparkdotfi-spark-psm | 0.173 s | 0.131 s    |
 
 ## Forge Coverage
 
-### Repositories Tested
-
-1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
-### Foundry Versions
-
-- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
-
-| Repository | stable | nightly |
-|------------|----------|----------|
-| ithacaxyz-account | 22.03 s | 21.98 s |
+| Repository           | v1.3.6   | v1.4.0-rc1 |
+| -------------------- | -------- | ---------- |
+| ithacaxyz-account    | 14.91 s  | 13.34 s    |
+| Uniswap-v4-core      | 1m 34.8s | 1m 30.3s   |
+| sparkdotfi-spark-psm | 3m 49.3s | 3m 40.2s   |
 
 ## System Information
 
-
-- **OS**: linux
+- **OS**: macos
 - **CPU**: 8
-- **Rustc**: rustc 1.88.0 (6b00bc388 2025-06-23)
+- **Rustc**: rustc 1.90.0-nightly (3014e79f9 2025-07-15)

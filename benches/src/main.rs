@@ -10,12 +10,13 @@ use foundry_common::sh_println;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
-const ALL_BENCHMARKS: [&str; 5] = [
+const ALL_BENCHMARKS: [&str; 6] = [
     "forge_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
+    "forge_isolate_test",
 ];
 
 /// Foundry Benchmark Runner

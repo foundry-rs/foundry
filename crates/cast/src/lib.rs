@@ -1,7 +1,7 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
@@ -9,7 +9,7 @@ use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, Selector, TxHash, TxKind, U64, U256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, TxKind, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{
@@ -28,14 +28,14 @@ use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     TransactionReceiptWithRevertReason,
-    abi::{encode_function_args, get_func},
+    abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
+    flatten,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
-use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -58,6 +58,7 @@ pub mod cmd;
 pub mod opts;
 
 pub mod base;
+pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
 pub mod tx;
@@ -749,7 +750,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     pub async fn codesize(&self, who: Address, block: Option<BlockId>) -> Result<String> {
         let code =
             self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-        Ok(format!("{}", code.len()))
+        Ok(code.len().to_string())
     }
 
     /// # Example
@@ -763,7 +764,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -775,6 +776,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
+        to_request: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -811,6 +813,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
+        } else if to_request {
+            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
+                tx.into(),
+            ))?
         } else {
             tx.pretty()
         })
@@ -1629,6 +1635,48 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(bytes32))
     }
 
+    /// Pads hex data to a specified length
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let padded = Cast::pad("abcd", true, 20)?;
+    /// assert_eq!(padded, "0xabcd000000000000000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("abcd", false, 20)?;
+    /// assert_eq!(padded, "0x000000000000000000000000000000000000abcd");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", true, 32)?;
+    /// assert_eq!(padded, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", false, 32)?;
+    /// assert_eq!(padded, "0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    ///
+    /// let err = Cast::pad("1234", false, 1).unwrap_err();
+    /// assert_eq!(err.to_string(), "input length exceeds target length");
+    ///
+    /// let err = Cast::pad("foobar", false, 32).unwrap_err();
+    /// assert_eq!(err.to_string(), "input is not a valid hex");
+    ///
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
+        let s = strip_0x(s);
+        let hex_len = len * 2;
+
+        // Validate input
+        if s.len() > hex_len {
+            eyre::bail!("input length exceeds target length");
+        }
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            eyre::bail!("input is not a valid hex");
+        }
+
+        Ok(if right { format!("0x{s:0<hex_len$}") } else { format!("0x{s:0>hex_len$}") })
+    }
+
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let bytes = hex::decode(s)?;
@@ -1762,10 +1810,7 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         }
     }
 
@@ -1795,12 +1840,89 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!(
-                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
-                e
-            ),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
         };
         Ok(format!("0x{encoded}"))
+    }
+
+    /// Performs ABI encoding of an event to produce the topics and data.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_primitives::hex;
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let log_data = Cast::abi_encode_event(
+    ///     "Transfer(address indexed from, address indexed to, uint256 value)",
+    ///     &[
+    ///         "0x1234567890123456789012345678901234567890",
+    ///         "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+    ///         "1000",
+    ///     ],
+    /// )
+    /// .unwrap();
+    ///
+    /// // topic0 is the event selector
+    /// assert_eq!(log_data.topics().len(), 3);
+    /// assert_eq!(
+    ///     log_data.topics()[0].to_string(),
+    ///     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    /// );
+    /// assert_eq!(
+    ///     log_data.topics()[1].to_string(),
+    ///     "0x0000000000000000000000001234567890123456789012345678901234567890"
+    /// );
+    /// assert_eq!(
+    ///     log_data.topics()[2].to_string(),
+    ///     "0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    /// );
+    /// assert_eq!(
+    ///     hex::encode_prefixed(log_data.data),
+    ///     "0x00000000000000000000000000000000000000000000000000000000000003e8"
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<LogData> {
+        let event = get_event(sig)?;
+        let tokens = std::iter::zip(&event.inputs, args)
+            .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut topics = vec![event.selector()];
+        let mut data_tokens: Vec<u8> = Vec::new();
+
+        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
+            if input.indexed {
+                let ty = DynSolType::parse(&input.ty)?;
+                if matches!(
+                    ty,
+                    DynSolType::String
+                        | DynSolType::Bytes
+                        | DynSolType::Array(_)
+                        | DynSolType::Tuple(_)
+                ) {
+                    // For dynamic types, hash the encoded value
+                    let encoded = token.abi_encode();
+                    let hash = keccak256(encoded);
+                    topics.push(hash);
+                } else {
+                    // For fixed-size types, encode directly to 32 bytes
+                    let mut encoded = [0u8; 32];
+                    let token_encoded = token.abi_encode();
+                    if token_encoded.len() <= 32 {
+                        let start = 32 - token_encoded.len();
+                        encoded[start..].copy_from_slice(&token_encoded);
+                    }
+                    topics.push(B256::from(encoded));
+                }
+            } else {
+                // Non-indexed parameters go into data
+                data_tokens.extend_from_slice(&token.abi_encode());
+            }
+        }
+
+        Ok(LogData::new_unchecked(topics, data_tokens.into()))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
@@ -2070,7 +2192,7 @@ impl SimpleCast {
         let project = etherscan_project(metadata, tmp.path())?;
         let target_path = project.find_contract_path(&metadata.contract_name)?;
 
-        let flattened = Flattener::new(project, &target_path)?.flatten();
+        let flattened = flatten(project, &target_path)?;
 
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
@@ -2100,23 +2222,9 @@ impl SimpleCast {
     /// ```
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
-
-        for step in decode_instructions(code)? {
-            write!(output, "{:08x}: ", step.pc)?;
-
-            if let Some(op) = step.op {
-                write!(output, "{op}")?;
-            } else {
-                write!(output, "INVALID")?;
-            }
-
-            if !step.immediate.is_empty() {
-                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
-            }
-
-            writeln!(output)?;
+        for (pc, inst) in InstIter::new(code).with_pc() {
+            writeln!(output, "{pc:08x}: {inst}")?;
         }
-
         Ok(output)
     }
 
@@ -2243,7 +2351,7 @@ fn explorer_client(
     api_url: Option<String>,
     explorer_url: Option<String>,
 ) -> Result<Client> {
-    let mut builder = Client::builder().with_chain_id(chain);
+    let mut builder = Client::builder().chain(chain)?;
 
     let deduced = chain.etherscan_urls();
 
@@ -2266,7 +2374,7 @@ fn explorer_client(
 
 #[cfg(test)]
 mod tests {
-    use super::SimpleCast as Cast;
+    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
     use alloy_primitives::hex;
 
     #[test]
@@ -2385,6 +2493,47 @@ mod tests {
     }
 
     #[test]
+    fn calldata_decode_nested_json() {
+        let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
+        let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
+        let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded)).unwrap();
+        let expected = serde_json::json!([
+            [
+                [
+                    "0x04366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed74",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x60f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf7",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                [
+                    "0x93dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb731886",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+            ],
+            1735573273,
+            132886,
+            "0xAF9d27ffe4d51eD54AC8eEc78f2785D7E11E5ab1",
+            "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
+        ]);
+        assert_eq!(json_value, expected);
+    }
+
+    #[test]
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
         assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
@@ -2404,23 +2553,21 @@ mod tests {
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
         let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
+        assert_eq!(disassembled, "00000000: PUSH1\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-
         let disassembled = Cast::disassemble(incomplete).unwrap();
-
-        assert_eq!(
-            disassembled,
-            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
-        );
+        assert_eq!(disassembled, "00000000: PUSH32\n");
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+        );
     }
 }

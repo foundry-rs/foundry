@@ -1,0 +1,39 @@
+[package]
+name = "foundry-evm-networks"
+description = "Custom network features, like precompiles and custom tx types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-chains.workspace = true
+alloy-evm.workspace = true
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
+
+revm = { workspace = true, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "optional_eip3607",
+    "optional_block_gas_limit",
+    "optional_no_base_fee",
+    "arbitrary",
+    "c-kzg",
+    "blst",
+] }
+
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+serde.workspace = true

@@ -6,7 +6,7 @@ use alloy_sol_types::SolValue;
 use std::{env, sync::OnceLock};
 
 /// Stores the forge execution context for the duration of the program.
-static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
+pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
 impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -25,6 +25,15 @@ impl Cheatcode for setEnvCall {
             }
             Ok(Default::default())
         }
+    }
+}
+
+impl Cheatcode for resolveEnvCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input } = self;
+        let resolved = foundry_config::resolve::interpolate(input)
+            .map_err(|e| fmt_err!("failed to resolve env var: {e}"))?;
+        Ok(resolved.abi_encode())
     }
 }
 

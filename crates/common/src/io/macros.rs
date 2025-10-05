@@ -146,7 +146,7 @@ macro_rules! __sh_dispatch {
     // Ensure that the global shell lock is held for as little time as possible.
     // Also avoids deadlocks in case of nested calls.
     (@impl $f:ident $shell:expr, $($args:tt)*) => {
-        match ::core::format_args!($($args)*) {
+        match format!($($args)*) {
             fmt => $crate::Shell::$f($shell, fmt),
         }
     };
@@ -178,7 +178,10 @@ mod tests {
 
         sh_println!("{:?}", {
             sh_println!("hi")?;
-            "nested"
+            solar::data_structures::fmt::from_fn(|f| {
+                let _ = sh_println!("even more nested");
+                write!(f, "hi 2")
+            })
         })?;
 
         Ok(())

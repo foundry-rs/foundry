@@ -27,7 +27,7 @@ pub struct AccessListArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
-    #[arg(value_name = "ARGS")]
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// The block height to query at.

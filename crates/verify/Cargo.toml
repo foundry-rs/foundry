@@ -18,7 +18,6 @@ foundry-config.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-foundry-evm-core.workspace = true
 serde_json.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
@@ -28,7 +27,7 @@ serde.workspace = true
 eyre.workspace = true
 alloy-provider = { workspace = true, features = ["trace-api"] }
 tracing.workspace = true
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 revm.workspace = true
 

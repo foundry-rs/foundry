@@ -1,6 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Comments, Document, ParseItem, ParseSource};
-use forge_fmt::solang_ext::SafeUnwrap;
+use crate::{Comments, Document, ParseItem, ParseSource, solang_ext::SafeUnwrap};
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,
@@ -236,7 +235,7 @@ impl<'a> InlineLink<'a> {
     }
 
     fn captures(s: &'a str) -> impl Iterator<Item = Self> + 'a {
-        RE_INLINE_LINK.captures(s).map(Self::from_capture).into_iter().flatten()
+        RE_INLINE_LINK.captures_iter(s).filter_map(Self::from_capture)
     }
 
     /// Parses the first inline link.

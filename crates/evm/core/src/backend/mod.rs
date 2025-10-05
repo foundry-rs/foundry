@@ -691,7 +691,6 @@ impl Backend {
     }
 
     /// Returns the current database implementation as a `&dyn` value.
-    #[inline(always)]
     pub fn db(&self) -> &dyn Database<Error = DatabaseError> {
         match self.active_fork_db() {
             Some(fork_db) => fork_db,
@@ -700,7 +699,6 @@ impl Backend {
     }
 
     /// Returns the current database implementation as a `&mut dyn` value.
-    #[inline(always)]
     pub fn db_mut(&mut self) -> &mut dyn Database<Error = DatabaseError> {
         match self.active_fork_ids.map(|(_, idx)| &mut self.inner.get_fork_mut(idx).db) {
             Some(fork_db) => fork_db,
@@ -770,7 +768,7 @@ impl Backend {
     pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut Env,
-        inspector: &mut I,
+        inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
@@ -1198,8 +1196,8 @@ impl DatabaseExt for Backend {
 
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
-
                 active.journaled_state.depth = journaled_state.depth;
+
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
@@ -1829,7 +1827,9 @@ impl BackendInner {
             journal_inner.set_spec_id(self.spec_id);
             journal_inner
         };
-        journal.precompiles.extend(self.precompiles().addresses().copied());
+        journal
+            .warm_addresses
+            .set_precompile_addresses(self.precompiles().addresses().copied().collect());
         journal
     }
 }

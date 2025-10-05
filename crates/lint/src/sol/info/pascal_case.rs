@@ -1,9 +1,9 @@
 use super::PascalCaseStruct;
 use crate::{
-    linter::{EarlyLintPass, LintContext},
+    linter::{EarlyLintPass, LintContext, Suggestion},
     sol::{Severity, SolLint},
 };
-use solar_ast::ItemStruct;
+use solar::ast::ItemStruct;
 
 declare_forge_lint!(
     PASCAL_CASE_STRUCT,
@@ -13,19 +13,29 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
-    fn check_item_struct(&mut self, ctx: &LintContext<'_>, strukt: &'ast ItemStruct<'ast>) {
+    fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
         let name = strukt.name.as_str();
-        if name.len() > 1 && !is_pascal_case(name) {
-            ctx.emit(&PASCAL_CASE_STRUCT, strukt.name.span);
+        if let Some(expected) = check_pascal_case(name) {
+            ctx.emit_with_suggestion(
+                &PASCAL_CASE_STRUCT,
+                strukt.name.span,
+                Suggestion::fix(
+                    expected,
+                    solar::interface::diagnostics::Applicability::MachineApplicable,
+                )
+                .with_desc("consider using"),
+            );
         }
     }
 }
 
-/// Check if a string is PascalCase
-pub fn is_pascal_case(s: &str) -> bool {
+/// If the string `s` is not PascalCase, returns a `Some(String)` with the
+/// suggested conversion. Otherwise, returns `None`.
+pub fn check_pascal_case(s: &str) -> Option<String> {
     if s.len() <= 1 {
-        return true;
+        return None;
     }
 
-    s == format!("{}", heck::AsPascalCase(s)).as_str()
+    let expected = heck::AsPascalCase(s).to_string();
+    if s == expected.as_str() { None } else { Some(expected) }
 }

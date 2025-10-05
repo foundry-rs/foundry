@@ -1,52 +1,65 @@
-use solar_ast::{self as ast, visit::Visit};
-use solar_interface::data_structures::Never;
-use std::ops::ControlFlow;
-
 use super::LintContext;
+use solar::{
+    ast::{self as ast, visit::Visit},
+    interface::data_structures::Never,
+};
+use std::ops::ControlFlow;
 
 /// Trait for lints that operate directly on the AST.
 /// Its methods mirror `ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait EarlyLintPass<'ast>: Send + Sync {
-    fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast ast::Expr<'ast>) {}
-    fn check_item_struct(&mut self, _ctx: &LintContext<'_>, _struct: &'ast ast::ItemStruct<'ast>) {}
-    fn check_item_function(
-        &mut self,
-        _ctx: &LintContext<'_>,
-        _func: &'ast ast::ItemFunction<'ast>,
-    ) {
-    }
+    fn check_expr(&mut self, _ctx: &LintContext, _expr: &'ast ast::Expr<'ast>) {}
+    fn check_item_struct(&mut self, _ctx: &LintContext, _struct: &'ast ast::ItemStruct<'ast>) {}
+    fn check_item_function(&mut self, _ctx: &LintContext, _func: &'ast ast::ItemFunction<'ast>) {}
     fn check_variable_definition(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _var: &'ast ast::VariableDefinition<'ast>,
     ) {
     }
     fn check_import_directive(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _import: &'ast ast::ImportDirective<'ast>,
     ) {
     }
     fn check_using_directive(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _using: &'ast ast::UsingDirective<'ast>,
     ) {
     }
     fn check_item_contract(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext,
         _contract: &'ast ast::ItemContract<'ast>,
     ) {
     }
-    fn check_doc_comment(&mut self, _ctx: &LintContext<'_>, _cmnt: &'ast ast::DocComment) {}
+    fn check_doc_comment(&mut self, _ctx: &LintContext, _cmnt: &'ast ast::DocComment) {}
     // TODO: Add methods for each required AST node type
 
     /// Should be called after the source unit has been visited. Enables lints that require
     /// knowledge of the entire AST to perform their analysis.
+    ///
+    /// # Performance
+    ///
+    /// Since a full-AST analysis can be computationally expensive, implementations
+    /// should guard their logic by first checking if the relevant lint is enabled
+    /// using [`LintContext::is_lint_enabled`]. This avoids performing costly work
+    /// if the user has disabled the lint.
+    ///
+    /// ### Example
+    /// ```rust,ignore
+    /// fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast ast::SourceUnit<'ast>) {
+    ///     // Check if the lint is enabled before performing expensive work.
+    ///     if ctx.is_lint_enabled(MY_EXPENSIVE_LINT.id) {
+    ///         // ... perform computation and emit diagnostics ...
+    ///     }
+    /// }
+    /// ```
     fn check_full_source_unit(
         &mut self,
-        _ctx: &LintContext<'ast>,
+        _ctx: &LintContext<'ast, '_>,
         _ast: &'ast ast::SourceUnit<'ast>,
     ) {
     }
@@ -54,7 +67,7 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
 
 /// Visitor struct for `EarlyLintPass`es
 pub struct EarlyLintVisitor<'a, 's, 'ast> {
-    pub ctx: &'a LintContext<'s>,
+    pub ctx: &'a LintContext<'s, 'a>,
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
 }
 
@@ -63,7 +76,7 @@ where
     's: 'ast,
 {
     pub fn new(
-        ctx: &'a LintContext<'s>,
+        ctx: &'a LintContext<'s, 'a>,
         passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
     ) -> Self {
         Self { ctx, passes }
@@ -158,6 +171,6 @@ where
         self.walk_item_contract(contract)
     }
 
-    // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method
-    // sigs + adding `LintContext`
+    // TODO: Add methods for each required AST node type, mirroring `solar::ast::visit::Visit`
+    // method sigs + adding `LintContext`
 }

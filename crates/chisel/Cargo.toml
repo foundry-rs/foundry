@@ -1,11 +1,8 @@
 [package]
 name = "chisel"
-authors = [
-    "clabby <https://github.com/clabby>",
-    "asnared <https://github.com/abigger87>",
-]
 description = "Fast, utilitarian, and verbose Solidity REPL"
 
+authors.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,12 +19,17 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
+forge-doc.workspace = true
 forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+
+tempfile.workspace = true
+
+solar.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = [
@@ -41,16 +43,14 @@ alloy-json-abi.workspace = true
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
-regex.workspace = true
 reqwest.workspace = true
 revm.workspace = true
-rustyline = "15"
+rustyline = "17"
+itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
-solar-parse.workspace = true
-strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 yansi.workspace = true
 tracing.workspace = true
@@ -58,6 +58,12 @@ walkdir.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+
+# REPL tests only work on Unix.
+[target.'cfg(unix)'.dev-dependencies]
+foundry-test-utils.workspace = true
+rexpect = "0.6"
+tokio.workspace = true
 
 [features]
 default = ["jemalloc"]

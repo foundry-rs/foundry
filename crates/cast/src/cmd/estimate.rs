@@ -22,6 +22,7 @@ pub struct EstimateArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// The block height to query at.
@@ -58,6 +59,7 @@ pub enum EstimateSubcommands {
         sig: Option<String>,
 
         /// Constructor arguments
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
 
         /// Ether to send in the transaction
