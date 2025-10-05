@@ -405,14 +405,18 @@ fn check(
 }
 
 /// Compare the set of tests with an existing gas snapshot.
-fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: DiffSortOrder) -> Result<()> {
+fn diff(
+    tests: Vec<SuiteTestResult>,
+    snaps: Vec<GasSnapshotEntry>,
+    sort_order: DiffSortOrder,
+) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
         .collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
     let mut new_tests = Vec::new();
-    
+
     for test in tests.into_iter() {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
@@ -427,7 +431,7 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: D
             new_tests.push(format!("{}::{}", test.contract_name(), test.signature));
         }
     }
-    
+
     let mut increased = 0;
     let mut decreased = 0;
     let mut unchanged = 0;
@@ -459,7 +463,7 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: D
         overall_gas_change += gas_change;
         overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-        
+
         // Classify changes
         if gas_change > 0 {
             increased += 1;
@@ -468,16 +472,16 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: D
         } else {
             unchanged += 1;
         }
-        
+
         // Display with icon and before/after values
-        let icon = if gas_change > 0 { 
-            "↑".red() 
-        } else if gas_change < 0 { 
-            "↓".green() 
-        } else { 
-            "━".dimmed() 
+        let icon = if gas_change > 0 {
+            "↑".red()
+        } else if gas_change < 0 {
+            "↓".green()
+        } else {
+            "━".dimmed()
         };
-        
+
         sh_println!(
             "{} {} (gas: {} → {} | {} {})",
             icon,
@@ -499,19 +503,22 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>, sort_order: D
 
     // Summary separator
     sh_println!("\n{}", "-".repeat(80))?;
-    
+
     let overall_gas_diff = if overall_gas_used > 0 {
         overall_gas_change as f64 / overall_gas_used as f64
     } else {
         0.0
     };
-    
+
     sh_println!(
         "Total tests: {}, {} {}, {} {}, {} {}",
         diffs.len(),
-        "↑".red(), increased,
-        "↓".green(), decreased,
-        "━".dimmed(), unchanged
+        "↑".red(),
+        increased,
+        "↓".green(),
+        decreased,
+        "━".dimmed(),
+        unchanged
     )?;
     sh_println!(
         "Overall gas change: {} ({})",
