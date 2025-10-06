@@ -166,7 +166,7 @@ impl ParseSource {
             Self::Error(error) => error.loc,
             Self::Struct(structure) => structure.loc,
             Self::Enum(enumerable) => enumerable.loc,
-            Self::Function(func) => func.loc,
+            Self::Function(func) => func.loc_prototype,
             Self::Type(ty) => ty.loc,
         }
         .range()
