@@ -167,12 +167,14 @@ impl MutationHandler {
     // Note: we now get the build hash directly from the recent compile output (see test flow)
 
     /// Persists cached mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>.mutants`.
+    /// Writes to `cache/mutation/<hash>_<filename>.mutants`.
     pub fn persist_cached_mutants(&self, hash: &str, mutants: &[Mutant]) -> std::io::Result<()> {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
         std::fs::create_dir_all(&cache_dir)?;
 
-        let cache_file = cache_dir.join(format!("{}.mutants", hash));
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.mutants", hash, filename));
         let json = serde_json::to_string_pretty(mutants).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)?;
 
@@ -180,7 +182,7 @@ impl MutationHandler {
     }
 
     /// Persists results for mutants using build hash for cache invalidation.
-    /// Writes to `cache/mutation/<hash>.results`.
+    /// Writes to `cache/mutation/<hash>_<filename>.results`.
     pub fn persist_cached_results(
         &self,
         hash: &str,
@@ -189,7 +191,9 @@ impl MutationHandler {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
         std::fs::create_dir_all(&cache_dir)?;
 
-        let cache_file = cache_dir.join(format!("{}.results", hash));
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.results", hash, filename));
         let json = serde_json::to_string_pretty(results).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)?;
 
@@ -251,10 +255,12 @@ impl MutationHandler {
     }
 
     /// Retrieves cached mutants using build hash.
-    /// Reads from `cache/mutation/<hash>.mutants`.
+    /// Reads from `cache/mutation/<hash>_<filename>.mutants`.
     pub fn retrieve_cached_mutants(&self, hash: &str) -> Option<Vec<Mutant>> {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let cache_file = cache_dir.join(format!("{}.mutants", hash));
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.mutants", hash, filename));
 
         if !cache_file.exists() {
             return None;
@@ -265,13 +271,15 @@ impl MutationHandler {
     }
 
     /// Retrieves cached results using build hash.
-    /// Reads from `cache/mutation/<hash>.results`.
+    /// Reads from `cache/mutation/<hash>_<filename>.results`.
     pub fn retrieve_cached_mutant_results(
         &self,
         hash: &str,
     ) -> Option<Vec<(Mutant, MutationResult)>> {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let cache_file = cache_dir.join(format!("{}.results", hash));
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.results", hash, filename));
 
         if !cache_file.exists() {
             return None;
