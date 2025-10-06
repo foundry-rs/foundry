@@ -326,7 +326,7 @@ pub(crate) fn remove_bytecode_dependencies(
                     call_args_offset,
                     value,
                     salt,
-                    try_stmt,
+                    try_stmt: _,
                 } => {
                     // Always wrap in `{name}(payable(...))` so the expression remains of the
                     // contract type in both try and non-try contexts.
