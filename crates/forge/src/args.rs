@@ -86,10 +86,10 @@ pub fn run_command(args: Forge) -> Result<()> {
         },
         ForgeSubcommand::Create(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Update(cmd) => cmd.run(),
-        ForgeSubcommand::Install(cmd) => cmd.run(),
+        ForgeSubcommand::Install(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
         ForgeSubcommand::Remappings(cmd) => cmd.run(),
-        ForgeSubcommand::Init(cmd) => cmd.run(),
+        ForgeSubcommand::Init(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Completions { shell } => {
             generate(shell, &mut Forge::command(), "forge", &mut std::io::stdout());
             Ok(())

@@ -9,6 +9,7 @@ use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;
 use semver::Version;
+use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
     io::IsTerminal,
     path::{Path, PathBuf},
@@ -59,9 +60,9 @@ pub struct InstallArgs {
 impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let mut config = self.load_config()?;
-        self.opts.install(&mut config, self.dependencies)
+        self.opts.install(&mut config, self.dependencies).await
     }
 }
 
@@ -97,7 +98,10 @@ impl DependencyInstallOpts {
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
             let _ = sh_println!("Missing dependencies found. Installing now...\n");
-            if self.install(config, Vec::new()).is_err() {
+
+            // Create a runtime to handle async install
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            if rt.block_on(self.install(config, Vec::new())).is_err() {
                 let _ =
                     sh_warn!("Your project has missing dependencies that could not be installed.");
             }
@@ -108,7 +112,7 @@ impl DependencyInstallOpts {
     }
 
     /// Installs all dependencies
-    pub fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
+    pub async fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
         let Self { no_git, commit, .. } = self;
 
         let git = self.git(config);
@@ -256,6 +260,11 @@ impl DependencyInstallOpts {
                 }
             }
             sh_println!("{msg}")?;
+
+            // Check if the dependency has soldeer.lock and install soldeer dependencies
+            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
+                sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
+            }
         }
 
         // update `libs` in config if not included yet
@@ -270,6 +279,32 @@ impl DependencyInstallOpts {
 
 pub fn install_missing_dependencies(config: &mut Config) -> bool {
     DependencyInstallOpts::default().install_missing_dependencies(config)
+}
+
+/// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.
+async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
+    let soldeer_lock = dep_path.join("soldeer.lock");
+
+    if soldeer_lock.exists() {
+        sh_println!("    Found soldeer.lock, installing soldeer dependencies...")?;
+
+        // Change to the dependency directory and run soldeer install
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(dep_path)?;
+
+        let result = soldeer_commands::run(
+            Command::Install(Install::default()),
+            Verbosity::new(foundry_common::shell::verbosity(), if foundry_common::shell::is_quiet() { 1 } else { 0 })
+        ).await;
+
+        // Change back to original directory
+        std::env::set_current_dir(original_dir)?;
+
+        result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
+        sh_println!("    Soldeer dependencies installed successfully")?;
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]
