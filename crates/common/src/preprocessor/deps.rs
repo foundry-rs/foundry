@@ -328,11 +328,9 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                     try_stmt,
                 } => {
-                    let (mut update, closing_seq) = if *try_stmt {
-                        (String::new(), "})")
-                    } else {
-                        (format!("{name}(payable("), "})))")
-                    };
+                    // Always wrap in `{name}(payable(...))` so the expression remains of the
+                    // contract type in both try and non-try contexts.
+                    let (mut update, closing_seq) = (format!("{name}(payable("), "})))");
                     update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
