@@ -598,7 +598,7 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
-                config: self.config.clone(),
+                config: self.config,
                 fail_fast: FailFast::new(self.fail_fast),
             },
 
