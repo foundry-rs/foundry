@@ -31,6 +31,13 @@ pub struct Chisel {
     ))]
     pub no_vm: bool,
 
+    /// Enable viaIR with minimum optimization
+    ///
+    /// This can fix most of the "stack too deep" errors while resulting a
+    /// relatively accurate source map.
+    #[arg(long, help_heading = "REPL options")]
+    pub ir_minimum: bool,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
