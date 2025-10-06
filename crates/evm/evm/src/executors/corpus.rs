@@ -323,6 +323,7 @@ impl WorkerCorpus {
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
@@ -344,8 +345,8 @@ impl WorkerCorpus {
 
                 trace!(
                     target: "corpus",
-                    "updated worker {} corpus {}, total mutations: {}, new finds: {}",
-                    self.id, corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
+                    "updated corpus {}, total mutations: {}, new finds: {}",
+                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
                 );
             }
 
@@ -376,12 +377,12 @@ impl WorkerCorpus {
         };
 
         if let Err(err) = write_result {
-            debug!(target: "corpus", %err, "Failed to record call sequence {:?} in worker {}", &corpus.tx_seq, self.id);
+            debug!(target: "corpus", %err, "Failed to record call sequence {:?}", &corpus.tx_seq);
         } else {
             trace!(
                 target: "corpus",
-                "persisted {} inputs for new coverage in worker {} for {corpus_uuid} corpus",
-                self.id, &corpus.tx_seq.len()
+                "persisted {} inputs for new coverage for {corpus_uuid} corpus",
+                &corpus.tx_seq.len()
             );
         }
 
@@ -410,6 +411,7 @@ impl WorkerCorpus {
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value. Used by invariant test campaigns.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
@@ -538,6 +540,7 @@ impl WorkerCorpus {
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
     /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     pub fn new_input(
         &mut self,
         test_runner: &mut TestRunner,
@@ -615,7 +618,7 @@ impl WorkerCorpus {
             let corpus = self.in_memory_corpus.get(index).unwrap();
 
             let uuid = corpus.uuid;
-            debug!(target: "corpus", "evict corpus {uuid} in worker {}", self.id);
+            debug!(target: "corpus", "evict corpus {uuid}");
 
             // Flush to disk the seed metadata at the time of eviction.
             let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -691,6 +694,7 @@ impl WorkerCorpus {
     // Sync Methods
 
     /// Exports the new corpus entries to the master workers (id = 0) sync dir.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     fn export(&self) -> eyre::Result<()> {
         // Early return if no new entries or corpus dir not configured
         if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
@@ -728,7 +732,7 @@ impl WorkerCorpus {
                 let sync_path = master_sync_dir.join(&file_name);
 
                 let Ok(_) = foundry_common::fs::copy(file_path, sync_path) else {
-                    debug!(target: "corpus", "failed to export corpus {} from worker {}", entry.uuid, self.id);
+                    debug!(target: "corpus", "failed to export corpus {}", entry.uuid);
                     continue;
                 };
 
@@ -736,7 +740,7 @@ impl WorkerCorpus {
             }
         }
 
-        trace!(target: "corpus", "exported {exported} new corpus entries from worker {}", self.id);
+        trace!(target: "corpus", "exported {exported} new corpus entries");
 
         Ok(())
     }
@@ -787,6 +791,7 @@ impl WorkerCorpus {
 
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     fn calibrate(
         &mut self,
         executor: &Executor,
@@ -841,8 +846,8 @@ impl WorkerCorpus {
                         trace!(
                             target: "corpus",
                             %new_coverage,
-                            "replayed tx for syncing worker {}: {:?}",
-                            self.id, &tx
+                            "replayed tx for syncing: {:?}",
+                            &tx
                         );
                     }
                 }
@@ -863,14 +868,14 @@ impl WorkerCorpus {
                     let corpus_path = corpus_dir.join(&file_name);
 
                     let Ok(_) = std::fs::rename(&sync_path, &corpus_path) else {
-                        debug!(target: "corpus", "failed to move synced corpus {} from {sync_path:?} to {corpus_path:?} dir in worker {}", corpus_entry.uuid, self.id);
+                        debug!(target: "corpus", "failed to move synced corpus {} from {sync_path:?} to {corpus_path:?} dir", corpus_entry.uuid);
                         continue;
                     };
 
                     trace!(
                         target: "corpus",
-                        "moved synced corpus {} to corpus dir in worker {}",
-                        corpus_entry.uuid, self.id
+                        "moved synced corpus {} to corpus dir",
+                        corpus_entry.uuid
                     );
 
                     self.in_memory_corpus.push(corpus_entry);
@@ -879,10 +884,7 @@ impl WorkerCorpus {
         }
 
         let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        trace!(target: "corpus", "sync complete for worker {}, updating last sync time to {}",
-            self.id,
-            last_sync
-        );
+        trace!(target: "corpus", "sync complete, updating last sync time to {}", last_sync);
         self.last_sync_timestamp = last_sync;
 
         Ok(())
@@ -890,6 +892,7 @@ impl WorkerCorpus {
 
     /// To be run by the master worker (id = 0) to distribute the global corpus to sync/ directories
     /// of other workers.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     fn distribute(&mut self, num_workers: usize) -> eyre::Result<()> {
         if self.id != 0 || self.worker_dir.is_none() {
             return Ok(());
@@ -929,11 +932,11 @@ impl WorkerCorpus {
 
                     if timestamp > self.last_sync_timestamp {
                         let Ok(_) = foundry_common::fs::copy(&path, &sync_path) else {
-                            debug!(target: "corpus", "failed to distribute corpus {} from worker {} to {target_dir:?}", name, self.id);
+                            debug!(target: "corpus", "failed to distribute corpus {} to {target_dir:?}", name);
                             continue;
                         };
 
-                        trace!(target: "corpus", "distributed corpus {} from worker {} to {target_dir:?}", name, self.id);
+                        trace!(target: "corpus", "distributed corpus {} to {target_dir:?}", name);
                     }
                 }
             }
@@ -943,6 +946,7 @@ impl WorkerCorpus {
     }
 
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
+    #[tracing::instrument(skip_all, fields(worker_id = self.id))]
     pub fn sync(
         &mut self,
         num_workers: usize,
@@ -958,7 +962,7 @@ impl WorkerCorpus {
 
             self.new_entry_indices.clear();
 
-            trace!(target: "corpus", "master worker synced");
+            trace!(target: "corpus", "master synced");
 
             return Ok(());
         }
@@ -969,7 +973,7 @@ impl WorkerCorpus {
 
         self.new_entry_indices.clear();
 
-        trace!(target: "corpus", "synced worker {}", self.id);
+        trace!(target: "corpus", "synced");
 
         Ok(())
     }
