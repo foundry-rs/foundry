@@ -29,7 +29,6 @@ use solar_parse::ast::visit::Visit;
 use std::{collections::HashMap, path::PathBuf};
 
 pub struct MutationsSummary {
-    total: usize,
     dead: Vec<Mutant>,
     survived: Vec<Mutant>,
     invalid: Vec<Mutant>,
@@ -43,7 +42,7 @@ impl Default for MutationsSummary {
 
 impl MutationsSummary {
     pub fn new() -> Self {
-        Self { total: 0, dead: vec![], survived: vec![], invalid: vec![] }
+        Self { dead: vec![], survived: vec![], invalid: vec![] }
     }
 
     pub fn update_valid_mutant(&mut self, outcome: &TestOutcome, mutant: Mutant) {
@@ -93,11 +92,36 @@ impl MutationsSummary {
     pub fn invalid(&self) -> String {
         self.invalid.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
     }
+
+    pub fn get_dead(&self) -> &Vec<Mutant> {
+        &self.dead
+    }
+
+    pub fn get_survived(&self) -> &Vec<Mutant> {
+        &self.survived
+    }
+
+    pub fn get_invalid(&self) -> &Vec<Mutant> {
+        &self.invalid
+    }
+
+    /// Merge another MutationsSummary into this one
+    pub fn merge(&mut self, other: &MutationsSummary) {
+        self.dead.extend(other.dead.clone());
+        self.survived.extend(other.survived.clone());
+        self.invalid.extend(other.invalid.clone());
+    }
+
+    /// Calculate mutation score (percentage of dead mutants out of valid mutants)
+    /// Higher scores indicate better test coverage
+    pub fn mutation_score(&self) -> f64 {
+        let valid_mutants = self.dead.len() + self.survived.len();
+        if valid_mutants == 0 { 0.0 } else { self.dead.len() as f64 / valid_mutants as f64 * 100.0 }
+    }
 }
 
 pub struct MutationHandler {
     contract_to_mutate: PathBuf,
-    hash_build: String,
     src: Arc<String>,
     pub mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
@@ -108,7 +132,6 @@ impl MutationHandler {
     pub fn new(contract_to_mutate: PathBuf, config: Arc<foundry_config::Config>) -> Self {
         Self {
             contract_to_mutate,
-            hash_build: String::new(),
             src: Arc::default(),
             mutations: vec![],
             config,
@@ -120,6 +143,31 @@ impl MutationHandler {
         let content = std::fs::read_to_string(&self.contract_to_mutate)?;
         self.src = Arc::new(content);
         Ok(())
+    }
+
+    /// Add a dead mutant to the report
+    pub fn add_dead_mutant(&mut self, mutant: Mutant) {
+        self.report.add_dead_mutant(mutant);
+    }
+
+    /// Add a survived mutant to the report
+    pub fn add_survived_mutant(&mut self, mutant: Mutant) {
+        self.report.add_survived_mutant(mutant);
+    }
+
+    /// Add an invalid mutant to the report
+    pub fn add_invalid_mutant(&mut self, mutant: Mutant) {
+        self.report.update_invalid_mutant(mutant);
+    }
+
+    /// Get a reference to the current report
+    pub fn get_report(&self) -> &MutationsSummary {
+        &self.report
+    }
+
+    /// Get a mutable reference to the current report
+    pub fn get_report_mut(&mut self) -> &mut MutationsSummary {
+        &mut self.report
     }
 
     // Note: we now get the build hash directly from the recent compile output (see test flow)

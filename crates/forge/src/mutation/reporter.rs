@@ -54,6 +54,7 @@ impl MutationReporter {
         self.table.add_row(row);
 
         let _ = sh_println!("Total number of mutants generated: {}", summary.total_mutants());
+        let _ = sh_println!("Mutation score: {:.2}%", summary.mutation_score());
         let _ = sh_println!("\n{}\n", self.table);
         let _ = sh_println!("Dead mutants: {}\n", summary.dead());
         let _ = sh_println!("Survived mutants: {}\n", summary.survived());

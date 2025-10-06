@@ -7,7 +7,7 @@ use crate::mutation::{
     mutators::{MutationContext, mutator_registry::MutatorRegistry},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssignVarTypes {
     Literal(OwnedLiteral),
     Identifier(String), /* not using Ident as the symbol is slow to convert as to_str() <--

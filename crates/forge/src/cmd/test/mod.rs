@@ -501,16 +501,18 @@ impl TestArgs {
                     for (mutant, status) in prior {
                         match status {
                             crate::mutation::mutant::MutationResult::Dead => {
-                                mutation_summary.add_dead_mutant(mutant)
+                                handler.add_dead_mutant(mutant)
                             }
                             crate::mutation::mutant::MutationResult::Alive => {
-                                mutation_summary.add_survived_mutant(mutant)
+                                handler.add_survived_mutant(mutant)
                             }
                             crate::mutation::mutant::MutationResult::Invalid => {
-                                mutation_summary.update_invalid_mutant(mutant)
+                                handler.add_invalid_mutant(mutant)
                             }
                         }
                     }
+                    // Add this handler's results to the overall summary
+                    mutation_summary.merge(handler.get_report());
                     continue;
                 }
 
@@ -541,7 +543,7 @@ impl TestArgs {
                     let compile_output = compiler.compile(&config.project().unwrap());
 
                     if compile_output.is_err() {
-                        mutation_summary.update_invalid_mutant(mutant.clone());
+                        handler.add_invalid_mutant(mutant.clone());
                         results_vec.push((
                             mutant.clone(),
                             crate::mutation::mutant::MutationResult::Invalid,
@@ -565,13 +567,13 @@ impl TestArgs {
 
                         let outcome = TestOutcome::new(Some(runner), results, self.allow_failure);
                         if outcome.failures().count() > 0 {
-                            mutation_summary.add_dead_mutant(mutant.clone());
+                            handler.add_dead_mutant(mutant.clone());
                             results_vec.push((
                                 mutant.clone(),
                                 crate::mutation::mutant::MutationResult::Dead,
                             ));
                         } else {
-                            mutation_summary.add_survived_mutant(mutant.clone());
+                            handler.add_survived_mutant(mutant.clone());
                             results_vec.push((
                                 mutant.clone(),
                                 crate::mutation::mutant::MutationResult::Alive,
@@ -587,6 +589,9 @@ impl TestArgs {
                     let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
                     let _ = handler.persist_cached_results(&build_id, &results_vec);
                 }
+
+                // Add this handler's results to the overall summary
+                mutation_summary.merge(handler.get_report());
             }
 
             MutationReporter::new().report(&mutation_summary);

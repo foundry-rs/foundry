@@ -1,18 +1,46 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use super::visitor::AssignVarTypes;
+use serde::{Deserialize, Serialize};
 use solar_parse::ast::{BinOpKind, LitKind, Span, StrKind, UnOpKind};
 use std::{fmt::Display, path::PathBuf};
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnaryOpMutated {
     /// String containing the whole new expression (operator and its target)
     /// eg `a++`
     new_expression: String,
 
     /// The underlying operator used by this mutant
+    #[serde(serialize_with = "serialize_unop_kind", deserialize_with = "deserialize_unop_kind")]
     pub resulting_op_kind: UnOpKind,
+}
+
+// Custom serialization for UnOpKind
+fn serialize_unop_kind<S>(value: &UnOpKind, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let s = format!("{:?}", value);
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_unop_kind<'de, D>(deserializer: D) -> Result<UnOpKind, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "PreInc" => Ok(UnOpKind::PreInc),
+        "PostInc" => Ok(UnOpKind::PostInc),
+        "PreDec" => Ok(UnOpKind::PreDec),
+        "PostDec" => Ok(UnOpKind::PostDec),
+        "Not" => Ok(UnOpKind::Not),
+        "BitNot" => Ok(UnOpKind::BitNot),
+        "Neg" => Ok(UnOpKind::Neg),
+        other => Err(serde::de::Error::custom(format!("Unknown UnOpKind: {}", other))),
+    }
 }
 
 impl UnaryOpMutated {
@@ -27,16 +55,53 @@ impl Display for UnaryOpMutated {
     }
 }
 
+// Custom serialization for BinOpKind
+fn serialize_binop<S>(value: &BinOpKind, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let s = format!("{:?}", value);
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_binop<'de, D>(deserializer: D) -> Result<BinOpKind, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "Add" => Ok(BinOpKind::Add),
+        "Sub" => Ok(BinOpKind::Sub),
+        "Mul" => Ok(BinOpKind::Mul),
+        "Div" => Ok(BinOpKind::Div),
+        "And" => Ok(BinOpKind::And),
+        "Or" => Ok(BinOpKind::Or),
+        "Eq" => Ok(BinOpKind::Eq),
+        "Ne" => Ok(BinOpKind::Ne),
+        "Lt" => Ok(BinOpKind::Lt),
+        "Le" => Ok(BinOpKind::Le),
+        "Gt" => Ok(BinOpKind::Gt),
+        "Ge" => Ok(BinOpKind::Ge),
+        "BitAnd" => Ok(BinOpKind::BitAnd),
+        "BitOr" => Ok(BinOpKind::BitOr),
+        "BitXor" => Ok(BinOpKind::BitXor),
+        "Shl" => Ok(BinOpKind::Shl),
+        "Shr" => Ok(BinOpKind::Shr),
+        "Sar" => Ok(BinOpKind::Sar),
+        other => Err(serde::de::Error::custom(format!("Unknown BinOpKind: {}", other))),
+    }
+}
+
 // @todo add a mutation from universalmutator: line swap (swap two lines of code, as it
 // could theoretically uncover untested reentrancies
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum OwnedStrKind {
     Str,
     Unicode,
     Hex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OwnedLiteral {
     Str { kind: OwnedStrKind, text: String },
     Number(alloy_primitives::U256),
@@ -84,7 +149,7 @@ impl Display for OwnedLiteral {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MutationType {
     // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
     // now, planket and let solc filter out the invalid mutants -> we might/should add a
@@ -100,6 +165,7 @@ pub enum MutationType {
 
     /// For a binary op y in BinOpKind ("+", "-", ">=", etc)
     /// replace y with each non-y in op
+    #[serde(serialize_with = "serialize_binop", deserialize_with = "deserialize_binop")]
     BinaryOp(BinOpKind),
 
     /// For a delete expr x `delete foo`, replace x with `assert(true)`
