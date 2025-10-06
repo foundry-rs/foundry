@@ -33,8 +33,7 @@ around bugs and participate in reviewing PRs.
 
 ### Contributions Related to Spelling and Grammar
 
-At this time, we will not be accepting contributions that only fix spelling or grammatical errors in documentation, code or
-elsewhere.
+At this time, we will not be accepting contributions that only fix spelling or grammatical errors in documentation, code or elsewhere.
 
 ### Contributions Assisted by AI
 
@@ -57,6 +56,8 @@ Or a more detailed disclosure:
 > was fully authored manually by myself.
 
 Failure to disclose this makes it difficult to determine how much scrutiny to apply to the contribution as it is unclear how much the contributor themselves understands the code the propose to merge.
+
+If you do not disclose your use of AI assistance and reviewers suspect your contribution to be AI generated, it will likely be refused on those grounds.
 
 ### Asking for help
 
