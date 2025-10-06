@@ -9,8 +9,10 @@ use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
+use solar::interface::source_map::FileName;
 use std::{
     cmp::Ordering,
+    fmt::Debug,
     fs,
     path::{Path, PathBuf},
 };
@@ -94,7 +96,7 @@ impl DocBuilder {
     }
 
     /// Parse the sources and build the documentation.
-    pub fn build(self) -> eyre::Result<()> {
+    pub fn build(self, compiler: &mut solar::sema::Compiler) -> eyre::Result<()> {
         fs::create_dir_all(self.root.join(&self.config.out))
             .wrap_err("failed to create output directory")?;
 
@@ -124,135 +126,153 @@ impl DocBuilder {
             .collect::<Vec<_>>();
 
         let out_dir = self.out_dir()?;
-        let documents = combined_sources
-            .par_iter()
-            .enumerate()
-            .map(|(i, (path, from_library))| {
-                let path = *path;
-                let from_library = *from_library;
+        let documents = compiler.enter_mut(|compiler| -> eyre::Result<Vec<Vec<Document>>> {
+            let gcx = compiler.gcx();
+            let documents = combined_sources
+                .par_iter()
+                .enumerate()
+                .map(|(i, (path, from_library))| {
+                    let path = *path;
+                    let from_library = *from_library;
+                    let mut files = vec![];
 
-                // Read and parse source file
-                let source = fs::read_to_string(path)?;
-                let source =
-                    forge_fmt::format(&source, self.fmt.clone()).into_result().unwrap_or(source);
-
-                let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
-                    Ok(res) => res,
-                    Err(err) => {
-                        if from_library {
-                            // Ignore failures for library files
-                            return Ok(Vec::new());
-                        } else {
-                            return Err(eyre::eyre!(
-                                "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                path.display(),
-                                err
-                            ));
+                    // Read and parse source file
+                    if let Some(ast) = gcx.sources.iter().find(|source| {
+                        if let FileName::Real(src_path) = &source.file.name {
+                            return src_path.eq(path);
                         }
-                    }
-                };
+                        false
+                    }) && let Some(source) =
+                        forge_fmt::format_ast(gcx, ast, self.fmt.clone().into())
+                    {
+                        let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
+                            Ok(res) => res,
+                            Err(err) => {
+                                if from_library {
+                                    // Ignore failures for library files
+                                    return Ok(files);
+                                } else {
+                                    return Err(eyre::eyre!(
+                                        "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                        path.display(),
+                                        err
+                                    ));
+                                }
+                            }
+                        };
 
-                // Visit the parse tree
-                let mut doc = Parser::new(comments, source);
-                source_unit
-                    .visit(&mut doc)
-                    .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
+                        // Visit the parse tree
+                        let mut doc = Parser::new(comments, source);
+                        source_unit
+                            .visit(&mut doc)
+                            .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
 
-                // Split the parsed items on top-level constants and rest.
-                let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc
-                    .items()
-                    .into_iter()
-                    .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
+                        // Split the parsed items on top-level constants and rest.
+                        let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc
+                            .items()
+                            .into_iter()
+                            .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
 
-                // Attempt to group overloaded top-level functions
-                let mut remaining = Vec::with_capacity(items.len());
-                let mut funcs: HashMap<String, Vec<ParseItem>> = HashMap::default();
-                for item in items {
-                    if matches!(item.source, ParseSource::Function(_)) {
-                        funcs.entry(item.source.ident()).or_default().push(item);
-                    } else {
-                        // Put the item back
-                        remaining.push(item);
-                    }
-                }
-                let (items, overloaded): (
-                    HashMap<String, Vec<ParseItem>>,
-                    HashMap<String, Vec<ParseItem>>,
-                ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
-                remaining.extend(items.into_iter().flat_map(|(_, v)| v));
-
-                // Each regular item will be written into its own file.
-                let mut files = remaining
-                    .into_iter()
-                    .map(|item| {
-                        let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
-
-                        let target_path = out_dir.join(Self::SRC).join(relative_path);
-                        let ident = item.source.ident();
-                        Ok(Document::new(
-                            path.clone(),
-                            target_path,
-                            from_library,
-                            self.config.out.clone(),
-                        )
-                        .with_content(DocumentContent::Single(item), ident))
-                    })
-                    .collect::<eyre::Result<Vec<_>>>()?;
-
-                // If top-level constants exist, they will be written to the same file.
-                if !consts.is_empty() {
-                    let filestem = path.file_stem().and_then(|stem| stem.to_str());
-
-                    let filename = {
-                        let mut name = "constants".to_owned();
-                        if let Some(stem) = filestem {
-                            name.push_str(&format!(".{stem}"));
+                        // Attempt to group overloaded top-level functions
+                        let mut remaining = Vec::with_capacity(items.len());
+                        let mut funcs: HashMap<String, Vec<ParseItem>> = HashMap::default();
+                        for item in items {
+                            if matches!(item.source, ParseSource::Function(_)) {
+                                funcs.entry(item.source.ident()).or_default().push(item);
+                            } else {
+                                // Put the item back
+                                remaining.push(item);
+                            }
                         }
-                        name.push_str(".md");
-                        name
-                    };
-                    let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                    let target_path = out_dir.join(Self::SRC).join(relative_path);
+                        let (items, overloaded): (
+                            HashMap<String, Vec<ParseItem>>,
+                            HashMap<String, Vec<ParseItem>>,
+                        ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
+                        remaining.extend(items.into_iter().flat_map(|(_, v)| v));
 
-                    let identity = match filestem {
-                        Some(stem) if stem.to_lowercase().contains("constants") => stem.to_owned(),
-                        Some(stem) => format!("{stem} constants"),
-                        None => "constants".to_owned(),
-                    };
+                        // Each regular item will be written into its own file.
+                        files = remaining
+                            .into_iter()
+                            .map(|item| {
+                                let relative_path =
+                                    path.strip_prefix(&self.root)?.join(item.filename());
 
-                    files.push(
-                        Document::new(
-                            path.clone(),
-                            target_path,
-                            from_library,
-                            self.config.out.clone(),
-                        )
-                        .with_content(DocumentContent::Constants(consts), identity),
-                    )
-                }
+                                let target_path = out_dir.join(Self::SRC).join(relative_path);
+                                let ident = item.source.ident();
+                                Ok(Document::new(
+                                    path.clone(),
+                                    target_path,
+                                    from_library,
+                                    self.config.out.clone(),
+                                )
+                                .with_content(DocumentContent::Single(item), ident))
+                            })
+                            .collect::<eyre::Result<Vec<_>>>()?;
 
-                // If overloaded functions exist, they will be written to the same file
-                if !overloaded.is_empty() {
-                    for (ident, funcs) in overloaded {
-                        let filename = funcs.first().expect("no overloaded functions").filename();
-                        let relative_path = path.strip_prefix(&self.root)?.join(filename);
+                        // If top-level constants exist, they will be written to the same file.
+                        if !consts.is_empty() {
+                            let filestem = path.file_stem().and_then(|stem| stem.to_str());
 
-                        let target_path = out_dir.join(Self::SRC).join(relative_path);
-                        files.push(
-                            Document::new(
-                                path.clone(),
-                                target_path,
-                                from_library,
-                                self.config.out.clone(),
+                            let filename = {
+                                let mut name = "constants".to_owned();
+                                if let Some(stem) = filestem {
+                                    name.push_str(&format!(".{stem}"));
+                                }
+                                name.push_str(".md");
+                                name
+                            };
+                            let relative_path = path.strip_prefix(&self.root)?.join(filename);
+                            let target_path = out_dir.join(Self::SRC).join(relative_path);
+
+                            let identity = match filestem {
+                                Some(stem) if stem.to_lowercase().contains("constants") => {
+                                    stem.to_owned()
+                                }
+                                Some(stem) => format!("{stem} constants"),
+                                None => "constants".to_owned(),
+                            };
+
+                            files.push(
+                                Document::new(
+                                    path.clone(),
+                                    target_path,
+                                    from_library,
+                                    self.config.out.clone(),
+                                )
+                                .with_content(DocumentContent::Constants(consts), identity),
                             )
-                            .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
-                        );
-                    }
-                }
+                        }
 
-                Ok(files)
-            })
-            .collect::<eyre::Result<Vec<_>>>()?;
+                        // If overloaded functions exist, they will be written to the same file
+                        if !overloaded.is_empty() {
+                            for (ident, funcs) in overloaded {
+                                let filename =
+                                    funcs.first().expect("no overloaded functions").filename();
+                                let relative_path = path.strip_prefix(&self.root)?.join(filename);
+
+                                let target_path = out_dir.join(Self::SRC).join(relative_path);
+                                files.push(
+                                    Document::new(
+                                        path.clone(),
+                                        target_path,
+                                        from_library,
+                                        self.config.out.clone(),
+                                    )
+                                    .with_content(
+                                        DocumentContent::OverloadedFunctions(funcs),
+                                        ident,
+                                    ),
+                                );
+                            }
+                        }
+                    };
+
+                    Ok(files)
+                })
+                .collect::<eyre::Result<Vec<_>>>()?;
+
+            Ok(documents)
+        })?;
 
         // Flatten results and apply preprocessors to files
         let documents = self
@@ -262,15 +282,17 @@ impl DocBuilder {
                 p.preprocess(docs)
             })?;
 
-        // Sort the results
-        let documents = documents.into_iter().sorted_by(|doc1, doc2| {
-            doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
-        });
+        // Sort the results and filter libraries.
+        let documents = documents
+            .into_iter()
+            .sorted_by(|doc1, doc2| {
+                doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
+            })
+            .filter(|d| !d.from_library || self.include_libraries)
+            .collect_vec();
 
         // Write mdbook related files
-        self.write_mdbook(
-            documents.filter(|d| !d.from_library || self.include_libraries).collect_vec(),
-        )?;
+        self.write_mdbook(documents)?;
 
         // Build the book if requested
         if self.should_build {
