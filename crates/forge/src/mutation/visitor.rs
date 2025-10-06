@@ -64,11 +64,11 @@ impl<'ast> Visit<'ast> for MutantVisitor {
         var: &'ast VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Check if we should skip this span (adaptive mutation testing)
-        if let Some(ref filter) = self.span_filter {
-            if filter(var.span) {
-                self.skipped_count += 1;
-                return self.walk_variable_definition(var);
-            }
+        if let Some(ref filter) = self.span_filter
+            && filter(var.span)
+        {
+            self.skipped_count += 1;
+            return self.walk_variable_definition(var);
         }
 
         let context = MutationContext::builder()
@@ -84,11 +84,11 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         // Check if we should skip this span (adaptive mutation testing)
-        if let Some(ref filter) = self.span_filter {
-            if filter(expr.span) {
-                self.skipped_count += 1;
-                return self.walk_expr(expr);
-            }
+        if let Some(ref filter) = self.span_filter
+            && filter(expr.span)
+        {
+            self.skipped_count += 1;
+            return self.walk_expr(expr);
         }
 
         let context = MutationContext::builder()

@@ -559,13 +559,9 @@ impl TestArgs {
                 eprintln!("  Total mutations: {}", mutants.len());
                 eprintln!("  Unique spans: {}", span_counts.len());
                 eprintln!(
-                    "  Spans with >1 mutation: {} (these are candidates for skipping)",
-                    spans_with_multiple
+                    "  Spans with >1 mutation: {spans_with_multiple} (these are candidates for skipping)"
                 );
-                eprintln!(
-                    "  Mutations at multi-mutation spans: {}",
-                    total_mutations_at_multi_spans
-                );
+                eprintln!("  Mutations at multi-mutation spans: {total_mutations_at_multi_spans}");
                 eprintln!(
                     "  Max mutations at any span: {}",
                     span_counts.values().max().unwrap_or(&0)

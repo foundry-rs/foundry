@@ -22,7 +22,7 @@ fn serialize_unop_kind<S>(value: &UnOpKind, serializer: S) -> Result<S::Ok, S::E
 where
     S: serde::Serializer,
 {
-    let s = format!("{:?}", value);
+    let s = format!("{value:?}");
     serializer.serialize_str(&s)
 }
 
@@ -39,7 +39,7 @@ where
         "Not" => Ok(UnOpKind::Not),
         "BitNot" => Ok(UnOpKind::BitNot),
         "Neg" => Ok(UnOpKind::Neg),
-        other => Err(serde::de::Error::custom(format!("Unknown UnOpKind: {}", other))),
+        other => Err(serde::de::Error::custom(format!("Unknown UnOpKind: {other}"))),
     }
 }
 
@@ -60,7 +60,7 @@ fn serialize_binop<S>(value: &BinOpKind, serializer: S) -> Result<S::Ok, S::Erro
 where
     S: serde::Serializer,
 {
-    let s = format!("{:?}", value);
+    let s = format!("{value:?}");
     serializer.serialize_str(&s)
 }
 
@@ -88,7 +88,7 @@ where
         "Shl" => Ok(BinOpKind::Shl),
         "Shr" => Ok(BinOpKind::Shr),
         "Sar" => Ok(BinOpKind::Sar),
-        other => Err(serde::de::Error::custom(format!("Unknown BinOpKind: {}", other))),
+        other => Err(serde::de::Error::custom(format!("Unknown BinOpKind: {other}"))),
     }
 }
 

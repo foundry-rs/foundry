@@ -117,7 +117,7 @@ impl MutationsSummary {
     }
 
     /// Merge another MutationsSummary into this one
-    pub fn merge(&mut self, other: &MutationsSummary) {
+    pub fn merge(&mut self, other: &Self) {
         self.dead.extend(other.dead.clone());
         self.survived.extend(other.survived.clone());
         self.invalid.extend(other.invalid.clone());
@@ -245,7 +245,7 @@ impl MutationHandler {
 
         let filename =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.mutants", hash, filename));
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.mutants"));
         let json = serde_json::to_string_pretty(mutants).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)?;
 
@@ -264,7 +264,7 @@ impl MutationHandler {
 
         let filename =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.results", hash, filename));
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.results"));
         let json = serde_json::to_string_pretty(results).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)?;
 
@@ -293,10 +293,8 @@ impl MutationHandler {
             // Create visitor with adaptive span filter
             let mut mutant_visitor = MutantVisitor::default(path.clone())
                 .with_span_filter(move |span| survived_spans_clone.should_skip(span));
-            
             let _ = mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
-            
             // Log skipped mutations for debugging
             if mutant_visitor.skipped_count > 0 {
                 eprintln!(
@@ -304,7 +302,6 @@ impl MutationHandler {
                     mutant_visitor.skipped_count
                 );
             }
-            
             Ok(())
         });
     }
@@ -346,7 +343,7 @@ impl MutationHandler {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
         let filename =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.mutants", hash, filename));
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.mutants"));
 
         if !cache_file.exists() {
             return None;
@@ -365,7 +362,7 @@ impl MutationHandler {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
         let filename =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.results", hash, filename));
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.results"));
 
         if !cache_file.exists() {
             return None;
@@ -391,11 +388,10 @@ impl MutationHandler {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
         std::fs::create_dir_all(&cache_dir)?;
 
-        let filename = self.contract_to_mutate.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.survived", hash, filename));
-        
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.survived"));
+
         let spans = self.survived_spans.to_vec();
         let json = serde_json::to_string_pretty(&spans).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)?;
@@ -407,20 +403,19 @@ impl MutationHandler {
     /// Reads from `cache/mutation/<hash>_<filename>.survived`.
     pub fn retrieve_survived_spans(&mut self, hash: &str) -> bool {
         let cache_dir = self.config.root.join(&self.config.mutation_dir);
-        let filename = self.contract_to_mutate.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        let cache_file = cache_dir.join(format!("{}_{}.survived", hash, filename));
+        let filename =
+            self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{hash}_{filename}.survived"));
 
         if !cache_file.exists() {
             return false;
         }
 
-        if let Ok(data) = std::fs::read_to_string(cache_file) {
-            if let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data) {
-                self.survived_spans = SurvivedSpans::from_vec(pairs);
-                return true;
-            }
+        if let Ok(data) = std::fs::read_to_string(cache_file)
+            && let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data)
+        {
+            self.survived_spans = SurvivedSpans::from_vec(pairs);
+            return true;
         }
 
         false

@@ -96,9 +96,10 @@ impl Mutator for UnaryOperatorMutator {
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
         if let Some(expr) = ctxt.expr
-            && let ExprKind::Unary(_, _) = &expr.kind {
-                return true;
-            }
+            && let ExprKind::Unary(_, _) = &expr.kind
+        {
+            return true;
+        }
 
         false
     }
