@@ -53,6 +53,15 @@ impl MutationReporter {
             )));
         self.table.add_row(row);
 
+        row = Row::new();
+        row.add_cell(Cell::new("Skipped").fg(Color::Yellow))
+            .add_cell(Cell::new(summary.total_skipped().to_string()))
+            .add_cell(Cell::new(format!(
+                "{:.2}%",
+                summary.total_skipped() as f64 / summary.total_mutants() as f64 * 100.
+            )));
+        self.table.add_row(row);
+
         let _ = sh_println!("Total number of mutants generated: {}", summary.total_mutants());
         let _ = sh_println!("Mutation score: {:.2}%", summary.mutation_score());
         let _ = sh_println!("\n{}\n", self.table);

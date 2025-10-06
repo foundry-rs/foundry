@@ -232,6 +232,7 @@ pub enum MutationResult {
     Dead,
     Alive,
     Invalid,
+    Skipped,
 }
 
 /// A given mutation

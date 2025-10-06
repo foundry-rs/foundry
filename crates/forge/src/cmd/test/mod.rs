@@ -507,6 +507,9 @@ impl TestArgs {
                             crate::mutation::mutant::MutationResult::Invalid => {
                                 handler.add_invalid_mutant(mutant)
                             }
+                            crate::mutation::mutant::MutationResult::Skipped => {
+                                handler.add_skipped_mutant(mutant)
+                            }
                         }
                     }
                     // Add this handler's results to the overall summary
@@ -514,14 +517,59 @@ impl TestArgs {
                     continue;
                 }
 
+                // Load survived spans for adaptive mutation testing
+                handler.retrieve_survived_spans(&build_id);
+
                 // Try cached mutants first
-                let mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
+                let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
                     ms
                 } else {
-                    // No cache match: generate fresh mutants
+                    // No cache match: generate fresh mutants (will use survived spans filter)
                     handler.generate_ast().await;
                     handler.mutations.clone()
                 };
+
+                // Sort mutations by span: group by start position, then test wider spans first
+                // This maximizes effectiveness of adaptive mutation testing:
+                // - If a wide span survives, all nested child spans can be skipped
+                // - Sort by (lo ascending, hi descending) to group spans and test parents first
+                mutants.sort_by(|a, b| {
+                    let lo_cmp = a.span.lo().0.cmp(&b.span.lo().0);
+                    if lo_cmp != std::cmp::Ordering::Equal {
+                        lo_cmp
+                    } else {
+                        // Same start: wider span (larger hi) comes first
+                        b.span.hi().0.cmp(&a.span.hi().0)
+                    }
+                });
+
+                // Debug: Analyze mutation distribution by span
+                let mut span_counts = std::collections::HashMap::new();
+                for m in &mutants {
+                    *span_counts.entry((m.span.lo().0, m.span.hi().0)).or_insert(0) += 1;
+                }
+                let spans_with_multiple =
+                    span_counts.iter().filter(|(_, count)| **count > 1).count();
+                let total_mutations_at_multi_spans: usize = span_counts
+                    .iter()
+                    .filter(|(_, count)| **count > 1)
+                    .map(|(_, count)| *count)
+                    .sum();
+                eprintln!("\n[Adaptive Debug] Mutation distribution:");
+                eprintln!("  Total mutations: {}", mutants.len());
+                eprintln!("  Unique spans: {}", span_counts.len());
+                eprintln!(
+                    "  Spans with >1 mutation: {} (these are candidates for skipping)",
+                    spans_with_multiple
+                );
+                eprintln!(
+                    "  Mutations at multi-mutation spans: {}",
+                    total_mutations_at_multi_spans
+                );
+                eprintln!(
+                    "  Max mutations at any span: {}",
+                    span_counts.values().max().unwrap_or(&0)
+                );
 
                 // Accumulate per-mutant results for persistence
                 let mut results_vec: Vec<(
@@ -530,7 +578,18 @@ impl TestArgs {
                 )> = Vec::with_capacity(mutants.len());
 
                 for (i, mutant) in mutants.iter().enumerate() {
-                    sh_println!("Testing mutant {} out of {}", i + 1, mutants.len()).unwrap();
+                    // Adaptive mutation: Skip if this span already has a surviving mutation
+                    if handler.should_skip_span(mutant.span) {
+                        sh_println!("Skipping mutant {} of {} (adaptive: span already has surviving mutation)", i + 1, mutants.len()).unwrap();
+                        handler.add_skipped_mutant(mutant.clone());
+                        results_vec.push((
+                            mutant.clone(),
+                            crate::mutation::mutant::MutationResult::Skipped,
+                        ));
+                        continue;
+                    }
+
+                    sh_println!("Testing mutant {} of {}", i + 1, mutants.len()).unwrap();
 
                     handler.generate_mutated_solidity(mutant);
                     let new_filter = self.filter(&config).unwrap();
@@ -571,6 +630,23 @@ impl TestArgs {
                                 crate::mutation::mutant::MutationResult::Dead,
                             ));
                         } else {
+                            // Mutation survived! Mark this span to skip similar mutations
+                            let span_key = (mutant.span.lo().0, mutant.span.hi().0);
+                            let remaining_at_span = mutants
+                                .iter()
+                                .skip(i + 1)
+                                .filter(|m| {
+                                    (m.span.lo().0, m.span.hi().0) == span_key
+                                        || handler.should_skip_span(m.span)
+                                })
+                                .count();
+                            eprintln!(
+                                "[Adaptive] Mutation {} SURVIVED at span {:?} - will skip {} remaining mutations",
+                                i + 1,
+                                span_key,
+                                remaining_at_span
+                            );
+                            handler.mark_span_survived(mutant.span);
                             handler.add_survived_mutant(mutant.clone());
                             results_vec.push((
                                 mutant.clone(),
@@ -586,6 +662,8 @@ impl TestArgs {
                 if !handler.mutations.is_empty() && !build_id.is_empty() {
                     let _ = handler.persist_cached_mutants(&build_id, &handler.mutations);
                     let _ = handler.persist_cached_results(&build_id, &results_vec);
+                    // Persist survived spans for adaptive mutation testing
+                    let _ = handler.persist_survived_spans(&build_id);
                 }
 
                 // Add this handler's results to the overall summary

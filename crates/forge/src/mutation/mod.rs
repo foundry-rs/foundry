@@ -19,13 +19,14 @@ use crate::mutation::{
 pub use crate::mutation::reporter::MutationReporter;
 
 use crate::result::TestOutcome;
-use solar_parse::ast::visit::Visit;
-use std::path::PathBuf;
+use solar_parse::ast::{Span, visit::Visit};
+use std::{collections::HashSet, path::PathBuf};
 
 pub struct MutationsSummary {
     dead: Vec<Mutant>,
     survived: Vec<Mutant>,
     invalid: Vec<Mutant>,
+    skipped: Vec<Mutant>,
 }
 
 impl Default for MutationsSummary {
@@ -36,7 +37,7 @@ impl Default for MutationsSummary {
 
 impl MutationsSummary {
     pub fn new() -> Self {
-        Self { dead: vec![], survived: vec![], invalid: vec![] }
+        Self { dead: vec![], survived: vec![], invalid: vec![], skipped: vec![] }
     }
 
     pub fn update_valid_mutant(&mut self, outcome: &TestOutcome, mutant: Mutant) {
@@ -59,8 +60,12 @@ impl MutationsSummary {
         self.survived.push(mutant);
     }
 
+    pub fn add_skipped_mutant(&mut self, mutant: Mutant) {
+        self.skipped.push(mutant);
+    }
+
     pub fn total_mutants(&self) -> usize {
-        self.dead.len() + self.survived.len() + self.invalid.len()
+        self.dead.len() + self.survived.len() + self.invalid.len() + self.skipped.len()
     }
 
     pub fn total_dead(&self) -> usize {
@@ -75,6 +80,10 @@ impl MutationsSummary {
         self.invalid.len()
     }
 
+    pub fn total_skipped(&self) -> usize {
+        self.skipped.len()
+    }
+
     pub fn dead(&self) -> String {
         self.dead.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
     }
@@ -85,6 +94,10 @@ impl MutationsSummary {
 
     pub fn invalid(&self) -> String {
         self.invalid.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
+    }
+
+    pub fn skipped(&self) -> String {
+        self.skipped.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
     }
 
     pub fn get_dead(&self) -> &Vec<Mutant> {
@@ -99,11 +112,16 @@ impl MutationsSummary {
         &self.invalid
     }
 
+    pub fn get_skipped(&self) -> &Vec<Mutant> {
+        &self.skipped
+    }
+
     /// Merge another MutationsSummary into this one
     pub fn merge(&mut self, other: &MutationsSummary) {
         self.dead.extend(other.dead.clone());
         self.survived.extend(other.survived.clone());
         self.invalid.extend(other.invalid.clone());
+        self.skipped.extend(other.skipped.clone());
     }
 
     /// Calculate mutation score (percentage of dead mutants out of valid mutants)
@@ -114,12 +132,60 @@ impl MutationsSummary {
     }
 }
 
+/// Tracks spans where mutations have survived (weren't killed by tests).
+/// Used for adaptive mutation testing to skip redundant mutations.
+#[derive(Debug, Clone, Default)]
+pub struct SurvivedSpans {
+    spans: HashSet<(u32, u32)>, // (lo, hi) byte positions
+}
+
+impl SurvivedSpans {
+    pub fn new() -> Self {
+        Self { spans: HashSet::new() }
+    }
+
+    /// Mark a span as having a surviving mutation
+    pub fn mark_survived(&mut self, span: Span) {
+        self.spans.insert((span.lo().0, span.hi().0));
+    }
+
+    /// Check if this span or any parent span has a surviving mutation
+    pub fn should_skip(&self, span: Span) -> bool {
+        let (lo, hi) = (span.lo().0, span.hi().0);
+
+        // Check if this exact span has survived
+        if self.spans.contains(&(lo, hi)) {
+            return true;
+        }
+
+        // Check if any parent span (that contains this span) has survived
+        for &(parent_lo, parent_hi) in &self.spans {
+            if parent_lo <= lo && hi <= parent_hi && (parent_lo != lo || parent_hi != hi) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Serialize to a list of (lo, hi) pairs for caching
+    fn to_vec(&self) -> Vec<(u32, u32)> {
+        self.spans.iter().copied().collect()
+    }
+
+    /// Deserialize from a list of (lo, hi) pairs
+    fn from_vec(pairs: Vec<(u32, u32)>) -> Self {
+        Self { spans: pairs.into_iter().collect() }
+    }
+}
+
 pub struct MutationHandler {
     contract_to_mutate: PathBuf,
     src: Arc<String>,
     pub mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
     report: MutationsSummary,
+    survived_spans: SurvivedSpans,
 }
 
 impl MutationHandler {
@@ -130,6 +196,7 @@ impl MutationHandler {
             mutations: vec![],
             config,
             report: MutationsSummary::new(),
+            survived_spans: SurvivedSpans::new(),
         }
     }
 
@@ -152,6 +219,10 @@ impl MutationHandler {
     /// Add an invalid mutant to the report
     pub fn add_invalid_mutant(&mut self, mutant: Mutant) {
         self.report.update_invalid_mutant(mutant);
+    }
+
+    pub fn add_skipped_mutant(&mut self, mutant: Mutant) {
+        self.report.add_skipped_mutant(mutant);
     }
 
     /// Get a reference to the current report
@@ -207,6 +278,9 @@ impl MutationHandler {
         let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
 
+        // Clone survived_spans for use in the closure
+        let survived_spans_clone = self.survived_spans.clone();
+
         let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
             let arena = solar_parse::ast::Arena::new();
             let mut parser =
@@ -216,9 +290,21 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            let mut mutant_visitor = MutantVisitor::default(path.clone());
+            // Create visitor with adaptive span filter
+            let mut mutant_visitor = MutantVisitor::default(path.clone())
+                .with_span_filter(move |span| survived_spans_clone.should_skip(span));
+            
             let _ = mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
+            
+            // Log skipped mutations for debugging
+            if mutant_visitor.skipped_count > 0 {
+                eprintln!(
+                    "Adaptive mutation: Skipped {} mutation points (already have surviving mutations)",
+                    mutant_visitor.skipped_count
+                );
+            }
+            
             Ok(())
         });
     }
@@ -287,5 +373,56 @@ impl MutationHandler {
 
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
+    }
+
+    /// Mark a span as having a surviving mutation
+    pub fn mark_span_survived(&mut self, span: Span) {
+        self.survived_spans.mark_survived(span);
+    }
+
+    /// Check if a span should be skipped (has survived mutation or is child of survived span)
+    pub fn should_skip_span(&self, span: Span) -> bool {
+        self.survived_spans.should_skip(span)
+    }
+
+    /// Persist survived spans to cache for adaptive mutation testing.
+    /// Writes to `cache/mutation/<hash>_<filename>.survived`.
+    pub fn persist_survived_spans(&self, hash: &str) -> std::io::Result<()> {
+        let cache_dir = self.config.root.join(&self.config.mutation_dir);
+        std::fs::create_dir_all(&cache_dir)?;
+
+        let filename = self.contract_to_mutate.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.survived", hash, filename));
+        
+        let spans = self.survived_spans.to_vec();
+        let json = serde_json::to_string_pretty(&spans).map_err(std::io::Error::other)?;
+        std::fs::write(cache_file, json)?;
+
+        Ok(())
+    }
+
+    /// Retrieve survived spans from cache.
+    /// Reads from `cache/mutation/<hash>_<filename>.survived`.
+    pub fn retrieve_survived_spans(&mut self, hash: &str) -> bool {
+        let cache_dir = self.config.root.join(&self.config.mutation_dir);
+        let filename = self.contract_to_mutate.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+        let cache_file = cache_dir.join(format!("{}_{}.survived", hash, filename));
+
+        if !cache_file.exists() {
+            return false;
+        }
+
+        if let Ok(data) = std::fs::read_to_string(cache_file) {
+            if let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data) {
+                self.survived_spans = SurvivedSpans::from_vec(pairs);
+                return true;
+            }
+        }
+
+        false
     }
 }
