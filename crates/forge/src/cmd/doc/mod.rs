@@ -71,7 +71,8 @@ impl DocArgs {
         let root = &config.root;
         let project = config.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
-        let _output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
 
         let mut doc_config = config.doc;
         if let Some(out) = self.out {
@@ -118,7 +119,7 @@ impl DocArgs {
             builder = builder.with_preprocessor(Deployments { root: root.clone(), deployments });
         }
 
-        builder.build()?;
+        builder.build(compiler)?;
 
         if self.serve {
             Server::new(doc_config.out)

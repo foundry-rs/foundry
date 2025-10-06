@@ -361,7 +361,7 @@ impl TestArgs {
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
-            .build::<MultiCompiler>(project_root, output, env.clone(), evm_opts.clone())?;
+            .build::<MultiCompiler>(output, env.clone(), evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome =
@@ -613,7 +613,6 @@ impl TestArgs {
                             .sender(evm_opts.sender)
                             .with_fork(evm_opts.clone().get_fork(&config, env.clone()))
                             .build::<MultiCompiler>(
-                                &config.root,
                                 &compile_output.unwrap(),
                                 env.clone(),
                                 evm_opts.clone(),
