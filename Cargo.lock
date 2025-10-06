@@ -2666,7 +2666,6 @@ dependencies = [
  "foundry-test-utils",
  "itertools 0.14.0",
  "reqwest",
- "revm",
  "rexpect",
  "rustyline",
  "semver 1.0.27",

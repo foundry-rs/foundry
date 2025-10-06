@@ -8,7 +8,6 @@ use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
-use tracing::debug;
 use yansi::Paint;
 
 /// Run the `chisel` command line interface.

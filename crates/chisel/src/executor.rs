@@ -17,20 +17,12 @@ use foundry_evm::{
 };
 use solang_parser::pt;
 use std::ops::ControlFlow;
-use tracing::debug;
 use yansi::Paint;
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
-    /// the [ChiselResult].
-    ///
-    /// Returns an error if compilation fails.
-    pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
+    pub async fn execute(&mut self) -> Result<ChiselResult> {
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
@@ -76,11 +68,11 @@ impl SessionSource {
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
         let (mut res, err) = match source.execute().await {
-            Ok((_, res)) => (res, None),
+            Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
                 match source_without_inspector.execute().await {
-                    Ok((_, res)) => (res, Some(err)),
+                    Ok(res) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
