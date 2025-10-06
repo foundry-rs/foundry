@@ -20,9 +20,7 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
         expr: &'hir solar::sema::hir::Expr<'hir>,
     ) {
         let ExprKind::Call(
-            callee_expr @ Expr {
-                kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), ..
-            },
+            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },
             CallArgs { kind: CallArgsKind::Unnamed(args), .. },
             _,
         ) = &expr.kind
@@ -40,26 +38,33 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
             return;
         }
 
+        // Get struct name snippet and emit without suggestion if we can't get it
+        let Some(struct_name_snippet) = ctx.span_to_snippet(*span) else {
+            // Emit without suggestion if we can't get the struct name snippet
+            ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
+            return;
+        };
+
         // Collect field names and corresponding argument source snippets
         let mut field_assignments = Vec::new();
         for (field_id, arg) in fields.iter().zip(args.iter()) {
             let field = hir.variable(*field_id);
             let field_name = field.name.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string());
 
-            let arg_snippet =
-                ctx.span_to_snippet(arg.span).unwrap_or_else(|| "/* unknown */".to_string());
+            let Some(arg_snippet) = ctx.span_to_snippet(arg.span) else {
+                // Emit without suggestion if we can't get argument snippet
+                ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
+                return;
+            };
 
             field_assignments.push(format!("{field_name}: {arg_snippet}"));
         }
-
-        let struct_name =
-            ctx.span_to_snippet(callee_expr.span).unwrap_or_else(|| "StructName".to_string());
 
         ctx.emit_with_suggestion(
             &NAMED_STRUCT_FIELDS,
             expr.span,
             Suggestion::fix(
-                format!("{}({{ {} }})", struct_name, field_assignments.join(", ")),
+                format!("{}({{ {} }})", struct_name_snippet, field_assignments.join(", ")),
                 solar::interface::diagnostics::Applicability::MachineApplicable,
             )
             .with_desc("consider using named fields"),
