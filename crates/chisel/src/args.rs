@@ -51,6 +51,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         evm_opts,
         backend: None,
         calldata: None,
+        ir_minimum: args.ir_minimum,
     })?;
 
     // Execute prelude Solidity source files
