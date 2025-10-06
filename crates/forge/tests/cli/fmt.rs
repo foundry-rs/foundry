@@ -78,14 +78,14 @@ Diff in stdin:
 1   1    | // SPDX-License-Identifier: MIT
 2        |-pragma         solidity  =0.8.30    ;
     2    |+pragma solidity =0.8.30;
-3   3    | 
+...
 4        |-contract  Test  {
 5        |-    uint256    public    value ;
 6        |-    function   setValue ( uint256   _value )   public   {
 7        |-        value   =   _value ;
     4    |+contract Test {
     5    |+    uint256 public value;
-    6    |+
+...
     7    |+    function setValue(uint256 _value) public {
     8    |+        value = _value;
 8   9    |     }
@@ -102,4 +102,27 @@ forgetest!(fmt_stdin_original, |_prj, cmd| {
 
     cmd.stdin(FORMATTED.as_bytes());
     cmd.assert_success().stdout_eq(FORMATTED.as_bytes());
+});
+
+// Test that fmt can format a simple contract file
+forgetest_init!(fmt_file_config_parms_first, |prj, cmd| {
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[fmt]
+multiline_func_header = 'params_first'
+"#,
+    );
+    prj.add_raw_source("FmtTest.sol", FORMATTED);
+    cmd.forge_fuse().args(["fmt", "--check"]).arg("src/FmtTest.sol");
+    cmd.assert_failure().stdout_eq(str![[r#"
+Diff in src/FmtTest.sol:
+...
+7        |-    function setValue(uint256 _value) public {
+    7    |+    function setValue(
+    8    |+        uint256 _value
+    9    |+    ) public {
+...
+
+"#]]);
 });

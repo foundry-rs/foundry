@@ -37,7 +37,7 @@ use foundry_compilers::{
     },
     error::SolcError,
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
-    solc::{CliSettings, SolcSettings},
+    solc::{CliSettings, SolcLanguage, SolcSettings},
 };
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
@@ -1175,6 +1175,28 @@ impl Config {
         }
 
         Ok(project)
+    }
+
+    /// Disables optimizations and enables viaIR with minimum optimization if `ir_minimum` is true.
+    pub fn disable_optimizations(&self, project: &mut Project, ir_minimum: bool) {
+        if ir_minimum {
+            // Enable viaIR with minimum optimization: https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+            // And also in new releases of Solidity: https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+            project.settings.solc.settings = std::mem::take(&mut project.settings.solc.settings)
+                .with_via_ir_minimum_optimization();
+
+            // Sanitize settings for solc 0.8.4 if version cannot be detected: https://github.com/foundry-rs/foundry/issues/9322
+            // But keep the EVM version: https://github.com/ethereum/solidity/issues/15775
+            let evm_version = project.settings.solc.evm_version;
+            let version = self.solc_version().unwrap_or_else(|| Version::new(0, 8, 4));
+            project.settings.solc.settings.sanitize(&version, SolcLanguage::Solidity);
+            project.settings.solc.evm_version = evm_version;
+        } else {
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
+        }
     }
 
     /// Cleans the project.
