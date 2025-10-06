@@ -167,8 +167,8 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            // TODO: Avoid process::exit
-            std::process::exit(1);
+            // Avoid terminating the process from library code; propagate an error instead.
+            return Err(eyre::eyre!("tests failed"));
         }
 
         sh_println!("\nFailing tests:")?;
@@ -192,8 +192,8 @@ impl TestOutcome {
             successes.to_string().green()
         )?;
 
-        // TODO: Avoid process::exit
-        std::process::exit(1);
+        // Avoid terminating the process from library code; propagate an error instead.
+        Err(eyre::eyre!("tests failed"))
     }
 
     /// Removes first test result, if any.
