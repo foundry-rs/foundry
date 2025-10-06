@@ -294,8 +294,12 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
 
         let result = soldeer_commands::run(
             Command::Install(Install::default()),
-            Verbosity::new(foundry_common::shell::verbosity(), if foundry_common::shell::is_quiet() { 1 } else { 0 })
-        ).await;
+            Verbosity::new(
+                foundry_common::shell::verbosity(),
+                if foundry_common::shell::is_quiet() { 1 } else { 0 },
+            ),
+        )
+        .await;
 
         // Change back to original directory
         std::env::set_current_dir(original_dir)?;

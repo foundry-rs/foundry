@@ -160,7 +160,10 @@ impl CloneArgs {
     /// * `root` - the root directory of the project.
     /// * `enable_git` - whether to enable git for the project.
     /// * `quiet` - whether to print messages.
-    pub(crate) async fn init_an_empty_project(root: &Path, install: DependencyInstallOpts) -> Result<()> {
+    pub(crate) async fn init_an_empty_project(
+        root: &Path,
+        install: DependencyInstallOpts,
+    ) -> Result<()> {
         // Initialize the project with empty set to true to avoid creating example contracts
         let init_args =
             InitArgs { root: root.to_path_buf(), install, empty: true, ..Default::default() };
@@ -717,7 +720,9 @@ mod tests {
         let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
         let client = mock_etherscan(address);
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
-        CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default()).await.unwrap();
+        CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
+            .await
+            .unwrap();
         project_root = dunce::canonicalize(&project_root).unwrap();
         CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false, false)
             .await
