@@ -50,7 +50,9 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
         for (field_id, arg) in fields.iter().zip(args.iter()) {
             let field = hir.variable(*field_id);
 
-            let Some((field_name, arg_snippet)) = ctx.span_to_snippet(arg.span).zip(field.name.map(|n| n.to_string()) else {
+            let Some((arg_snippet, field_name)) =
+                ctx.span_to_snippet(arg.span).zip(field.name.map(|n| n.to_string()))
+            else {
                 // Emit without suggestion if we can't get argument snippet
                 ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
                 return;
