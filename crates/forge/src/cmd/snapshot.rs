@@ -475,11 +475,11 @@ fn diff(
 
         // Display with icon and before/after values
         let icon = if gas_change > 0 {
-            "↑".red()
+            "↑".red().to_string()
         } else if gas_change < 0 {
-            "↓".green()
+            "↓".green().to_string()
         } else {
-            "━".dimmed()
+            "━".to_string()
         };
 
         sh_println!(
@@ -513,11 +513,11 @@ fn diff(
     sh_println!(
         "Total tests: {}, {} {}, {} {}, {} {}",
         diffs.len(),
-        "↑".red(),
+        "↑".red().to_string(),
         increased,
-        "↓".green(),
+        "↓".green().to_string(),
         decreased,
-        "━".dimmed(),
+        "━",
         unchanged
     )?;
     sh_println!(
