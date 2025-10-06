@@ -43,6 +43,10 @@ pub enum EthRequest {
     #[serde(rename = "web3_sha3", with = "sequence")]
     Web3Sha3(Bytes),
 
+    /// Returns the current Ethereum protocol version.
+    #[serde(rename = "eth_protocolVersion", with = "empty_params")]
+    EthProtocolVersion(()),
+
     #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
@@ -51,6 +55,10 @@ pub enum EthRequest {
 
     #[serde(rename = "net_listening", with = "empty_params")]
     NetListening(()),
+
+    /// Returns the number of hashes per second with which the node is mining.
+    #[serde(rename = "eth_hashrate", with = "empty_params")]
+    EthHashrate(()),
 
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
@@ -66,6 +74,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_blockNumber", with = "empty_params")]
     EthBlockNumber(()),
+
+    /// Returns the client coinbase address.
+    #[serde(rename = "eth_coinbase", with = "empty_params")]
+    EthCoinbase(()),
 
     #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, Option<BlockId>),
@@ -185,6 +197,10 @@ pub enum EthRequest {
     /// Returns the blobs for a given transaction hash.
     #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
     GetBlobByTransactionHash(TxHash),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
+    GetBlobSidecarsByBlockId(BlockId),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),

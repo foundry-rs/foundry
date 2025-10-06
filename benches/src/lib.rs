@@ -139,7 +139,7 @@ impl BenchmarkProject {
 
         // Clone the repository
         let repo_url = format!("https://github.com/{}/{}.git", config.org, config.repo);
-        clone_remote(&repo_url, root);
+        clone_remote(&repo_url, root, true);
 
         // Checkout specific revision if provided
         if !config.rev.is_empty() && config.rev != "main" && config.rev != "master" {

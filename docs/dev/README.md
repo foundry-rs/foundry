@@ -51,6 +51,7 @@ $ make pr
 - [Cheatcodes](./cheatcodes.md)
 - [Debugging](./debugging.md)
 - [Scripting](./scripting.md)
+- [Custom Network Features](./networks.md)
 
 _Note: This is incomplete and possibly outdated_
 

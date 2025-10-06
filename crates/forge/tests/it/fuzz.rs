@@ -360,3 +360,137 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 "#]]);
 });
+
+// Test 256 runs regardless number of test rejects.
+// <https://github.com/foundry-rs/foundry/issues/9054>
+forgetest_init!(test_fuzz_runs_with_rejects, |prj, cmd| {
+    prj.add_test(
+        "FuzzWithRejectsTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzWithRejectsTest is Test {
+    function testFuzzWithRejects(uint256 x) public pure {
+        vm.assume(x < 1_000_000);
+    }
+}
+   "#,
+    );
+
+    // Tests should not fail as revert happens in Counter contract.
+    cmd.args(["test", "--mc", "FuzzWithRejectsTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FuzzWithRejectsTest.t.sol:FuzzWithRejectsTest
+[PASS] testFuzzWithRejects(uint256) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Test that counterexample is not replayed if test changes.
+// <https://github.com/foundry-rs/foundry/issues/11927>
+forgetest_init!(test_fuzz_replay_with_changed_test, |prj, cmd| {
+    prj.update_config(|config| config.fuzz.seed = Some(U256::from(100u32)));
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function testFuzz_SetNumber(uint256 x) public pure {
+        require(x > 200);
+    }
+}
+   "#,
+    );
+    // Tests should fail and record counterexample with value 2.
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000002 args=[2]] testFuzz_SetNumber(uint256) (runs: 19, [AVG_GAS])
+...
+
+"#]]);
+
+    // Change test to assume counterexample 2 is discarded.
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function testFuzz_SetNumber(uint256 x) public pure {
+        vm.assume(x != 2);
+    }
+}
+   "#,
+    );
+    // Test should pass when replay failure with changed assume logic.
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Change test signature.
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function testFuzz_SetNumber(uint8 x) public pure {
+    }
+}
+   "#,
+    );
+    // Test should pass when replay failure with changed function signature.
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint8) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Change test back to the original one that produced the counterexample.
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function testFuzz_SetNumber(uint256 x) public pure {
+        require(x > 200);
+    }
+}
+   "#,
+    );
+    // Test should fail with replayed counterexample 2 (0 runs).
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000002 args=[2]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
+...
+
+"#]]);
+});

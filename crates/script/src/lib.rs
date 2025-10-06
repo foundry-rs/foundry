@@ -3,7 +3,7 @@
 //! Smart contract scripting.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate foundry_common;
@@ -32,7 +32,6 @@ use foundry_cli::{
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
-    evm::Breakpoints,
     shell,
 };
 use foundry_compilers::ArtifactId;
@@ -45,6 +44,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
+    core::Breakpoints,
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,

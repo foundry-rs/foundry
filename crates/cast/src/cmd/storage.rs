@@ -136,14 +136,7 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(
-                    provider,
-                    address,
-                    block,
-                    artifact,
-                    !shell::is_json(),
-                )
-                .await;
+                return fetch_and_print_storage(provider, address, block, artifact).await;
             }
         }
 
@@ -224,7 +217,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, !shell::is_json()).await
+        fetch_and_print_storage(provider, address, block, artifact).await
     }
 }
 
@@ -272,7 +265,6 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     address: Address,
     block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
-    pretty: bool,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
         sh_warn!("Storage layout is empty.")?;
@@ -280,7 +272,7 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
         let values = fetch_storage_slots(provider, address, block, &layout).await?;
-        print_storage(layout, values, pretty)
+        print_storage(layout, values)
     }
 }
 
@@ -305,8 +297,8 @@ async fn fetch_storage_slots<P: Provider<AnyNetwork>>(
     futures::future::try_join_all(requests).await
 }
 
-fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
-    if !pretty {
+fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()> {
+    if shell::is_json() {
         let values: Vec<_> = layout
             .storage
             .iter()

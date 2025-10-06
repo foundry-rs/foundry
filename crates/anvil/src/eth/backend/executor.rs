@@ -31,9 +31,9 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::DatabaseError,
+    core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
     traces::{CallTraceDecoder, CallTraceNode},
 };
-use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use foundry_evm_networks::NetworkConfigs;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{

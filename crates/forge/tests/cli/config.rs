@@ -132,9 +132,12 @@ hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
 override_spacing = false
 wrap_comments = false
+docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
+pow_no_space = false
+call_compact_args = true
 
 [lint]
 severity = []
@@ -1304,9 +1307,12 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
-    "sort_imports": false
+    "sort_imports": false,
+    "pow_no_space": false,
+    "call_compact_args": true
   },
   "lint": {
     "severity": [],
@@ -1921,30 +1927,46 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 "#]]);
 });
 
-// Test that EVM version configuration works and the incompatibility check is available
-forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
-    // Clear default contracts
-    prj.wipe_contracts();
+// <https://github.com/foundry-rs/foundry/issues/5866>
+forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+    cmd.git_init();
 
-    // Add a simple contract
-    prj.add_source(
-        "Simple.sol",
-        r#"
-pragma solidity ^0.8.5;
+    let toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
 
-contract Simple {
-    uint public value = 42;
-}
-"#,
-    );
+    # Custom sections for other tools
+    [external.scopelint]
+    some_flag = 1
 
-    prj.update_config(|config| {
-        config.evm_version = EvmVersion::Cancun;
-        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
-    });
+    [external.forge_deploy]
+    another_setting = 123";
 
-    let result = cmd.args(["build"]).assert_success();
-    let output = result.get_output();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
+    fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10550>
+forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
+    cmd.git_init();
+
+    let faulty_toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+    solc_version = '0.8.18'
+    foo = 'unknown'
+
+    [profile.another]
+    src = 'src'
+    out = 'out'
+    bar = 'another_unknown'";
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Found unknown `bar` config for profile `another` defined in foundry.toml.
+Warning: Found unknown `foo` config for profile `default` defined in foundry.toml.
+
+"#]]);
 });

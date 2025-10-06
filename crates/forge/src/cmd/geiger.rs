@@ -41,7 +41,7 @@ impl GeigerArgs {
         }
 
         sh_warn!(
-            "`forge geiger` is just an alias for `forge lint --only-lint unsafe-cheatcode`\n"
+            "`forge geiger` is deprecated, as it is just an alias for `forge lint --only-lint unsafe-cheatcode`\n"
         )?;
 
         // Convert geiger command to lint command with specific lint filter
@@ -49,7 +49,6 @@ impl GeigerArgs {
             paths: self.paths,
             severity: None,
             lint: Some(vec!["unsafe-cheatcode".to_string()]),
-            json: false,
             build: self.build,
         };
         lint_args.build.deny = Some(DenyLevel::Notes);

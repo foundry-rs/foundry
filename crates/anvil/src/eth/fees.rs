@@ -156,9 +156,11 @@ impl FeeManager {
         calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
 
-    /// Calculates the next block blob base fee, using the provided excess blob gas
-    pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: u128) -> u128 {
-        alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas as u64)
+    /// Calculates the next block blob base fee.
+    pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
+        alloy_eips::eip4844::calc_blob_gasprice(
+            self.blob_excess_gas_and_price.read().excess_blob_gas,
+        )
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and

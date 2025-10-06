@@ -46,7 +46,7 @@ alloy-chains.workspace = true
 alloy-ens.workspace = true
 
 base64.workspace = true
-dialoguer = "0.11"
+dialoguer.workspace = true
 eyre.workspace = true
 itertools.workspace = true
 jsonpath_lib.workspace = true

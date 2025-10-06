@@ -229,7 +229,7 @@ fn find_mismatch_in_settings(
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.unwrap(),
+            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
             etherscan_settings.runs
         );
         mismatches.push(str);

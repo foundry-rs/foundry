@@ -1,7 +1,7 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
@@ -30,12 +30,12 @@ use foundry_common::{
     TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
+    flatten,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
-use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -58,6 +58,7 @@ pub mod cmd;
 pub mod opts;
 
 pub mod base;
+pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
 pub mod tx;
@@ -2191,7 +2192,7 @@ impl SimpleCast {
         let project = etherscan_project(metadata, tmp.path())?;
         let target_path = project.find_contract_path(&metadata.contract_name)?;
 
-        let flattened = Flattener::new(project, &target_path)?.flatten();
+        let flattened = flatten(project, &target_path)?;
 
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
@@ -2221,23 +2222,9 @@ impl SimpleCast {
     /// ```
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
-
-        for step in decode_instructions(code)? {
-            write!(output, "{:08x}: ", step.pc)?;
-
-            if let Some(op) = step.op {
-                write!(output, "{op}")?;
-            } else {
-                write!(output, "INVALID")?;
-            }
-
-            if !step.immediate.is_empty() {
-                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
-            }
-
-            writeln!(output)?;
+        for (pc, inst) in InstIter::new(code).with_pc() {
+            writeln!(output, "{pc:08x}: {inst}")?;
         }
-
         Ok(output)
     }
 
@@ -2566,23 +2553,21 @@ mod tests {
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
         let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
+        assert_eq!(disassembled, "00000000: PUSH1\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-
         let disassembled = Cast::disassemble(incomplete).unwrap();
-
-        assert_eq!(
-            disassembled,
-            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
-        );
+        assert_eq!(disassembled, "00000000: PUSH32\n");
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+        );
     }
 }
