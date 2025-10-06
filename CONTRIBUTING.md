@@ -55,7 +55,7 @@ Or a more detailed disclosure:
 > I consulted ChatGPT to understand the codebase but the solution
 > was fully authored manually by myself.
 
-Failure to disclose this makes it difficult to determine how much scrutiny to apply to the contribution as it is unclear how much the contributor themselves understands the code the propose to merge.
+Failure to disclose this makes it difficult to determine how much scrutiny to apply to the contribution as it is unclear how much the contributor themselves understands the code they propose to merge.
 
 If you do not disclose your use of AI assistance and reviewers suspect your contribution to be AI generated, it will likely be refused on those grounds.
 
