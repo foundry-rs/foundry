@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -7,11 +7,11 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config};
-use itertools::Itertools;
 use path_slash::PathExt;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -604,11 +604,8 @@ ignore them in the `.gitignore` file."
                 // project root. e.g monorepo.
                 // Hence, if path is lib/solady, then `lib/solady` is kept. if path is
                 // packages/contract-bedrock/lib/solady, then `lib/solady` is kept.
-                let lib_pos = path.components().find_position(|c| c.as_os_str() == lib);
-                let path = path
-                    .components()
-                    .skip(lib_pos.map(|(i, _)| i).unwrap_or(0))
-                    .collect::<PathBuf>();
+                let lib_pos = path.components().position(|c| c.as_os_str() == lib);
+                let path = path.components().skip(lib_pos.unwrap_or(0)).collect::<PathBuf>();
 
                 let branch = cap.get(2).unwrap().as_str().to_string();
                 (path, branch)

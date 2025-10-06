@@ -1,8 +1,7 @@
-use alloy_primitives::map::HashMap;
 use chrono::Utc;
 use indicatif::{MultiProgress, ProgressBar};
 use parking_lot::Mutex;
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// State of [ProgressBar]s displayed for the given test run.
 /// Shows progress of all test suites matching filter.
