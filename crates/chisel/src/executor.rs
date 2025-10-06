@@ -30,6 +30,7 @@ impl SessionSource {
             let contract = output
                 .repl_contract()
                 .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
+            trace!(?contract, "REPL contract");
             let bytecode = contract
                 .get_bytecode_bytes()
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
@@ -196,7 +197,7 @@ impl SessionSource {
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env = self.config.evm_opts.evm_env().await?;
 
-        let backend = match self.config.backend.take() {
+        let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
