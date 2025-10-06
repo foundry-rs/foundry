@@ -490,9 +490,7 @@ impl TestArgs {
 
                 let build_id = output
                     .artifact_ids()
-                    .find_map(
-                        |(id, _)| if id.source == path { Some(id.build_id) } else { None },
-                    )
+                    .find_map(|(id, _)| if id.source == path { Some(id.build_id) } else { None })
                     .unwrap_or_default();
 
                 // If we have cached results for these mutations and build id, use them and skip

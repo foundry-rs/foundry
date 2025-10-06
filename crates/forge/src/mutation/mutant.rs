@@ -207,43 +207,6 @@ pub enum MutationType {
     UnaryOperator(UnaryOpMutated),
 }
 
-impl MutationType {
-    fn get_name(&self) -> String {
-        match self {
-            Self::Assignment(var_type) => match var_type {
-                AssignVarTypes::Literal(lit) => match lit {
-                    OwnedLiteral::Bool(_) => format!("{}_{}", "Assignment", "bool"),
-                    OwnedLiteral::Number(_) => format!("{}_{}", "Assignment", "number"),
-                    OwnedLiteral::Address(_) => format!("{}_{}", "Assignment", "address"),
-                    OwnedLiteral::Str { kind, .. } => match kind {
-                        OwnedStrKind::Str => format!("{}_{}", "Assignment", "str"),
-                        OwnedStrKind::Unicode => format!("{}_{}", "Assignment", "unicode"),
-                        OwnedStrKind::Hex => format!("{}_{}", "Assignment", "hex"),
-                    },
-                    OwnedLiteral::Rational(_) => format!("{}_{}", "Assignment", "rational"),
-                    OwnedLiteral::Err(_) => format!("{}_{}", "Assignment", "err"),
-                },
-                AssignVarTypes::Identifier(ident) => {
-                    format!("{}_{}", "Assignment", ident)
-                }
-            },
-            Self::BinaryOp(kind) => {
-                format!("{}_{:?}", "BinaryOp", kind)
-            }
-            Self::DeleteExpression => "DeleteExpression".to_string(),
-            Self::ElimDelegate => "ElimDelegate".to_string(),
-            Self::FunctionCall => "FunctionCall".to_string(),
-            Self::Require => "Require".to_string(),
-            Self::SwapArgumentsFunction => "SwapArgumentsFunction".to_string(),
-            Self::SwapArgumentsOperator => "SwapArgumentsOperator".to_string(),
-            Self::UnaryOperator(mutated) => {
-                // avoid operator in tmp dir name
-                format!("{}_{:?}", "UnaryOperator", mutated.resulting_op_kind)
-            }
-        }
-    }
-}
-
 impl Display for MutationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -264,7 +227,7 @@ impl Display for MutationType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MutationResult {
     Dead,
     Alive,
@@ -272,12 +235,44 @@ pub enum MutationResult {
 }
 
 /// A given mutation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mutant {
     /// The path to the project root where this mutant (tries to) live
     pub path: PathBuf,
+    #[serde(serialize_with = "serialize_span", deserialize_with = "deserialize_span")]
     pub span: Span,
     pub mutation: MutationType,
+}
+
+// Custom serialization for Span (since solar_parse::ast::Span doesn't implement Serialize)
+fn serialize_span<S>(span: &Span, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::Serialize;
+    #[derive(Serialize)]
+    struct SpanHelper {
+        lo: u32,
+        hi: u32,
+    }
+    SpanHelper { lo: span.lo().0, hi: span.hi().0 }.serialize(serializer)
+}
+
+fn deserialize_span<'de, D>(deserializer: D) -> Result<Span, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    struct SpanHelper {
+        lo: u32,
+        hi: u32,
+    }
+    let helper = SpanHelper::deserialize(deserializer)?;
+    Ok(Span::new(
+        solar_parse::interface::BytePos(helper.lo),
+        solar_parse::interface::BytePos(helper.hi),
+    ))
 }
 
 impl Display for Mutant {
@@ -290,35 +285,5 @@ impl Display for Mutant {
             self.span.hi().0,
             self.mutation
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::U256;
-
-    #[test]
-    fn test_mutation_type_get_name() {
-        assert_eq!(MutationType::DeleteExpression.get_name(), "DeleteExpression");
-        assert_eq!(MutationType::ElimDelegate.get_name(), "ElimDelegate");
-        assert_eq!(MutationType::FunctionCall.get_name(), "FunctionCall");
-        assert_eq!(MutationType::Require.get_name(), "Require");
-        assert_eq!(MutationType::SwapArgumentsFunction.get_name(), "SwapArgumentsFunction");
-        assert_eq!(MutationType::SwapArgumentsOperator.get_name(), "SwapArgumentsOperator");
-
-        assert_eq!(MutationType::BinaryOp(BinOpKind::Add).get_name(), "BinaryOp_Add");
-
-        let lit_num = OwnedLiteral::Number(U256::from(123));
-        assert_eq!(
-            MutationType::Assignment(AssignVarTypes::Literal(lit_num)).get_name(),
-            "Assignment_number"
-        );
-
-        let ident = AssignVarTypes::Identifier("myVar".to_string());
-        assert_eq!(MutationType::Assignment(ident).get_name(), "Assignment_myVar");
-
-        let unary_mutated = UnaryOpMutated::new("a--".to_string(), UnOpKind::PreInc);
-        assert_eq!(MutationType::UnaryOperator(unary_mutated).get_name(), "UnaryOperator_PreInc");
     }
 }
