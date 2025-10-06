@@ -91,13 +91,7 @@ impl ParseItem {
         // Remove extra indent from source lines.
         self.code = code
             .lines()
-            .map(|line| {
-                if line.chars().take_while(|c| c.is_whitespace()).count() > 4 {
-                    line.strip_prefix("    ").unwrap_or(line)
-                } else {
-                    line
-                }
-            })
+            .map(|line| line.strip_prefix("    ").unwrap_or(line))
             .collect::<Vec<_>>()
             .join("\n");
         self

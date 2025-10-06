@@ -9,7 +9,6 @@ use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
-use solar::interface::source_map::FileName;
 use std::{
     cmp::Ordering,
     fs,
@@ -136,13 +135,9 @@ impl DocBuilder {
                     let mut files = vec![];
 
                     // Read and parse source file
-                    if let Some(ast) = gcx.sources.iter().find(|source| {
-                        if let FileName::Real(src_path) = &source.file.name {
-                            return src_path.eq(path);
-                        }
-                        false
-                    }) && let Some(source) =
-                        forge_fmt::format_ast(gcx, ast, self.fmt.clone().into())
+                    if let Some((_, ast)) = gcx.get_ast_source(path)
+                        && let Some(source) =
+                            forge_fmt::format_ast(gcx, ast, self.fmt.clone().into())
                     {
                         let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
                             Ok(res) => res,
