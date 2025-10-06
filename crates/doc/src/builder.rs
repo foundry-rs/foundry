@@ -12,7 +12,6 @@ use rayon::prelude::*;
 use solar::interface::source_map::FileName;
 use std::{
     cmp::Ordering,
-    fmt::Debug,
     fs,
     path::{Path, PathBuf},
 };
