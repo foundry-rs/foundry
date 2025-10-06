@@ -192,13 +192,14 @@ impl TestOutcome {
             successes.to_string().green()
         )?;
 
-        // Show helpful next steps for failed tests
-        sh_println!("\n💡 Next steps:")?;
-        sh_println!("  • Rerun only failed tests: forge test --rerun")?;
-        sh_println!("  • Debug specific test: forge test --debug --match-test <test_name>")?;
-        sh_println!("  • Watch mode with smart rerun: forge test --watch --rerun-failed")?;
-        sh_println!("  • View detailed traces: forge test -vvv --match-test <test_name>")?;
-        sh_println!("  • Run specific test: forge test --match-test <test_name>")?;
+        // Show helpful hint for rerunning failed tests
+        let test_word = if failures == 1 { "test" } else { "tests" };
+        sh_println!(
+            "\n💡 Tip: Run {} to retry only the {} failed {}",
+            "`forge test --rerun`".cyan(),
+            failures,
+            test_word
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);
