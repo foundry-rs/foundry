@@ -29,22 +29,14 @@ impl Cheatcode for keyExistsJsonCall {
 impl Cheatcode for parseJson_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json } = self;
-        parse_json(
-            json,
-            "$",
-            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-        )
+        parse_json(json, "$", state.struct_defs())
     }
 }
 
 impl Cheatcode for parseJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json(
-            json,
-            key,
-            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-        )
+        parse_json(json, key, state.struct_defs())
     }
 }
 
@@ -149,40 +141,23 @@ impl Cheatcode for parseJsonBytes32ArrayCall {
 impl Cheatcode for parseJsonType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, typeDescription } = self;
-        parse_json_coerce(
-            json,
-            "$",
-            &resolve_type(
-                typeDescription,
-                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-            )?,
-        )
-        .map(|v| v.abi_encode())
+        parse_json_coerce(json, "$", &resolve_type(typeDescription, state.struct_defs())?)
+            .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &resolve_type(
-                typeDescription,
-                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-            )?,
-        )
-        .map(|v| v.abi_encode())
+        parse_json_coerce(json, key, &resolve_type(typeDescription, state.struct_defs())?)
+            .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseJsonTypeArrayCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
-        let ty = resolve_type(
-            typeDescription,
-            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-        )?;
+        let ty = resolve_type(typeDescription, state.struct_defs())?;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
@@ -340,10 +315,9 @@ impl Cheatcode for serializeBytes_1Call {
 impl Cheatcode for serializeJsonType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeDescription, value } = self;
-        let struct_defs = state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok());
-        let ty = resolve_type(typeDescription, struct_defs)?;
+        let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
-        let value = state.serialize_value_as_json(value)?;
+        let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
         Ok(value.to_string().abi_encode())
     }
 }
@@ -351,10 +325,7 @@ impl Cheatcode for serializeJsonType_0Call {
 impl Cheatcode for serializeJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
-        let ty = resolve_type(
-            typeDescription,
-            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-        )?;
+        let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
         serialize_json(state, objectKey, valueKey, value)
     }
@@ -683,7 +654,7 @@ fn serialize_json(
     value_key: &str,
     value: DynSolValue,
 ) -> Result {
-    let value = state.serialize_value_as_json(value)?;
+    let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
     map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();

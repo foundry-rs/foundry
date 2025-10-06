@@ -21,7 +21,6 @@ use crate::{
     utils::IgnoredTraces,
 };
 use alloy_consensus::BlobTransactionSidecar;
-use alloy_dyn_abi::DynSolValue;
 use alloy_evm::eth::EthEvmContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
@@ -1081,14 +1080,9 @@ impl Cheatcodes {
         }
     }
 
-    /// Serializes a given [`DynSolValue`] into a [`serde_json::Value`].
-    ///
-    /// Attempts to preserve struct fields order if present in [`CheatcodeAnalysis`].
-    pub fn serialize_value_as_json(&self, value: DynSolValue) -> eyre::Result<serde_json::Value> {
-        foundry_common::fmt::serialize_value_as_json(
-            value,
-            self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
-        )
+    /// Returns struct definitions from the analysis, if available.
+    pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
+        self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
     }
 }
 
