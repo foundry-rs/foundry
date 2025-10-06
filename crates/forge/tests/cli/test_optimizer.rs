@@ -1535,3 +1535,51 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// Preprocess test contracts with try constructor statements that bind return type.
+forgetest_init!(preprocess_contract_with_try_ctor_stmt_and_returns, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "CounterB.sol",
+        r#"
+contract CounterB {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a > 0, \"ctor failure\");
+        number = a;
+    }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "CounterReturns.t.sol",
+        r#"
+import {Test} from \"forge-std/Test.sol\";
+import {CounterB} from \"../src/CounterB.sol\";
+
+contract CounterReturnsTest is Test {
+    function test_try_counterB_creation_returns() public {
+        try new CounterB(1) returns (CounterB c) {
+            // ensure the bound variable is of type CounterB
+            c;
+        } catch {
+            revert();
+        }
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 12 files with [..]
+...
+[PASS] test_try_counterB_creation_returns() (gas: [..])
+...
+"#]]);
+});
