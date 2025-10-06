@@ -81,7 +81,19 @@ impl ParseItem {
     ///
     /// The parameter should be the full source file where this parse item originated from.
     pub fn with_code(mut self, source: &str) -> Self {
-        self.code = source[self.source.range()].to_string();
+        let mut code = source[self.source.range()].to_string();
+
+        // Special function case, add `;` at the end of definition.
+        if let ParseSource::Function(_) = self.source {
+            code.push(';');
+        }
+
+        // Remove extra indent from source lines.
+        self.code = code
+            .lines()
+            .map(|line| line.strip_prefix("    ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
         self
     }
 
@@ -166,7 +178,7 @@ impl ParseSource {
             Self::Error(error) => error.loc,
             Self::Struct(structure) => structure.loc,
             Self::Enum(enumerable) => enumerable.loc,
-            Self::Function(func) => func.loc,
+            Self::Function(func) => func.loc_prototype,
             Self::Type(ty) => ty.loc,
         }
         .range()

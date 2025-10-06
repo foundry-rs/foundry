@@ -382,6 +382,11 @@ pub struct SessionSourceConfig {
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
     pub calldata: Option<Vec<u8>>,
+    /// Enable viaIR with minimum optimization
+    ///
+    /// This can fix most of the "stack too deep" errors while resulting a
+    /// relatively accurate source map.
+    pub ir_minimum: bool,
 }
 
 impl SessionSourceConfig {
@@ -603,7 +608,8 @@ impl SessionSource {
     fn compile(&self) -> Result<ProjectCompileOutput> {
         let sources = self.get_sources();
 
-        let project = self.config.foundry_config.ephemeral_project()?;
+        let mut project = self.config.foundry_config.ephemeral_project()?;
+        self.config.foundry_config.disable_optimizations(&mut project, self.config.ir_minimum);
         let mut output = ProjectCompiler::with_sources(&project, sources)?.compile()?;
 
         if output.has_compiler_errors() {
