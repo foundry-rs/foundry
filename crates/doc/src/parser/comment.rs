@@ -186,6 +186,44 @@ impl<'a> CommentsRef<'a> {
             (tag1, tag2) => tag1 == tag2,
         })
     }
+    
+
+    /// Return all `(formula, namespace)` pairs from `@custom:storage-location` comments.
+    ///
+    /// Supports lines like:
+    ///   - `erc7201:my.ns`
+    ///   - `erc7201 my.ns`
+    ///   - concatenated pairs: `erc7201:ns1erc7201:ns2`
+    pub fn storage_location_pairs(&self) -> Vec<(String, String)> {
+        self.iter()
+            .filter_map(|c| match &c.tag {
+                CommentTag::Custom(name) if name == "storage-location" => Some(c.value.as_str()),
+                _ => None,
+            })
+            .flat_map(Self::split_erc_storage_pairs)
+            .collect()
+    }
+
+    fn split_erc_storage_pairs(line: &str) -> Vec<(String, String)> {
+        // Split by any sequence of whitespace or commas
+        line.split(|c: char| c.is_whitespace() || c == ',')
+            .filter_map(|part| {
+                let part = part.trim();
+                if !part.to_ascii_lowercase().starts_with("erc") {
+                    return None;
+                }
+                // Split at the first colon if present, otherwise first space
+                let (formula, ns) = match part.split_once(':').or_else(|| part.split_once(' ')) {
+                    Some((f, r)) => (f.trim(), r.trim()),
+                    None => return None,
+                };
+                if formula.is_empty() || ns.is_empty() {
+                    return None;
+                }
+                Some((formula.to_string(), ns.to_string()))
+            })
+            .collect()
+    }
 
     /// Find an [CommentTag::Inheritdoc] comment and extract the base.
     fn find_inheritdoc_base(&self) -> Option<&'a str> {

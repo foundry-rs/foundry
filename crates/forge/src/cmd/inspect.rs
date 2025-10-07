@@ -21,6 +21,9 @@ use foundry_compilers::{
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
+// use foundry_common::comments::{Comment, CommentTag, Comments, CommentsRef};
+use forge_doc::{Comment, CommentTag, Comments, CommentsRef};
+
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -108,9 +111,9 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                let bucket_rows =
+                let namespaced_rows =
                     parse_storage_locations(artifact.raw_metadata.as_ref()).unwrap_or_default();
-                print_storage_layout(artifact.storage_layout.as_ref(), bucket_rows, wrap)?;
+                print_storage_layout(artifact.storage_layout.as_ref(), namespaced_rows, wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -304,7 +307,7 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(
     storage_layout: Option<&StorageLayout>,
-    bucket_rows: Vec<(String, String)>,
+    namespaced_rows: Vec<(String, String, String)>,
     should_wrap: bool,
 ) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
@@ -338,14 +341,14 @@ pub fn print_storage_layout(
                     &slot.contract,
                 ]);
             }
-            for (type_str, slot_dec) in &bucket_rows {
+            for (formula, ns, slot_hex) in &namespaced_rows {
                 table.add_row([
-                    "storage-location",
-                    type_str.as_str(),
-                    slot_dec.as_str(),
+                    "",
+                    formula.as_str(),
+                    slot_hex.as_str(),
                     "0",
                     "32",
-                    type_str,
+                    ns.as_str(),
                 ]);
             }
         },
@@ -652,40 +655,6 @@ fn missing_error(field: &str) -> eyre::Error {
     )
 }
 
-static STORAGE_LOC_HEAD_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)erc[0-9]+\s*:").unwrap());
-
-static STORAGE_LOC_PAIR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?ix) ^
-        (?P<formula>erc[0-9]+)   # erc ID
-        \s*:\s*
-        (?P<ns>[A-Za-z0-9_.\-]+) # namespace (no colon)
-        $",
-    )
-    .unwrap()
-});
-
-fn split_erc_formulas(s: &str) -> Vec<(String, String)> {
-    let mut starts: Vec<usize> = STORAGE_LOC_HEAD_RE.find_iter(s).map(|m| m.start()).collect();
-
-    if starts.is_empty() {
-        return Vec::new();
-    }
-    starts.push(s.len());
-    let mut out = Vec::new();
-    for w in starts.windows(2) {
-        let (beg, end) = (w[0], w[1]);
-        let slice = s[beg..end].trim();
-        if let Some(caps) = STORAGE_LOC_PAIR_RE.captures(slice) {
-            let formula = caps.name("formula").unwrap().as_str().to_string();
-            let ns = caps.name("ns").unwrap().as_str().to_string();
-            out.push((formula, ns));
-        }
-    }
-    out
-}
-
 #[inline]
 fn compute_erc7201_slot_hex(ns: &str) -> String {
     // Step 1: keccak256(bytes(id))
@@ -743,22 +712,33 @@ fn get_custom_tag_lines(devdoc: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn parse_storage_locations(raw_metadata: Option<&String>) -> Option<Vec<(String, String)>> {
+pub fn parse_storage_locations(
+    raw_metadata: Option<&String>
+) -> Option<Vec<(String , String, String)>> {
     let raw = raw_metadata?;
     let v: serde_json::Value = serde_json::from_str(raw).ok()?;
     let devdoc = v.get("output")?.get("devdoc")?;
-
     let loc_lines = get_custom_tag_lines(devdoc, "custom:storage-location");
-    let out: Vec<(String, String)> = loc_lines
-        .iter()
-        .flat_map(|s| split_erc_formulas(s))
-        .filter_map(|(formula, ns)| derive_slot_hex(&formula, &ns).map(|slot_hex| (ns, slot_hex)))
-        .collect();
-
-    if !out.is_empty() {
-        return Some(out);
+    if loc_lines.is_empty() {
+        return None;
     }
-    if !out.is_empty() { Some(out) } else { None }
+    let mut comments = Comments::default();
+    for s in loc_lines {
+        comments.push(Comment::new(
+            CommentTag::Custom("storage-location".to_owned()),
+            s,
+        ));
+    }
+    let cref = CommentsRef::from(&comments);
+    let out: Vec<(String, String, String)> = cref
+        .storage_location_pairs()
+        .into_iter()
+        .filter_map(|(formula, ns)| {
+            derive_slot_hex(&formula, &ns)
+                .map(|slot_hex| (formula.to_ascii_lowercase(), ns, slot_hex))
+        })
+        .collect();
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn short_hex(h: &str) -> String {
