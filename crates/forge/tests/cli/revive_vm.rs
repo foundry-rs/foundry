@@ -40,15 +40,7 @@ contract BalanceTranslationTest is DSTest {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 
 Ran 1 test for src/BalanceTranslationTest.t.sol:BalanceTranslationTest
 [PASS] test_BalanceTranslationRevmPvm() ([GAS])
@@ -143,15 +135,7 @@ contract CounterTest is DSTest {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 
 Ran 4 tests for src/CounterTest.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -200,15 +184,7 @@ contract SetNonce is DSTest {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 
 Ran 1 test for src/SetNonce.t.sol:SetNonce
 [PASS] test_SetNonce() ([GAS])
@@ -253,15 +229,7 @@ contract Roll is DSTest {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 
 Ran 1 test for src/Roll.t.sol:Roll
 [PASS] test_Roll() ([GAS])
@@ -307,15 +275,7 @@ contract Warp is DSTest {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 [..] INFO revive_strategy::cheatcodes: startup PVM migration initiated
 [..] INFO revive_strategy::cheatcodes: switching to PVM
 [..] INFO revive_strategy::cheatcodes: startup PVM migration completed
@@ -367,15 +327,7 @@ function test_Balance() public {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 [..] INFO revive_strategy::cheatcodes: startup PVM migration initiated
 [..] INFO revive_strategy::cheatcodes: switching to PVM
 [..] INFO revive_strategy::cheatcodes: startup PVM migration completed
@@ -442,15 +394,7 @@ function testFuzz_Load(uint256 x) public {
 Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning: Warning: Your code or one of its dependencies uses the 'extcodesize' instruction, which is
-usually needed in the following cases:
-  1. To detect whether an address belongs to a smart contract.
-  2. To detect whether the deploy code execution has finished.
-Polkadot comes with native account abstraction support (so smart contracts are just accounts
-coverned by code), and you should avoid differentiating between contracts and non-contract
-addresses.
-[FILE]
+Compiler run successful!
 
 Ran 1 test for src/Load.t.sol:Load
 [PASS] testFuzz_Load(uint256) (runs: 256, [AVG_GAS])
