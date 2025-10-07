@@ -379,8 +379,7 @@ fn deploy_code(
     let caller = ccx
         .state
         .get_prank(ccx.ecx.journaled_state.depth())
-        .map(|prank| prank.new_caller)
-        .unwrap_or(ccx.caller);
+        .map_or(ccx.caller, |prank| prank.new_caller);
 
     let outcome = executor.exec_create(
         CreateInputs {
