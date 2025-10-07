@@ -9,7 +9,9 @@ use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
+use std::collections::HashSet;
 use std::path::PathBuf;
+use tracing::warn;
 
 #[cfg(feature = "aws-kms")]
 use alloy_signer_aws::{AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
@@ -129,44 +131,73 @@ impl WalletSigner {
     /// - the result for Ledger signers includes addresses available for both LedgerLive and Legacy
     ///   derivation paths
     /// - for Local and AWS signers the result contains a single address
+    /// - errors when retrieving addresses are logged but do not prevent returning available addresses
     pub async fn available_senders(&self, max: usize) -> Result<Vec<Address>> {
         let mut senders = Vec::new();
+        let mut seen_addresses = HashSet::new();
+        
         match self {
             Self::Local(local) => {
-                senders.push(local.address());
+                let address = local.address();
+                if seen_addresses.insert(address) {
+                    senders.push(address);
+                }
             }
             Self::Ledger(ledger) => {
+                // Try LedgerLive derivation path
                 for i in 0..max {
-                    if let Ok(address) =
-                        ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
-                    {
-                        senders.push(address);
+                    match ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await {
+                        Ok(address) => {
+                            if seen_addresses.insert(address) {
+                                senders.push(address);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to get Ledger address at index {} (LedgerLive): {}", i, e);
+                        }
                     }
                 }
+                // Try Legacy derivation path
                 for i in 0..max {
-                    if let Ok(address) =
-                        ledger.get_address_with_path(&LedgerHDPath::Legacy(i)).await
-                    {
-                        senders.push(address);
+                    match ledger.get_address_with_path(&LedgerHDPath::Legacy(i)).await {
+                        Ok(address) => {
+                            if seen_addresses.insert(address) {
+                                senders.push(address);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to get Ledger address at index {} (Legacy): {}", i, e);
+                        }
                     }
                 }
             }
             Self::Trezor(trezor) => {
                 for i in 0..max {
-                    if let Ok(address) =
-                        trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
-                    {
-                        senders.push(address);
+                    match trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await {
+                        Ok(address) => {
+                            if seen_addresses.insert(address) {
+                                senders.push(address);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to get Trezor address at index {} (TrezorLive): {}", i, e);
+                        }
                     }
                 }
             }
             #[cfg(feature = "aws-kms")]
             Self::Aws(aws) => {
-                senders.push(alloy_signer::Signer::address(aws));
+                let address = alloy_signer::Signer::address(aws);
+                if seen_addresses.insert(address) {
+                    senders.push(address);
+                }
             }
             #[cfg(feature = "gcp-kms")]
             Self::Gcp(gcp) => {
-                senders.push(alloy_signer::Signer::address(gcp));
+                let address = alloy_signer::Signer::address(gcp);
+                if seen_addresses.insert(address) {
+                    senders.push(address);
+                }
             }
         }
         Ok(senders)
