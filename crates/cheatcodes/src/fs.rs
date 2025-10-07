@@ -12,7 +12,10 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::{context::CreateScheme, interpreter::CreateInputs};
+use revm::{
+    context::{CreateScheme, JournalTr},
+    interpreter::CreateInputs,
+};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -372,9 +375,16 @@ fn deploy_code(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
+    // If prank active at current depth, then use it as caller for create input.
+    let caller = ccx
+        .state
+        .get_prank(ccx.ecx.journaled_state.depth())
+        .map(|prank| prank.new_caller)
+        .unwrap_or(ccx.caller);
+
     let outcome = executor.exec_create(
         CreateInputs {
-            caller: ccx.caller,
+            caller,
             scheme,
             value: value.unwrap_or(U256::ZERO),
             init_code: bytecode.into(),
