@@ -126,3 +126,27 @@ Diff in src/FmtTest.sol:
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/12000
+forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
+    // Only line breaks
+    prj.add_raw_source("FmtTest.sol", "\n\n");
+
+    cmd.forge_fuse().args(["fmt", "src/FmtTest.sol"]);
+    cmd.assert_success();
+    assert_data_eq!(std::fs::read_to_string(prj.root().join("src/FmtTest.sol")).unwrap(), "",);
+    cmd.forge_fuse().args(["fmt", "--check", "src/FmtTest.sol"]);
+    cmd.assert_success();
+
+    // Only cmnts
+    prj.add_raw_source("FmtTest.sol", "\n\n// this is a cmnt");
+
+    cmd.forge_fuse().args(["fmt", "src/FmtTest.sol"]);
+    cmd.assert_success();
+    assert_data_eq!(
+        std::fs::read_to_string(prj.root().join("src/FmtTest.sol")).unwrap(),
+        "// this is a cmnt\n",
+    );
+    cmd.forge_fuse().args(["fmt", "--check", "src/FmtTest.sol"]);
+    cmd.assert_success();
+});

@@ -962,17 +962,15 @@ impl<'sess> State<'sess, '_> {
 
         let mut is_leading = true;
         while let Some(cmnt) = self.next_comment() {
-            let is_blank = cmnt.style.is_blank();
-            if !skip_leading_ws || !is_leading {
-                if let Some(cmnt) = self.handle_comment(cmnt, false) {
-                    self.print_comment(cmnt, CommentConfig::default());
-                } else if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
-                    self.hardbreak();
-                }
+            if cmnt.style.is_blank() && skip_leading_ws && is_leading {
+                continue;
             }
 
-            if is_blank {
-                is_leading = false;
+            is_leading = false;
+            if let Some(cmnt) = self.handle_comment(cmnt, false) {
+                self.print_comment(cmnt, CommentConfig::default());
+            } else if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
+                self.hardbreak();
             }
         }
     }
