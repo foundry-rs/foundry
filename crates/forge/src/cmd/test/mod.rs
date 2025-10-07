@@ -258,7 +258,8 @@ impl TestArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }

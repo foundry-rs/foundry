@@ -93,15 +93,13 @@ impl DependencyInstallOpts {
     /// See also [`Self::install`].
     ///
     /// Returns true if any dependency was installed.
-    pub fn install_missing_dependencies(self, config: &mut Config) -> bool {
+    pub async fn install_missing_dependencies(self, config: &mut Config) -> bool {
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
             let _ = sh_println!("Missing dependencies found. Installing now...\n");
 
-            // Create a runtime to handle async install
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            if rt.block_on(self.install(config, Vec::new())).is_err() {
+            if self.install(config, Vec::new()).await.is_err() {
                 let _ =
                     sh_warn!("Your project has missing dependencies that could not be installed.");
             }
@@ -277,8 +275,8 @@ impl DependencyInstallOpts {
     }
 }
 
-pub fn install_missing_dependencies(config: &mut Config) -> bool {
-    DependencyInstallOpts::default().install_missing_dependencies(config)
+pub async fn install_missing_dependencies(config: &mut Config) -> bool {
+    DependencyInstallOpts::default().install_missing_dependencies(config).await
 }
 
 /// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.

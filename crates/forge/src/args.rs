@@ -73,7 +73,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             if cmd.is_watch() {
                 global.block_on(watch::watch_build(cmd))
             } else {
-                cmd.run().map(drop)
+                global.block_on(cmd.run()).map(drop)
             }
         }
         ForgeSubcommand::VerifyContract(args) => global.block_on(args.run()),
