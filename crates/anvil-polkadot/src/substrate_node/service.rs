@@ -17,14 +17,22 @@ use polkadot_sdk::{
     sp_io,
     sp_keystore::KeystorePtr,
     sp_timestamp,
+    sp_wasm_interface::ExtendedHostFunctions,
     substrate_frame_rpc_system::SystemApiServer,
 };
 use std::sync::Arc;
 use substrate_runtime::{OpaqueBlock as Block, RuntimeApi};
 use tokio_stream::wrappers::ReceiverStream;
 
-pub type FullClient =
-    sc_service::TFullClient<Block, RuntimeApi, WasmExecutor<sp_io::SubstrateHostFunctions>>;
+use crate::substrate_node::host::{PublicKeyToHashOverride, SenderAddressRecoveryOverride};
+
+pub type Executor = WasmExecutor<
+    ExtendedHostFunctions<
+        ExtendedHostFunctions<sp_io::SubstrateHostFunctions, SenderAddressRecoveryOverride>,
+        PublicKeyToHashOverride,
+    >,
+>;
+pub type FullClient = sc_service::TFullClient<Block, RuntimeApi, Executor>;
 
 pub type Backend = sc_service::TFullBackend<Block>;
 pub type TransactionPoolHandle = sc_transaction_pool::TransactionPoolHandle<Block, FullClient>;
@@ -83,6 +91,7 @@ pub fn new(
         time_manager.clone(),
         seal_engine_command_sender,
     ));
+
     let rpc_handlers = spawn_rpc_server(
         &mut task_manager,
         client.clone(),

@@ -1,4 +1,4 @@
-use crate::utils::{TestNode, assert_with_tolerance, unwrap_response};
+use crate::utils::{BlockWaitTimeout, TestNode, assert_with_tolerance, unwrap_response};
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::{TransactionRequest, anvil::MineOptions};
 use anvil::eth::backend::time::duration_since_unix_epoch;
@@ -196,8 +196,10 @@ async fn test_auto_mine() {
         .to(Address::from(ReviveAddress::new(
             Account::from(subxt_signer::eth::dev::baltathar()).address(),
         )));
-    let _tx_hash0 = node.send_transaction(transaction.clone()).await;
-    node.wait_for_block_with_timeout(1, std::time::Duration::from_secs(2)).await.unwrap();
+    let _tx_hash0 = node
+        .send_transaction(transaction, Some(BlockWaitTimeout::new(1, Duration::from_secs(1))))
+        .await
+        .unwrap();
     assert_eq!(node.best_block_number().await, 1);
 }
 
@@ -208,6 +210,8 @@ async fn test_mixed_mining() {
     anvil_node_config.block_time = Some(Duration::from_secs(1));
     let substrate_node_config = SubstrateNodeConfig::new(&anvil_node_config);
     let mut node = TestNode::new(anvil_node_config, substrate_node_config).await.unwrap();
+
+    // Wait for automined block after sending a transaction.
     let transaction = TransactionRequest::default()
         .value(U256::from_str_radix("100000000000000000", 10).unwrap())
         .from(Address::from(ReviveAddress::new(
@@ -216,9 +220,13 @@ async fn test_mixed_mining() {
         .to(Address::from(ReviveAddress::new(
             Account::from(subxt_signer::eth::dev::baltathar()).address(),
         )));
-    let _tx_hash0 = node.send_transaction(transaction.clone()).await;
-    node.wait_for_block_with_timeout(1, std::time::Duration::from_secs(2)).await.unwrap();
+    let _tx_hash0 = node
+        .send_transaction(transaction, Some(BlockWaitTimeout::new(1, Duration::from_secs(1))))
+        .await
+        .unwrap();
     assert_eq!(node.best_block_number().await, 1);
+
+    // Wait for second block mined through interval mining.
     node.wait_for_block_with_timeout(2, std::time::Duration::from_secs(2)).await.unwrap();
     assert_eq!(node.best_block_number().await, 2);
 }

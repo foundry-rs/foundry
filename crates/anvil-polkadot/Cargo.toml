@@ -20,6 +20,9 @@ path = "bin/main.rs"
 [dependencies]
 # foundry internal
 substrate-runtime = { path = "substrate-runtime" }
+secp256k1 = { version = "0.28.0", default-features = false }
+libsecp256k1 = { version = "0.7.0", default-features = false }
+sp-runtime-interface = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", default-features = false }
 polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", default-features = false, features = [
     "sc-allocator",
 	"sc-basic-authorship",
@@ -139,6 +142,7 @@ alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
+rstest = "0.26.1"
 
 op-alloy-rpc-types.workspace = true
 

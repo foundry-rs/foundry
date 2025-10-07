@@ -132,7 +132,7 @@ pub async fn spawn_anvil_tasks(
     logging_manager: LoggingManager,
 ) -> Result<ApiHandle> {
     // Spawn the api server.
-    let api_handle = api_server::spawn(service, logging_manager);
+    let api_handle = api_server::spawn(service, logging_manager, &anvil_config);
 
     // Spawn the network servers.
     for addr in &anvil_config.host {
@@ -163,7 +163,7 @@ pub async fn spawn_anvil_tasks(
     Ok(api_handle)
 }
 
-fn init_tracing(silent: bool) -> LoggingManager {
+pub fn init_tracing(silent: bool) -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();

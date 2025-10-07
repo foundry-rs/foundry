@@ -6,12 +6,13 @@ use anvil_core::eth::EthRequest;
 use anvil_polkadot::{
     api_server::{self, ApiHandle, revive_conversions::ReviveAddress},
     config::{AnvilNodeConfig, SubstrateNodeConfig},
+    init_tracing,
     logging::LoggingManager,
     opts::SubstrateCli,
     spawn,
     substrate_node::service::Service,
 };
-use anvil_rpc::response::ResponseResult;
+use anvil_rpc::{error::RpcError, response::ResponseResult};
 use eyre::{Result, WrapErr};
 use futures::{StreamExt, channel::oneshot};
 use parity_scale_codec::Decode;
@@ -24,9 +25,23 @@ use polkadot_sdk::{
     sp_core::{H256, storage::StorageKey, twox_128},
 };
 use serde_json::{Value, json};
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 use subxt::utils::H160;
 use tempfile::TempDir;
+
+const NATIVE_TO_ETH_RATIO: u128 = 1000000;
+pub const EXISTENTIAL_DEPOSIT: u128 = substrate_runtime::currency::DOLLARS * NATIVE_TO_ETH_RATIO;
+
+pub struct BlockWaitTimeout {
+    block_number: u32,
+    timeout: Duration,
+}
+
+impl BlockWaitTimeout {
+    pub fn new(block_number: u32, timeout: Duration) -> Self {
+        Self { block_number, timeout }
+    }
+}
 
 pub struct TestNode {
     pub service: Service,
@@ -64,8 +79,13 @@ impl TestNode {
 
         let substrate_client = SubstrateCli {};
         let config = substrate_config.create_configuration(&substrate_client, handle.clone())?;
-        let (service, task_manager, api) =
-            spawn(anvil_config, config, LoggingManager::default()).await?;
+        let logging_manager = if anvil_config.enable_tracing {
+            init_tracing(anvil_config.silent)
+        } else {
+            LoggingManager::default()
+        };
+
+        let (service, task_manager, api) = spawn(anvil_config, config, logging_manager).await?;
 
         Ok(Self { service, api, _temp_dir: temp_dir, _task_manager: task_manager })
     }
@@ -122,6 +142,26 @@ impl TestNode {
         key.extend_from_slice(&twox_128(pallet.as_bytes()));
         key.extend_from_slice(&twox_128(item.as_bytes()));
         StorageKey(key)
+    }
+
+    /// Execute an ethereum transaction.
+    pub async fn send_transaction(
+        &mut self,
+        transaction: TransactionRequest,
+        timeout: Option<BlockWaitTimeout>,
+    ) -> Result<H256, RpcError> {
+        let tx_hash = unwrap_response::<H256>(
+            self.eth_rpc(EthRequest::EthSendTransaction(Box::new(WithOtherFields::new(
+                transaction,
+            ))))
+            .await
+            .unwrap(),
+        )?;
+
+        if let Some(BlockWaitTimeout { block_number, timeout }) = timeout {
+            self.wait_for_block_with_timeout(block_number, timeout).await.unwrap();
+        }
+        Ok(tx_hash)
     }
 
     pub async fn state_get_storage(
@@ -205,17 +245,6 @@ impl TestNode {
         .unwrap()
     }
 
-    pub async fn send_transaction(&mut self, transaction_request: TransactionRequest) -> H256 {
-        unwrap_response::<H256>(
-            self.eth_rpc(EthRequest::EthSendTransaction(Box::new(WithOtherFields::new(
-                transaction_request.clone(),
-            ))))
-            .await
-            .unwrap(),
-        )
-        .unwrap()
-    }
-
     pub async fn get_block_by_hash(&mut self, hash: H256) -> Block {
         unwrap_response::<Block>(
             self.eth_rpc(EthRequest::EthGetBlockByHash(hash.as_fixed_bytes().into(), false))
@@ -239,14 +268,12 @@ where
     }
 }
 
-pub fn unwrap_response<T>(response: ResponseResult) -> Result<T, Box<dyn std::error::Error>>
+pub fn unwrap_response<T>(response: ResponseResult) -> Result<T, RpcError>
 where
     T: serde::de::DeserializeOwned,
 {
     match response {
-        ResponseResult::Success(value) => Ok(serde_json::from_value(value)?),
-        ResponseResult::Error(err) => {
-            Err(format!("Expected success but got error: {err:?}").into())
-        }
+        ResponseResult::Success(value) => Ok(serde_json::from_value(value).unwrap()),
+        ResponseResult::Error(err) => Err(err),
     }
 }

@@ -64,6 +64,7 @@ result_large_err = "allow"
 redundant_imports = "warn"
 redundant-lifetimes = "warn"
 rust-2018-idioms = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(substrate_runtime)'] }
 unused-must-use = "warn"
 # unreachable-pub = "warn"
 
