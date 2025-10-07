@@ -80,7 +80,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        self.print_remaining_comments();
+        self.print_remaining_comments(is_first);
     }
 
     /// Prints a hardbreak if the item needs an isolated line break.
