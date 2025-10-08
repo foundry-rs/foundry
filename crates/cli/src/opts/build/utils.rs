@@ -5,7 +5,10 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
-use foundry_config::Config;
+use foundry_config::{
+    Config,
+    semver::{Comparator, Version, VersionReq},
+};
 use rayon::prelude::*;
 use solar::sema::ParsingContext;
 use std::{
@@ -91,8 +94,8 @@ pub fn configure_pcx_from_compile_output(
         path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
     };
 
-    // Collect source paths based on whether targets are specified
-    let source_paths: Vec<PathBuf> = if let Some(targets) = target_paths
+    // Collect source path targets
+    let mut source_paths: HashSet<PathBuf> = if let Some(targets) = target_paths
         && !targets.is_empty()
     {
         let mut source_paths = HashSet::new();
@@ -111,7 +114,7 @@ pub fn configure_pcx_from_compile_output(
             }
         }
 
-        source_paths.into_iter().collect()
+        source_paths
     } else {
         output
             .graph()
@@ -123,21 +126,24 @@ pub fn configure_pcx_from_compile_output(
             .collect()
     };
 
-    // Find the latest version among all compiled files.
-    let version = output
-        .artifact_ids()
-        .filter_map(|(id, _)| {
-            (source_paths.is_empty() || source_paths.contains(&id.source)).then_some(id.version)
-        })
-        .max()
-        .ok_or_else(|| eyre::eyre!("no artifacts to determine Solidity version"))?;
+    // Read all sources and find the latest version.
+    let (version, sources) = {
+        let (mut max_version, mut sources) = (Version::new(0, 0, 0), Sources::new());
+        for (id, _) in output.artifact_ids() {
+            if let Ok(path) = dunce::canonicalize(&id.source) {
+                if source_paths.remove(&path) {
+                    if id.version > max_version {
+                        max_version = id.version;
+                    };
 
-    // Read the file content for each of the determined paths.
-    let mut sources = Sources::new();
-    for path in source_paths.into_iter() {
-        let source = Source::read(&path)?;
-        sources.insert(path, source);
-    }
+                    let source = Source::read(&path)?;
+                    sources.insert(path, source);
+                }
+            }
+        }
+
+        (max_version, sources)
+    };
 
     let solc = SolcVersionedInput::build(
         sources,
