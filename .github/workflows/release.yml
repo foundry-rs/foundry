@@ -126,7 +126,7 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: depot-macos-latest
+          - runner: macos-latest-large
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
