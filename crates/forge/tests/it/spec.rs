@@ -57,7 +57,7 @@ contract TestEvmVersion is Test {
 }
    "#.replace("<rpc>", &endpoint),
     );
-    // Tests should fail and record counterexample with value 2.
+
     cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
