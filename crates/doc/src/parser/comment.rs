@@ -201,8 +201,8 @@ impl<'a> CommentsRef<'a> {
         // Lowercase copy for case-insensitive matching of "erc"
         let lower = line.to_ascii_lowercase();
 
-        // Find every starting index of the substring "erc"
-        let mut starts: Vec<usize> = lower.match_indices("erc").map(|(i, _)| i).collect();
+        // Find every starting index of the substring "erc7201"
+        let mut starts: Vec<usize> = lower.match_indices("erc7201").map(|(i, _)| i).collect();
         if starts.is_empty() {
             return Vec::new();
         }
@@ -221,9 +221,8 @@ impl<'a> CommentsRef<'a> {
             // Attempt to split once at ':' or first whitespace
             let (left, right) = if let Some((l, r)) = slice.split_once(':') {
                 (l.trim(), r.trim())
-            } else if let Some((l, r)) = slice
-                .split_once(char::is_whitespace)
-                .map(|(l, r)| (l.trim(), r.trim()))
+            } else if let Some((l, r)) =
+                slice.split_once(char::is_whitespace).map(|(l, r)| (l.trim(), r.trim()))
             {
                 (l, r)
             } else {

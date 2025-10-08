@@ -3,6 +3,7 @@ use alloy_primitives::{U256, hex, keccak256};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
+use forge_doc::{Comment, CommentTag, Comments, CommentsRef};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
@@ -21,8 +22,6 @@ use foundry_compilers::{
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
-use forge_doc::{Comment, CommentTag, Comments, CommentsRef};
-
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -340,7 +339,7 @@ pub fn print_storage_layout(
                     &slot.contract,
                 ]);
             }
-            for ( _ , ns, slot_hex) in &namespaced_rows {
+            for (_, ns, slot_hex) in &namespaced_rows {
                 table.add_row([
                     "",
                     ns.as_str(),
@@ -712,8 +711,8 @@ fn get_custom_tag_lines(devdoc: &serde_json::Value, key: &str) -> Vec<String> {
 }
 
 pub fn parse_storage_locations(
-    raw_metadata: Option<&String>
-) -> Option<Vec<(String , String, String)>> {
+    raw_metadata: Option<&String>,
+) -> Option<Vec<(String, String, String)>> {
     let raw = raw_metadata?;
     let v: serde_json::Value = serde_json::from_str(raw).ok()?;
     let devdoc = v.get("output")?.get("devdoc")?;
@@ -723,10 +722,7 @@ pub fn parse_storage_locations(
     }
     let mut comments = Comments::default();
     for s in loc_lines {
-        comments.push(Comment::new(
-            CommentTag::Custom("storage-location".to_owned()),
-            s,
-        ));
+        comments.push(Comment::new(CommentTag::Custom("storage-location".to_owned()), s));
     }
     let cref = CommentsRef::from(&comments);
     let out: Vec<(String, String, String)> = cref
@@ -814,8 +810,8 @@ mod tests {
         let rows = parse_storage_locations(Some(&inner_meta_str)).expect("parser returned None");
         assert_eq!(rows.len(), 2, "expected two EIP-7201 buckets");
 
-        assert_eq!(rows[0].0, "openzeppelin.storage.ERC20");
-        assert_eq!(rows[1].0, "openzeppelin.storage.AccessControlDefaultAdminRules");
+        assert_eq!(rows[0].1, "openzeppelin.storage.ERC20");
+        assert_eq!(rows[1].1, "openzeppelin.storage.AccessControlDefaultAdminRules");
 
         let expect_short = |h: &str| {
             let hex_str = h.trim_start_matches("0x");
@@ -829,10 +825,10 @@ mod tests {
         let nonces_slot_hex =
             expect_short("0xeef3dac4538c82c8ace4063ab0acd2d15cdb5883aa1dff7c2673abb3d8698400");
 
-        assert_eq!(rows[0].1, eip712_slot_hex);
-        assert_eq!(rows[1].1, nonces_slot_hex);
+        assert_eq!(rows[0].2, eip712_slot_hex);
+        assert_eq!(rows[1].2, nonces_slot_hex);
 
-        assert!(rows[0].1.starts_with("0x") && rows[0].1.contains('…'));
-        assert!(rows[1].1.starts_with("0x") && rows[1].1.contains('…'));
+        assert!(rows[0].2.starts_with("0x") && rows[0].2.contains('…'));
+        assert!(rows[1].2.starts_with("0x") && rows[1].2.contains('…'));
     }
 }
