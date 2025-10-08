@@ -33,6 +33,8 @@ Encountered 2 failing tests in src/DeprecationTestFail.t.sol:DeprecationTestFail
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
 "#]]);
 });
 
