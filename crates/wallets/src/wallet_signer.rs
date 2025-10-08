@@ -137,8 +137,7 @@ impl WalletSigner {
 
         match self {
             Self::Local(local) => {
-                let address = local.address();
-                senders.insert(address);
+                senders.insert(local.address());
             }
             Self::Ledger(ledger) => {
                 // Try LedgerLive derivation path
@@ -148,10 +147,7 @@ impl WalletSigner {
                             senders.insert(address);
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to get Ledger address at index {} (LedgerLive): {}",
-                                i, e
-                            );
+                            warn!("Failed to get Ledger address at index {i} (LedgerLive): {e}");
                         }
                     }
                 }
@@ -162,7 +158,7 @@ impl WalletSigner {
                             senders.insert(address);
                         }
                         Err(e) => {
-                            warn!("Failed to get Ledger address at index {} (Legacy): {}", i, e);
+                            warn!("Failed to get Ledger address at index {i} (Legacy): {e}");
                         }
                     }
                 }
@@ -174,23 +170,18 @@ impl WalletSigner {
                             senders.insert(address);
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to get Trezor address at index {} (TrezorLive): {}",
-                                i, e
-                            );
+                            warn!("Failed to get Trezor address at index {i} (TrezorLive): {e}",);
                         }
                     }
                 }
             }
             #[cfg(feature = "aws-kms")]
             Self::Aws(aws) => {
-                let address = alloy_signer::Signer::address(aws);
-                senders.insert(address);
+                senders.insert(alloy_signer::Signer::address(aws));
             }
             #[cfg(feature = "gcp-kms")]
             Self::Gcp(gcp) => {
-                let address = alloy_signer::Signer::address(gcp);
-                senders.insert(address);
+                senders.insert(alloy_signer::Signer::address(gcp));
             }
         }
         Ok(senders.into_iter().collect())
