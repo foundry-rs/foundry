@@ -806,7 +806,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 5, calls: 2500, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 2, calls: 1000, reverts: 0)
 ...
 "#]]);
 });
@@ -1112,6 +1112,8 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]],
     );
 
@@ -1137,6 +1139,8 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]],
     );
 
@@ -1157,6 +1161,8 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]],
     );
