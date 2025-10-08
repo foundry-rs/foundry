@@ -1,9 +1,4 @@
-// tests enhanced `vm.parseJson` and `vm.serializeJson` cheatcodes, which are not constrained to
-// alphabetical ordering of struct keys, but rather respect the Solidity struct definition.
-forgetest_init!(test_parse_json, |prj, cmd| {
-    prj.add_test(
-        "JsonCheats",
-        r#"
+const TEST_CONTRACT: &str = r#"
 import {Test} from "forge-std/Test.sol";
 
 // Definition order: color, sweetness, sourness
@@ -56,9 +51,21 @@ contract SimpleJsonCheatsTest is Test {
         assertEq(keccak256(abi.encode(finalType)), keccak256(abi.encode(originalType)));
     }
 }
-"#,
-    );
+"#;
+
+// tests enhanced `vm.parseJson` and `vm.serializeJson` cheatcodes, which are not constrained to
+// alphabetical ordering of struct keys, but rather respect the Solidity struct definition.
+forgetest_init!(test_parse_json, |prj, cmd| {
+    prj.add_test("JsonCheats", TEST_CONTRACT);
 
     // Directly run the test. No `bind-json` or type schemas are needed.
+    cmd.forge_fuse().args(["test"]).assert_success();
+});
+
+forgetest_init!(works_when_built_is_skipped, |prj, cmd| {
+    prj.add_test("JsonCheats", TEST_CONTRACT);
+
+    cmd.forge_fuse().args(["test"]).assert_success();
+    // Should still work when the project is not compiled.
     cmd.forge_fuse().args(["test"]).assert_success();
 });
