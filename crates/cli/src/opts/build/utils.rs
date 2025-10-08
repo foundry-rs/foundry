@@ -5,10 +5,7 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
 };
-use foundry_config::{
-    Config,
-    semver::{Comparator, Version, VersionReq},
-};
+use foundry_config::{Config, semver::Version};
 use rayon::prelude::*;
 use solar::sema::ParsingContext;
 use std::{
@@ -130,15 +127,15 @@ pub fn configure_pcx_from_compile_output(
     let (version, sources) = {
         let (mut max_version, mut sources) = (Version::new(0, 0, 0), Sources::new());
         for (id, _) in output.artifact_ids() {
-            if let Ok(path) = dunce::canonicalize(&id.source) {
-                if source_paths.remove(&path) {
-                    if id.version > max_version {
-                        max_version = id.version;
-                    };
+            if let Ok(path) = dunce::canonicalize(&id.source)
+                && source_paths.remove(&path)
+            {
+                if id.version > max_version {
+                    max_version = id.version;
+                };
 
-                    let source = Source::read(&path)?;
-                    sources.insert(path, source);
-                }
+                let source = Source::read(&path)?;
+                sources.insert(path, source);
             }
         }
 
