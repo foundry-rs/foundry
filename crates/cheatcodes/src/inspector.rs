@@ -77,7 +77,7 @@ use std::{
 mod utils;
 
 pub mod analysis;
-pub use analysis::CheatcodeAnalysis;
+pub use analysis::*;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 

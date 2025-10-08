@@ -116,20 +116,34 @@ pub fn fuzz_param_from_state(
     param: &DynSolType,
     state: &EvmFuzzState,
 ) -> BoxedStrategy<DynSolValue> {
-    // Value strategy that uses the state.
+    // Value strategy that uses the state with AST literal support with the following allocations:
+    // - default: 20% AST literals, 40% DB state, 40% runtime samples (when AST available)
+    // - fallback (when no AST literals): 50% samples, 50% DB state
     let value = || {
         let state = state.clone();
         let param = param.clone();
-        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
-        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
-        // entire dictionary.
-        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
-            let state = state.dictionary_read();
-            let values = if bias { state.samples(&param) } else { None }
-                .unwrap_or_else(|| state.values())
-                .as_slice();
-            values[index.index(values.len())]
-        })
+        (any::<prop::sample::Index>(), any::<prop::sample::Index>()).prop_map(
+            move |(bias_index, select_index)| {
+                let bias = bias_index.index(10);
+                let dict = state.dictionary_read();
+                let values = match dict.ast_word(&param) {
+                    // AST literals available: use 20/40/40 allocation
+                    Some(ast_pool) if !ast_pool.is_empty() => {
+                        if bias < 2 {
+                            ast_pool
+                        } else if bias < 6 {
+                            dict.values()
+                        } else {
+                            dict.samples(&param).unwrap_or_else(|| dict.values())
+                        }
+                    }
+                    // No AST literals: use 50/50 allocation
+                    _ => if bias.is_multiple_of(2) { dict.samples(&param) } else { None }
+                        .unwrap_or_else(|| dict.values()),
+                };
+                values.as_slice()[select_index.index(values.len())]
+            },
+        )
     };
 
     // Convert the value based on the parameter type
@@ -170,13 +184,32 @@ pub fn fuzz_param_from_state(
             })
             .boxed(),
         DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
-        DynSolType::String => DynSolValue::type_strategy(param)
-            .prop_map(move |value| {
-                DynSolValue::String(
-                    value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
-                )
-            })
-            .boxed(),
+        DynSolType::String => {
+            let state_clone = state.clone();
+            (any::<prop::sample::Index>(), any::<prop::sample::Index>())
+                .prop_flat_map(move |(use_ast_index, select_index)| {
+                    let dict = state_clone.dictionary_read();
+
+                    // AST string literals available: use 30/70 allocation
+                    if let Some(ast_strings) = dict.ast_string()
+                        && !ast_strings.is_empty()
+                        && use_ast_index.index(10) < 3
+                    {
+                        let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
+                        return Just(DynSolValue::String(s.clone())).boxed();
+                    }
+
+                    // Fallback to random string generation
+                    DynSolValue::type_strategy(&DynSolType::String)
+                        .prop_map(|value| {
+                            DynSolValue::String(
+                                value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
+                            )
+                        })
+                        .boxed()
+                })
+                .boxed()
+        }
         DynSolType::Bytes => {
             value().prop_map(move |value| DynSolValue::Bytes(value.0.into())).boxed()
         }
@@ -379,16 +412,18 @@ mod tests {
         FuzzFixtures,
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
+    use alloy_primitives::B256;
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use revm::database::{CacheDB, EmptyDB};
+    use std::collections::HashSet;
 
     #[test]
     fn can_fuzz_array() {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[]);
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None);
         let strategy = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
@@ -396,5 +431,54 @@ mod tests {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
         let _ = runner.run(&strategy, |_| Ok(()));
+    }
+
+    /// Verifies that AST string literals and their keccak256 hashes are available in the fuzzer.
+    #[test]
+    fn can_fuzz_string_with_ast_literals_and_hashes() {
+        use super::fuzz_param_from_state;
+        use crate::strategies::state::LiteralMaps;
+        use alloy_dyn_abi::DynSolType;
+        use alloy_primitives::keccak256;
+        use proptest::strategy::Strategy;
+        use std::sync::Arc;
+
+        // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
+        let mut literals = LiteralMaps::default();
+        literals.strings.insert("hello".to_string());
+        literals.strings.insert("world".to_string());
+        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
+        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
+
+        let db = CacheDB::new(EmptyDB::default());
+        let state =
+            EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], Some(Arc::new(literals)));
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
+
+        // Verify strategies generates the seeded AST literals
+        let mut generated_hashes = HashSet::new();
+        let mut generated_strings = HashSet::new();
+        let string_strategy = fuzz_param_from_state(&DynSolType::String, &state);
+        let bytes32_strategy = fuzz_param_from_state(&DynSolType::FixedBytes(32), &state);
+
+        for _ in 0..256 {
+            let tree = string_strategy.new_tree(&mut runner).unwrap();
+            if let Some(s) = tree.current().as_str() {
+                generated_strings.insert(s.to_string());
+            }
+
+            let tree = bytes32_strategy.new_tree(&mut runner).unwrap();
+            if let Some((bytes, size)) = tree.current().as_fixed_bytes()
+                && size == 32
+            {
+                generated_hashes.insert(B256::from_slice(bytes));
+            }
+        }
+
+        assert!(generated_strings.contains("hello"));
+        assert!(generated_strings.contains("world"));
+        assert!(generated_hashes.contains(&keccak256("hello")));
+        assert!(generated_hashes.contains(&keccak256("world")));
     }
 }

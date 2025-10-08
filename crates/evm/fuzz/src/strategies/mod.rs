@@ -11,7 +11,7 @@ mod calldata;
 pub use calldata::{fuzz_calldata, fuzz_calldata_from_state};
 
 mod state;
-pub use state::EvmFuzzState;
+pub use state::{EvmFuzzState, LiteralMaps};
 
 mod invariants;
 pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call_strat};

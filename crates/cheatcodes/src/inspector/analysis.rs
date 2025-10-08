@@ -1,8 +1,22 @@
 //! Cheatcode information, extracted from the syntactic and semantic analysis of the sources.
 
+use alloy_dyn_abi::DynSolType;
+use alloy_primitives::{
+    B256, keccak256,
+    map::{B256IndexSet, HashMap, IndexSet},
+};
 use foundry_common::fmt::{StructDefinitions, TypeDefMap};
-use solar::sema::{self, Compiler, Gcx, hir};
-use std::sync::{Arc, OnceLock};
+use foundry_compilers::ProjectPathsConfig;
+use foundry_evm_fuzz::LiteralMaps;
+use solar::{
+    ast::{self, Visit},
+    interface::source_map::FileName,
+    sema::{self, Compiler, Gcx, hir},
+};
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, OnceLock},
+};
 use thiserror::Error;
 
 /// Represents a failure in one of the lazy analysis steps.
@@ -40,6 +54,10 @@ pub struct CheatcodeAnalysis {
     /// Cached struct definitions in the sources.
     /// Used to keep field order when parsing JSON values.
     struct_defs: OnceLock<Result<StructDefinitions, AnalysisError>>,
+
+    /// Cached literal values defined in the sources.
+    /// Used to seed the fuzzer dictionary at initialization.
+    ast_literals: OnceLock<Result<Arc<LiteralMaps>, AnalysisError>>,
 }
 
 impl std::fmt::Debug for CheatcodeAnalysis {
@@ -53,7 +71,7 @@ impl std::fmt::Debug for CheatcodeAnalysis {
 
 impl CheatcodeAnalysis {
     pub fn new(compiler: Arc<solar::sema::Compiler>) -> Self {
-        Self { compiler, struct_defs: OnceLock::new() }
+        Self { compiler, struct_defs: OnceLock::new(), ast_literals: OnceLock::new() }
     }
 
     /// Lazily initializes and returns the struct definitions.
@@ -67,6 +85,118 @@ impl CheatcodeAnalysis {
                 })
             })
             .as_ref()
+    }
+
+    /// Lazily initializes and returns the AST literals.
+    pub fn ast_literals(
+        &self,
+        max_values: usize,
+        paths_config: Option<&ProjectPathsConfig>,
+    ) -> Result<Arc<LiteralMaps>, &AnalysisError> {
+        self.ast_literals
+            .get_or_init(|| {
+                self.compiler.enter(|compiler| {
+                    let mut literals_collector = LiteralsCollector::new(max_values);
+                    for source in compiler.sources().iter() {
+                        if let Some(paths) = paths_config
+                            && let FileName::Real(source_path) = &source.file.name
+                            && paths.is_test_or_script(source_path)
+                        {
+                            continue;
+                        }
+
+                        if let Some(ref ast) = source.ast {
+                            let _ = literals_collector.visit_source_unit(ast);
+                        }
+                    }
+
+                    Ok(Arc::new(LiteralMaps {
+                        words: literals_collector.words,
+                        strings: literals_collector.strings,
+                    }))
+                })
+            })
+            .as_ref()
+            .map(Arc::clone)
+    }
+}
+
+// -- AST LITERALS -------------------------------------------------------------
+
+enum LitTy {
+    Word(B256),
+    Str(String),
+}
+
+#[derive(Debug, Default)]
+struct LiteralsCollector {
+    words: HashMap<DynSolType, B256IndexSet>,
+    strings: IndexSet<String>,
+    max_values: usize,
+    total_values: usize,
+}
+
+impl LiteralsCollector {
+    fn new(max_values: usize) -> Self {
+        Self { max_values, ..Default::default() }
+    }
+}
+
+impl<'ast> ast::Visit<'ast> for LiteralsCollector {
+    type BreakValue = ();
+
+    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<()> {
+        // Stop early if we've hit the limit
+        if self.total_values >= self.max_values {
+            return ControlFlow::Break(());
+        }
+
+        if let ast::ExprKind::Lit(lit, _) = &expr.kind
+            && let Some((ty, value)) = convert_literal(lit)
+        {
+            let is_new = match value {
+                LitTy::Word(v) => self.words.entry(ty).or_default().insert(v),
+                LitTy::Str(v) => {
+                    // For strings, also store the hashed version
+                    let hash = keccak256(v.as_bytes());
+                    if self.words.entry(DynSolType::FixedBytes(32)).or_default().insert(hash) {
+                        self.total_values += 1;
+                    }
+                    self.strings.insert(v)
+                }
+            };
+
+            if is_new {
+                self.total_values += 1;
+            }
+        }
+
+        self.walk_expr(expr)
+    }
+}
+
+fn convert_literal(lit: &ast::Lit) -> Option<(DynSolType, LitTy)> {
+    use ast::LitKind;
+
+    match &lit.kind {
+        LitKind::Number(n) => Some((DynSolType::Uint(256), LitTy::Word(B256::from(*n)))),
+        LitKind::Address(addr) => Some((DynSolType::Address, LitTy::Word(addr.into_word()))),
+        // Hex strings: store short as right-padded B256, and ignore long ones.
+        LitKind::Str(ast::StrKind::Hex, bytes, _) => {
+            let byte_slice = bytes.as_byte_str();
+            if byte_slice.len() <= 32 {
+                Some((DynSolType::Bytes, LitTy::Word(B256::right_padding_from(byte_slice))))
+            } else {
+                None
+            }
+        }
+        // Regular and unicode strings: always store as dynamic
+        LitKind::Str(_, bytes, _) => Some((
+            DynSolType::String,
+            LitTy::Str(String::from_utf8_lossy(bytes.as_byte_str()).into_owned()),
+        )),
+        // Skip
+        LitKind::Bool(_) | LitKind::Rational(_) | LitKind::Err(_) => None,
     }
 }
 

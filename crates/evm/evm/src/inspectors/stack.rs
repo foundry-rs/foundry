@@ -8,6 +8,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
+use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -306,6 +307,16 @@ pub struct InnerContextData {
 pub struct InspectorStack {
     pub cheatcodes: Option<Box<Cheatcodes>>,
     pub inner: InspectorStackInner,
+}
+
+impl InspectorStack {
+    pub fn analysis(&self) -> Option<&CheatcodeAnalysis> {
+        self.cheatcodes.as_ref().and_then(|c| c.analysis.as_ref())
+    }
+
+    pub fn paths_config(&self) -> Option<&ProjectPathsConfig> {
+        self.cheatcodes.as_ref().map(|c| &c.config.paths)
+    }
 }
 
 /// All used inpectors besides [Cheatcodes].
