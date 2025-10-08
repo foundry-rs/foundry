@@ -1,6 +1,6 @@
-//! # foundry-evm-precompiles
+//! # foundry-evm-networks
 //!
-//! Foundry EVM network custom precompiles.
+//! Foundry EVM network configuration.
 
 use crate::celo::transfer::{
     CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
