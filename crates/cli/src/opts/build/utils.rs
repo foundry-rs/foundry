@@ -78,9 +78,9 @@ pub fn configure_pcx(
 /// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`] and [`SolcVersionedInput`].
 ///
 /// # Note:
-/// uses `output.graph()` rather than `output.sources()` because sources aren't populated
-/// when build is skipped when there are no changes in the source code.
-/// <https://github.com/foundry-rs/foundry/issues/12018>
+/// uses `output.graph().source_files()` and `output.artifact_ids()` rather than `output.sources()`
+/// because sources aren't populated when build is skipped when there are no changes in the source
+/// code. <https://github.com/foundry-rs/foundry/issues/12018>
 pub fn configure_pcx_from_compile_output(
     pcx: &mut ParsingContext<'_>,
     config: &Config,
