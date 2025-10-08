@@ -98,9 +98,10 @@ impl CheatcodeAnalysis {
                 self.compiler.enter(|compiler| {
                     let mut literals_collector = LiteralsCollector::new(max_values);
                     for source in compiler.sources().iter() {
+                        // Ignore tests, scripts, and libs
                         if let Some(paths) = paths_config
                             && let FileName::Real(source_path) = &source.file.name
-                            && paths.is_test_or_script(source_path)
+                            && !source_path.starts_with(&paths.sources)
                         {
                             continue;
                         }

@@ -4154,3 +4154,70 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
+
+forgetest_init!(should_fuzz_literals, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // Add a source with magic values
+    prj.add_source(
+        "Hasher.sol",
+        r#"
+contract Hasher {
+    string constant HELLO = "hello";
+    bytes32 forbidden = keccak256("foo");
+
+    function hash(bytes memory v) external view returns (bytes32) {
+    bytes32 hashed = keccak256(v);
+
+        assert(hashed != keccak256(bytes(HELLO)));
+        assert(hashed != keccak256("world"));
+        assert(hashed != forbidden);
+        return hashed;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "HasherFuzz.t.sol",
+        r#"
+    import {Test} from "forge-std/Test.sol";
+    import {Hasher} from "src/Hasher.sol";
+
+    contract HasherTest is Test {
+        Hasher public hasher;
+        function setUp() public { hasher = new Hasher(); }
+
+        function testFuzz_Hash(string memory s) public view { hasher.hash(bytes(s)); }
+    }
+         "#,
+    );
+
+    // the fuzzer is ABLE to find a breaking input when seeding from the AST
+    prj.update_config(|config| {
+        config.fuzz.runs = 10;
+        config.fuzz.seed = Some(U256::from(100));
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
+    });
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(
+r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/HasherFuzz.t.sol:HasherTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["foo"]] testFuzz_Hash(string) (runs: 4, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+...
+Encountered a total of 1 failing tests, 0 tests succeeded
+"#);
+
+    // the fuzzer is UNABLE to find a breaking input when NOT seeding from the AST
+    prj.update_config(|config| {
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+    });
+    cmd.args(["test"]).assert_success();
+});
