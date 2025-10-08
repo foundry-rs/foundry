@@ -50,7 +50,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, optional = true }
 
 alloy-chains.workspace = true
 alloy-dyn-abi.workspace = true
@@ -120,7 +120,7 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
-aws-kms = ["foundry-wallets/aws-kms"]
-gcp-kms = ["foundry-wallets/gcp-kms"]
-turnkey = ["foundry-wallets/turnkey"]
+aws-kms = ["dep:foundry-wallets", "foundry-wallets/aws-kms"]
+gcp-kms = ["dep:foundry-wallets", "foundry-wallets/gcp-kms"]
+turnkey = ["dep:foundry-wallets", "foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
