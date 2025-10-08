@@ -192,6 +192,15 @@ impl TestOutcome {
             successes.to_string().green()
         )?;
 
+        // Show helpful hint for rerunning failed tests
+        let test_word = if failures == 1 { "test" } else { "tests" };
+        sh_println!(
+            "\nTip: Run {} to retry only the {} failed {}",
+            "`forge test --rerun`".cyan(),
+            failures,
+            test_word
+        )?;
+
         // TODO: Avoid process::exit
         std::process::exit(1);
     }
