@@ -584,7 +584,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number, config.eth_rpc_accept_invalid_certs).await?
+            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number, &config).await?
         } else {
             // dapptools compatibility
             1
@@ -595,7 +595,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None, self.config.eth_rpc_accept_invalid_certs).await?
+            next_nonce(sender, fork_url, None, &self.config).await?
         } else {
             // dapptools compatibility
             1

@@ -70,15 +70,15 @@ pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
 /// ```
 #[inline]
 #[track_caller]
-pub fn get_http_provider(builder: impl AsRef<str>, accept_invalid_certs: bool) -> RetryProvider {
-    try_get_http_provider(builder, accept_invalid_certs).unwrap()
+pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
+    try_get_http_provider(builder).unwrap()
 }
 
 /// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
 /// an anvil or other dev node) and with the default, or 7 second otherwise.
 #[inline]
-pub fn try_get_http_provider(builder: impl AsRef<str>, accept_invalid_certs: bool) -> Result<RetryProvider> {
-    ProviderBuilder::new(builder.as_ref()).accept_invalid_certs(accept_invalid_certs).build()
+pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
+    ProviderBuilder::new(builder.as_ref()).build()
 }
 
 /// Helper type to construct a `RetryProvider`

@@ -105,12 +105,32 @@ pub fn get_provider(config: &Config) -> Result<RetryProvider> {
     get_provider_builder(config)?.build()
 }
 
+/// Returns a [RetryProvider] instantiated using the given
+/// RPC URL instead of the [Config]'s RPC
+pub fn get_provider_url(config: &Config, url_str: &str) -> Result<RetryProvider> {
+    provider_builder_with_url(config, url_str)?.build()
+}
+
 /// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = ProviderBuilder::new(url.as_ref());
+    provider_builder_with_url(config, url.as_ref())
+}
+
+/// Returns a [ProviderBuilder] instantiated using [Config] values and
+/// the given RPC URL.
+fn provider_builder_with_url(config: &Config, url_str: &str) -> Result<ProviderBuilder> {
+    let builder = ProviderBuilder::new(url_str);
+    apply_config_to_builder(builder, config)
+}
+
+// Applies [Config] values to a [ProviderBuilder].
+fn apply_config_to_builder(
+    mut builder: ProviderBuilder,
+    config: &Config,
+) -> Result<ProviderBuilder> {
 
     builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
 
