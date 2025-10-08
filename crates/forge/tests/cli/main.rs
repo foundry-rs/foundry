@@ -9,6 +9,7 @@ mod bind;
 mod bind_json;
 mod build;
 mod cache;
+mod check;
 mod cmd;
 mod compiler;
 mod config;

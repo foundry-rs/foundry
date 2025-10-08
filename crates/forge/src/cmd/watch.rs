@@ -1,5 +1,5 @@
 use super::{
-    build::BuildArgs, coverage::CoverageArgs, doc::DocArgs, fmt::FmtArgs,
+    build::BuildArgs, check::CheckArgs, coverage::CoverageArgs, doc::DocArgs, fmt::FmtArgs,
     snapshot::GasSnapshotArgs, test::TestArgs,
 };
 use alloy_primitives::map::HashSet;
@@ -279,6 +279,13 @@ pub async fn run(config: watchexec::Config) -> Result<()> {
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
 pub async fn watch_build(args: BuildArgs) -> Result<()> {
+    let config = args.watchexec_config()?;
+    run(config).await
+}
+
+/// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
+/// check`
+pub async fn watch_check(args: CheckArgs) -> Result<()> {
     let config = args.watchexec_config()?;
     run(config).await
 }
