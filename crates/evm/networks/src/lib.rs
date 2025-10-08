@@ -17,12 +17,12 @@ pub mod celo;
 #[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize)]
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
-    #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
+    #[arg(help_heading = "Networks", long, visible_alias = "optimism", conflicts_with = "celo")]
     // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
     pub optimism: bool,
     /// Enable Celo network features.
-    #[arg(help_heading = "Networks", long)]
+    #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
     pub celo: bool,
 }
 
