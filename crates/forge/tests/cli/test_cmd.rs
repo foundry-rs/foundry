@@ -602,6 +602,8 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 
 Encountered a total of 1 failing tests, 1 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -763,6 +765,8 @@ Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -812,6 +816,8 @@ Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
 [FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -864,6 +870,8 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
 "#]]);
 
     // Test failure filter should be persisted.
@@ -886,6 +894,8 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 [FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
@@ -2871,6 +2881,8 @@ Encountered 1 failing test in test/Foo.t.sol:ContractTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -3001,6 +3013,8 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 
 Encountered a total of 1 failing tests, 1 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]],
     );
 
@@ -3062,6 +3076,8 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 [FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -3747,6 +3763,8 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -3855,6 +3873,8 @@ Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractC
 
 Encountered a total of 3 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
+
 "#]]);
 });
 
@@ -3936,6 +3956,8 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 [FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -4127,6 +4149,8 @@ Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 [FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
