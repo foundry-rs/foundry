@@ -6307,7 +6307,7 @@
     {
       "func": {
         "id": "getEvmVersion",
-        "description": "Returns the execution evm version.",
+        "description": "Returns the test or script execution evm version.\n**Note:** The execution evm version is not the same as the compilation one.",
         "declaration": "function getEvmVersion() external pure returns (string memory evm);",
         "visibility": "external",
         "mutability": "pure",
@@ -9813,7 +9813,7 @@
     {
       "func": {
         "id": "setEvmVersion",
-        "description": "Set the execution evm version.",
+        "description": "Set the test or script execution evm version.\n**Note:** The execution evm version is not the same as the compilation one.",
         "declaration": "function setEvmVersion(string calldata evm) external;",
         "visibility": "external",
         "mutability": "",
