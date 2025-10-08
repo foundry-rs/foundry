@@ -21,7 +21,6 @@ use foundry_compilers::{
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
-// use foundry_common::comments::{Comment, CommentTag, Comments, CommentsRef};
 use forge_doc::{Comment, CommentTag, Comments, CommentsRef};
 
 
@@ -341,14 +340,14 @@ pub fn print_storage_layout(
                     &slot.contract,
                 ]);
             }
-            for (formula, ns, slot_hex) in &namespaced_rows {
+            for ( _ , ns, slot_hex) in &namespaced_rows {
                 table.add_row([
                     "",
-                    formula.as_str(),
+                    ns.as_str(),
                     slot_hex.as_str(),
                     "0",
                     "32",
-                    ns.as_str(),
+                    ns.split('.').last().unwrap_or(ns.as_str()),
                 ]);
             }
         },

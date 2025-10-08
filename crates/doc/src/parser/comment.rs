@@ -186,14 +186,7 @@ impl<'a> CommentsRef<'a> {
             (tag1, tag2) => tag1 == tag2,
         })
     }
-    
 
-    /// Return all `(formula, namespace)` pairs from `@custom:storage-location` comments.
-    ///
-    /// Supports lines like:
-    ///   - `erc7201:my.ns`
-    ///   - `erc7201 my.ns`
-    ///   - concatenated pairs: `erc7201:ns1erc7201:ns2`
     pub fn storage_location_pairs(&self) -> Vec<(String, String)> {
         self.iter()
             .filter_map(|c| match &c.tag {
@@ -205,24 +198,53 @@ impl<'a> CommentsRef<'a> {
     }
 
     fn split_erc_storage_pairs(line: &str) -> Vec<(String, String)> {
-        // Split by any sequence of whitespace or commas
-        line.split(|c: char| c.is_whitespace() || c == ',')
-            .filter_map(|part| {
-                let part = part.trim();
-                if !part.to_ascii_lowercase().starts_with("erc") {
-                    return None;
-                }
-                // Split at the first colon if present, otherwise first space
-                let (formula, ns) = match part.split_once(':').or_else(|| part.split_once(' ')) {
-                    Some((f, r)) => (f.trim(), r.trim()),
-                    None => return None,
-                };
-                if formula.is_empty() || ns.is_empty() {
-                    return None;
-                }
-                Some((formula.to_string(), ns.to_string()))
-            })
-            .collect()
+        // Lowercase copy for case-insensitive matching of "erc"
+        let lower = line.to_ascii_lowercase();
+
+        // Find every starting index of the substring "erc"
+        let mut starts: Vec<usize> = lower.match_indices("erc").map(|(i, _)| i).collect();
+        if starts.is_empty() {
+            return Vec::new();
+        }
+        // Add sentinel to mark the end of the final slice
+        starts.push(line.len());
+
+        let mut out = Vec::new();
+
+        for window in starts.windows(2) {
+            let (a, b) = (window[0], window[1]);
+            let slice = line[a..b].trim().trim_matches(|c: char| c.is_whitespace() || c == ',');
+            if slice.is_empty() {
+                continue;
+            }
+
+            // Attempt to split once at ':' or first whitespace
+            let (left, right) = if let Some((l, r)) = slice.split_once(':') {
+                (l.trim(), r.trim())
+            } else if let Some((l, r)) = slice
+                .split_once(char::is_whitespace)
+                .map(|(l, r)| (l.trim(), r.trim()))
+            {
+                (l, r)
+            } else {
+                continue;
+            };
+
+            // Basic sanity check: left must start with "erc" (case-insensitive)
+            let left_lc = left.to_ascii_lowercase();
+            if !left_lc.starts_with("erc") {
+                continue;
+            }
+
+            // Require at least one digit after "erc"
+            if left_lc.chars().skip(3).next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                && !right.is_empty()
+            {
+                out.push((left.to_string(), right.to_string()));
+            }
+        }
+
+        out
     }
 
     /// Find an [CommentTag::Inheritdoc] comment and extract the base.
