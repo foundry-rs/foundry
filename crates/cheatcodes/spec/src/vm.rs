@@ -615,7 +615,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getEvmVersion() external pure returns (string memory evm);
 
-    /// Set the test or script execution evm version.
+    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
