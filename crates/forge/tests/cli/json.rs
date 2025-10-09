@@ -61,4 +61,6 @@ contract SimpleJsonCheatsTest is Test {
 
     // Directly run the test. No `bind-json` or type schemas are needed.
     cmd.forge_fuse().args(["test"]).assert_success();
+    // Should still work when the project is not compiled.
+    cmd.forge_fuse().args(["test"]).assert_success();
 });
