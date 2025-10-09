@@ -499,7 +499,9 @@ impl CorpusManager {
             self.current_mutated = Some(corpus.uuid);
             let new_seq = corpus.tx_seq.clone();
             let mut tx = new_seq.first().unwrap().clone();
-            self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            if !function.inputs.is_empty() {
+                self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            }
             tx
         } else {
             self.new_tx(test_runner)?
