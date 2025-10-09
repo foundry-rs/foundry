@@ -22,9 +22,23 @@ function getBinaryPath() {
   console.error(colors.reset)
   console.error(colors.yellow, `Platform: ${process.platform}, Architecture: ${process.arch}`)
   console.error(colors.reset)
-  process.exit(1)
+  // Propagate error instead of terminating the process here; handled at call site
+  throw new Error(`Platform-specific package ${PLATFORM_SPECIFIC_PACKAGE_NAME} not found.`)
 }
 
-NodeChildProcess.spawn(getBinaryPath(), process.argv.slice(2), {
+let binaryPath: string
+try {
+  binaryPath = getBinaryPath()
+} catch (err) {
+  console.error(colors.red, `Platform-specific package ${PLATFORM_SPECIFIC_PACKAGE_NAME} not found.`)
+  console.error(colors.yellow, 'This usually means the installation failed or your platform is not supported.')
+  console.error(colors.reset)
+  console.error(colors.yellow, `Platform: ${process.platform}, Architecture: ${process.arch}`)
+  console.error(colors.reset)
+  // Fail gracefully: set exit code and return; do not terminate abruptly
+  process.exitCode = 1
+  return
+}
+NodeChildProcess.spawn(binaryPath, process.argv.slice(2), {
   stdio: 'inherit'
 })
