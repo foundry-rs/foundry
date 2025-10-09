@@ -238,6 +238,7 @@ alloy-serde = { version = "1.0.36", default-features = false }
 alloy-signer = { version = "1.0.36", default-features = false }
 alloy-signer-aws = { version = "1.0.36", default-features = false }
 alloy-signer-gcp = { version = "1.0.36", default-features = false }
+alloy-signer-turnkey = { path = "../alloy/crates/signer-turnkey", default-features = false }
 alloy-signer-ledger = { version = "1.0.36", default-features = false }
 alloy-signer-local = { version = "1.0.36", default-features = false }
 alloy-signer-trezor = { version = "1.0.36", default-features = false }
