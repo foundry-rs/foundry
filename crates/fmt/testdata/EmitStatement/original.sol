@@ -25,8 +25,8 @@ function emitEvent() {
     // https://github.com/foundry-rs/foundry/issues/12029
     emit OperatorSharesDecreased(
         defaultOperator,
-        address(0),
+        address(0), // should break
         strategyMock,
-        depositAmount / 6 // should break
+        depositAmount / 6
     );
 }

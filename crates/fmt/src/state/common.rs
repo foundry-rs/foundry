@@ -393,7 +393,7 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(0);
         }
 
-        let mut last_delimeter_break = !format.with_delimiters;
+        let mut last_delimiter_break = !format.with_delimiters;
         let mut skip_last_break =
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
@@ -456,7 +456,7 @@ impl<'ast> State<'_, 'ast> {
                     self.s.break_offset(SIZE_INFINITY as usize, -self.ind);
                 }
                 skip_last_break = true;
-                last_delimeter_break = false;
+                last_delimiter_break = false;
             }
 
             // Final break if needed before the next value.
@@ -495,7 +495,7 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.cursor.advance_to(pos_hi, true);
 
-        if last_delimeter_break {
+        if last_delimiter_break {
             self.zerobreak();
         }
     }
