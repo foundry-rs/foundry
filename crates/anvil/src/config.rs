@@ -538,7 +538,7 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.networks.optimism {
+        if self.networks.is_optimism() {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
