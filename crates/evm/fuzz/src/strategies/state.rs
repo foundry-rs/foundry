@@ -142,7 +142,7 @@ pub struct FuzzDictionary {
     /// Used to revert new collected addresses at the end of each run.
     db_addresses: usize,
     /// Typed runtime sample values persisted across invariant runs.
-    /// Intially seeded with literal values collected from the source code.
+    /// Initially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
     /// String literals collected from source code. Never reverted.
     string_literals: Arc<IndexSet<String>>,
@@ -432,7 +432,7 @@ impl FuzzDictionary {
 
     /// Returns the collected AST strings.
     #[inline]
-    pub fn ast_string(&self) -> &IndexSet<String> {
+    pub fn ast_strings(&self) -> &IndexSet<String> {
         self.string_literals.as_ref()
     }
 

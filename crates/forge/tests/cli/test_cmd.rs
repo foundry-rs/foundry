@@ -2396,6 +2396,7 @@ contract Dummy {
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(111));
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
     });
 
     prj.add_source(
@@ -4205,6 +4206,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 Failing tests:
 ...
 Encountered a total of 1 failing tests, 0 tests succeeded
+...
 "#;
     let expected = |word: &'static str, runs: u32| -> String {
         format!("{EXPECTED_PREV}{word}\"]] testFuzz_Hash(string) (runs: {runs}{EXPECTED_POST}")

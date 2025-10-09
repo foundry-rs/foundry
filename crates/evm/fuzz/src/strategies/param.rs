@@ -177,7 +177,7 @@ pub fn fuzz_param_from_state(
                     let dict = state_clone.dictionary_read();
 
                     // AST string literals available: use 30/70 allocation
-                    let ast_strings = dict.ast_string();
+                    let ast_strings = dict.ast_strings();
                     if !ast_strings.is_empty() && use_ast_index.index(10) < 3 {
                         let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
                         return Just(DynSolValue::String(s.clone())).boxed();
