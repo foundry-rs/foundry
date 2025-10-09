@@ -319,9 +319,7 @@ impl TestRunnerConfig {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        if config.celo {
-            self.networks = NetworkConfigs::with_celo();
-        }
+        self.networks = config.networks;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
