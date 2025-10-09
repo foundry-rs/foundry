@@ -6306,6 +6306,26 @@
     },
     {
       "func": {
+        "id": "getEvmVersion",
+        "description": "Returns the test or script execution evm version.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "declaration": "function getEvmVersion() external pure returns (string memory evm);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "getEvmVersion()",
+        "selector": "0xaa2bb222",
+        "selectorBytes": [
+          170,
+          43,
+          178,
+          34
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getFoundryVersion",
         "description": "Returns the Foundry version.\nFormat: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>\nSample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use UNIX format (e.g., >= 1700000000)\nto compare timestamps while ignoring minor time differences.",
         "declaration": "function getFoundryVersion() external view returns (string memory version);",
@@ -9787,6 +9807,26 @@
         ]
       },
       "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setEvmVersion",
+        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "declaration": "function setEvmVersion(string calldata evm) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setEvmVersion(string)",
+        "selector": "0x43179f5a",
+        "selectorBytes": [
+          67,
+          23,
+          159,
+          90
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
