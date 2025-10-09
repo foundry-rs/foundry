@@ -12,7 +12,7 @@ forgetest!(
             .assert_success()
             .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
