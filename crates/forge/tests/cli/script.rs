@@ -3263,10 +3263,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     └─ ← [Return] 481 bytes of code
 
-  [22418] Counter::increment()
+  [..] Counter::increment()
     └─ ← [Stop]
 
 
