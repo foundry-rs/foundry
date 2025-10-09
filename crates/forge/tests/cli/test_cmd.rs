@@ -4162,50 +4162,42 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
     prj.add_source(
         "Hasher.sol",
         r#"
-contract Hasher {
-    string constant HELLO = "hello";
-    bytes32 forbidden = keccak256("foo");
+        contract Hasher {
+            string constant HELLO = "hello";
+            bytes32 forbidden = keccak256("foo");
 
-    function hash(bytes memory v) external view returns (bytes32) {
-    bytes32 hashed = keccak256(v);
+            function hash(bytes memory v) external view returns (bytes32) {
+            bytes32 hashed = keccak256(v);
 
-        assert(hashed != keccak256(bytes(HELLO)));
-        assert(hashed != keccak256("world"));
-        assert(hashed != forbidden);
-        return hashed;
-    }
-}
-"#,
+                assert(hashed != keccak256(bytes(HELLO)));
+                assert(hashed != keccak256("world"));
+                assert(hashed != forbidden);
+                return hashed;
+            }
+        }
+        "#,
     );
 
     prj.add_test(
         "HasherFuzz.t.sol",
         r#"
-    import {Test} from "forge-std/Test.sol";
-    import {Hasher} from "src/Hasher.sol";
+            import {Test} from "forge-std/Test.sol";
+            import {Hasher} from "src/Hasher.sol";
 
-    contract HasherTest is Test {
-        Hasher public hasher;
-        function setUp() public { hasher = new Hasher(); }
+            contract HasherTest is Test {
+                Hasher public hasher;
+                function setUp() public { hasher = new Hasher(); }
 
-        function testFuzz_Hash(string memory s) public view { hasher.hash(bytes(s)); }
-    }
-         "#,
+                function testFuzz_Hash(string memory s) public view { hasher.hash(bytes(s)); }
+            }
+                 "#,
     );
 
-    // the fuzzer is ABLE to find a breaking input when seeding from the AST
-    prj.update_config(|config| {
-        config.fuzz.runs = 10;
-        config.fuzz.seed = Some(U256::from(100));
-        config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
-    });
-    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(
-r#"[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
+    const EXPECTED_PREV: &str = r#"No files changed, compilation skipped
 
 Ran 1 test for test/HasherFuzz.t.sol:HasherTest
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=["foo"]] testFuzz_Hash(string) (runs: 4, [AVG_GAS])
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[""#;
+    const EXPECTED_POST: &str = r#", [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
@@ -4213,11 +4205,30 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 Failing tests:
 ...
 Encountered a total of 1 failing tests, 0 tests succeeded
-"#);
+"#;
+    let expected = |word: &'static str, runs: u32| -> String {
+        format!("{EXPECTED_PREV}{word}\"]] testFuzz_Hash(string) (runs: {runs}{EXPECTED_POST}")
+    };
+    let mut fuzz_with_seed = |seed: u32, expected_word: &'static str, expected_runs: u32| {
+        prj.clear_cache_dir();
 
-    // the fuzzer is UNABLE to find a breaking input when NOT seeding from the AST
-    prj.update_config(|config| {
-        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
-    });
-    cmd.args(["test"]).assert_success();
+        // the fuzzer is UNABLE to find a breaking input when NOT seeding from the AST
+        prj.update_config(|config| {
+            config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+            config.fuzz.seed = Some(U256::from(seed));
+        });
+        cmd.forge_fuse().args(["test"]).assert_success();
+
+        // the fuzzer is ABLE to find a breaking input when seeding from the AST
+        prj.update_config(|config| {
+            config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
+        });
+
+        let expected_output = expected(expected_word, expected_runs);
+        cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(expected_output);
+    };
+
+    fuzz_with_seed(999, "hello", 5);
+    fuzz_with_seed(300, "world", 5);
+    fuzz_with_seed(100, "foo", 4);
 });
