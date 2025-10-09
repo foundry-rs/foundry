@@ -128,6 +128,7 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 pub mod extend;
 use extend::Extends;
 
+use foundry_evm_networks::NetworkConfigs;
 pub use semver;
 
 /// Foundry configuration
@@ -530,9 +531,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Whether to enable Celo precompiles.
-    #[serde(default)]
-    pub celo: bool,
+    /// Networks with enabled features.
+    #[serde(flatten)]
+    pub networks: NetworkConfigs,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -2568,7 +2569,7 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            celo: false,
+            networks: Default::default(),
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),

@@ -4671,6 +4671,7 @@ dependencies = [
  "figment",
  "foundry-block-explorers",
  "foundry-compilers",
+ "foundry-evm-networks",
  "glob",
  "globset",
  "heck",

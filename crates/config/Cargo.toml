@@ -20,6 +20,8 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
+foundry-evm-networks.workspace = true
+
 revm.workspace = true
 
 solar.workspace = true
