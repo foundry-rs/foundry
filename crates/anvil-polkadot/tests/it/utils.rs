@@ -277,3 +277,26 @@ where
         ResponseResult::Error(err) => Err(err),
     }
 }
+
+#[allow(unused)]
+pub struct ContractCode {
+    pub init: Vec<u8>,
+    pub runtime: Option<Vec<u8>>,
+}
+
+#[allow(unused)]
+pub fn get_contract_code(name: &str) -> ContractCode {
+    let contract_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("test-data/{name}.json"));
+
+    let contract_json: Value = serde_json::from_reader(std::io::BufReader::new(
+        std::fs::File::open(contract_path).unwrap(),
+    ))
+    .unwrap();
+
+    let init = hex::decode(contract_json.get("bin").unwrap().as_str().unwrap()).unwrap();
+    let runtime =
+        contract_json.get("bin-runtime").map(|code| hex::decode(code.as_str().unwrap()).unwrap());
+
+    ContractCode { init, runtime }
+}
