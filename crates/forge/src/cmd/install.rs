@@ -162,11 +162,11 @@ impl DependencyInstallOpts {
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
             sh_println!(
-                "Installing {} in {} (url: {:?}, tag: {:?})",
+                "Installing {} in {} (url: {}, tag: {})",
                 dep.name,
                 path.display(),
-                dep.url,
-                dep.tag
+                dep.url.as_deref().unwrap_or("None"),
+                dep.tag.as_deref().unwrap_or("None")
             )?;
 
             // this tracks the actual installed tag
