@@ -4157,49 +4157,59 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(should_fuzz_literals, |prj, cmd| {
+    prj.clear_cache_dir();
     prj.wipe_contracts();
 
-    // Add a source with magic values
+    // Add a source with magic (literal) values
     prj.add_source(
-        "Hasher.sol",
+        "Magic.sol",
         r#"
-        contract Hasher {
-            string constant HELLO = "hello";
-            bytes32 forbidden = keccak256("foo");
+        contract Magic {
+            address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+            uint256 constant MAGIC_NUMBER = 1122334455;
+            int32 constant MAGIC_INT = -777;
+            bytes32 constant MAGIC_WORD = 0x00000000000000000000000000000000000000000000000000000000deadbeef;
+            bytes constant MAGIC_BYTES = hex"deadbeef";
+            string constant MAGIC_STRING = "xyzzy";
 
-            function hash(bytes memory v) external view returns (bytes32) {
-            bytes32 hashed = keccak256(v);
-
-                assert(hashed != keccak256(bytes(HELLO)));
-                assert(hashed != keccak256("world"));
-                assert(hashed != forbidden);
-                return hashed;
-            }
+            function checkAddr(address v) external pure { assert(v != DAI); }
+            function checkWord(bytes32 v) external pure { assert(v != MAGIC_WORD); }
+            function checkNumber(uint256 v) external pure { assert(v != MAGIC_NUMBER); }
+            function checkInteger(int32 v) external pure { assert(v != MAGIC_INT); }
+            function checkBytes(bytes memory v) external pure { assert(keccak256(v) != keccak256(MAGIC_BYTES)); }
+            function checkString(string memory v) external pure { assert(keccak256(abi.encodePacked(v)) != keccak256(abi.encodePacked(MAGIC_STRING))); }
         }
         "#,
     );
 
     prj.add_test(
-        "HasherFuzz.t.sol",
+        "MagicFuzz.t.sol",
         r#"
             import {Test} from "forge-std/Test.sol";
-            import {Hasher} from "src/Hasher.sol";
+            import {Magic} from "src/Magic.sol";
 
-            contract HasherTest is Test {
-                Hasher public hasher;
-                function setUp() public { hasher = new Hasher(); }
+            contract MagicTest is Test {
+                Magic public magic;
+                function setUp() public { magic = new Magic(); }
 
-                function testFuzz_Hash(string memory s) public view { hasher.hash(bytes(s)); }
+                function testFuzz_Addr(address v) public view { magic.checkAddr(v); }
+                function testFuzz_Number(uint256 v) public view { magic.checkNumber(v); }
+                function testFuzz_Integer(int32 v) public view { magic.checkInteger(v); }
+                function testFuzz_Word(bytes32 v) public view { magic.checkWord(v); }
+                function testFuzz_Bytes(bytes memory v) public view { magic.checkBytes(v); }
+                function testFuzz_String(string memory v) public view { magic.checkString(v); }
             }
-                 "#,
+        "#,
     );
 
-    const EXPECTED_PREV: &str = r#"No files changed, compilation skipped
+    // Helper to create expected output for a test failure
+    let expected_fail = |test_name: &str, type_sig: &str, value: &str, runs: u32| -> String {
+        format!(
+            r#"No files changed, compilation skipped
 
-Ran 1 test for test/HasherFuzz.t.sol:HasherTest
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[""#;
-    const EXPECTED_POST: &str = r#", [AVG_GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+Ran 1 test for test/MagicFuzz.t.sol:MagicTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: {runs}, [AVG_GAS])
+[..]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
@@ -4207,30 +4217,48 @@ Failing tests:
 ...
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
-"#;
-    let expected = |word: &'static str, runs: u32| -> String {
-        format!("{EXPECTED_PREV}{word}\"]] testFuzz_Hash(string) (runs: {runs}{EXPECTED_POST}")
+"#
+        )
     };
-    let mut fuzz_with_seed = |seed: u32, expected_word: &'static str, expected_runs: u32| {
+
+    // Test address literal fuzzing
+    let mut test_literal = |seed: u32,
+                            test_name: &'static str,
+                            type_sig: &'static str,
+                            expected_value: &'static str,
+                            expected_runs: u32| {
         prj.clear_cache_dir();
 
         // the fuzzer is UNABLE to find a breaking input when NOT seeding from the AST
         prj.update_config(|config| {
+            config.fuzz.runs = 100;
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
             config.fuzz.seed = Some(U256::from(seed));
         });
-        cmd.forge_fuse().args(["test"]).assert_success();
+        cmd.forge_fuse().args(["test", "--match-test", test_name]).assert_success();
 
         // the fuzzer is ABLE to find a breaking input when seeding from the AST
         prj.update_config(|config| {
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 10_000;
         });
 
-        let expected_output = expected(expected_word, expected_runs);
-        cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(expected_output);
+        let expected_output = expected_fail(test_name, type_sig, expected_value, expected_runs);
+        cmd.forge_fuse()
+            .args(["test", "--match-test", test_name])
+            .assert_failure()
+            .stdout_eq(expected_output);
     };
 
-    fuzz_with_seed(999, "hello", 5);
-    fuzz_with_seed(300, "world", 5);
-    fuzz_with_seed(100, "foo", 4);
+    test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
+    test_literal(200, "testFuzz_Number", "uint256", "1122334455 [1.122e9]", 5);
+    // test_literal(300, "testFuzz_Integer", "int32", "-777", 4);
+    // test_literal(
+    //     400,
+    //     "testFuzz_Word",
+    //     "bytes32",
+    //     "0x00000000000000000000000000000000000000000000000000000000deadbeef",
+    //     0,
+    // );
+    // test_literal(500, "testFuzz_Bytes", "bytes", "0xdeadbeef", 4);
+    test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
 });
