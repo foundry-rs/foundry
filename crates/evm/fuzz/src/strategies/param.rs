@@ -195,7 +195,29 @@ pub fn fuzz_param_from_state(
                 .boxed()
         }
         DynSolType::Bytes => {
-            value().prop_map(move |value| DynSolValue::Bytes(value.0.into())).boxed()
+            let state_clone = state.clone();
+            (value(), any::<prop::sample::Index>(), any::<prop::sample::Index>())
+                .prop_map(move |(word, use_ast_index, select_index)| {
+                    let dict = state_clone.dictionary_read();
+
+                    // Try string literals as bytes (10% chance)
+                    let ast_strings = dict.ast_strings();
+                    if !ast_strings.is_empty() && use_ast_index.index(10) < 1 {
+                        let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
+                        return DynSolValue::Bytes(s.as_bytes().to_vec());
+                    }
+
+                    // Prefer hex literals (20% chance)
+                    let ast_bytes = dict.ast_bytes();
+                    if !ast_bytes.is_empty() && use_ast_index.index(10) < 3 {
+                        let bytes = &ast_bytes.as_slice()[select_index.index(ast_bytes.len())];
+                        return DynSolValue::Bytes(bytes.to_vec());
+                    }
+
+                    // Fallback to the generated word from the dictionary (70% chance)
+                    DynSolValue::Bytes(word.0.into())
+                })
+                .boxed()
         }
         DynSolType::Int(n @ 8..=256) => match n / 8 {
             32 => value()
@@ -417,7 +439,6 @@ mod tests {
         let _ = runner.run(&strategy, |_| Ok(()));
     }
 
-    /// Verifies that AST string literals and their keccak256 hashes are available in the fuzzer.
     #[test]
     fn can_fuzz_string_with_ast_literals_and_hashes() {
         use super::fuzz_param_from_state;
@@ -464,5 +485,41 @@ mod tests {
         assert!(generated_strings.contains("world"));
         assert!(generated_hashes.contains(&keccak256("hello")));
         assert!(generated_hashes.contains(&keccak256("world")));
+    }
+
+    #[test]
+    fn can_fuzz_bytes_with_string_literals_and_hashes() {
+        use super::fuzz_param_from_state;
+        use crate::strategies::state::LiteralMaps;
+        use alloy_dyn_abi::DynSolType;
+        use proptest::strategy::Strategy;
+
+        // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
+        let mut literals = LiteralMaps::default();
+        literals.strings.insert("hello".to_string());
+        literals.strings.insert("world".to_string());
+
+        let db = CacheDB::new(EmptyDB::default());
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
+        state.seed_literals(literals);
+
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
+
+        // Verify strategies generates the seeded AST literals
+        let mut generated_bytes = HashSet::new();
+        let bytes_strategy = fuzz_param_from_state(&DynSolType::Bytes, &state);
+
+        for _ in 0..256 {
+            let tree = bytes_strategy.new_tree(&mut runner).unwrap();
+            if let Some(bytes) = tree.current().as_bytes() {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    generated_bytes.insert(s.to_string());
+                }
+            }
+        }
+
+        assert!(generated_bytes.contains("hello"));
+        assert!(generated_bytes.contains("world"));
     }
 }

@@ -2,7 +2,7 @@ use crate::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
-    Address, B256, Bytes, Log, U256, keccak256,
+    Address, B256, Bytes, I256, Log, U256, keccak256,
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::{
@@ -69,6 +69,7 @@ impl EvmFuzzState {
             );
             dictionary.sample_values = literals.words;
             dictionary.string_literals = literals.strings;
+            dictionary.byte_literals = literals.bytes;
             trace!("inserted AST literals into fuzz dictionary");
         }
 
@@ -163,6 +164,8 @@ pub struct FuzzDictionary {
     sample_values: HashMap<DynSolType, B256IndexSet>,
     /// String literals collected from source code. Never reverted.
     string_literals: IndexSet<String>,
+    /// Byte literals (hex"...") collected from source code. Never reverted.
+    byte_literals: IndexSet<Bytes>,
 
     misses: usize,
     hits: usize,
@@ -447,6 +450,12 @@ impl FuzzDictionary {
         &self.string_literals
     }
 
+    /// Returns the collected AST bytes (hex literals).
+    #[inline]
+    pub fn ast_bytes(&self) -> &IndexSet<Bytes> {
+        &self.byte_literals
+    }
+
     #[inline]
     pub fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
@@ -474,6 +483,7 @@ impl FuzzDictionary {
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: LiteralMaps) {
         self.string_literals = map.strings;
+        self.byte_literals = map.bytes;
         self.sample_values = map.words;
     }
 }
@@ -483,12 +493,14 @@ impl FuzzDictionary {
 enum LitTy {
     Word(B256),
     Str(String),
+    Bytes(Bytes),
 }
 
 #[derive(Clone, Default, Debug)]
 pub struct LiteralMaps {
     pub words: HashMap<DynSolType, B256IndexSet>,
     pub strings: IndexSet<String>,
+    pub bytes: IndexSet<Bytes>,
 }
 
 #[derive(Debug, Default)]
@@ -550,8 +562,22 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
                     {
                         self.total_values += 1;
                     }
+                    // And the right-padded version if it fits.
+                    if v.len() <= 32 {
+                        let padded = B256::right_padding_from(v.as_bytes());
+                        if self
+                            .output
+                            .words
+                            .entry(DynSolType::FixedBytes(32))
+                            .or_default()
+                            .insert(padded)
+                        {
+                            self.total_values += 1;
+                        }
+                    }
                     self.output.strings.insert(v)
                 }
+                LitTy::Bytes(v) => self.output.bytes.insert(v),
             };
 
             if is_new {
@@ -569,14 +595,9 @@ fn convert_literal(lit: &ast::Lit<'_>) -> Option<(DynSolType, LitTy)> {
     match &lit.kind {
         LitKind::Number(n) => Some((DynSolType::Uint(256), LitTy::Word(B256::from(*n)))),
         LitKind::Address(addr) => Some((DynSolType::Address, LitTy::Word(addr.into_word()))),
-        // Hex strings: store short as right-padded B256, and ignore long ones.
         LitKind::Str(ast::StrKind::Hex, bytes, _) => {
             let byte_slice = bytes.as_byte_str();
-            if byte_slice.len() <= 32 {
-                Some((DynSolType::Bytes, LitTy::Word(B256::right_padding_from(byte_slice))))
-            } else {
-                None
-            }
+            Some((DynSolType::Bytes, LitTy::Bytes(Bytes::copy_from_slice(byte_slice))))
         }
         // Regular and unicode strings: always store as dynamic
         LitKind::Str(_, bytes, _) => Some((

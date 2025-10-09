@@ -4168,7 +4168,7 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
             address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
             uint256 constant MAGIC_NUMBER = 1122334455;
             int32 constant MAGIC_INT = -777;
-            bytes32 constant MAGIC_WORD = 0x00000000000000000000000000000000000000000000000000000000deadbeef;
+            bytes32 constant MAGIC_WORD = "abcd1234";
             bytes constant MAGIC_BYTES = hex"deadbeef";
             string constant MAGIC_STRING = "xyzzy";
 
@@ -4178,6 +4178,7 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
             function checkInteger(int32 v) external pure { assert(v != MAGIC_INT); }
             function checkBytes(bytes memory v) external pure { assert(keccak256(v) != keccak256(MAGIC_BYTES)); }
             function checkString(string memory v) external pure { assert(keccak256(abi.encodePacked(v)) != keccak256(abi.encodePacked(MAGIC_STRING))); }
+            function checkBytesFromString(bytes memory v) external pure { assert(keccak256(v) != keccak256(abi.encodePacked(MAGIC_STRING))); }
         }
         "#,
     );
@@ -4196,7 +4197,8 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
                 function testFuzz_Number(uint256 v) public view { magic.checkNumber(v); }
                 function testFuzz_Integer(int32 v) public view { magic.checkInteger(v); }
                 function testFuzz_Word(bytes32 v) public view { magic.checkWord(v); }
-                function testFuzz_Bytes(bytes memory v) public view { magic.checkBytes(v); }
+                function testFuzz_BytesFromHex(bytes memory v) public view { magic.checkBytes(v); }
+                function testFuzz_BytesFromString(bytes memory v) public view { magic.checkBytesFromString(v); }
                 function testFuzz_String(string memory v) public view { magic.checkString(v); }
             }
         "#,
@@ -4252,13 +4254,14 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
     test_literal(200, "testFuzz_Number", "uint256", "1122334455 [1.122e9]", 5);
     // test_literal(300, "testFuzz_Integer", "int32", "-777", 4);
-    // test_literal(
-    //     400,
-    //     "testFuzz_Word",
-    //     "bytes32",
-    //     "0x00000000000000000000000000000000000000000000000000000000deadbeef",
-    //     0,
-    // );
-    // test_literal(500, "testFuzz_Bytes", "bytes", "0xdeadbeef", 4);
+    test_literal(
+        400,
+        "testFuzz_Word",
+        "bytes32",
+        "0x6162636431323334000000000000000000000000000000000000000000000000", /* bytes32("abcd1234") */
+        7,
+    );
+    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef", 1);
     test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
+    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 53); // abi.encodePacked("xyzzy")
 });
