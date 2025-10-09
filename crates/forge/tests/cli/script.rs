@@ -3193,7 +3193,17 @@ contract CounterScript is Script {
         "https://sepolia.infura.io/v3/test",
     ])
     .assert_failure()
-    .stderr_eq("error: the following required arguments were not provided:\n  --broadcast\n\nUsage: forge script [OPTIONS] <PATH> [ARGS]...\n+ Usage: forge script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...\n\nFor more information, try '--help'.");
+    .stderr_eq(str![[r#"
+error: the following required arguments were not provided:
+  --broadcast
+
+Usage: forge script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
+
+For more information, try '--help'.
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/11855>
 forgetest_async!(can_broadcast_from_deploy_code_cheatcode, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -3250,15 +3260,17 @@ Traces:
 Script ran successfully.
 
 ## Setting up 1 EVM.
+==========================
 Simulated On-chain Traces:
 
-  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     └─ ← [Return] 481 bytes of code
 
-  [..] Counter::increment()
+  [22418] Counter::increment()
     └─ ← [Stop]
 
 
+==========================
 
 Chain 31337
 
@@ -3268,8 +3280,10 @@ Chain 31337
 
 [ESTIMATED_AMOUNT_REQUIRED]
 
+==========================
 
 
+==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
