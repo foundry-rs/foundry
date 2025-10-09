@@ -989,13 +989,6 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
-    /// Sets whether to enable optimism support
-    #[must_use]
-    pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.networks.optimism = enable_optimism;
-        self
-    }
-
     /// Sets whether to disable the default create2 deployer
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
