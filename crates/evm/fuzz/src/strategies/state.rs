@@ -44,7 +44,7 @@ impl EvmFuzzState {
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
         deployed_libs: &[Address],
-        analysis: Option<Arc<LiteralMaps>>,
+        analysis: Option<&LiteralMaps>,
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
@@ -56,7 +56,8 @@ impl EvmFuzzState {
 
         // Seed dict with AST literals if analysis is available.
         if let Some(literals) = analysis {
-            dictionary.ast_values = Some(literals);
+            dictionary.sample_values = literals.words.as_ref().clone();
+            dictionary.string_literals = literals.strings.clone();
             trace!("inserted AST literals into fuzz dictionary");
         }
 
@@ -140,10 +141,11 @@ pub struct FuzzDictionary {
     /// Number of address values initially collected from db.
     /// Used to revert new collected addresses at the end of each run.
     db_addresses: usize,
-    /// Literal values collected from source code. Never reverted.
-    ast_values: Option<Arc<LiteralMaps>>,
     /// Typed runtime sample values persisted across invariant runs.
+    /// Intially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
+    /// String literals collected from source code. Never reverted.
+    string_literals: Arc<IndexSet<String>>,
 
     misses: usize,
     hits: usize,
@@ -151,8 +153,8 @@ pub struct FuzzDictionary {
 
 #[derive(Clone, Default)]
 pub struct LiteralMaps {
-    pub words: HashMap<DynSolType, B256IndexSet>,
-    pub strings: IndexSet<String>,
+    pub words: Arc<HashMap<DynSolType, B256IndexSet>>,
+    pub strings: Arc<IndexSet<String>>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -428,16 +430,10 @@ impl FuzzDictionary {
         self.sample_values.get(param_type)
     }
 
-    /// Returns the collectec AST static values (fit in a single evm word) for a given type
-    #[inline]
-    pub fn ast_word(&self, param_type: &DynSolType) -> Option<&B256IndexSet> {
-        self.ast_values.as_ref()?.words.get(param_type)
-    }
-
     /// Returns the collected AST strings.
     #[inline]
-    pub fn ast_string(&self) -> Option<&IndexSet<String>> {
-        self.ast_values.as_ref().map(|v| &v.strings)
+    pub fn ast_string(&self) -> &IndexSet<String> {
+        self.string_literals.as_ref()
     }
 
     #[inline]
@@ -452,19 +448,9 @@ impl FuzzDictionary {
     }
 
     pub fn log_stats(&self) {
-        let (ast_word_count, ast_string_count) = self
-            .ast_values
-            .as_ref()
-            .map(|v| {
-                let words: usize = v.words.values().map(|vals| vals.len()).sum();
-                let strings = v.strings.len();
-                (words, strings)
-            })
-            .unwrap_or((0, 0));
         trace!(
             addresses.len = self.addresses.len(),
-            ast_words.len = ast_word_count,
-            ast_string.len = ast_string_count,
+            ast_string.len = self.string_literals.as_ref().len(),
             sample.len = self.sample_values.len(),
             state.len = self.state_values.len(),
             state.misses = self.misses,

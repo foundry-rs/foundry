@@ -116,34 +116,20 @@ pub fn fuzz_param_from_state(
     param: &DynSolType,
     state: &EvmFuzzState,
 ) -> BoxedStrategy<DynSolValue> {
-    // Value strategy that uses the state with AST literal support with the following allocations:
-    // - default: 20% AST literals, 40% DB state, 40% runtime samples (when AST available)
-    // - fallback (when no AST literals): 50% samples, 50% DB state
+    // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
         let param = param.clone();
-        (any::<prop::sample::Index>(), any::<prop::sample::Index>()).prop_map(
-            move |(bias_index, select_index)| {
-                let bias = bias_index.index(10);
-                let dict = state.dictionary_read();
-                let values = match dict.ast_word(&param) {
-                    // AST literals available: use 20/40/40 allocation
-                    Some(ast_pool) if !ast_pool.is_empty() => {
-                        if bias < 2 {
-                            ast_pool
-                        } else if bias < 6 {
-                            dict.values()
-                        } else {
-                            dict.samples(&param).unwrap_or_else(|| dict.values())
-                        }
-                    }
-                    // No AST literals: use 50/50 allocation
-                    _ => if bias.is_multiple_of(2) { dict.samples(&param) } else { None }
-                        .unwrap_or_else(|| dict.values()),
-                };
-                values.as_slice()[select_index.index(values.len())]
-            },
-        )
+        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
+        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
+        // entire dictionary.
+        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
+            let state = state.dictionary_read();
+            let values = if bias { state.samples(&param) } else { None }
+                .unwrap_or_else(|| state.values())
+                .as_slice();
+            values[index.index(values.len())]
+        })
     };
 
     // Convert the value based on the parameter type
@@ -191,10 +177,8 @@ pub fn fuzz_param_from_state(
                     let dict = state_clone.dictionary_read();
 
                     // AST string literals available: use 30/70 allocation
-                    if let Some(ast_strings) = dict.ast_string()
-                        && !ast_strings.is_empty()
-                        && use_ast_index.index(10) < 3
-                    {
+                    let ast_strings = dict.ast_string();
+                    if !ast_strings.is_empty() && use_ast_index.index(10) < 3 {
                         let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
                         return Just(DynSolValue::String(s.clone())).boxed();
                     }
@@ -412,10 +396,16 @@ mod tests {
         FuzzFixtures,
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
-    use alloy_primitives::B256;
+    use alloy_primitives::{
+        B256,
+        map::{B256IndexSet, IndexSet},
+    };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::{
+        database::{CacheDB, EmptyDB},
+        primitives::HashMap,
+    };
     use std::collections::HashSet;
 
     #[test]
@@ -444,15 +434,16 @@ mod tests {
         use std::sync::Arc;
 
         // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
-        let mut literals = LiteralMaps::default();
-        literals.strings.insert("hello".to_string());
-        literals.strings.insert("world".to_string());
-        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
-        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
+        let mut strings = IndexSet::default();
+        strings.insert("hello".to_string());
+        strings.insert("world".to_string());
+        let mut words = HashMap::<DynSolType, B256IndexSet>::default();
+        words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
+        words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
+        let literals = LiteralMaps { words: Arc::new(words), strings: Arc::new(strings) };
 
         let db = CacheDB::new(EmptyDB::default());
-        let state =
-            EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], Some(Arc::new(literals)));
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], Some(&literals));
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 

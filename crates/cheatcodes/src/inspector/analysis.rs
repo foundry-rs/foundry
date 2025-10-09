@@ -57,7 +57,7 @@ pub struct CheatcodeAnalysis {
 
     /// Cached literal values defined in the sources.
     /// Used to seed the fuzzer dictionary at initialization.
-    ast_literals: OnceLock<Result<Arc<LiteralMaps>, AnalysisError>>,
+    ast_literals: OnceLock<Result<LiteralMaps, AnalysisError>>,
 }
 
 impl std::fmt::Debug for CheatcodeAnalysis {
@@ -92,7 +92,7 @@ impl CheatcodeAnalysis {
         &self,
         max_values: usize,
         paths_config: Option<&ProjectPathsConfig>,
-    ) -> Result<Arc<LiteralMaps>, &AnalysisError> {
+    ) -> Result<&LiteralMaps, &AnalysisError> {
         self.ast_literals
             .get_or_init(|| {
                 self.compiler.enter(|compiler| {
@@ -111,14 +111,13 @@ impl CheatcodeAnalysis {
                         }
                     }
 
-                    Ok(Arc::new(LiteralMaps {
-                        words: literals_collector.words,
-                        strings: literals_collector.strings,
-                    }))
+                    Ok(LiteralMaps {
+                        words: Arc::new(literals_collector.words),
+                        strings: Arc::new(literals_collector.strings),
+                    })
                 })
             })
             .as_ref()
-            .map(Arc::clone)
     }
 }
 
