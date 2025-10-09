@@ -301,8 +301,21 @@ impl Document {
         code: &str,
     ) -> Result<(), std::fmt::Error> {
         let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+        let func_sign = if !func.params.is_empty() {
+            format!(
+                "{}({})",
+                func_name,
+                func.params
+                    .iter()
+                    .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            func_name.clone()
+        };
         let comments =
-            comments.merge_inheritdoc(&func_name, read_context!(self, INHERITDOC_ID, Inheritdoc));
+            comments.merge_inheritdoc(&func_sign, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
         // Write function name
         writer.write_heading(&func_name)?;

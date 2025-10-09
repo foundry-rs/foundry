@@ -169,6 +169,29 @@ impl ParseSource {
         }
     }
 
+    /// Get the signature of the source (for functions, includes parameter types)
+    pub fn signature(&self) -> String {
+        match self {
+            Self::Function(func) => {
+                let name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+                if !func.params.is_empty() {
+                    format!(
+                        "{}({})",
+                        name,
+                        func.params
+                            .iter()
+                            .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )
+                } else {
+                    name
+                }
+            }
+            _ => self.ident(),
+        }
+    }
+
     /// Get the range of this item in the source file.
     pub fn range(&self) -> Range<usize> {
         match self {
