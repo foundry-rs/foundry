@@ -20,5 +20,13 @@ function emitEvent() {
       _vestingBeneficiaries.length - 1, // index
    uint64(block.timestamp), // timestamp
      endTimestamp // end timestamp
-    ); 
+    );
+
+    // https://github.com/foundry-rs/foundry/issues/12029
+    emit OperatorSharesDecreased(
+        defaultOperator,
+        address(0),
+        strategyMock,
+        depositAmount / 6 // 1 withdrawal not queued so decreased
+    );
 }

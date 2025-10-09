@@ -393,6 +393,7 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(0);
         }
 
+        let mut last_delimiter_break = !format.with_delimiters;
         let mut skip_last_break =
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
@@ -444,13 +445,18 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 CommentConfig::skip_ws().no_breaks().mixed_prev_space()
             };
-            self.print_comments(next_pos, comment_config);
+            let with_trailing = self.print_comments(next_pos, comment_config).is_some();
 
-            if is_last && self.is_bol_or_only_ind() {
-                // if a trailing comment is printed at the very end, we have to manually adjust
-                // the offset to avoid having a double break.
-                self.break_offset_if_not_bol(0, -self.ind, false);
+            if is_last && with_trailing {
+                if self.is_bol_or_only_ind() {
+                    // if a trailing comment is printed at the very end, we have to manually adjust
+                    // the offset to avoid having a double break.
+                    self.break_offset_if_not_bol(0, -self.ind, false);
+                } else {
+                    self.s.break_offset(SIZE_INFINITY as usize, -self.ind);
+                }
                 skip_last_break = true;
+                last_delimiter_break = false;
             }
 
             // Final break if needed before the next value.
@@ -489,7 +495,7 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.cursor.advance_to(pos_hi, true);
 
-        if !format.with_delimiters {
+        if last_delimiter_break {
             self.zerobreak();
         }
     }
