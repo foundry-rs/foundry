@@ -1,7 +1,9 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
+use foundry_compilers::artifacts::{
+    ConfigurableContractArtifact, EvmVersion, Metadata, remappings::Remapping,
+};
 use foundry_config::{
     BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
 };
@@ -2677,7 +2679,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                   | Deployment Size |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 117159                                            | 471             |       |        |       |         |
+| 117171                                            | 471             |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                   |                 |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2716,7 +2718,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:DelegateProxy",
     "deployment": {
-      "gas": 117159,
+      "gas": 117171,
       "size": 471
     },
     "functions": {
@@ -2760,6 +2762,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9858>
 forgetest_init!(gas_report_fallback_with_calldata, |prj, cmd| {
+    prj.update_config(|c| {
+        c.evm_version = EvmVersion::Prague;
+    });
     prj.add_test(
         "FallbackWithCalldataTest.sol",
         r#"
