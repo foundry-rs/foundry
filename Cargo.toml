@@ -221,30 +221,30 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 
 ## alloy
-alloy-consensus = { version = "1.0.36", default-features = false }
-alloy-contract = { version = "1.0.36", default-features = false }
-alloy-eips = { version = "1.0.36", default-features = false }
-alloy-eip5792 = { version = "1.0.36", default-features = false }
-alloy-ens = { version = "1.0.36", default-features = false }
-alloy-genesis = { version = "1.0.36", default-features = false }
-alloy-json-rpc = { version = "1.0.36", default-features = false }
-alloy-network = { version = "1.0.36", default-features = false }
-alloy-provider = { version = "1.0.36", default-features = false }
-alloy-pubsub = { version = "1.0.36", default-features = false }
-alloy-rpc-client = { version = "1.0.36", default-features = false }
-alloy-rpc-types = { version = "1.0.36", default-features = true }
-alloy-rpc-types-beacon = { version = "1.0.36", default-features = true }
-alloy-serde = { version = "1.0.36", default-features = false }
-alloy-signer = { version = "1.0.36", default-features = false }
-alloy-signer-aws = { version = "1.0.36", default-features = false }
-alloy-signer-gcp = { version = "1.0.36", default-features = false }
-alloy-signer-ledger = { version = "1.0.36", default-features = false }
-alloy-signer-local = { version = "1.0.36", default-features = false }
-alloy-signer-trezor = { version = "1.0.36", default-features = false }
-alloy-transport = { version = "1.0.36", default-features = false }
-alloy-transport-http = { version = "1.0.36", default-features = false }
-alloy-transport-ipc = { version = "1.0.36", default-features = false }
-alloy-transport-ws = { version = "1.0.36", default-features = false }
+alloy-consensus = { version = "1.0.38", default-features = false }
+alloy-contract = { version = "1.0.38", default-features = false }
+alloy-eips = { version = "1.0.38", default-features = false }
+alloy-eip5792 = { version = "1.0.38", default-features = false }
+alloy-ens = { version = "1.0.38", default-features = false }
+alloy-genesis = { version = "1.0.38", default-features = false }
+alloy-json-rpc = { version = "1.0.38", default-features = false }
+alloy-network = { version = "1.0.38", default-features = false }
+alloy-provider = { version = "1.0.38", default-features = false }
+alloy-pubsub = { version = "1.0.38", default-features = false }
+alloy-rpc-client = { version = "1.0.38", default-features = false }
+alloy-rpc-types = { version = "1.0.38", default-features = true }
+alloy-rpc-types-beacon = { version = "1.0.38", default-features = true }
+alloy-serde = { version = "1.0.38", default-features = false }
+alloy-signer = { version = "1.0.38", default-features = false }
+alloy-signer-aws = { version = "1.0.38", default-features = false }
+alloy-signer-gcp = { version = "1.0.38", default-features = false }
+alloy-signer-ledger = { version = "1.0.38", default-features = false }
+alloy-signer-local = { version = "1.0.38", default-features = false }
+alloy-signer-trezor = { version = "1.0.38", default-features = false }
+alloy-transport = { version = "1.0.38", default-features = false }
+alloy-transport-http = { version = "1.0.38", default-features = false }
+alloy-transport-ipc = { version = "1.0.38", default-features = false }
+alloy-transport-ws = { version = "1.0.38", default-features = false }
 alloy-hardforks = { version = "0.3.2", default-features = false }
 alloy-op-hardforks = { version = "0.3.2", default-features = false }
 

@@ -538,7 +538,7 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.networks.optimism {
+        if self.networks.is_optimism() {
             return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
@@ -989,13 +989,6 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
-    /// Sets whether to enable optimism support
-    #[must_use]
-    pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
-        self.networks.optimism = enable_optimism;
-        self
-    }
-
     /// Sets whether to disable the default create2 deployer
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
@@ -1021,17 +1014,6 @@ impl NodeConfig {
     #[must_use]
     pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
-        self
-    }
-
-    /// Sets whether to enable Celo support
-    #[must_use]
-    pub fn with_celo(mut self, celo: bool) -> Self {
-        self.networks.celo = celo;
-        if celo {
-            // Celo requires Optimism support
-            self.networks.optimism = true;
-        }
         self
     }
 

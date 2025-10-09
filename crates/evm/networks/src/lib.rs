@@ -20,15 +20,27 @@ pub struct NetworkConfigs {
     #[arg(help_heading = "Networks", long, visible_alias = "optimism", conflicts_with = "celo")]
     // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
-    pub optimism: bool,
+    optimism: bool,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
-    pub celo: bool,
+    celo: bool,
 }
 
 impl NetworkConfigs {
     pub fn with_optimism() -> Self {
         Self { optimism: true, ..Default::default() }
+    }
+
+    pub fn with_celo() -> Self {
+        Self { celo: true, ..Default::default() }
+    }
+
+    pub fn is_optimism(&self) -> bool {
+        self.optimism
+    }
+
+    pub fn is_celo(&self) -> bool {
+        self.celo
     }
 
     pub fn with_chain_id(mut self, chain_id: u64) -> Self {
