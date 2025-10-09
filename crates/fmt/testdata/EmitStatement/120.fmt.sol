@@ -26,6 +26,6 @@ function emitEvent() {
         defaultOperator,
         address(0),
         strategyMock,
-        depositAmount / 6 // should break
+        depositAmount / 6 // 1 withdrawal not queued so decreased
     );
 }

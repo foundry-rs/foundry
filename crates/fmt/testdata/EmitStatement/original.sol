@@ -25,8 +25,8 @@ function emitEvent() {
     // https://github.com/foundry-rs/foundry/issues/12029
     emit OperatorSharesDecreased(
         defaultOperator,
-        address(0), // should break
+        address(0),
         strategyMock,
-        depositAmount / 6
+        depositAmount / 6 // 1 withdrawal not queued so decreased
     );
 }
