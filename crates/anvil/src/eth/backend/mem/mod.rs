@@ -795,7 +795,7 @@ impl Backend {
 
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        self.env.read().networks.optimism
+        self.env.read().networks.is_optimism()
     }
 
     /// Returns the precompiles for the current spec.
@@ -1203,7 +1203,7 @@ impl Backend {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
 
-        if env.networks.optimism {
+        if env.networks.is_optimism() {
             env.tx.enveloped_tx =
                 Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
         }

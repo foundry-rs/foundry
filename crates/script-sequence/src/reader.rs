@@ -143,24 +143,17 @@ impl BroadcastReader {
         &self,
         broadcast: ScriptSequence,
     ) -> Vec<(TransactionWithMetadata, AnyTransactionReceipt)> {
-        let transactions = broadcast.transactions.clone();
-
-        let txs = transactions
-            .into_iter()
-            .filter(|tx| {
-                let name_filter =
-                    tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
-
-                let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
-
-                name_filter && type_filter
-            })
-            .collect::<Vec<_>>();
+        let ScriptSequence { transactions, receipts, .. } = broadcast;
 
         let mut targets = Vec::new();
-        for tx in txs.into_iter() {
-            let maybe_receipt = broadcast
-                .receipts
+        for tx in transactions.into_iter().filter(|tx| {
+            let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
+
+            let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
+
+            name_filter && type_filter
+        }) {
+            let maybe_receipt = receipts
                 .iter()
                 .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
 

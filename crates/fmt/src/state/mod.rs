@@ -952,17 +952,24 @@ impl<'sess> State<'sess, '_> {
         );
     }
 
-    fn print_remaining_comments(&mut self) {
+    fn print_remaining_comments(&mut self, skip_leading_ws: bool) {
         // If there aren't any remaining comments, then we need to manually
         // make sure there is a line break at the end.
         if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
             self.hardbreak();
+            return;
         }
 
+        let mut is_leading = true;
         while let Some(cmnt) = self.next_comment() {
+            if cmnt.style.is_blank() && skip_leading_ws && is_leading {
+                continue;
+            }
+
+            is_leading = false;
             if let Some(cmnt) = self.handle_comment(cmnt, false) {
                 self.print_comment(cmnt, CommentConfig::default());
-            } else if self.peek_comment().is_none() {
+            } else if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
                 self.hardbreak();
             }
         }
