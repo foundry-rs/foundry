@@ -31,6 +31,10 @@ impl NetworkConfigs {
         Self { optimism: true, ..Default::default() }
     }
 
+    pub fn with_celo() -> Self {
+        Self { celo: true, ..Default::default() }
+    }
+
     pub fn with_chain_id(mut self, chain_id: u64) -> Self {
         if let Ok(NamedChain::Celo | NamedChain::CeloSepolia) = NamedChain::try_from(chain_id) {
             self.celo = true;

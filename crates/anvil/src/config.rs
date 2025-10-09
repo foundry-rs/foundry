@@ -1024,17 +1024,6 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Celo support
-    #[must_use]
-    pub fn with_celo(mut self, celo: bool) -> Self {
-        self.networks.celo = celo;
-        if celo {
-            // Celo requires Optimism support
-            self.networks.optimism = true;
-        }
-        self
-    }
-
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn silent(self) -> Self {
