@@ -396,16 +396,10 @@ mod tests {
         FuzzFixtures,
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
-    use alloy_primitives::{
-        B256,
-        map::{B256IndexSet, IndexSet},
-    };
+    use alloy_primitives::B256;
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::{
-        database::{CacheDB, EmptyDB},
-        primitives::HashMap,
-    };
+    use revm::database::{CacheDB, EmptyDB};
     use std::collections::HashSet;
 
     #[test]
@@ -413,7 +407,7 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None);
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
         let strategy = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
@@ -431,19 +425,18 @@ mod tests {
         use alloy_dyn_abi::DynSolType;
         use alloy_primitives::keccak256;
         use proptest::strategy::Strategy;
-        use std::sync::Arc;
 
         // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
-        let mut strings = IndexSet::default();
-        strings.insert("hello".to_string());
-        strings.insert("world".to_string());
-        let mut words = HashMap::<DynSolType, B256IndexSet>::default();
-        words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
-        words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
-        let literals = LiteralMaps { words: Arc::new(words), strings: Arc::new(strings) };
+        let mut literals = LiteralMaps::default();
+        literals.strings.insert("hello".to_string());
+        literals.strings.insert("world".to_string());
+        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
+        literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
 
         let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], Some(&literals));
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
+        state.seed_literals(literals);
+
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 

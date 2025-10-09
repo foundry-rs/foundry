@@ -2,13 +2,13 @@ use crate::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
-    Address, B256, Bytes, Log, U256,
+    Address, B256, Bytes, Log, U256, keccak256,
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_compilers::{ProjectPathsConfig, artifacts::StorageLayout};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
@@ -16,7 +16,12 @@ use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use solar::{
+    ast::{self, Visit},
+    interface::source_map::FileName,
+    sema::Compiler,
+};
+use std::{collections::BTreeMap, fmt, ops::ControlFlow, sync::Arc};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -44,7 +49,8 @@ impl EvmFuzzState {
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
         deployed_libs: &[Address],
-        analysis: Option<&LiteralMaps>,
+        analysis: Option<&Arc<Compiler>>,
+        paths_config: Option<&ProjectPathsConfig>,
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
@@ -55,9 +61,14 @@ impl EvmFuzzState {
         dictionary.insert_db_values(accs);
 
         // Seed dict with AST literals if analysis is available.
-        if let Some(literals) = analysis {
-            dictionary.sample_values = literals.words.as_ref().clone();
-            dictionary.string_literals = literals.strings.clone();
+        if let Some(compiler) = analysis {
+            let literals = LiteralsCollector::process(
+                compiler,
+                paths_config,
+                config.max_fuzz_dictionary_literals,
+            );
+            dictionary.sample_values = literals.words;
+            dictionary.string_literals = literals.strings;
             trace!("inserted AST literals into fuzz dictionary");
         }
 
@@ -123,6 +134,12 @@ impl EvmFuzzState {
     pub fn log_stats(&self) {
         self.inner.read().log_stats();
     }
+
+    #[cfg(test)]
+    /// Test-only helper to seed the dictionary with literal values.
+    pub(crate) fn seed_literals(&self, map: LiteralMaps) {
+        self.inner.write().seed_literals(map);
+    }
 }
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
@@ -145,16 +162,10 @@ pub struct FuzzDictionary {
     /// Initially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
     /// String literals collected from source code. Never reverted.
-    string_literals: Arc<IndexSet<String>>,
+    string_literals: IndexSet<String>,
 
     misses: usize,
     hits: usize,
-}
-
-#[derive(Clone, Default)]
-pub struct LiteralMaps {
-    pub words: Arc<HashMap<DynSolType, B256IndexSet>>,
-    pub strings: Arc<IndexSet<String>>,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -433,7 +444,7 @@ impl FuzzDictionary {
     /// Returns the collected AST strings.
     #[inline]
     pub fn ast_strings(&self) -> &IndexSet<String> {
-        self.string_literals.as_ref()
+        &self.string_literals
     }
 
     #[inline]
@@ -450,12 +461,129 @@ impl FuzzDictionary {
     pub fn log_stats(&self) {
         trace!(
             addresses.len = self.addresses.len(),
-            ast_string.len = self.string_literals.as_ref().len(),
+            ast_string.len = self.string_literals.len(),
             sample.len = self.sample_values.len(),
             state.len = self.state_values.len(),
             state.misses = self.misses,
             state.hits = self.hits,
             "FuzzDictionary stats",
         );
+    }
+
+    #[cfg(test)]
+    /// Test-only helper to seed the dictionary with literal values.
+    pub(crate) fn seed_literals(&mut self, map: LiteralMaps) {
+        self.string_literals = map.strings;
+        self.sample_values = map.words;
+    }
+}
+
+// -- AST LITERALS COLLECTOR ---------------------------------------------------
+
+enum LitTy {
+    Word(B256),
+    Str(String),
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct LiteralMaps {
+    pub words: HashMap<DynSolType, B256IndexSet>,
+    pub strings: IndexSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct LiteralsCollector {
+    max_values: usize,
+    total_values: usize,
+    output: LiteralMaps,
+}
+
+impl LiteralsCollector {
+    fn new(max_values: usize) -> Self {
+        Self { max_values, ..Default::default() }
+    }
+
+    fn process(
+        compiler: &Arc<Compiler>,
+        paths_config: Option<&ProjectPathsConfig>,
+        max_values: usize,
+    ) -> LiteralMaps {
+        compiler.enter(|compiler| {
+            let mut literals_collector = Self::new(max_values);
+            for source in compiler.sources().iter() {
+                // Ignore scripts, and libs
+                if let Some(paths) = paths_config
+                    && let FileName::Real(source_path) = &source.file.name
+                    && !(source_path.starts_with(&paths.sources) || paths.is_test(source_path))
+                {
+                    continue;
+                }
+
+                if let Some(ref ast) = source.ast {
+                    let _ = literals_collector.visit_source_unit(ast);
+                }
+            }
+
+            literals_collector.output
+        })
+    }
+}
+
+impl<'ast> ast::Visit<'ast> for LiteralsCollector {
+    type BreakValue = ();
+
+    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<()> {
+        // Stop early if we've hit the limit
+        if self.total_values >= self.max_values {
+            return ControlFlow::Break(());
+        }
+
+        if let ast::ExprKind::Lit(lit, _) = &expr.kind
+            && let Some((ty, value)) = convert_literal(lit)
+        {
+            let is_new = match value {
+                LitTy::Word(v) => self.output.words.entry(ty).or_default().insert(v),
+                LitTy::Str(v) => {
+                    // For strings, also store the hashed version
+                    let hash = keccak256(v.as_bytes());
+                    if self.output.words.entry(DynSolType::FixedBytes(32)).or_default().insert(hash)
+                    {
+                        self.total_values += 1;
+                    }
+                    self.output.strings.insert(v)
+                }
+            };
+
+            if is_new {
+                self.total_values += 1;
+            }
+        }
+
+        self.walk_expr(expr)
+    }
+}
+
+fn convert_literal(lit: &ast::Lit<'_>) -> Option<(DynSolType, LitTy)> {
+    use ast::LitKind;
+
+    match &lit.kind {
+        LitKind::Number(n) => Some((DynSolType::Uint(256), LitTy::Word(B256::from(*n)))),
+        LitKind::Address(addr) => Some((DynSolType::Address, LitTy::Word(addr.into_word()))),
+        // Hex strings: store short as right-padded B256, and ignore long ones.
+        LitKind::Str(ast::StrKind::Hex, bytes, _) => {
+            let byte_slice = bytes.as_byte_str();
+            if byte_slice.len() <= 32 {
+                Some((DynSolType::Bytes, LitTy::Word(B256::right_padding_from(byte_slice))))
+            } else {
+                None
+            }
+        }
+        // Regular and unicode strings: always store as dynamic
+        LitKind::Str(_, bytes, _) => Some((
+            DynSolType::String,
+            LitTy::Str(String::from_utf8_lossy(bytes.as_byte_str()).into_owned()),
+        )),
+        // Skip
+        LitKind::Bool(_) | LitKind::Rational(_) | LitKind::Err(_) => None,
     }
 }

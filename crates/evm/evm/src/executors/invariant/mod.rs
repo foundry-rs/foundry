@@ -571,13 +571,8 @@ impl<'a> InvariantExecutor<'a> {
             self.executor.backend().mem_db(),
             self.config.dictionary,
             deployed_libs,
-            inspector.analysis().and_then(|a| {
-                a.ast_literals(
-                    self.config.dictionary.max_fuzz_dictionary_literals,
-                    inspector.paths_config(),
-                )
-                .ok()
-            }),
+            inspector.analysis.as_ref(),
+            inspector.paths_config(),
         );
 
         // Creates the invariant strategy.
