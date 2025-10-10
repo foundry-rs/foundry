@@ -227,13 +227,10 @@ pub fn fuzz_param_from_state(
                 .prop_map(move |value| {
                     // Extract lower N bits
                     let uint_n = U256::from_be_bytes(value.0) % U256::from(1).wrapping_shl(n);
-
-                    // Interpret as signed integer (two's complement)
-                    // Check if the sign bit (bit N-1) is set
+                    // Interpret as signed int (two's complement) --> check sign bit (bit N-1).
                     let sign_bit = U256::from(1) << (n - 1);
                     let num = if uint_n >= sign_bit {
                         // Negative number in two's complement
-                        // Map [2^(N-1), 2^N) to [-2^(N-1), 0) by subtracting 2^N
                         let modulus = U256::from(1) << n;
                         I256::from_raw(uint_n.wrapping_sub(modulus))
                     } else {
