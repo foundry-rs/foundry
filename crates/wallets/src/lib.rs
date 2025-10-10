@@ -11,6 +11,7 @@ extern crate tracing;
 pub mod error;
 pub mod multi_wallet;
 pub mod raw_wallet;
+pub mod registry;
 pub mod utils;
 pub mod wallet;
 pub mod wallet_signer;
