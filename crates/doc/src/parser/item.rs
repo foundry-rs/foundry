@@ -1,4 +1,4 @@
-use crate::{Comments, solang_ext::SafeUnwrap};
+use crate::{Comments, helpers::function_signature, solang_ext::SafeUnwrap};
 use solang_parser::pt::{
     ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
     FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
@@ -166,6 +166,14 @@ impl ParseSource {
                 func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
             }
             Self::Type(ty) => ty.name.name.to_owned(),
+        }
+    }
+
+    /// Get the signature of the source (for functions, includes parameter types)
+    pub fn signature(&self) -> String {
+        match self {
+            Self::Function(func) => function_signature(func),
+            _ => self.ident(),
         }
     }
 

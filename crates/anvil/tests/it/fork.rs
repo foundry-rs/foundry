@@ -23,6 +23,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use revm::precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult};
@@ -1711,7 +1712,9 @@ async fn test_config_with_cancun_hardfork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_with_prague_hardfork_with_celo() {
     let (api, _handle) = spawn(
-        NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into())).with_celo(true),
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_networks(NetworkConfigs::with_celo()),
     )
     .await;
 

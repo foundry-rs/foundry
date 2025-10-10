@@ -44,7 +44,6 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
-revm.workspace = true
 rustyline = "17"
 itertools.workspace = true
 semver.workspace = true

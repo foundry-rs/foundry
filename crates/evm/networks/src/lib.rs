@@ -1,6 +1,6 @@
-//! # foundry-evm-precompiles
+//! # foundry-evm-networks
 //!
-//! Foundry EVM network custom precompiles.
+//! Foundry EVM network configuration.
 
 use crate::celo::transfer::{
     CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
@@ -14,21 +14,34 @@ use std::collections::BTreeMap;
 
 pub mod celo;
 
-#[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Parser, Copy, Serialize, Deserialize, PartialEq)]
 pub struct NetworkConfigs {
     /// Enable Optimism network features.
-    #[arg(help_heading = "Networks", long, visible_alias = "optimism")]
+    #[arg(help_heading = "Networks", long, visible_alias = "optimism", conflicts_with = "celo")]
     // Skipped from configs (forge) as there is no feature to be added yet.
     #[serde(skip)]
-    pub optimism: bool,
+    optimism: bool,
     /// Enable Celo network features.
-    #[arg(help_heading = "Networks", long)]
-    pub celo: bool,
+    #[arg(help_heading = "Networks", long, conflicts_with = "optimism")]
+    #[serde(default)]
+    celo: bool,
 }
 
 impl NetworkConfigs {
     pub fn with_optimism() -> Self {
         Self { optimism: true, ..Default::default() }
+    }
+
+    pub fn with_celo() -> Self {
+        Self { celo: true, ..Default::default() }
+    }
+
+    pub fn is_optimism(&self) -> bool {
+        self.optimism
+    }
+
+    pub fn is_celo(&self) -> bool {
+        self.celo
     }
 
     pub fn with_chain_id(mut self, chain_id: u64) -> Self {
