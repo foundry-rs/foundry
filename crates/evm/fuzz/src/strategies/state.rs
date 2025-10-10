@@ -563,16 +563,15 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
 
                 // Store under all intN sizes that can represent this value
                 for bits in [16, 32, 64, 128, 256] {
-                    if can_fit_in_int(neg_value, bits) {
-                        if self
+                    if can_fit_in_int(neg_value, bits)
+                        && self
                             .output
                             .words
                             .entry(DynSolType::Int(bits))
                             .or_default()
                             .insert(neg_b256)
-                        {
-                            self.total_values += 1;
-                        }
+                    {
+                        self.total_values += 1;
                     }
                 }
             }

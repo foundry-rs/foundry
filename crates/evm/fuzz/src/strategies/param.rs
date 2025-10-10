@@ -523,10 +523,10 @@ mod tests {
 
         for _ in 0..256 {
             let tree = bytes_strategy.new_tree(&mut runner).unwrap();
-            if let Some(bytes) = tree.current().as_bytes() {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    generated_bytes.insert(s.to_string());
-                }
+            if let Some(bytes) = tree.current().as_bytes()
+                && let Ok(s) = std::str::from_utf8(bytes)
+            {
+                generated_bytes.insert(s.to_string());
             }
         }
 
