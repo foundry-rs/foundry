@@ -10,7 +10,8 @@ RUN apk add clang lld curl build-base linux-headers git \
     && chmod +x ./rustup.sh \
     && ./rustup.sh -y
 
-RUN [[ "$TARGETARCH" = "arm64" ]] && echo "export CFLAGS=-mno-outline-atomics" >> $HOME/.profile || true
+# Use POSIX-compatible [ ] to work with BusyBox /bin/sh (Alpine)
+RUN [ "$TARGETARCH" = "arm64" ] && echo 'export CFLAGS=-mno-outline-atomics' >> "$HOME/.profile" || true
 
 WORKDIR /opt/foundry
 COPY . .
