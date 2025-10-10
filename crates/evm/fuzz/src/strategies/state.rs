@@ -662,3 +662,140 @@ fn can_fit_uint(value: U256, bits: usize) -> bool {
     let max_val = (U256::from(1) << bits) - U256::from(1);
     value <= max_val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    const SOURCE: &str = r#"
+    contract Magic {
+        // plain literals
+        address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+        uint64 constant MAGIC_NUMBER = 1122334455;
+        int32 constant MAGIC_INT = -777;
+        bytes32 constant MAGIC_WORD = "abcd1234";
+        bytes constant MAGIC_BYTES = hex"deadbeef";
+        string constant MAGIC_STRING = "xyzzy";
+
+        // constant exprs with folding
+        uint256 constant NEG_FOLDING = uint(-2);
+        uint256 constant BIN_FOLDING = 2 * 2 ether;
+        bytes32 constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
+    }"#;
+
+    /// Helper to compile Solidity source and return the solar Compiler.
+    fn compile_test_source(source: &str) -> eyre::Result<Arc<Compiler>> {
+        // Create a new solar Compiler instance
+        let mut compiler = solar::sema::Compiler::new(
+            solar::interface::Session::builder().with_stderr_emitter().build(),
+        );
+
+        // Parse the source directly using stdin (in-memory source)
+        compiler.enter_mut(|c| -> eyre::Result<()> {
+            let mut pcx = c.parse();
+            pcx.set_resolve_imports(false);
+
+            // Create source file from string using Stdin file name
+            let sf = c
+                .sess()
+                .source_map()
+                .new_source_file(solar::interface::source_map::FileName::Stdin, source)
+                .map_err(|e| eyre::eyre!("Failed to create source file: {}", e))?;
+
+            pcx.add_file(sf);
+            pcx.parse();
+            let _ = c.lower_asts();
+
+            Ok(())
+        })?;
+
+        Ok(Arc::new(compiler))
+    }
+
+    #[test]
+    fn test_literals_collector_coverage() {
+        // Compile the test source and process literals
+        let compiler = compile_test_source(SOURCE).expect("Failed to compile test source");
+        let literals = LiteralsCollector::process(&compiler, None, usize::MAX);
+
+        // Expected values from the SOURCE contract
+        let dai_address = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F").into_word();
+        let magic_number = B256::from(U256::from(1122334455u64));
+        let magic_int = B256::from(I256::try_from(-777i32).unwrap().into_raw());
+        let magic_word = B256::right_padding_from(b"abcd1234");
+        let deadbeef_bytes = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
+
+        assert!(
+            literals.words.get(&DynSolType::Address).is_some_and(|set| set.contains(&dai_address)),
+            "Expected DAI in address set"
+        );
+        assert!(
+            literals
+                .words
+                .get(&DynSolType::Uint(64))
+                .is_some_and(|set| set.contains(&magic_number)),
+            "Expected MAGIC_NUMBER in uint64 set"
+        );
+        assert!(
+            literals.words.get(&DynSolType::Int(32)).is_some_and(|set| set.contains(&magic_int)),
+            "Expected MAGIC_INT in int32 set"
+        );
+        assert!(
+            literals
+                .words
+                .get(&DynSolType::FixedBytes(32))
+                .is_some_and(|set| set.contains(&magic_word)),
+            "Expected MAGIC_WORD in bytes32 set"
+        );
+        assert!(literals.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
+        assert!(
+            literals.strings.contains("eip1967.proxy.implementation"),
+            "Expected IMPLEMENTATION_SLOT in string set"
+        );
+        assert!(literals.bytes.contains(&deadbeef_bytes), "Expected MAGIC_BYTES in bytes set");
+    }
+
+    #[test]
+    fn test_literals_collector_size() {
+        // Compile the test source and process literals
+        let compiler = compile_test_source(SOURCE).expect("Failed to compile test source");
+        let literals = LiteralsCollector::process(&compiler, None, usize::MAX);
+
+        // Helper to get count for a type, returns 0 if not present
+        let count = |ty: DynSolType| literals.words.get(&ty).map_or(0, |set| set.len());
+
+        assert_eq!(count(DynSolType::Address), 1, "Address literal count mismatch");
+
+        // Unsigned integers - MAGIC_NUMBER (1122334455) appears in multiple sizes
+        assert_eq!(count(DynSolType::Uint(8)), 2, "Uint(8) count mismatch");
+        assert_eq!(count(DynSolType::Uint(16)), 3, "Uint(16) count mismatch");
+        assert_eq!(count(DynSolType::Uint(32)), 4, "Uint(32) count mismatch");
+        assert_eq!(count(DynSolType::Uint(64)), 5, "Uint(64) count mismatch");
+        assert_eq!(count(DynSolType::Uint(128)), 5, "Uint(128) count mismatch");
+        assert_eq!(count(DynSolType::Uint(256)), 5, "Uint(256) count mismatch");
+
+        // Signed integers - MAGIC_INT (-777) appears in multiple sizes
+        assert_eq!(count(DynSolType::Int(16)), 2, "Int(16) count mismatch");
+        assert_eq!(count(DynSolType::Int(32)), 2, "Int(32) count mismatch");
+        assert_eq!(count(DynSolType::Int(64)), 2, "Int(64) count mismatch");
+        assert_eq!(count(DynSolType::Int(128)), 2, "Int(128) count mismatch");
+        assert_eq!(count(DynSolType::Int(256)), 2, "Int(256) count mismatch");
+
+        // FixedBytes(32) includes:
+        // - MAGIC_WORD
+        // - String literals (hashed and right-padded versions)
+        assert_eq!(count(DynSolType::FixedBytes(32)), 6, "FixedBytes(32) count mismatch");
+
+        // String and byte literals
+        assert_eq!(literals.strings.len(), 3, "String literals count mismatch");
+        assert_eq!(literals.bytes.len(), 1, "Byte literals count mismatch");
+
+        // Total count check
+        assert_eq!(
+            literals.words.values().map(|set| set.len()).sum::<usize>(),
+            41,
+            "Total word values count mismatch"
+        );
+    }
+}

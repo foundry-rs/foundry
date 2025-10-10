@@ -4165,12 +4165,18 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
         "Magic.sol",
         r#"
         contract Magic {
+            // plain literals
             address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
             uint64 constant MAGIC_NUMBER = 1122334455;
             int32 constant MAGIC_INT = -777;
             bytes32 constant MAGIC_WORD = "abcd1234";
             bytes constant MAGIC_BYTES = hex"deadbeef";
             string constant MAGIC_STRING = "xyzzy";
+
+            // constant exprs with folding
+            uint256 constant NEG_FOLDING = uint(-2);
+            uint256 constant BIN_FOLDING = 2 * 2 ether;
+            bytes32 constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
 
             function checkAddr(address v) external pure { assert(v != DAI); }
             function checkWord(bytes32 v) external pure { assert(v != MAGIC_WORD); }
