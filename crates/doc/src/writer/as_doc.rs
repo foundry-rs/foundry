@@ -2,6 +2,7 @@ use crate::{
     CONTRACT_INHERITANCE_ID, CommentTag, Comments, CommentsRef, DEPLOYMENTS_ID, Document,
     GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
     document::{DocumentContent, read_context},
+    helpers::function_signature,
     parser::ParseSource,
     solang_ext::SafeUnwrap,
     writer::BufWriter,
@@ -277,24 +278,6 @@ impl AsDoc for Document {
     }
 }
 
-/// Generates a function signature with parameter types (e.g., "functionName(type1,type2)").
-/// Returns the function name without parameters if the function has no parameters.
-fn function_signature(func: &FunctionDefinition) -> String {
-    let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
-    if func.params.is_empty() {
-        return func_name;
-    }
-
-    format!(
-        "{}({})",
-        func_name,
-        func.params
-            .iter()
-            .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
-            .join(",")
-    )
-}
-
 impl Document {
     /// Where all the source files are written to
     fn target_src_dir(&self) -> PathBuf {
@@ -335,76 +318,5 @@ impl Document {
 
         writer.writeln()?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use solang_parser::{
-        parse,
-        pt::{ContractPart, SourceUnit, SourceUnitPart},
-    };
-
-    #[test]
-    fn test_function_signature_no_params() {
-        let (source_unit, _) = parse(
-            r#"
-            contract Test {
-                function foo() public {}
-            }
-            "#,
-            0,
-        )
-        .unwrap();
-
-        let func = extract_function(&source_unit);
-        assert_eq!(function_signature(func), "foo");
-    }
-
-    #[test]
-    fn test_function_signature_with_params() {
-        let (source_unit, _) = parse(
-            r#"
-            contract Test {
-                function transfer(address to, uint256 amount) public {}
-            }
-            "#,
-            0,
-        )
-        .unwrap();
-
-        let func = extract_function(&source_unit);
-        assert_eq!(function_signature(func), "transfer(address,uint256)");
-    }
-
-    #[test]
-    fn test_function_signature_constructor() {
-        let (source_unit, _) = parse(
-            r#"
-            contract Test {
-                constructor(address owner) {}
-            }
-            "#,
-            0,
-        )
-        .unwrap();
-
-        let func = extract_function(&source_unit);
-        assert_eq!(function_signature(func), "constructor(address)");
-    }
-
-    /// Helper to extract the first function from a parsed source unit
-    fn extract_function(source_unit: &SourceUnit) -> &FunctionDefinition {
-        for part in &source_unit.0 {
-            if let SourceUnitPart::ContractDefinition(contract) = part {
-                for part in &contract.parts {
-                    if let ContractPart::FunctionDefinition(func) = part {
-                        return func;
-                    }
-                }
-            }
-        }
-        panic!("No function found in source unit");
     }
 }
