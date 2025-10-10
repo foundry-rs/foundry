@@ -146,7 +146,7 @@ contract ForkTest is Test {
         assertEq(dummy.val(), expectedValue);
     }
 
-    // checks diagnostic
+    /// forge-config: default.allow_internal_expect_revert = true
     function testNonExistingContractRevert() public {
         vm.selectFork(mainnetFork);
         DummyContract dummy = new DummyContract();
@@ -160,7 +160,8 @@ contract ForkTest is Test {
         assertEq(dummyAddress, address(dummy));
 
         // this will revert since `dummy` does not exists on the currently active fork
-        string memory msg2 = dummy.hello();
+        vm.expectRevert();
+        dummy.noop();
     }
 
     struct EthGetLogsJsonParseable {
@@ -240,6 +241,8 @@ contract ForkTest is Test {
 
 contract DummyContract {
     uint256 public val;
+
+    function noop() external pure {}
 
     function hello() external view returns (string memory) {
         return "hello";
