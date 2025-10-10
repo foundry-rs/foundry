@@ -4166,7 +4166,7 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
         r#"
         contract Magic {
             address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-            uint256 constant MAGIC_NUMBER = 1122334455;
+            uint64 constant MAGIC_NUMBER = 1122334455;
             int32 constant MAGIC_INT = -777;
             bytes32 constant MAGIC_WORD = "abcd1234";
             bytes constant MAGIC_BYTES = hex"deadbeef";
@@ -4174,7 +4174,7 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
 
             function checkAddr(address v) external pure { assert(v != DAI); }
             function checkWord(bytes32 v) external pure { assert(v != MAGIC_WORD); }
-            function checkNumber(uint256 v) external pure { assert(v != MAGIC_NUMBER); }
+            function checkNumber(uint64 v) external pure { assert(v != MAGIC_NUMBER); }
             function checkInteger(int32 v) external pure { assert(v != MAGIC_INT); }
             function checkString(string memory v) external pure { assert(keccak256(abi.encodePacked(v)) != keccak256(abi.encodePacked(MAGIC_STRING))); }
             function checkBytesFromHex(bytes memory v) external pure { assert(keccak256(v) != keccak256(MAGIC_BYTES)); }
@@ -4194,7 +4194,7 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
                 function setUp() public { magic = new Magic(); }
 
                 function testFuzz_Addr(address v) public view { magic.checkAddr(v); }
-                function testFuzz_Number(uint256 v) public view { magic.checkNumber(v); }
+                function testFuzz_Number(uint64 v) public view { magic.checkNumber(v); }
                 function testFuzz_Integer(int32 v) public view { magic.checkInteger(v); }
                 function testFuzz_Word(bytes32 v) public view { magic.checkWord(v); }
                 function testFuzz_String(string memory v) public view { magic.checkString(v); }
@@ -4252,7 +4252,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     };
 
     test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
-    test_literal(200, "testFuzz_Number", "uint256", "1122334455 [1.122e9]", 5);
+    test_literal(200, "testFuzz_Number", "uint64", "1122334455 [1.122e9]", 5);
     test_literal(300, "testFuzz_Integer", "int32", "-777", 0);
     test_literal(
         400,
