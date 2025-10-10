@@ -667,6 +667,7 @@ fn can_fit_uint(value: U256, bits: usize) -> bool {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use solar::interface::{Session, source_map};
 
     const SOURCE: &str = r#"
     contract Magic {
@@ -684,88 +685,39 @@ mod tests {
         bytes32 constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
     }"#;
 
-    /// Helper to compile Solidity source and return the solar Compiler.
-    fn compile_test_source(source: &str) -> eyre::Result<Arc<Compiler>> {
-        // Create a new solar Compiler instance
-        let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
-        );
-
-        // Parse the source directly using stdin (in-memory source)
-        compiler.enter_mut(|c| -> eyre::Result<()> {
-            let mut pcx = c.parse();
-            pcx.set_resolve_imports(false);
-
-            // Create source file from string using Stdin file name
-            let sf = c
-                .sess()
-                .source_map()
-                .new_source_file(solar::interface::source_map::FileName::Stdin, source)
-                .map_err(|e| eyre::eyre!("Failed to create source file: {}", e))?;
-
-            pcx.add_file(sf);
-            pcx.parse();
-            let _ = c.lower_asts();
-
-            Ok(())
-        })?;
-
-        Ok(Arc::new(compiler))
-    }
-
     #[test]
     fn test_literals_collector_coverage() {
-        // Compile the test source and process literals
-        let compiler = compile_test_source(SOURCE).expect("Failed to compile test source");
-        let literals = LiteralsCollector::process(&compiler, None, usize::MAX);
+        let lits = process_source_literals(SOURCE);
 
         // Expected values from the SOURCE contract
-        let dai_address = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F").into_word();
-        let magic_number = B256::from(U256::from(1122334455u64));
-        let magic_int = B256::from(I256::try_from(-777i32).unwrap().into_raw());
-        let magic_word = B256::right_padding_from(b"abcd1234");
-        let deadbeef_bytes = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
+        let addr = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F").into_word();
+        let num = B256::from(U256::from(1122334455u64));
+        let int = B256::from(I256::try_from(-777i32).unwrap().into_raw());
+        let word = B256::right_padding_from(b"abcd1234");
+        let dyn_bytes = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
 
+        assert_word(&lits, DynSolType::Address, addr, "Expected DAI in address set");
+        assert_word(&lits, DynSolType::Uint(64), num, "Expected MAGIC_NUMBER in uint64 set");
+        assert_word(&lits, DynSolType::Int(32), int, "Expected MAGIC_INT in int32 set");
+        assert_word(&lits, DynSolType::FixedBytes(32), word, "Expected MAGIC_WORD in bytes32 set");
+        assert!(lits.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
         assert!(
-            literals.words.get(&DynSolType::Address).is_some_and(|set| set.contains(&dai_address)),
-            "Expected DAI in address set"
-        );
-        assert!(
-            literals
-                .words
-                .get(&DynSolType::Uint(64))
-                .is_some_and(|set| set.contains(&magic_number)),
-            "Expected MAGIC_NUMBER in uint64 set"
-        );
-        assert!(
-            literals.words.get(&DynSolType::Int(32)).is_some_and(|set| set.contains(&magic_int)),
-            "Expected MAGIC_INT in int32 set"
-        );
-        assert!(
-            literals
-                .words
-                .get(&DynSolType::FixedBytes(32))
-                .is_some_and(|set| set.contains(&magic_word)),
-            "Expected MAGIC_WORD in bytes32 set"
-        );
-        assert!(literals.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
-        assert!(
-            literals.strings.contains("eip1967.proxy.implementation"),
+            lits.strings.contains("eip1967.proxy.implementation"),
             "Expected IMPLEMENTATION_SLOT in string set"
         );
-        assert!(literals.bytes.contains(&deadbeef_bytes), "Expected MAGIC_BYTES in bytes set");
+        assert!(lits.bytes.contains(&dyn_bytes), "Expected MAGIC_BYTES in bytes set");
     }
 
     #[test]
     fn test_literals_collector_size() {
-        // Compile the test source and process literals
-        let compiler = compile_test_source(SOURCE).expect("Failed to compile test source");
-        let literals = LiteralsCollector::process(&compiler, None, usize::MAX);
+        let literals = process_source_literals(SOURCE);
 
         // Helper to get count for a type, returns 0 if not present
         let count = |ty: DynSolType| literals.words.get(&ty).map_or(0, |set| set.len());
 
         assert_eq!(count(DynSolType::Address), 1, "Address literal count mismatch");
+        assert_eq!(literals.strings.len(), 3, "String literals count mismatch");
+        assert_eq!(literals.bytes.len(), 1, "Byte literals count mismatch");
 
         // Unsigned integers - MAGIC_NUMBER (1122334455) appears in multiple sizes
         assert_eq!(count(DynSolType::Uint(8)), 2, "Uint(8) count mismatch");
@@ -787,15 +739,36 @@ mod tests {
         // - String literals (hashed and right-padded versions)
         assert_eq!(count(DynSolType::FixedBytes(32)), 6, "FixedBytes(32) count mismatch");
 
-        // String and byte literals
-        assert_eq!(literals.strings.len(), 3, "String literals count mismatch");
-        assert_eq!(literals.bytes.len(), 1, "Byte literals count mismatch");
-
         // Total count check
         assert_eq!(
             literals.words.values().map(|set| set.len()).sum::<usize>(),
             41,
             "Total word values count mismatch"
         );
+    }
+
+    // -- TEST HELPERS ---------------------------------------------------------
+
+    fn process_source_literals(source: &str) -> LiteralMaps {
+        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+        compiler
+            .enter_mut(|c| -> std::io::Result<()> {
+                let mut pcx = c.parse();
+                pcx.set_resolve_imports(false);
+
+                pcx.add_file(
+                    c.sess().source_map().new_source_file(source_map::FileName::Stdin, source)?,
+                );
+                pcx.parse();
+                let _ = c.lower_asts();
+                Ok(())
+            })
+            .expect("Failed to compile test source");
+
+        LiteralsCollector::process(&Arc::new(compiler), None, usize::MAX)
+    }
+
+    fn assert_word(literals: &LiteralMaps, ty: DynSolType, value: B256, msg: &str) {
+        assert!(literals.words.get(&ty).is_some_and(|set| set.contains(&value)), "{}", msg);
     }
 }
