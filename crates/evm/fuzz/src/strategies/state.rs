@@ -490,13 +490,7 @@ impl FuzzDictionary {
 
 // -- AST LITERALS COLLECTOR ---------------------------------------------------
 
-enum LitTy {
-    Word(B256),
-    Str(String),
-    Bytes(Bytes),
-}
-
-#[derive(Clone, Default, Debug)]
+#[derive(Debug, Default)]
 pub struct LiteralMaps {
     pub words: HashMap<DynSolType, B256IndexSet>,
     pub strings: IndexSet<String>,
@@ -563,7 +557,7 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
 
                 // Store under all intN sizes that can represent this value
                 for bits in [16, 32, 64, 128, 256] {
-                    if can_fit_in_int(neg_value, bits)
+                    if can_fit_int(neg_value, bits)
                         && self
                             .output
                             .words
@@ -580,21 +574,48 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
             return self.walk_expr(expr);
         }
 
-        if let ast::ExprKind::Lit(lit, _) = &expr.kind
-            && let Some((ty, value)) = convert_literal(lit)
-        {
-            let is_new = match value {
-                LitTy::Word(v) => self.output.words.entry(ty).or_default().insert(v),
-                LitTy::Str(v) => {
+        // Handle literals
+        if let ast::ExprKind::Lit(lit, _) = &expr.kind {
+            let is_new = match &lit.kind {
+                ast::LitKind::Number(n) => {
+                    let pos_value = U256::from(*n);
+                    let pos_b256 = B256::from(pos_value);
+
+                    // Store under all uintN sizes that can represent this value
+                    for bits in [8, 16, 32, 64, 128, 256] {
+                        if can_fit_uint(pos_value, bits)
+                            && self
+                                .output
+                                .words
+                                .entry(DynSolType::Uint(bits))
+                                .or_default()
+                                .insert(pos_b256)
+                        {
+                            self.total_values += 1;
+                        }
+                    }
+                    false // already handled inserts individually
+                }
+                ast::LitKind::Address(addr) => self
+                    .output
+                    .words
+                    .entry(DynSolType::Address)
+                    .or_default()
+                    .insert(addr.into_word()),
+                ast::LitKind::Str(ast::StrKind::Hex, sym, _) => {
+                    self.output.bytes.insert(Bytes::copy_from_slice(sym.as_byte_str()))
+                }
+                ast::LitKind::Str(_, sym, _) => {
+                    let s = String::from_utf8_lossy(sym.as_byte_str()).into_owned();
                     // For strings, also store the hashed version
-                    let hash = keccak256(v.as_bytes());
+                    let hash = keccak256(s.as_bytes());
                     if self.output.words.entry(DynSolType::FixedBytes(32)).or_default().insert(hash)
                     {
                         self.total_values += 1;
                     }
                     // And the right-padded version if it fits.
-                    if v.len() <= 32 {
-                        let padded = B256::right_padding_from(v.as_bytes());
+                    if s.len() <= 32 {
+                        let padded = B256::right_padding_from(s.as_bytes());
                         if self
                             .output
                             .words
@@ -605,9 +626,11 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
                             self.total_values += 1;
                         }
                     }
-                    self.output.strings.insert(v)
+                    self.output.strings.insert(s)
                 }
-                LitTy::Bytes(v) => self.output.bytes.insert(v),
+                ast::LitKind::Bool(..) | ast::LitKind::Rational(..) | ast::LitKind::Err(..) => {
+                    false // ignore
+                }
             };
 
             if is_new {
@@ -620,7 +643,7 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
 }
 
 /// Checks if a signed integer value can fit in intN type.
-fn can_fit_in_int(value: I256, bits: usize) -> bool {
+fn can_fit_int(value: I256, bits: usize) -> bool {
     // Calculate the maximum positive value for intN: 2^(N-1) - 1
     let max_val = I256::try_from((U256::from(1) << (bits - 1)) - U256::from(1))
         .expect("max value should fit in I256");
@@ -630,21 +653,12 @@ fn can_fit_in_int(value: I256, bits: usize) -> bool {
     value >= min_val && value <= max_val
 }
 
-fn convert_literal(lit: &ast::Lit<'_>) -> Option<(DynSolType, LitTy)> {
-    use ast::LitKind;
-
-    match &lit.kind {
-        LitKind::Number(n) => Some((DynSolType::Uint(256), LitTy::Word(B256::from(*n)))),
-        LitKind::Address(addr) => Some((DynSolType::Address, LitTy::Word(addr.into_word()))),
-        LitKind::Str(ast::StrKind::Hex, bytes, _) => {
-            let byte_slice = bytes.as_byte_str();
-            Some((DynSolType::Bytes, LitTy::Bytes(Bytes::copy_from_slice(byte_slice))))
-        }
-        LitKind::Str(_, bytes, _) => Some((
-            DynSolType::String,
-            LitTy::Str(String::from_utf8_lossy(bytes.as_byte_str()).into_owned()),
-        )),
-        // Skip
-        LitKind::Bool(_) | LitKind::Rational(_) | LitKind::Err(_) => None,
+/// Checks if an unsigned integer value can fit in uintN type.
+fn can_fit_uint(value: U256, bits: usize) -> bool {
+    if bits == 256 {
+        return true;
     }
+    // Calculate the maximum value for uintN: 2^N - 1
+    let max_val = (U256::from(1) << bits) - U256::from(1);
+    value <= max_val
 }
