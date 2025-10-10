@@ -640,7 +640,6 @@ fn convert_literal(lit: &ast::Lit<'_>) -> Option<(DynSolType, LitTy)> {
             let byte_slice = bytes.as_byte_str();
             Some((DynSolType::Bytes, LitTy::Bytes(Bytes::copy_from_slice(byte_slice))))
         }
-        // Regular and unicode strings: always store as dynamic
         LitKind::Str(_, bytes, _) => Some((
             DynSolType::String,
             LitTy::Str(String::from_utf8_lossy(bytes.as_byte_str()).into_owned()),

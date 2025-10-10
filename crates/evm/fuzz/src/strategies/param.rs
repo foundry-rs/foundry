@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn can_fuzz_string_with_ast_literals_and_hashes() {
+    fn can_fuzz_string_and_bytes_with_ast_literals_and_hashes() {
         use super::fuzz_param_from_state;
         use crate::strategies::state::LiteralMaps;
         use alloy_dyn_abi::DynSolType;
@@ -473,12 +473,21 @@ mod tests {
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 
         // Verify strategies generates the seeded AST literals
+        let mut generated_bytes = HashSet::new();
         let mut generated_hashes = HashSet::new();
         let mut generated_strings = HashSet::new();
+        let bytes_strategy = fuzz_param_from_state(&DynSolType::Bytes, &state);
         let string_strategy = fuzz_param_from_state(&DynSolType::String, &state);
         let bytes32_strategy = fuzz_param_from_state(&DynSolType::FixedBytes(32), &state);
 
         for _ in 0..256 {
+            let tree = bytes_strategy.new_tree(&mut runner).unwrap();
+            if let Some(bytes) = tree.current().as_bytes()
+                && let Ok(s) = std::str::from_utf8(bytes)
+            {
+                generated_bytes.insert(s.to_string());
+            }
+
             let tree = string_strategy.new_tree(&mut runner).unwrap();
             if let Some(s) = tree.current().as_str() {
                 generated_strings.insert(s.to_string());
@@ -492,45 +501,11 @@ mod tests {
             }
         }
 
+        assert!(generated_bytes.contains("hello"));
+        assert!(generated_bytes.contains("world"));
         assert!(generated_strings.contains("hello"));
         assert!(generated_strings.contains("world"));
         assert!(generated_hashes.contains(&keccak256("hello")));
         assert!(generated_hashes.contains(&keccak256("world")));
-    }
-
-    #[test]
-    fn can_fuzz_bytes_with_string_literals_and_hashes() {
-        use super::fuzz_param_from_state;
-        use crate::strategies::state::LiteralMaps;
-        use alloy_dyn_abi::DynSolType;
-        use proptest::strategy::Strategy;
-
-        // Seed dict with string values and their hashes --> mimic `CheatcodeAnalysis` behavior.
-        let mut literals = LiteralMaps::default();
-        literals.strings.insert("hello".to_string());
-        literals.strings.insert("world".to_string());
-
-        let db = CacheDB::new(EmptyDB::default());
-        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default(), &[], None, None);
-        state.seed_literals(literals);
-
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
-        let mut runner = proptest::test_runner::TestRunner::new(cfg);
-
-        // Verify strategies generates the seeded AST literals
-        let mut generated_bytes = HashSet::new();
-        let bytes_strategy = fuzz_param_from_state(&DynSolType::Bytes, &state);
-
-        for _ in 0..256 {
-            let tree = bytes_strategy.new_tree(&mut runner).unwrap();
-            if let Some(bytes) = tree.current().as_bytes()
-                && let Ok(s) = std::str::from_utf8(bytes)
-            {
-                generated_bytes.insert(s.to_string());
-            }
-        }
-
-        assert!(generated_bytes.contains("hello"));
-        assert!(generated_bytes.contains("world"));
     }
 }
