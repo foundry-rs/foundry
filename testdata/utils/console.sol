@@ -11,7 +11,6 @@ library console {
             pop(staticcall(gas(), consoleAddress, add(payload, 32), mload(payload), 0, 0))
         }
     }
-    
 
     function _castToPure(function(bytes memory) internal view fnIn)
         internal
