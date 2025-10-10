@@ -395,7 +395,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Test that counterexample is not replayed if test changes.
 // <https://github.com/foundry-rs/foundry/issues/11927>
 forgetest_init!(test_fuzz_replay_with_changed_test, |prj, cmd| {
-    prj.update_config(|config| config.fuzz.seed = Some(U256::from(100u32)));
+    prj.update_config(|config| {
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+        config.fuzz.seed = Some(U256::from(100u32))
+    });
     prj.add_test(
         "Counter.t.sol",
         r#"
