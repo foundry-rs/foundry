@@ -1,32 +1,27 @@
 use crate::{
     AnvilNodeConfig,
-    substrate_node::mining_engine::{MiningEngine, MiningMode, run_mining_engine},
+    substrate_node::{
+        genesis::DevelopmentGenesisBlockBuilder,
+        host::{PublicKeyToHashOverride, SenderAddressRecoveryOverride},
+        mining_engine::{MiningEngine, MiningMode, run_mining_engine},
+        rpc::spawn_rpc_server,
+    },
 };
 use anvil::eth::backend::time::TimeManager;
 use polkadot_sdk::{
-    sc_basic_authorship, sc_consensus, sc_consensus_manual_seal,
-    sc_executor::WasmExecutor,
-    sc_network_types::{self, multiaddr::Multiaddr},
-    sc_rpc_api::DenyUnsafe,
+    sc_basic_authorship, sc_consensus, sc_consensus_manual_seal, sc_executor,
     sc_service::{
         self, Configuration, RpcHandlers, SpawnTaskHandle, TaskManager,
         error::Error as ServiceError,
     },
-    sc_transaction_pool::{self, TransactionPoolWrapper},
-    sc_utils::mpsc::tracing_unbounded,
-    sp_io,
-    sp_keystore::KeystorePtr,
-    sp_timestamp,
+    sc_transaction_pool, sp_io, sp_timestamp,
     sp_wasm_interface::ExtendedHostFunctions,
-    substrate_frame_rpc_system::SystemApiServer,
 };
 use std::sync::Arc;
 use substrate_runtime::{OpaqueBlock as Block, RuntimeApi};
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::substrate_node::host::{PublicKeyToHashOverride, SenderAddressRecoveryOverride};
-
-pub type Executor = WasmExecutor<
+type Executor = sc_executor::WasmExecutor<
     ExtendedHostFunctions<
         ExtendedHostFunctions<sp_io::SubstrateHostFunctions, SenderAddressRecoveryOverride>,
         PublicKeyToHashOverride,
@@ -46,6 +41,7 @@ pub struct Service {
     pub tx_pool: Arc<TransactionPoolHandle>,
     pub rpc_handlers: RpcHandlers,
     pub mining_engine: Arc<MiningEngine>,
+    pub genesis_block_number: u64,
 }
 
 /// Builds a new service for a full client.
@@ -53,11 +49,25 @@ pub fn new(
     anvil_config: &AnvilNodeConfig,
     config: Configuration,
 ) -> Result<(Service, TaskManager), ServiceError> {
+    let backend = sc_service::new_db_backend(config.db_config())?;
+
+    let wasm_executor = sc_service::new_wasm_executor(&config.executor);
+    let genesis_block_builder = DevelopmentGenesisBlockBuilder::new(
+        anvil_config.get_genesis_number(),
+        config.chain_spec.as_storage_builder(),
+        !config.no_genesis(),
+        backend.clone(),
+        wasm_executor.clone(),
+    )?;
+
     let (client, backend, keystore_container, mut task_manager) =
-        sc_service::new_full_parts::<Block, RuntimeApi, _>(
+        sc_service::new_full_parts_with_genesis_builder(
             &config,
             None,
-            sc_service::new_wasm_executor(&config.executor),
+            wasm_executor,
+            backend,
+            genesis_block_builder,
+            false,
         )?;
     let client = Arc::new(client);
 
@@ -83,8 +93,15 @@ pub fn new(
 
     let mining_mode =
         MiningMode::new(anvil_config.block_time, anvil_config.mixed_mining, anvil_config.no_mining);
-    let time_manager =
-        Arc::new(TimeManager::new_with_milliseconds(sp_timestamp::Timestamp::current().into()));
+    let time_manager = Arc::new(TimeManager::new_with_milliseconds(
+        sp_timestamp::Timestamp::from(
+            anvil_config
+                .get_genesis_timestamp()
+                .checked_mul(1000)
+                .ok_or(ServiceError::Application("Genesis timestamp overflow".into()))?,
+        )
+        .into(),
+    ));
     let mining_engine = Arc::new(MiningEngine::new(
         mining_mode,
         transaction_pool.clone(),
@@ -93,6 +110,7 @@ pub fn new(
     ));
 
     let rpc_handlers = spawn_rpc_server(
+        anvil_config.get_genesis_number(),
         &mut task_manager,
         client.clone(),
         config,
@@ -148,78 +166,8 @@ pub fn new(
             tx_pool: transaction_pool,
             rpc_handlers,
             mining_engine,
+            genesis_block_number: anvil_config.get_genesis_number(),
         },
         task_manager,
     ))
-}
-
-fn spawn_rpc_server(
-    task_manager: &mut TaskManager,
-    client: Arc<FullClient>,
-    mut config: Configuration,
-    transaction_pool: Arc<TransactionPoolWrapper<Block, FullClient>>,
-    keystore: KeystorePtr,
-    backend: Arc<Backend>,
-) -> Result<RpcHandlers, ServiceError> {
-    let rpc_extensions_builder = {
-        let client = client.clone();
-        let pool = transaction_pool.clone();
-
-        Box::new(move |_| {
-            Ok(polkadot_sdk::substrate_frame_rpc_system::System::new(client.clone(), pool.clone())
-                .into_rpc())
-        })
-    };
-
-    let (system_rpc_tx, system_rpc_rx) = tracing_unbounded("mpsc_system_rpc", 10_000);
-
-    let rpc_id_provider = config.rpc.id_provider.take();
-
-    let gen_rpc_module = || {
-        sc_service::gen_rpc_module(
-            task_manager.spawn_handle(),
-            client.clone(),
-            transaction_pool.clone(),
-            keystore.clone(),
-            system_rpc_tx.clone(),
-            config.impl_name.clone(),
-            config.impl_version.clone(),
-            config.chain_spec.as_ref(),
-            &config.state_pruning,
-            config.blocks_pruning,
-            backend.clone(),
-            &*rpc_extensions_builder,
-            None,
-        )
-    };
-
-    let rpc_server_handle = sc_service::start_rpc_servers(
-        &config.rpc,
-        config.prometheus_registry(),
-        &config.tokio_handle,
-        gen_rpc_module,
-        rpc_id_provider,
-    )?;
-
-    let listen_addrs = rpc_server_handle
-        .listen_addrs()
-        .iter()
-        .map(|socket_addr| {
-            let mut multiaddr: Multiaddr = socket_addr.ip().into();
-            multiaddr.push(sc_network_types::multiaddr::Protocol::Tcp(socket_addr.port()));
-            multiaddr
-        })
-        .collect();
-
-    let in_memory_rpc = {
-        let mut module = gen_rpc_module()?;
-        module.extensions_mut().insert(DenyUnsafe::No);
-        module
-    };
-
-    let in_memory_rpc_handle = RpcHandlers::new(Arc::new(in_memory_rpc), listen_addrs);
-
-    task_manager.keep_alive((config.base_path, rpc_server_handle, system_rpc_rx));
-
-    Ok(in_memory_rpc_handle)
 }

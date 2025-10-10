@@ -13,6 +13,8 @@ pub enum Error {
     InvalidParams(String),
     #[error("Revive call failed: {0}")]
     ReviveRpc(#[from] EthRpcError),
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 impl From<subxt::Error> for Error {
     fn from(err: subxt::Error) -> Self {
@@ -71,6 +73,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 Error::ReviveRpc(client_error) => {
                     RpcError::internal_error_with(format!("{client_error}")).into()
+                }
+                Error::InternalError(error_message) => {
+                    RpcError::internal_error_with(error_message).into()
                 }
             },
         }

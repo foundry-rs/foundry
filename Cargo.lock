@@ -1211,6 +1211,7 @@ dependencies = [
  "futures-timer",
  "hyper 1.6.0",
  "itertools 0.14.0",
+ "jsonrpsee",
  "libsecp256k1",
  "op-alloy-consensus 0.17.2",
  "op-alloy-rpc-types",
@@ -14345,13 +14346,16 @@ dependencies = [
  "sc-executor-common",
  "sc-executor-wasmtime",
  "sc-keystore",
+ "sc-network",
  "sc-network-types",
  "sc-rpc",
  "sc-rpc-api",
  "sc-rpc-server",
  "sc-rpc-spec-v2",
+ "sc-runtime-utilities",
  "sc-service",
  "sc-state-db",
+ "sc-telemetry",
  "sc-tracing",
  "sc-transaction-pool",
  "sc-transaction-pool-api",
@@ -17194,6 +17198,21 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "sc-runtime-utilities"
+version = "0.1.0"
+source = "git+https://github.com/paritytech/polkadot-sdk.git?branch=master#e8f1aff5a174f420cdd77f5d5c854dd6dc8a3273"
+dependencies = [
+ "parity-scale-codec",
+ "sc-executor",
+ "sc-executor-common",
+ "sp-core",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk.git?branch=master)",
+ "sp-state-machine",
+ "sp-wasm-interface",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

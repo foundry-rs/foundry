@@ -10,12 +10,12 @@ use anvil_polkadot::{
     logging::LoggingManager,
     opts::SubstrateCli,
     spawn,
-    substrate_node::service::Service,
+    substrate_node::{genesis::GenesisConfig, service::Service},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
+use codec::Decode;
 use eyre::{Result, WrapErr};
 use futures::{StreamExt, channel::oneshot};
-use parity_scale_codec::Decode;
 use polkadot_sdk::{
     pallet_revive::evm::{Block, ReceiptInfo},
     polkadot_sdk_frame::traits::Header,
@@ -77,7 +77,7 @@ impl TestNode {
             Some(_) => {}
         }
 
-        let substrate_client = SubstrateCli {};
+        let substrate_client = SubstrateCli { genesis_config: GenesisConfig::from(&anvil_config) };
         let config = substrate_config.create_configuration(&substrate_client, handle.clone())?;
         let logging_manager = if anvil_config.enable_tracing {
             init_tracing(anvil_config.silent)
@@ -299,4 +299,11 @@ pub fn get_contract_code(name: &str) -> ContractCode {
         contract_json.get("bin-runtime").map(|code| hex::decode(code.as_str().unwrap()).unwrap());
 
     ContractCode { init, runtime }
+}
+
+pub fn to_hex_string(value: u64) -> String {
+    let hex = hex::encode(value.to_be_bytes());
+    let trimmed = hex.trim_start_matches('0');
+    let result = if trimmed.is_empty() { "0" } else { trimmed };
+    format!("0x{result}")
 }

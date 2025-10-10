@@ -20,15 +20,15 @@ async fn test_get_chain_id() {
     let substrate_node_config = SubstrateNodeConfig::new(&anvil_node_config);
     let mut node = TestNode::new(anvil_node_config.clone(), substrate_node_config).await.unwrap();
 
-    // expected 420420420
+    // expected 31337, default value from the Anvil config
     assert_eq!(
         unwrap_response::<String>(node.eth_rpc(EthRequest::EthChainId(())).await.unwrap()).unwrap(),
-        "0x190f1b44"
+        "0x7a69"
     );
-    // expected 420420420
+    // expected 31337, default value from the Anvil config
     assert_eq!(
         unwrap_response::<u64>(node.eth_rpc(EthRequest::EthNetworkId(())).await.unwrap()).unwrap(),
-        0x190f1b44
+        0x7a69
     );
 }
 

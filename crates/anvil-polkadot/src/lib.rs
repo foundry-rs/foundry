@@ -6,7 +6,7 @@ use crate::{
     api_server::ApiHandle,
     config::AnvilNodeConfig,
     logging::{LoggingManager, NodeLogLayer},
-    substrate_node::service::Service,
+    substrate_node::{genesis::GenesisConfig, service::Service},
 };
 use clap::{CommandFactory, Parser};
 use eyre::Result;
@@ -83,9 +83,11 @@ pub fn run_command(args: Anvil) -> Result<()> {
         }
         return Ok(());
     }
-    let substrate_client = opts::SubstrateCli {};
 
     let (anvil_config, substrate_config) = args.node.into_node_config()?;
+
+    let substrate_client =
+        opts::SubstrateCli { genesis_config: GenesisConfig::from(&anvil_config) };
 
     let tokio_runtime = build_runtime()?;
 

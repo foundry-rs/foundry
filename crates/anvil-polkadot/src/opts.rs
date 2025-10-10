@@ -1,4 +1,7 @@
-use crate::{cmd::NodeArgs, substrate_node::chain_spec};
+use crate::{
+    cmd::NodeArgs,
+    substrate_node::{chain_spec, genesis::GenesisConfig},
+};
 use clap::{Parser, Subcommand};
 use foundry_cli::opts::GlobalArgs;
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
@@ -31,7 +34,10 @@ pub enum AnvilSubcommand {
     GenerateFigSpec,
 }
 
-pub struct SubstrateCli;
+pub struct SubstrateCli {
+    // Used to inject the anvil config into the chain spec
+    pub genesis_config: GenesisConfig,
+}
 
 // Implementation of the SubstrateCli, which enables us to launch an in-process substrate node.
 impl sc_cli::SubstrateCli for SubstrateCli {
@@ -63,12 +69,7 @@ impl sc_cli::SubstrateCli for SubstrateCli {
         "anvil-polkadot".into()
     }
 
-    fn load_spec(&self, id: &str) -> std::result::Result<Box<dyn sc_service::ChainSpec>, String> {
-        Ok(match id {
-            "dev" | "" => Box::new(chain_spec::development_chain_spec()?),
-            path => {
-                Box::new(chain_spec::ChainSpec::from_json_file(std::path::PathBuf::from(path))?)
-            }
-        })
+    fn load_spec(&self, _: &str) -> std::result::Result<Box<dyn sc_service::ChainSpec>, String> {
+        Ok(Box::new(chain_spec::development_chain_spec(self.genesis_config.clone())?))
     }
 }

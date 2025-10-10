@@ -9,8 +9,10 @@ use crate::{
     logging::LoggingManager,
     macros::node_info,
     substrate_node::{
-        impersonation::ImpersonationManager, in_mem_rpc::InMemoryRpcClient,
-        mining_engine::MiningEngine, service::Service,
+        impersonation::ImpersonationManager,
+        in_mem_rpc::InMemoryRpcClient,
+        mining_engine::MiningEngine,
+        service::{Backend, Service},
     },
 };
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -19,6 +21,7 @@ use alloy_rpc_types::{TransactionRequest, anvil::MineOptions};
 use alloy_serde::WithOtherFields;
 use anvil_core::eth::{EthRequest, Params as MineParams};
 use anvil_rpc::response::ResponseResult;
+use codec::Decode;
 use futures::{StreamExt, channel::mpsc};
 use polkadot_sdk::{
     pallet_revive::evm::{Account, Block, Bytes, ReceiptInfo, TransactionSigned},
@@ -27,12 +30,16 @@ use polkadot_sdk::{
         client::{Client as EthRpcClient, ClientError, SubscriptionType},
         subxt_client::{self, SrcChainConfig},
     },
+    parachains_common::Hash,
+    sc_client_api::{Backend as _, HeaderBackend, StateBackend, TrieCacheContext},
+    sp_api::{Metadata, ProvideRuntimeApi},
     sp_core::{self, keccak_256},
 };
 use sqlx::sqlite::SqlitePoolOptions;
 use std::{sync::Arc, time::Duration};
 use subxt::{
-    OnlineClient, backend::rpc::RpcClient, config::substrate::H256,
+    Metadata as SubxtMetadata, OnlineClient, backend::rpc::RpcClient,
+    client::RuntimeVersion as SubxtRuntimeVersion, config::substrate::H256,
     ext::subxt_rpcs::LegacyRpcMethods, utils::H160,
 };
 
@@ -43,6 +50,7 @@ pub struct Wallet {
 pub struct ApiServer {
     req_receiver: mpsc::Receiver<ApiRequest>,
     logging_manager: LoggingManager,
+    backend: Arc<Backend>,
     mining_engine: Arc<MiningEngine>,
     eth_rpc_client: EthRpcClient,
     wallet: Wallet,
@@ -61,6 +69,7 @@ impl ApiServer {
         Ok(Self {
             req_receiver,
             logging_manager,
+            backend: substrate_service.backend.clone(),
             mining_engine: substrate_service.mining_engine.clone(),
             eth_rpc_client,
             impersonation_manager,
@@ -257,12 +266,14 @@ impl ApiServer {
     // Eth RPCs
     fn eth_chain_id(&self) -> Result<U64> {
         node_info!("eth_chainId");
-        Ok(U256::from(self.eth_rpc_client.chain_id()).to::<U64>())
+        let latest_block_hash = self.backend.blockchain().info().best_hash;
+        Ok(U256::from(self.chain_id(latest_block_hash)).to::<U64>())
     }
 
     fn network_id(&self) -> Result<u64> {
         node_info!("eth_networkId");
-        Ok(self.eth_rpc_client.chain_id())
+        let latest_block_hash = self.backend.blockchain().info().best_hash;
+        Ok(self.chain_id(latest_block_hash))
     }
 
     fn net_listening(&self) -> Result<bool> {
@@ -446,11 +457,83 @@ impl ApiServer {
         self.impersonation_manager.stop_impersonating(addr);
         Ok(())
     }
+
+    fn chain_id(&self, at: Hash) -> u64 {
+        let chain_id_key: [u8; 16] = [
+            149u8, 39u8, 54u8, 105u8, 39u8, 71u8, 142u8, 113u8, 13u8, 63u8, 127u8, 183u8, 124u8,
+            109u8, 31u8, 137u8,
+        ];
+        if let Ok(state_at) = self.backend.state_at(at, TrieCacheContext::Trusted)
+            && let Ok(Some(encoded_chain_id)) = state_at.storage(chain_id_key.as_slice())
+            && let Ok(chain_id) = u64::decode(&mut &encoded_chain_id[..])
+        {
+            return chain_id;
+        }
+
+        // if the chain id is not found, use the default chain id
+        self.eth_rpc_client.chain_id()
+    }
 }
 
 async fn create_revive_rpc_client(substrate_service: &Service) -> Result<EthRpcClient> {
     let rpc_client = RpcClient::new(InMemoryRpcClient(substrate_service.rpc_handlers.clone()));
-    let api = OnlineClient::<SrcChainConfig>::from_rpc_client(rpc_client.clone()).await?;
+
+    let genesis_block_number = substrate_service.genesis_block_number.try_into().map_err(|_| {
+        Error::InternalError(format!(
+            "Genesis block number {} is too large for u32 (max: {})",
+            substrate_service.genesis_block_number,
+            u32::MAX
+        ))
+    })?;
+
+    let Some(genesis_hash) = substrate_service.client.hash(genesis_block_number).ok().flatten()
+    else {
+        return Err(Error::InternalError(format!(
+            "Genesis hash not found for genesis block number {}",
+            substrate_service.genesis_block_number
+        )));
+    };
+
+    let Ok(runtime_version) = substrate_service.client.runtime_version_at(genesis_hash) else {
+        return Err(Error::InternalError(
+            "Runtime version not found for given genesis hash".to_string(),
+        ));
+    };
+
+    let subxt_runtime_version = SubxtRuntimeVersion {
+        spec_version: runtime_version.spec_version,
+        transaction_version: runtime_version.transaction_version,
+    };
+
+    let Ok(supported_metadata_versions) =
+        substrate_service.client.runtime_api().metadata_versions(genesis_hash)
+    else {
+        return Err(Error::InternalError("Unable to fetch metadata versions".to_string()));
+    };
+    let Some(latest_metadata_version) = supported_metadata_versions.into_iter().max() else {
+        return Err(Error::InternalError("No stable metadata versions supported".to_string()));
+    };
+    let opaque_metadata = substrate_service
+        .client
+        .runtime_api()
+        .metadata_at_version(genesis_hash, latest_metadata_version)
+        .map_err(|_| {
+            Error::InternalError("Failed to get runtime API for genesis hash".to_string())
+        })?
+        .ok_or_else(|| {
+            Error::InternalError(format!(
+                "Metadata not found for version {latest_metadata_version} at genesis hash"
+            ))
+        })?;
+    let subxt_metadata = SubxtMetadata::decode(&mut (*opaque_metadata).as_slice())
+        .map_err(|_| Error::InternalError("Unable to decode metadata".to_string()))?;
+
+    let api = OnlineClient::<SrcChainConfig>::from_rpc_client_with(
+        genesis_hash,
+        subxt_runtime_version,
+        subxt_metadata,
+        rpc_client.clone(),
+    )?;
     let rpc = LegacyRpcMethods::<SrcChainConfig>::new(rpc_client.clone());
 
     let block_provider = SubxtBlockInfoProvider::new(api.clone(), rpc.clone()).await?;

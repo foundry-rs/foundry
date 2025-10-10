@@ -271,6 +271,9 @@ exceptions = [
     { allow = [
         "GPL-3.0-or-later WITH Classpath-exception-2.0",
     ], name = "sc-network-common" }, # Polkadot SDK
+    { allow = [
+        "GPL-3.0-or-later WITH Classpath-exception-2.0",
+    ], name = "sc-runtime-utilities" }, # Polkadot SDK
 ]
 # copyleft = "deny"
 

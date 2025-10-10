@@ -1,4 +1,5 @@
 mod abi;
+mod genesis;
 mod impersonation;
 mod mining;
 mod standard_rpc;
