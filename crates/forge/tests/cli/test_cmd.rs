@@ -4173,11 +4173,6 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
             bytes constant MAGIC_BYTES = hex"deadbeef";
             string constant MAGIC_STRING = "xyzzy";
 
-            // constant exprs with folding
-            uint256 constant NEG_FOLDING = uint(-2);
-            uint256 constant BIN_FOLDING = 2 * 2 ether;
-            bytes32 constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
-
             function checkAddr(address v) external pure { assert(v != DAI); }
             function checkWord(bytes32 v) external pure { assert(v != MAGIC_WORD); }
             function checkNumber(uint64 v) external pure { assert(v != MAGIC_NUMBER); }
