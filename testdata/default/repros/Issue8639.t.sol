@@ -28,7 +28,7 @@ contract Issue8639Test is Test {
     }
 
     /// forge-config: default.fuzz.runs = 1000
-    /// forge-config: default.fuzz.seed = '100'
+    /// forge-config: default.fuzz.seed = "100"
     function test_external_library_address(address test) public {
         require(test != address(ExternalLibrary));
     }
@@ -36,7 +36,7 @@ contract Issue8639Test is Test {
 
 contract Issue8639AnotherTest is Test {
     /// forge-config: default.fuzz.runs = 1000
-    /// forge-config: default.fuzz.seed = '100'
+    /// forge-config: default.fuzz.seed = "100"
     function test_another_external_library_address(address test) public {
         require(test != address(ExternalLibrary));
     }

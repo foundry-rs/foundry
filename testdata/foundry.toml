@@ -14,6 +14,7 @@ ignored_error_codes = [
     5574, # Contract code size exceeds limit
     5667, # Unused function parameter
 ]
+extra_output = ["storageLayout"]
 
 ffi = true
 fs_permissions = [{ access = "read-write", path = "./" }]
@@ -33,7 +34,7 @@ ignore = ["cheats/Vm.sol"]
 [lint]
 lint_on_build = false
 
-[profile.default.rpc_endpoints]
+[rpc_endpoints]
 mainnet = "${RPC_MAINNET}"
 mainnet2 = "${RPC_MAINNET2}"
 sepolia = "${RPC_SEPOLIA}"

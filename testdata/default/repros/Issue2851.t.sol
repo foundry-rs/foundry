@@ -22,7 +22,7 @@ contract Issue2851Test is Test {
         back = new Backdoor();
     }
 
-    /// forge-config: default.fuzz.seed = '111'
+    /// forge-config: default.fuzz.seed = "111"
     function invariantNotZero() public {
         assertEq(back.number(), 1);
     }

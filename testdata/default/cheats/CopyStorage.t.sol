@@ -17,6 +17,7 @@ contract Counter {
     }
 }
 
+/// forge-config: default.fuzz.seed = "100"
 contract CounterWithSeedTest is Test {
     Counter public counter;
     Counter public counter1;

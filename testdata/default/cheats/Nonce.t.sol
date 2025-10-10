@@ -11,6 +11,7 @@ contract Counter {
     }
 }
 
+/// forge-config: default.isolate = true
 contract NonceIsolatedTest is Test {
     function testIncrementNonce() public {
         address bob = address(14);

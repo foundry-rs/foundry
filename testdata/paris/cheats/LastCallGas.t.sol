@@ -65,6 +65,7 @@ abstract contract LastCallGasFixture is Test {
     }
 }
 
+/// forge-config: default.isolate = true
 contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();

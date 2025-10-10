@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
+/// forge-config: default.isolate = true
 contract AccessListIsolatedTest is Test {
     function test_access_list() public {
         Write anotherWrite = new Write();

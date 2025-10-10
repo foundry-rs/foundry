@@ -10,7 +10,7 @@ contract GetArtifactPathTest is Test {
         bytes memory dummyCreationCode = type(DummyForGetArtifactPath).creationCode;
 
         string memory path = vm.getArtifactPathByCode(dummyCreationCode);
-        assertTrue(vm.contains(path, "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"));
+        assertTrue(vm.contains(path, "/out/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"));
     }
 
     function testGetArtifactPathByDeployedCode() public {
@@ -18,6 +18,6 @@ contract GetArtifactPathTest is Test {
         bytes memory dummyRuntimeCode = address(dummy).code;
 
         string memory path = vm.getArtifactPathByDeployedCode(dummyRuntimeCode);
-        assertTrue(vm.contains(path, "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"));
+        assertTrue(vm.contains(path, "/out/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"));
     }
 }
