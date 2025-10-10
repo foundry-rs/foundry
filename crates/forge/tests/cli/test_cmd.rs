@@ -4176,8 +4176,8 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
             function checkWord(bytes32 v) external pure { assert(v != MAGIC_WORD); }
             function checkNumber(uint256 v) external pure { assert(v != MAGIC_NUMBER); }
             function checkInteger(int32 v) external pure { assert(v != MAGIC_INT); }
-            function checkBytes(bytes memory v) external pure { assert(keccak256(v) != keccak256(MAGIC_BYTES)); }
             function checkString(string memory v) external pure { assert(keccak256(abi.encodePacked(v)) != keccak256(abi.encodePacked(MAGIC_STRING))); }
+            function checkBytesFromHex(bytes memory v) external pure { assert(keccak256(v) != keccak256(MAGIC_BYTES)); }
             function checkBytesFromString(bytes memory v) external pure { assert(keccak256(v) != keccak256(abi.encodePacked(MAGIC_STRING))); }
         }
         "#,
@@ -4197,9 +4197,9 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
                 function testFuzz_Number(uint256 v) public view { magic.checkNumber(v); }
                 function testFuzz_Integer(int32 v) public view { magic.checkInteger(v); }
                 function testFuzz_Word(bytes32 v) public view { magic.checkWord(v); }
-                function testFuzz_BytesFromHex(bytes memory v) public view { magic.checkBytes(v); }
-                function testFuzz_BytesFromString(bytes memory v) public view { magic.checkBytesFromString(v); }
                 function testFuzz_String(string memory v) public view { magic.checkString(v); }
+                function testFuzz_BytesFromHex(bytes memory v) public view { magic.checkBytesFromHex(v); }
+                function testFuzz_BytesFromString(bytes memory v) public view { magic.checkBytesFromString(v); }
             }
         "#,
     );
@@ -4231,7 +4231,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
                             expected_runs: u32| {
         prj.clear_cache_dir();
 
-        // the fuzzer is UNABLE to find a breaking input when NOT seeding from the AST
+        // the fuzzer is UNABLE to find a breaking input (fast) when NOT seeding from the AST
         prj.update_config(|config| {
             config.fuzz.runs = 100;
             config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
@@ -4253,7 +4253,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
     test_literal(100, "testFuzz_Addr", "address", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 28);
     test_literal(200, "testFuzz_Number", "uint256", "1122334455 [1.122e9]", 5);
-    // test_literal(300, "testFuzz_Integer", "int32", "-777", 4);
+    test_literal(300, "testFuzz_Integer", "int32", "-777", 0);
     test_literal(
         400,
         "testFuzz_Word",

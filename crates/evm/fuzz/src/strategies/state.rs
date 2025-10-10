@@ -550,6 +550,37 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
             return ControlFlow::Break(());
         }
 
+        // Handle unary negation of number literals
+        if let ast::ExprKind::Unary(un_op, inner_expr) = &expr.kind
+            && un_op.kind == ast::UnOpKind::Neg
+            && let ast::ExprKind::Lit(lit, _) = &inner_expr.kind
+            && let ast::LitKind::Number(n) = &lit.kind
+        {
+            // Compute the negative I256 value
+            if let Ok(pos_i256) = I256::try_from(*n) {
+                let neg_value = -pos_i256;
+                let neg_b256 = B256::from(neg_value.into_raw());
+
+                // Store under all intN sizes that can represent this value
+                for bits in [16, 32, 64, 128, 256] {
+                    if can_fit_in_int(neg_value, bits) {
+                        if self
+                            .output
+                            .words
+                            .entry(DynSolType::Int(bits))
+                            .or_default()
+                            .insert(neg_b256)
+                        {
+                            self.total_values += 1;
+                        }
+                    }
+                }
+            }
+
+            // Continue walking the expression
+            return self.walk_expr(expr);
+        }
+
         if let ast::ExprKind::Lit(lit, _) = &expr.kind
             && let Some((ty, value)) = convert_literal(lit)
         {
@@ -587,6 +618,17 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
 
         self.walk_expr(expr)
     }
+}
+
+/// Checks if a signed integer value can fit in intN type.
+fn can_fit_in_int(value: I256, bits: usize) -> bool {
+    // Calculate the maximum positive value for intN: 2^(N-1) - 1
+    let max_val = I256::try_from((U256::from(1) << (bits - 1)) - U256::from(1))
+        .expect("max value should fit in I256");
+    // Calculate the minimum negative value for intN: -2^(N-1)
+    let min_val = -max_val - I256::ONE;
+
+    value >= min_val && value <= max_val
 }
 
 fn convert_literal(lit: &ast::Lit<'_>) -> Option<(DynSolType, LitTy)> {
