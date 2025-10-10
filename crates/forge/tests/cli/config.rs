@@ -164,7 +164,7 @@ dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 15728640
 max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
 corpus_gzip = true
@@ -183,7 +183,7 @@ dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 15728640
 max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
@@ -1223,7 +1223,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 15728640,
     "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
@@ -1244,7 +1244,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 15728640,
     "max_fuzz_dictionary_literals": 6553600,
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
