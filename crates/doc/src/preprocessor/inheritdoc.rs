@@ -78,9 +78,9 @@ impl Inheritdoc {
                 // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
                 for children in &item.children {
-                    // TODO: improve matching logic
-                    if source.ident() == children.source.ident() {
-                        let key = format!("{}.{}", base, source.ident());
+                    // Match using signature for functions (includes parameter types for overloads)
+                    if source.signature() == children.source.signature() {
+                        let key = format!("{}.{}", base, source.signature());
                         return Some((key, children.comments.clone()));
                     }
                 }
