@@ -23,6 +23,7 @@ pub mod vanity;
 use vanity::VanityArgs;
 
 pub mod list;
+use foundry_wallets::registry::{WalletKind, WalletRegistry, WalletRegistryEntry};
 use list::ListArgs;
 
 /// CLI arguments for `cast wallet`.
@@ -199,6 +200,34 @@ pub enum WalletSubcommands {
     /// List all the accounts in the keystore default directory
     #[command(visible_alias = "ls")]
     List(ListArgs),
+
+    /// Register a hardware wallet alias for use with --account
+    #[command(name = "register", visible_alias = "reg")]
+    Register {
+        /// Alias name to register
+        #[arg(long, required = true)]
+        name: String,
+
+        /// Register a Ledger hardware wallet
+        #[arg(long, conflicts_with = "trezor")]
+        ledger: bool,
+
+        /// Register a Trezor hardware wallet
+        #[arg(long, conflicts_with = "ledger")]
+        trezor: bool,
+
+        /// Derivation path to use (optional)
+        #[arg(long, alias = "hd-path")]
+        derivation_path: Option<String>,
+
+        /// Mnemonic index to use when no derivation path is provided
+        #[arg(long, default_value = "0")]
+        mnemonic_index: u32,
+
+        /// Attempt to connect and cache public key/address
+        #[arg(long)]
+        cache: bool,
+    },
 
     /// Remove a wallet from the keystore.
     ///
@@ -669,6 +698,51 @@ flag to set your key via:
             }
             Self::List(cmd) => {
                 cmd.run().await?;
+            }
+            Self::Register { name, ledger, trezor, derivation_path, mnemonic_index, cache } => {
+                let kind = match (ledger, trezor) {
+                    (true, false) => WalletKind::Ledger,
+                    (false, true) => WalletKind::Trezor,
+                    _ => eyre::bail!("Please specify exactly one of --ledger or --trezor"),
+                };
+
+                let mut reg = WalletRegistry::load().unwrap_or_default();
+
+                let mut entry = WalletRegistryEntry {
+                    name: name.clone(),
+                    kind,
+                    hd_path: derivation_path,
+                    mnemonic_index: Some(mnemonic_index),
+                    cached_public_key: None,
+                    cached_address: None,
+                };
+
+                if cache {
+                    // Try to connect and fetch public data
+                    match entry.kind {
+                        WalletKind::Ledger => {
+                            let signer = foundry_wallets::utils::create_ledger_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?;
+                            entry.cached_address = Some(signer.address());
+                        }
+                        WalletKind::Trezor => {
+                            let signer = foundry_wallets::utils::create_trezor_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?;
+                            entry.cached_address = Some(signer.address());
+                        }
+                    }
+                }
+
+                reg.set(entry);
+                reg.save()?;
+
+                sh_println!("Registered alias `{}`", name)?;
             }
             Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
