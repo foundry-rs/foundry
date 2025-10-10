@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_literals_collector_coverage() {
-        let lits = process_source_literals(SOURCE);
+        let map = process_source_literals(SOURCE);
 
         // Expected values from the SOURCE contract
         let addr = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F").into_word();
@@ -696,16 +696,16 @@ mod tests {
         let word = B256::right_padding_from(b"abcd1234");
         let dyn_bytes = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
 
-        assert_word(&lits, DynSolType::Address, addr, "Expected DAI in address set");
-        assert_word(&lits, DynSolType::Uint(64), num, "Expected MAGIC_NUMBER in uint64 set");
-        assert_word(&lits, DynSolType::Int(32), int, "Expected MAGIC_INT in int32 set");
-        assert_word(&lits, DynSolType::FixedBytes(32), word, "Expected MAGIC_WORD in bytes32 set");
-        assert!(lits.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
+        assert_word(&map, DynSolType::Address, addr, "Expected DAI in address set");
+        assert_word(&map, DynSolType::Uint(64), num, "Expected MAGIC_NUMBER in uint64 set");
+        assert_word(&map, DynSolType::Int(32), int, "Expected MAGIC_INT in int32 set");
+        assert_word(&map, DynSolType::FixedBytes(32), word, "Expected MAGIC_WORD in bytes32 set");
+        assert!(map.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
         assert!(
-            lits.strings.contains("eip1967.proxy.implementation"),
+            map.strings.contains("eip1967.proxy.implementation"),
             "Expected IMPLEMENTATION_SLOT in string set"
         );
-        assert!(lits.bytes.contains(&dyn_bytes), "Expected MAGIC_BYTES in bytes set");
+        assert!(map.bytes.contains(&dyn_bytes), "Expected MAGIC_BYTES in bytes set");
     }
 
     #[test]
