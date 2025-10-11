@@ -624,6 +624,11 @@ impl TestProject {
         let _ = fs::remove_dir_all(self.artifacts());
     }
 
+    /// Removes the entire cache directory (including fuzz, invariant, and test-failures caches).
+    pub fn clear_cache_dir(&self) {
+        let _ = fs::remove_dir_all(self.root().join("cache"));
+    }
+
     /// Updates the project's config with the given function.
     pub fn update_config(&self, f: impl FnOnce(&mut Config)) {
         self._update_config(Box::new(f));

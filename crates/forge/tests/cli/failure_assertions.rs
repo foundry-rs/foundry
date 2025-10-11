@@ -241,6 +241,9 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
+    prj.update_config(|config| {
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+    });
 
     let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
@@ -426,7 +429,7 @@ forgetest!(multiple_setups, |prj, cmd| {
     prj.add_source(
         "MultipleSetupsTest.t.sol",
         r#"
-    
+
 import "./test.sol";
 
 contract MultipleSetup is DSTest {
