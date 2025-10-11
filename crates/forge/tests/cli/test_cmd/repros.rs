@@ -62,6 +62,8 @@ Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 
 Encountered a total of 3 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
+
 "#]]);
 });
 
@@ -115,6 +117,8 @@ Encountered 1 failing test in test/Issue3189.t.sol:Issue3189Test
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -164,6 +168,8 @@ Encountered 1 failing test in test/Issue3596.t.sol:Issue3596Test
 [FAIL: EvmError: Revert] testDealTransfer() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -229,6 +235,8 @@ Encountered 1 failing test in test/Issue2851.t.sol:Issue2851Test
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -278,6 +286,8 @@ Encountered 1 failing test in test/Issue6170.t.sol:Issue6170Test
 [FAIL: log != expected log] test() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -340,6 +350,8 @@ Encountered 2 failing tests in test/Issue6355.t.sol:Issue6355Test
 [FAIL: assertion failed: 3 != 2] test_shouldFailWithRevertToState() ([GAS])
 
 Encountered a total of 2 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
