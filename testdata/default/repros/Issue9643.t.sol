@@ -39,7 +39,7 @@ contract Issue9643Test is Test {
         proxied.setCounter(42);
         string memory rawDiff = vm.getStateDiffJson();
         assertEq(
-            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":null,\"contract\":\"default/repros/Issue9643.t.sol:DelegateProxy\",\"balanceDiff\":null,\"nonceDiff\":{\"previousValue\":0,\"newValue\":1},\"stateDiff\":{\"0x0000000000000000000000000000000000000000000000000000000000000000\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000002a\"}}},\"0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f\":{\"label\":null,\"contract\":\"default/repros/Issue9643.t.sol:Mock\",\"balanceDiff\":null,\"nonceDiff\":{\"previousValue\":0,\"newValue\":1},\"stateDiff\":{}}}",
+            '{"0x2e234dae75c793f67a35089c9d99245e1c58470b":{"label":null,"contract":"default/repros/Issue9643.t.sol:DelegateProxy","balanceDiff":null,"nonceDiff":{"previousValue":0,"newValue":1},"stateDiff":{"0x0000000000000000000000000000000000000000000000000000000000000000":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000000000000000000000000000002a","label":"implementation","type":"address","offset":0,"slot":"0","decoded":{"previousValue":"0x0000000000000000000000000000000000000000","newValue":"0x000000000000000000000000000000000000002A"}}}},"0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f":{"label":null,"contract":"default/repros/Issue9643.t.sol:Mock","balanceDiff":null,"nonceDiff":{"previousValue":0,"newValue":1},"stateDiff":{}}}',
             rawDiff
         );
     }
