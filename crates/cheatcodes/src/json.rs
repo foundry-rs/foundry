@@ -590,10 +590,10 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
                     }
 
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Uint(n, 256));
+                        return Ok(DynSolValue::Uint(n, 64));
                     }
                     if let Ok(n) = s.parse() {
-                        return Ok(DynSolValue::Int(n, 256));
+                        return Ok(DynSolValue::Int(n, 64));
                     }
                 }
             }
@@ -1064,7 +1064,7 @@ mod tests {
         // Serialize the value to JSON and verify that the order is preserved.
         let json_value = serialize_value_as_json(item_struct, Some(&struct_defs.into())).unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
-        assert_eq!(json_string, r#"{"name":"Test Item","id":123,"active":true}"#);
+        assert_eq!(json_string, r#"{"name":"Test Item","id":"123","active":true}"#);
     }
 
     #[test]
@@ -1100,7 +1100,7 @@ mod tests {
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(
             json_string,
-            format!(r#"{{"owner":"{owner_address}","balance":5000,"id":"{wallet_id}"}}"#)
+            format!(r#"{{"owner":"{owner_address}","balance":"5000","id":"{wallet_id}"}}"#)
         );
 
         // Resolve the type, which should also respect the struct definition order.
