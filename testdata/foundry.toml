@@ -26,7 +26,10 @@ compilation_restrictions = [
 ]
 
 ffi = true
-fs_permissions = [{ access = "read-write", path = "./" }]
+fs_permissions = [
+    { access = "read-write", path = "out/" },
+    { access = "read-write", path = "fixtures/" },
+]
 verbosity = 3
 prompt_timeout = 0
 
