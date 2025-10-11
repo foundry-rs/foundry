@@ -16,6 +16,15 @@ ignored_error_codes = [
 ]
 extra_output = ["storageLayout"]
 
+additional_compiler_profiles = [
+    # paris
+    { name = "paris", evm_version = "paris" },
+]
+compilation_restrictions = [
+    # paris
+    { paths = "paris/**", evm_version = "paris" },
+]
+
 ffi = true
 fs_permissions = [{ access = "read-write", path = "./" }]
 verbosity = 3
