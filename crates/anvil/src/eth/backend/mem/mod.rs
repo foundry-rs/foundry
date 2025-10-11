@@ -1149,11 +1149,15 @@ impl Backend {
     }
 
     /// Returns the environment for the next block
+    ///
+    /// This is used for obtaining the evm environment for the next (pending) block (e.g.
+    /// transaction validation in eth_sendrawTransaction)
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(U256::from(1));
         env.evm_env.block_env.basefee = self.base_fee();
+        env.evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         env.evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
