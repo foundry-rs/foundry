@@ -200,7 +200,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(if decoded.is_empty() {
             res.to_string()
         } else if shell::is_json() {
-            let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
+            let tokens = decoded
+                .into_iter()
+                .map(|value| serialize_value_as_json(value, None))
+                .collect::<eyre::Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
