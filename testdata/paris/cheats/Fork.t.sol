@@ -8,6 +8,7 @@ interface IWETH {
     function balanceOf(address) external view returns (uint256);
 }
 
+/// forge-config: default.evm_version = "paris"
 contract ForkTest is Test {
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     uint256 constant mainblock = 14_608_400;
