@@ -10,6 +10,7 @@ contract NoAssertionsRevertTest is Test {
     }
 }
 
+/// forge-config: default.legacy_assertions = true
 contract LegacyAssertionsTest {
     bool public failed;
 
