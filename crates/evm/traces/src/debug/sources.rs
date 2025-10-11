@@ -26,7 +26,7 @@ pub struct SourceData {
     pub path: PathBuf,
     /// Maps contract name to (start, end) of the contract definition in the source code.
     /// This is useful for determining which contract contains given function definition.
-    contract_definitions: Vec<(String, Range<usize>)>,
+    pub contract_definitions: Vec<(String, Range<usize>)>,
 }
 
 impl SourceData {
