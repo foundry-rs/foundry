@@ -175,20 +175,20 @@ fn _serialize_value_as_json(value: DynSolValue, defs: &StructDefinitions) -> Res
         }
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
-        DynSolValue::Int(i, _) => {
-            if let Ok(n) = i64::try_from(i) {
+        DynSolValue::Int(i, bits) => {
+            if bits <= 64 {
                 // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
+                Ok(Value::Number(TryInto::<i64>::try_into(i)?.into()))
             } else {
                 // Otherwise, fallback to its string representation to preserve precision and ensure
                 // compatibility with alloy's `DynSolType` coercion.
                 Ok(Value::String(i.to_string()))
             }
         }
-        DynSolValue::Uint(i, _) => {
-            if let Ok(n) = u64::try_from(i) {
+        DynSolValue::Uint(i, bits) => {
+            if bits <= 64 {
                 // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
+                Ok(Value::Number(TryInto::<u64>::try_into(i)?.into()))
             } else {
                 // Otherwise, fallback to its string representation to preserve precision and ensure
                 // compatibility with alloy's `DynSolType` coercion.
