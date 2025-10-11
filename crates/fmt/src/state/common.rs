@@ -285,6 +285,15 @@ impl<'ast> State<'_, 'ast> {
             return false;
         };
 
+        // If first item is uninformed (just a comma), and it has its own comment, skip it.
+        // It will be dealt with when printing the item in the main loop of `commasep`.
+        if span.is_dummy()
+            && let Some(next_pos) = values.get(1).map(|v| get_span(v).lo())
+            && self.peek_comment_before(next_pos).is_some()
+        {
+            return true;
+        }
+
         // Check for comments before the first item.
         if let Some((cmnt_span, cmnt_style)) =
             self.peek_comment_before(span.lo()).map(|c| (c.span, c.style))
@@ -406,7 +415,10 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
 
-            print(self, value);
+            // Avoid printing the last uninformed item, so that we can handle line breaks.
+            if !(is_last && get_span(value).is_dummy()) {
+                print(self, value);
+            }
 
             if !is_last {
                 self.print_word(",");
@@ -449,13 +461,9 @@ impl<'ast> State<'_, 'ast> {
             if let Some(next_span) = next_span
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
+                && !next_span.is_dummy()
             {
-                if next_span.is_dummy() && !matches!(format.kind, ListFormatKind::AlwaysBreak) {
-                    // Don't add spaces between uninformed items (commas)
-                    self.zerobreak();
-                } else {
-                    format.print_break(false, values.len(), &mut self.s);
-                }
+                format.print_break(false, values.len(), &mut self.s);
             }
         }
 
