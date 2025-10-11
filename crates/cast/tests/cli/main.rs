@@ -6,6 +6,7 @@ use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{B256, Bytes, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
+use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_test_utils::{
     rpc::{
@@ -4078,6 +4079,50 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
   [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
 ...
 "#]]);
+});
+
+casttest!(correct_json_serialization, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    // cast calldata "decimals()"
+    let calldata = "0x313ce567";
+    let tokens = [
+        "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // WETH
+    ];
+    let calldata_args = format!(
+        "[{}]",
+        tokens
+            .iter()
+            .map(|token| format!("({token},false,{calldata})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let args = vec![
+        "call",
+        "--json",
+        "--rpc-url",
+        rpc.as_str(),
+        "0xcA11bde05977b3631167028862bE2a173976CA11",
+        "aggregate3((address,bool,bytes)[])((bool,bytes)[])",
+        &calldata_args,
+    ];
+    let expected_output = serde_json::Value::Array(vec![serde_json::Value::Array(
+        [6, 18, 18]
+            .iter()
+            .map(|d| {
+                let abi_encoded = format!("0x{}", hex::encode((d,).abi_encode()));
+                serde_json::Value::Array(vec![
+                    serde_json::Value::Bool(true),
+                    serde_json::Value::String(abi_encoded),
+                ])
+            })
+            .collect::<Vec<_>>(),
+    )]);
+    let decoded: serde_json::Value =
+        serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
+            .expect("not valid json");
+    assert_eq!(decoded, expected_output);
 });
 
 // Test cast abi-encode-event with indexed parameters
