@@ -4685,6 +4685,7 @@ dependencies = [
  "foundry-primitives",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
+ "proptest",
  "revm 34.0.0",
  "serde",
  "serde_json",
