@@ -11,6 +11,8 @@ use foundry_test_utils::{
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+mod repros;
+
 forgetest!(testdata, |_prj, cmd| {
     let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
     cmd.current_dir(&testdata);
