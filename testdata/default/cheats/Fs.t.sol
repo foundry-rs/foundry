@@ -40,7 +40,7 @@ contract FsTest is Test {
     }
 
     function testWriteFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
         vm.writeFile(path, data);
 
@@ -56,7 +56,7 @@ contract FsTest is Test {
 
     function testCopyFile() public {
         string memory from = "fixtures/File/read.txt";
-        string memory to = "fixtures/File/copy.txt";
+        string memory to = "fixtures/File/ignored/copy.txt";
         uint64 copied = vm.copyFile(from, to);
         assertEq(vm.fsMetadata(to).length, uint256(copied));
         assertEq(vm.readFile(from), vm.readFile(to));
@@ -64,7 +64,7 @@ contract FsTest is Test {
     }
 
     function testWriteLine() public {
-        string memory path = "fixtures/File/write_line.txt";
+        string memory path = "fixtures/File/ignored/write_line.txt";
 
         string memory line1 = "first line";
         vm.writeLine(path, line1);
@@ -89,7 +89,7 @@ contract FsTest is Test {
     }
 
     function testRemoveFile() public {
-        string memory path = "fixtures/File/remove_file.txt";
+        string memory path = "fixtures/File/ignored/remove_file.txt";
         string memory data = "hello writable world";
 
         vm.writeFile(path, data);
