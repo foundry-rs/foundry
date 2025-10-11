@@ -38,7 +38,7 @@ function ensureSecureUrl(urlString: string, purpose: string) {
   }
 }
 
-function makeRequest(url: string): Promise<Buffer> {
+function makeRequest(url: string, maxRedirects = 10): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     ensureSecureUrl(url, 'HTTP request')
 
@@ -56,7 +56,11 @@ function makeRequest(url: string): Promise<Buffer> {
           && response.statusCode < 400
           && response.headers.location
         ) {
-          // Follow redirects
+          // Follow redirects with a maximum limit to prevent infinite loops
+          if (maxRedirects <= 0) {
+            reject(new Error('Too many redirects'))
+            return
+          }
           const redirected = (() => {
             try {
               return new URL(response.headers.location, url).href
@@ -64,7 +68,7 @@ function makeRequest(url: string): Promise<Buffer> {
               return response.headers.location
             }
           })()
-          makeRequest(redirected).then(resolve, reject)
+          makeRequest(redirected, maxRedirects - 1).then(resolve, reject)
         } else {
           reject(
             new Error(
