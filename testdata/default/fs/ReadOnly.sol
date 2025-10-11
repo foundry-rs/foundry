@@ -3,7 +3,10 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
-contract DefaultAccessTest is Test {
+// Default permissions: only read FS operations should succeed.
+
+/// forge-config: default.fs_permissions = [{ access = "read", path = "./fixtures"}]
+contract ReadOnlyAccessTest is Test {
     function testReadFile() public {
         string memory path = "fixtures/File/read.txt";
         vm.readFile(path);
@@ -17,7 +20,7 @@ contract DefaultAccessTest is Test {
     }
 
     function testWriteFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
 
         vm._expectCheatcodeRevert();
@@ -28,7 +31,7 @@ contract DefaultAccessTest is Test {
     }
 
     function testWriteLine() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
 
         vm._expectCheatcodeRevert();
@@ -36,7 +39,7 @@ contract DefaultAccessTest is Test {
     }
 
     function testRemoveFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
 
         vm._expectCheatcodeRevert();
         vm.removeFile(path);
