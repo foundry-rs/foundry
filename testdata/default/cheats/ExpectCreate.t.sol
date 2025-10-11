@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Contract {
     function add(uint256 a, uint256 b) public pure returns (uint256) {
@@ -20,8 +19,7 @@ contract ContractDeployer {
     }
 }
 
-contract ExpectCreateTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ExpectCreateTest is Test {
     bytes bytecode = vm.getDeployedCode("cheats/ExpectCreate.t.sol:Contract");
 
     function testExpectCreate() public {

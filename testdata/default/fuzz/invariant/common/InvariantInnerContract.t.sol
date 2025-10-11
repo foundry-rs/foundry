@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 /*//////////////////////////////////////////////////////////////
     Here we test that the fuzz engine can include a contract created during the fuzz
@@ -37,7 +37,7 @@ contract Judas {
     }
 }
 
-contract InvariantInnerContract is DSTest {
+contract InvariantInnerContract is Test {
     Jesus jesus;
 
     function setUp() public {

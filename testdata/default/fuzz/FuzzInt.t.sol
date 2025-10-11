@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521
 // random values (instead edge cases) are generated if no fixtures defined
-contract FuzzNumbersTest is DSTest {
+contract FuzzNumbersTest is Test {
     function testPositive(int256) public {
         assertTrue(true);
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Hello {
     bool public world = true;
@@ -12,7 +12,7 @@ contract Hello {
     }
 }
 
-contract TargetSenders is DSTest {
+contract TargetSenders is Test {
     Hello hello;
 
     function setUp() public {

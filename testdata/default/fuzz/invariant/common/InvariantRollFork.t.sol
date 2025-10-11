@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 interface IERC20 {
     function totalSupply() external view returns (uint256 supply);
 }
 
-contract RollForkHandler is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract RollForkHandler is Test {
     uint256 public totalSupply;
 
     function work() external {
@@ -18,8 +16,7 @@ contract RollForkHandler is DSTest {
     }
 }
 
-contract InvariantRollForkBlockTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract InvariantRollForkBlockTest is Test {
     RollForkHandler forkHandler;
 
     function setUp() public {
@@ -34,8 +31,7 @@ contract InvariantRollForkBlockTest is DSTest {
     }
 }
 
-contract InvariantRollForkStateTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract InvariantRollForkStateTest is Test {
     RollForkHandler forkHandler;
 
     function setUp() public {

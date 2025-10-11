@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract MockFunctionContract {
     uint256 public a;
@@ -28,10 +27,9 @@ contract ModelMockFunctionContract {
     }
 }
 
-contract MockFunctionTest is DSTest {
+contract MockFunctionTest is Test {
     MockFunctionContract my_contract;
     ModelMockFunctionContract model_contract;
-    Vm vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         my_contract = new MockFunctionContract();

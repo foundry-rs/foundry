@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public a;
@@ -18,10 +17,10 @@ contract Counter {
     }
 }
 
-contract CounterWithSeedTest is DSTest {
+/// forge-config: default.fuzz.seed = "100"
+contract CounterWithSeedTest is Test {
     Counter public counter;
     Counter public counter1;
-    Vm vm = Vm(HEVM_ADDRESS);
 
     function test_copy_storage() public {
         counter = new Counter();
@@ -67,11 +66,10 @@ contract CopyStorageContract {
     uint256 public x;
 }
 
-contract CopyStorageTest is DSTest {
+contract CopyStorageTest is Test {
     CopyStorageContract csc_1;
     CopyStorageContract csc_2;
     CopyStorageContract csc_3;
-    Vm vm = Vm(HEVM_ADDRESS);
 
     function _storeUInt256(address contractAddress, uint256 slot, uint256 value) internal {
         vm.store(contractAddress, bytes32(slot), bytes32(value));

@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract FsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract FsTest is Test {
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "access to foundry.toml is not allowed";
     bytes constant FOUNDRY_READ_ERR = "the path /etc/hosts is not allowed to be accessed for read operations";
     bytes constant FOUNDRY_READ_DIR_ERR = "the path /etc is not allowed to be accessed for read operations";
@@ -42,7 +40,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
         vm.writeFile(path, data);
 
@@ -58,7 +56,7 @@ contract FsTest is DSTest {
 
     function testCopyFile() public {
         string memory from = "fixtures/File/read.txt";
-        string memory to = "fixtures/File/copy.txt";
+        string memory to = "fixtures/File/ignored/copy.txt";
         uint64 copied = vm.copyFile(from, to);
         assertEq(vm.fsMetadata(to).length, uint256(copied));
         assertEq(vm.readFile(from), vm.readFile(to));
@@ -66,7 +64,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteLine() public {
-        string memory path = "fixtures/File/write_line.txt";
+        string memory path = "fixtures/File/ignored/write_line.txt";
 
         string memory line1 = "first line";
         vm.writeLine(path, line1);
@@ -91,7 +89,7 @@ contract FsTest is DSTest {
     }
 
     function testRemoveFile() public {
-        string memory path = "fixtures/File/remove_file.txt";
+        string memory path = "fixtures/File/ignored/remove_file.txt";
         string memory data = "hello writable world";
 
         vm.writeFile(path, data);

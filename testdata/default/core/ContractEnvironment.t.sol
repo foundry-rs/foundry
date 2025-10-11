@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
-contract ContractEnvironmentTest is DSTest {
+contract ContractEnvironmentTest is Test {
     function chainId() internal view returns (uint256 id) {
         assembly {
             id := chainid()

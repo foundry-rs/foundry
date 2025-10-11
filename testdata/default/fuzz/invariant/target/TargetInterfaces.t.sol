@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 struct FuzzInterface {
     address target;
@@ -47,7 +47,7 @@ contract HelloProxy {
     }
 }
 
-contract TargetWorldInterfaces is DSTest {
+contract TargetWorldInterfaces is Test {
     IHello proxy;
 
     function setUp() public {

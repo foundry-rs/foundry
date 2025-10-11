@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity =0.8.17;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 import "../Counter.sol";
 
 // Same as GetCode.t.sol but for 0.8.17 version
-contract GetCodeTest17 is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetCodeTest17 is Test {
     function testGetCodeMultiVersion() public {
         assertEq(vm.getCode("Counter.sol"), type(Counter).creationCode);
         require(

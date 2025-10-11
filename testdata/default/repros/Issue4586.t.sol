@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/4586
-contract Issue4586Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue4586Test is Test {
     uint256 constant initialBlock = 16730733;
 
     InvariantHandler handler;
@@ -31,8 +28,7 @@ contract Issue4586Test is DSTest {
 }
 
 contract InvariantHandler {
-    address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
 
     uint256 public calledRollFork;
 

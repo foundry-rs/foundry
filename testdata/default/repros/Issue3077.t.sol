@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3077
-abstract contract ZeroState is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+abstract contract ZeroState is Test {
     // deployer and users
     address public deployer = vm.addr(1);
     Token aaveToken;

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.25;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract BlobhashesTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract BlobhashesTest is Test {
     function testSetAndGetBlobhashes() public {
         bytes32[] memory blobhashes = new bytes32[](2);
         blobhashes[0] = bytes32(0x0000000000000000000000000000000000000000000000000000000000000001);

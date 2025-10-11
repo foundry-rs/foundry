@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GetChainTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetChainTest is Test {
     function testGetMainnet() public {
         // Test mainnet
         Vm.Chain memory mainnet = vm.getChain("mainnet");

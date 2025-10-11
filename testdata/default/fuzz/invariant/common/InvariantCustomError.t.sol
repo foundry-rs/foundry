@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.0;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract ContractWithCustomError {
     error InvariantCustomError(uint256, string);
@@ -12,7 +11,7 @@ contract ContractWithCustomError {
     }
 }
 
-contract Handler is DSTest {
+contract Handler is Test {
     ContractWithCustomError target;
 
     constructor() {
@@ -24,7 +23,7 @@ contract Handler is DSTest {
     }
 }
 
-contract InvariantCustomError is DSTest {
+contract InvariantCustomError is Test {
     Handler handler;
 
     function setUp() external {

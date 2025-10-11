@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Target {
     uint256 public slot0;
@@ -28,8 +27,7 @@ contract Target {
     fallback() external {}
 }
 
-abstract contract LastCallGasFixture is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+abstract contract LastCallGasFixture is Test {
     Target public target;
 
     struct Gas {
@@ -67,6 +65,8 @@ abstract contract LastCallGasFixture is DSTest {
     }
 }
 
+/// forge-config: default.isolate = true
+/// forge-config: default.evm_version = "paris"
 contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
@@ -88,6 +88,7 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
 }
 
 // Without isolation mode enabled the gas usage will be incorrect.
+/// forge-config: default.evm_version = "paris"
 contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();

@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GasSnapshotTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+/// forge-config: default.evm_version = "paris"
+contract GasSnapshotTest is Test {
     uint256 public slot0;
     Flare public flare;
 
@@ -149,9 +147,8 @@ contract GasSnapshotTest is DSTest {
     }
 }
 
-contract GasComparisonTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+/// forge-config: default.evm_version = "paris"
+contract GasComparisonTest is Test {
     uint256 public slot0;
     uint256 public slot1;
 

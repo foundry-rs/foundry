@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract DiffTest {
     // slot 0
@@ -49,8 +48,7 @@ contract DiffTest {
     }
 }
 
-contract StateDiffStructTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract StateDiffStructTest is Test {
     DiffTest internal test;
 
     function setUp() public {

@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct Value {
     uint256 value;
 }
 
 // https://github.com/foundry-rs/foundry/issues/5038
-contract Issue5038Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue5038Test is Test {
     function testParseMaxUint64() public {
         string memory json = '{"value": 18446744073709551615}';
         bytes memory parsed = vm.parseJson(json);

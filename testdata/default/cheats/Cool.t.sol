@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "lib/ds-test/src/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract CoolTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract CoolTest is Test {
     uint256 public slot0 = 1;
 
     function testCool_SLOAD_normal() public {

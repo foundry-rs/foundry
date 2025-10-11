@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract A {
     function foo() public pure returns (bool) {
@@ -10,9 +9,7 @@ contract A {
     }
 }
 
-contract Issue10302Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue10302Test is Test {
     function testDelegateFails() external {
         vm.createSelectFork("sepolia");
         A a = new A();

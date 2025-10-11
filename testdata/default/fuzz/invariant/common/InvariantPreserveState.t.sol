@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct FuzzSelector {
     address addr;
@@ -11,9 +10,7 @@ struct FuzzSelector {
 
 // https://github.com/foundry-rs/foundry/issues/7219
 
-contract Handler is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Handler is Test {
     function thisFunctionReverts() external {
         if (block.number < 10) {} else {
             revert();
@@ -27,7 +24,7 @@ contract Handler is DSTest {
     }
 }
 
-contract InvariantPreserveState is DSTest {
+contract InvariantPreserveState is Test {
     Handler handler;
 
     function setUp() public {

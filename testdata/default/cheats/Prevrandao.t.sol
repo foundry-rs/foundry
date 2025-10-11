@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract PrevrandaoTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract PrevrandaoTest is Test {
     function testPrevrandao() public {
         assertEq(block.prevrandao, 0);
         vm.prevrandao(uint256(10));

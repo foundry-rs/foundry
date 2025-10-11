@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract InvariantSenders {
     function checkSender() external {
@@ -11,7 +11,7 @@ contract InvariantSenders {
     }
 }
 
-contract InvariantExcludedSendersTest is DSTest {
+contract InvariantExcludedSendersTest is Test {
     InvariantSenders target;
 
     function setUp() public {

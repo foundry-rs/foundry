@@ -199,7 +199,7 @@ pub(crate) fn handle_expect_revert(
             }
 
             // Reason check
-            let expected_reason = expected_revert.reason.as_deref();
+            let expected_reason = expected_revert.reason();
             if let Some(expected_reason) = expected_reason {
                 let mut actual_revert: Vec<u8> = retdata.to_vec();
                 actual_revert = decode_revert(actual_revert);
@@ -212,12 +212,12 @@ pub(crate) fn handle_expect_revert(
             match (reason_match, reverter_match) {
                 (Some(true), Some(true)) => Err(fmt_err!(
                     "expected 0 reverts with reason: {}, from address: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default()),
+                    stringify(expected_reason.unwrap_or_default()),
                     expected_revert.reverter.unwrap()
                 )),
                 (Some(true), None) => Err(fmt_err!(
                     "expected 0 reverts with reason: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default())
+                    stringify(expected_reason.unwrap_or_default())
                 )),
                 (None, Some(true)) => Err(fmt_err!(
                     "expected 0 reverts from address: {}, but got one",
@@ -232,22 +232,22 @@ pub(crate) fn handle_expect_revert(
                     if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
                         Err(fmt_err!(
                             "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
-                            &stringify(&decoded_revert),
+                            stringify(&decoded_revert),
                             expected_revert.reverted_by.unwrap_or_default(),
-                            &stringify(expected_reason.unwrap_or_default()),
+                            stringify(expected_reason.unwrap_or_default()),
                             expected_revert.reverter.unwrap()
                         ))
                     } else if expected_revert.reverter.is_some() {
                         Err(fmt_err!(
                             "call reverted with '{}' from {}, but expected 0 reverts from {}",
-                            &stringify(&decoded_revert),
+                            stringify(&decoded_revert),
                             expected_revert.reverted_by.unwrap_or_default(),
                             expected_revert.reverter.unwrap()
                         ))
                     } else {
                         Err(fmt_err!(
                             "call reverted with '{}' when it was expected not to revert",
-                            &stringify(&decoded_revert)
+                            stringify(&decoded_revert)
                         ))
                     }
                 }

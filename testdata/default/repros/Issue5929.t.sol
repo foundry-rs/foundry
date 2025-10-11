@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/5929
-contract Issue5929Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue5929Test is Test {
     function test_transact_not_working() public {
         vm.createSelectFork("mainnet", 21134547);
         // https://etherscan.io/tx/0x96a129768ec66fd7d65114bf182f4e173bf0b73a44219adaf71f01381a3d0143

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.24;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Blobhash {
     function getIndices(uint256[] calldata blobIndices) public view returns (bytes32[] memory) {
@@ -18,9 +17,7 @@ contract Blobhash {
 }
 
 // https://github.com/foundry-rs/foundry/issues/11353
-contract Issue11353Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue11353Test is Test {
     Blobhash public blobhashContract;
 
     function setUp() public {

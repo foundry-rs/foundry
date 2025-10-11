@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3685
-contract Issue3685Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue3685Test is Test {
     Actor a;
     Actor b;
 

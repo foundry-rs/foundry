@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 library TomlStructs {
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
@@ -58,7 +56,7 @@ library TomlStructs {
     }
 }
 
-contract ParseTomlTest is DSTest {
+contract ParseTomlTest is Test {
     using TomlStructs for *;
 
     struct FlatToml {
@@ -80,7 +78,6 @@ contract ParseTomlTest is DSTest {
         string name;
     }
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     string toml;
 
     function setUp() public {
@@ -349,9 +346,7 @@ contract ParseTomlTest is DSTest {
     }
 }
 
-contract WriteTomlTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WriteTomlTest is Test {
     string json1;
     string json2;
 

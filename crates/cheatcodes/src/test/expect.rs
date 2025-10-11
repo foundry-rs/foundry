@@ -73,7 +73,7 @@ pub enum ExpectedRevertKind {
 #[derive(Clone, Debug)]
 pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any.
-    pub reason: Option<Vec<u8>>,
+    pub reason: Option<Bytes>,
     /// The depth at which the revert is expected.
     pub depth: usize,
     /// The type of expected revert.
@@ -668,7 +668,7 @@ impl RevertParameters for ExpectedRevert {
     }
 
     fn reason(&self) -> Option<&[u8]> {
-        self.reason.as_deref()
+        self.reason.as_ref().map(|b| &***b)
     }
 
     fn partial_match(&self) -> bool {
@@ -1044,7 +1044,7 @@ fn expect_revert(
         "you must call another function prior to expecting a second revert"
     );
     state.expected_revert = Some(ExpectedRevert {
-        reason: reason.map(<[_]>::to_vec),
+        reason: reason.map(Bytes::copy_from_slice),
         depth,
         kind: if cheatcode {
             ExpectedRevertKind::Cheatcode { pending_processing: true }

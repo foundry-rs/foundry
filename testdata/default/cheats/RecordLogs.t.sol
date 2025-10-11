@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Emitter {
     event LogAnonymous(bytes data) anonymous;
@@ -48,8 +47,7 @@ contract Emitterv2 {
     }
 }
 
-contract RecordLogsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract RecordLogsTest is Test {
     Emitter emitter;
     bytes32 internal seedTestData = keccak256(abi.encodePacked("Some data"));
 

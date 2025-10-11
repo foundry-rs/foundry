@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 struct FuzzSelector {
     address addr;
@@ -20,7 +20,7 @@ contract Hello {
     }
 }
 
-contract ExcludeSelectors is DSTest {
+contract ExcludeSelectors is Test {
     Hello hello;
 
     function setUp() public {

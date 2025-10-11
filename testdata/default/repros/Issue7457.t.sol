@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 interface ITarget {
     event AnonymousEventEmpty() anonymous;
@@ -46,9 +45,7 @@ contract Target is ITarget {
 }
 
 // https://github.com/foundry-rs/foundry/issues/7457
-contract Issue7457Test is DSTest, ITarget {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue7457Test is Test, ITarget {
     Target public target;
 
     function setUp() external {

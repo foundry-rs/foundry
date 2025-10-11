@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract StringManipulationTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract StringManipulationTest is Test {
     function testToLowercase() public {
         string memory original = "Hello World";
         string memory lowercased = vm.toLowercase(original);

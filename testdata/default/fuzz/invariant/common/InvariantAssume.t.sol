@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.0;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract Handler is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Handler is Test {
     function doSomething(uint256 param) public {
         vm.assume(param == 0);
     }
 }
 
-contract InvariantAssume is DSTest {
+contract InvariantAssume is Test {
     Handler handler;
 
     function setUp() public {

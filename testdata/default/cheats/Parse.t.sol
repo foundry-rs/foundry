@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract ParseTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ParseTest is Test {
     function testParseBytes() public {
         bytes memory testBytes = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
 

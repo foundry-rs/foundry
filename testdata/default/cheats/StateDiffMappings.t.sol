@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract MappingStorage {
     // Simple mappings only
@@ -29,8 +28,7 @@ contract MappingStorage {
     }
 }
 
-contract StateDiffMappingsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract StateDiffMappingsTest is Test {
     MappingStorage public mappingStorage;
 
     function setUp() public {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Hello {
     address seed_address = address(0xdeadbeef);
@@ -19,7 +19,7 @@ contract Hello {
     }
 }
 
-contract ExcludeSenders is DSTest {
+contract ExcludeSenders is Test {
     Hello hello;
 
     function setUp() public {

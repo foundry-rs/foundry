@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import {DSTest as Test} from "ds-test/test.sol";
-import {Vm} from "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract ReverterB {
     /// @notice has same error selectors as contract below to test the `reverter` param
@@ -62,7 +61,6 @@ contract Reverter {
 
 contract ReverterTest is Test {
     Reverter reverter;
-    Vm _vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         reverter = new Reverter();
@@ -70,7 +68,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` anticipates and correctly rejects a specific error selector
     function testAssumeSelector(uint256 x) public view {
-        _vm.assumeNoRevert(
+        vm.assumeNoRevert(
             Vm.PotentialRevert({
                 revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
                 partialMatch: false,
@@ -82,7 +80,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` anticipates and correctly rejects a specific error selector and data
     function testAssumeWithDataSingle(uint256 x) public view {
-        _vm.assumeNoRevert(
+        vm.assumeNoRevert(
             Vm.PotentialRevert({
                 revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 2),
                 partialMatch: false,
@@ -94,7 +92,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` anticipates and correctly rejects a specific error selector with any extra data (ie providing selector allows for arbitrary extra data)
     function testAssumeWithDataPartial(uint256 x) public view {
-        _vm.assumeNoRevert(
+        vm.assumeNoRevert(
             Vm.PotentialRevert({
                 revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector),
                 partialMatch: true,
@@ -106,14 +104,14 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` assumptions are not cleared after a cheatcode call
     function testAssumeNotClearedAfterCheatcodeCall(uint256 x) public {
-        _vm.assumeNoRevert(
+        vm.assumeNoRevert(
             Vm.PotentialRevert({
                 revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
                 partialMatch: false,
                 reverter: address(0)
             })
         );
-        _vm.warp(block.timestamp + 1000);
+        vm.warp(block.timestamp + 1000);
         reverter.revertIf2(x);
     }
 
@@ -130,7 +128,7 @@ contract ReverterTest is Test {
             partialMatch: false,
             reverter: address(reverter)
         });
-        _vm.assumeNoRevert(revertData);
+        vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
     }
 
@@ -147,7 +145,7 @@ contract ReverterTest is Test {
             partialMatch: false,
             reverter: address(reverter)
         });
-        _vm.assumeNoRevert(revertData);
+        vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
     }
 }

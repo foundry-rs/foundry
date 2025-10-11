@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/6966
 // See also https://github.com/RustCrypto/elliptic-curves/issues/988#issuecomment-1817681013
-contract Issue6966Test is DSTest {
+contract Issue6966Test is Test {
     function testEcrecover() public {
         bytes32 h = 0x0000000000000000000000000000000000000000000000000000000000000000;
         uint8 v = 27;

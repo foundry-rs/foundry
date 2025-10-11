@@ -746,19 +746,19 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
+        let s = include_str!("../../../testdata/utils/DSTest.sol");
         self.add_source("test.sol", s)
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/default/logs/console.sol");
+        let s = include_str!("../../../testdata/utils/console.sol");
         self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/cheats/Vm.sol");
+        let s = include_str!("../../../testdata/utils/Vm.sol");
         self.add_source("Vm.sol", s)
     }
 

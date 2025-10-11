@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract ShuffleTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ShuffleTest is Test {
     function testDeterministicShuffle() public {
         // Use a known seed
         uint256 seed = 123456789;

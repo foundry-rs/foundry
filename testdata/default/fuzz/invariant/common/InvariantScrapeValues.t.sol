@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract FindFromReturnValue {
     bool public found = false;
@@ -20,7 +19,7 @@ contract FindFromReturnValue {
     }
 }
 
-contract FindFromReturnValueTest is DSTest {
+contract FindFromReturnValueTest is Test {
     FindFromReturnValue target;
 
     function setUp() public {
@@ -53,7 +52,7 @@ contract FindFromLogValue {
     }
 }
 
-contract FindFromLogValueTest is DSTest {
+contract FindFromLogValueTest is Test {
     FindFromLogValue target;
 
     function setUp() public {

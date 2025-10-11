@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract DefaultAccessTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+// Default permissions: only read FS operations should succeed.
 
+/// forge-config: default.fs_permissions = [{ access = "read", path = "./fixtures"}]
+contract ReadOnlyAccessTest is Test {
     function testReadFile() public {
         string memory path = "fixtures/File/read.txt";
         vm.readFile(path);
@@ -20,7 +20,7 @@ contract DefaultAccessTest is DSTest {
     }
 
     function testWriteFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
 
         vm._expectCheatcodeRevert();
@@ -31,7 +31,7 @@ contract DefaultAccessTest is DSTest {
     }
 
     function testWriteLine() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
         string memory data = "hello writable world";
 
         vm._expectCheatcodeRevert();
@@ -39,7 +39,7 @@ contract DefaultAccessTest is DSTest {
     }
 
     function testRemoveFile() public {
-        string memory path = "fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/ignored/write_file.txt";
 
         vm._expectCheatcodeRevert();
         vm.removeFile(path);

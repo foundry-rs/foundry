@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
-contract SetupConsistencyCheck is DSTest {
+contract SetupConsistencyCheck is Test {
     uint256 two;
     uint256 four;
     uint256 result;

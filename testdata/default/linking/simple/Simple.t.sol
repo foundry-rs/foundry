@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 // Linking scenario: contract with one library
 
@@ -17,7 +17,7 @@ contract LibraryConsumer {
     }
 }
 
-contract SimpleLibraryLinkingTest is DSTest {
+contract SimpleLibraryLinkingTest is Test {
     LibraryConsumer consumer;
 
     function setUp() public {

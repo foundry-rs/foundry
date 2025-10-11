@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 interface IWETH {
     function deposit() external payable;
     function balanceOf(address) external view returns (uint256);
 }
 
-contract ForkTest is DSTest {
+contract ForkTest is Test {
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     uint256 constant mainblock = 14_608_400;
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     IWETH WETH = IWETH(WETH_TOKEN_ADDR);
 
     uint256 forkA;

@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/6180
-contract Issue6180Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue6180Test is Test {
     function test_timebug() external {
         uint256 start = block.timestamp;
         uint256 count = 4;

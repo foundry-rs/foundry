@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Foo {
     function f() external view returns (uint256) {
@@ -10,8 +9,7 @@ contract Foo {
     }
 }
 
-contract ResetNonce is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ResetNonce is Test {
     Foo public fooContract;
     address barEOA;
 

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GetLabelTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetLabelTest is Test {
     function testGetLabel() public {
         // Label an address.
         vm.label(address(1), "Sir Address the 1st");

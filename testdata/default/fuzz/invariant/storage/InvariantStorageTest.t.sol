@@ -1,6 +1,6 @@
 pragma solidity >0.8.13;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Contract {
     address public addr = address(0xbeef);
@@ -33,7 +33,7 @@ contract Contract {
     }
 }
 
-contract InvariantStorageTest is DSTest {
+contract InvariantStorageTest is Test {
     Contract c;
 
     function setUp() public {

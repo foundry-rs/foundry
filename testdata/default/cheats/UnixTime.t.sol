@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract UnixTimeTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract UnixTimeTest is Test {
     // This is really wide because CI sucks.
     uint256 constant errMargin = 1000;
 

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract GetBlockNumberTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetBlockNumberTest is Test {
     function testGetBlockNumber() public {
         uint256 height = vm.getBlockNumber();
         assertEq(height, uint256(block.number), "height should be equal to block.number");

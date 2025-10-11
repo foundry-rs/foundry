@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 struct FuzzArtifactSelector {
     string artifact;
@@ -20,7 +20,7 @@ contract Hi {
     }
 }
 
-contract TargetArtifactSelectors is DSTest {
+contract TargetArtifactSelectors is Test {
     Hi hello;
 
     function setUp() public {

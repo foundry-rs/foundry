@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract NonPersistentHelper is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract NonPersistentHelper is Test {
     uint256 public curState;
 
     function createSelectFork() external {
@@ -42,8 +40,7 @@ contract NonPersistentHelper is DSTest {
 }
 
 // https://github.com/foundry-rs/foundry/issues/8004
-contract Issue8004CreateSelectForkTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue8004CreateSelectForkTest is Test {
     NonPersistentHelper helper;
 
     function setUp() public {
@@ -72,8 +69,7 @@ contract Issue8004CreateSelectForkTest is DSTest {
     }
 }
 
-contract Issue8004RollForkTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue8004RollForkTest is Test {
     NonPersistentHelper helper;
     uint256 forkId;
 

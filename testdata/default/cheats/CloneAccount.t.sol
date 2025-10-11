@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Source {
     uint256 public a;
@@ -20,9 +19,7 @@ contract Source {
     }
 }
 
-contract CloneAccountTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract CloneAccountTest is Test {
     address clone = address(777);
 
     function setUp() public {
