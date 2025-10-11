@@ -96,7 +96,7 @@ async fn can_send_eip4844_transaction_eth_send_transaction() {
         .with_to(bob)
         .with_blob_sidecar(sidecar.clone());
 
-    let pending_tx = provider.send_transaction(tx.into()).await.unwrap();
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
     let receipt = pending_tx.get_receipt().await.unwrap();
     let tx_hash = receipt.transaction_hash;
 
