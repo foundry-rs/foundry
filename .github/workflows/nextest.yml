@@ -67,7 +67,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@d0f4f69b07c0804d1003ca9a5a5f853423872ed9 # v2
+      - uses: taiki-e/install-action@522492a8c115f1b6d4d318581f09638e9442547b # v2
         with:
           tool: nextest
 
@@ -90,13 +90,15 @@ jobs:
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
 
-      - name: Forge RPC cache
+      - name: Foundry test cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.foundry/cache
             ~/.config/.foundry/cache
-          key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
+            testdata/cache
+            testdata/out
+          key: ${{ runner.os }}-foundry-${{ matrix.name }}
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
         run: |

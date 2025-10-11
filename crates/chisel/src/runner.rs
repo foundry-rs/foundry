@@ -9,7 +9,6 @@ use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
     traces::{TraceKind, Traces},
 };
-use revm::interpreter::{InstructionResult, return_ok};
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
 static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
@@ -46,7 +45,7 @@ pub struct ChiselResult {
     /// Return data
     pub returned: Bytes,
     /// Called address
-    pub address: Option<Address>,
+    pub address: Address,
     /// EVM State at the final instruction of the `run()` function
     pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
@@ -72,17 +71,7 @@ impl ChiselRunner {
     }
 
     /// Run a contract as a REPL session
-    ///
-    /// ### Takes
-    ///
-    /// The creation bytecode of the REPL contract
-    ///
-    /// ### Returns
-    ///
-    /// A tuple containing the deployed address of the bytecode as well as a
-    /// [ChiselResult] containing information about the result of the call to the deployed REPL
-    /// contract.
-    pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
+    pub fn run(&mut self, bytecode: Bytes) -> Result<ChiselResult> {
         // Set the sender's balance to [U256::MAX] for deployment of the REPL contract.
         self.executor.set_balance(self.sender, U256::MAX)?;
 
@@ -102,99 +91,11 @@ impl ChiselRunner {
             calldata.append(&mut input);
         }
 
-        // Call the "run()" function of the REPL contract
-        let call_res = self.call(self.sender, address, Bytes::from(calldata), U256::from(0), true);
+        let res = self.executor.transact_raw(self.sender, address, calldata.into(), U256::ZERO)?;
 
-        call_res.map(|res| (address, res))
-    }
-
-    /// Executes the call.
-    ///
-    /// This will commit the changes if `commit` is true.
-    ///
-    /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
-    /// can be used as `gas_limit`.
-    ///
-    /// Taken from Forge's script runner.
-    fn call(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-        commit: bool,
-    ) -> eyre::Result<ChiselResult> {
-        let fs_commit_changed =
-            if let Some(cheatcodes) = &mut self.executor.inspector_mut().cheatcodes {
-                let original_fs_commit = cheatcodes.fs_commit;
-                cheatcodes.fs_commit = false;
-                original_fs_commit != cheatcodes.fs_commit
-            } else {
-                false
-            };
-
-        let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
-        let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, Some(return_ok!())) {
-            // store the current gas limit and reset it later
-            let init_gas_limit = self.executor.env().tx.gas_limit;
-
-            // the executor will return the _exact_ gas value this transaction consumed, setting
-            // this value as gas limit will result in `OutOfGas` so to come up with a
-            // better estimate we search over a possible range we pick a higher gas
-            // limit 3x of a succeeded call should be safe
-            let mut highest_gas_limit = gas_used * 3;
-            let mut lowest_gas_limit = gas_used;
-            let mut last_highest_gas_limit = highest_gas_limit;
-            while (highest_gas_limit - lowest_gas_limit) > 1 {
-                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
-                let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
-                match res.exit_reason {
-                    Some(InstructionResult::Revert)
-                    | Some(InstructionResult::OutOfGas)
-                    | Some(InstructionResult::OutOfFunds) => {
-                        lowest_gas_limit = mid_gas_limit;
-                    }
-                    _ => {
-                        highest_gas_limit = mid_gas_limit;
-                        // if last two successful estimations only vary by 10%, we consider this to
-                        // sufficiently accurate
-                        const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
-                            / last_highest_gas_limit
-                            < 1
-                        {
-                            // update the gas
-                            gas_used = highest_gas_limit;
-                            break;
-                        }
-                        last_highest_gas_limit = highest_gas_limit;
-                    }
-                }
-            }
-            // reset gas limit in the executor environment to its original value
-            self.executor.env_mut().tx.gas_limit = init_gas_limit;
-        }
-
-        // if we changed `fs_commit` during gas limit search, re-execute the call with original
-        // value
-        if fs_commit_changed {
-            if let Some(cheatcodes) = &mut self.executor.inspector_mut().cheatcodes {
-                cheatcodes.fs_commit = !cheatcodes.fs_commit;
-            }
-
-            if !commit {
-                res = self.executor.call_raw(from, to, calldata.clone(), value)?;
-            }
-        }
-
-        if commit {
-            // if explicitly requested we can now commit the call
-            res = self.executor.transact_raw(from, to, calldata, value)?;
-        }
-
-        let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;
+        let RawCallResult {
+            result, reverted, logs, traces, labels, chisel_state, gas_used, ..
+        } = res;
 
         Ok(ChiselResult {
             returned: result,
@@ -203,7 +104,7 @@ impl ChiselRunner {
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             labeled_addresses: labels,
-            address: None,
+            address,
             state: chisel_state,
         })
     }

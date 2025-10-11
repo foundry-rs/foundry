@@ -10,7 +10,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
-use foundry_common::fs;
+use foundry_common::{fmt::StructDefinitions, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
@@ -23,16 +23,24 @@ impl Cheatcode for keyExistsTomlCall {
 }
 
 impl Cheatcode for parseToml_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml } = self;
-        parse_toml(toml, "$")
+        parse_toml(
+            toml,
+            "$",
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )
     }
 }
 
 impl Cheatcode for parseToml_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml(toml, key)
+        parse_toml(
+            toml,
+            key,
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )
     }
 }
 
@@ -135,23 +143,42 @@ impl Cheatcode for parseTomlBytes32ArrayCall {
 }
 
 impl Cheatcode for parseTomlType_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, typeDescription } = self;
-        parse_toml_coerce(toml, "$", &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+        parse_toml_coerce(
+            toml,
+            "$",
+            &resolve_type(
+                typeDescription,
+                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+            )?,
+        )
+        .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseTomlType_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
-        parse_toml_coerce(toml, key, &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+        parse_toml_coerce(
+            toml,
+            key,
+            &resolve_type(
+                typeDescription,
+                state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+            )?,
+        )
+        .map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseTomlTypeArrayCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { toml, key, typeDescription } = self;
-        let ty = resolve_type(typeDescription)?;
+        let ty = resolve_type(
+            typeDescription,
+            state.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok()),
+        )?;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
@@ -199,8 +226,8 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 }
 
 /// Parse a TOML string and return the value at the given path.
-fn parse_toml(toml: &str, key: &str) -> Result {
-    parse_json(&toml_to_json_string(toml)?, key)
+fn parse_toml(toml: &str, key: &str, struct_defs: Option<&StructDefinitions>) -> Result {
+    parse_json(&toml_to_json_string(toml)?, key, struct_defs)
 }
 
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.

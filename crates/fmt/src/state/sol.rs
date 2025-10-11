@@ -80,7 +80,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        self.print_remaining_comments();
+        self.print_remaining_comments(is_first);
     }
 
     /// Prints a hardbreak if the item needs an isolated line break.
@@ -460,7 +460,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(-self.ind);
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
-            MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
@@ -1823,7 +1823,7 @@ impl<'ast> State<'_, 'ast> {
             |this, var| match var {
                 SpannedOption::Some(var) => this.print_var(var, true),
                 SpannedOption::None(span) => {
-                    this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                    this.print_comments(span.hi(), CommentConfig::skip_ws().mixed_no_break_post());
                 }
             },
             |var| match var {

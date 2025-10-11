@@ -206,12 +206,11 @@ impl ForgeTestData {
 
         let mut builder = self.base_runner();
         let config = Arc::new(config);
-        let root = self.project.root();
         builder.config = config.clone();
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .build::<MultiCompiler>(root, &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(&self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -219,9 +218,7 @@ impl ForgeTestData {
     pub fn tracing_runner(&self) -> MultiContractRunner {
         let mut opts = config_evm_opts(&self.config);
         opts.verbosity = 5;
-        self.base_runner()
-            .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
-            .unwrap()
+        self.base_runner().build::<MultiCompiler>(&self.output, opts.local_evm_env(), opts).unwrap()
     }
 
     /// Builds a runner that runs against forked state
@@ -234,10 +231,7 @@ impl ForgeTestData {
         let env = opts.evm_env().await.expect("Could not instantiate fork environment");
         let fork = opts.get_fork(&Default::default(), env.clone());
 
-        self.base_runner()
-            .with_fork(fork)
-            .build::<MultiCompiler>(self.project.root(), &self.output, env, opts)
-            .unwrap()
+        self.base_runner().with_fork(fork).build::<MultiCompiler>(&self.output, env, opts).unwrap()
     }
 }
 

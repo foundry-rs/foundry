@@ -29,6 +29,8 @@ pub struct FormatterConfig {
     pub override_spacing: bool,
     /// Wrap comments on `line_length` reached
     pub wrap_comments: bool,
+    /// Style of doc comments
+    pub docs_style: DocCommentStyle,
     /// Globs to ignore
     pub ignore: Vec<String>,
     /// Add new line at start and end of contract declarations
@@ -101,6 +103,19 @@ pub enum HexUnderscore {
     Bytes,
 }
 
+/// Style of doc comments
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocCommentStyle {
+    /// Preserve the source code style
+    #[default]
+    Preserve,
+    /// Use single-line style (`///`)
+    Line,
+    /// Use block style (`/** .. */`)
+    Block,
+}
+
 /// Style of string quotes
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,8 +157,9 @@ pub enum SingleLineBlockStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
-    /// Write function parameters multiline first.
-    ParamsFirst,
+    /// Always write function parameters multiline.
+    #[serde(alias = "params_first")] // alias for backwards compatibility
+    ParamsAlways,
     /// Write function parameters multiline first when there is more than one param.
     ParamsFirstMulti,
     /// Write function attributes multiline first.
@@ -162,7 +178,7 @@ impl MultilineFuncHeaderStyle {
     }
 
     pub fn params_first(&self) -> bool {
-        matches!(self, Self::ParamsFirst | Self::ParamsFirstMulti)
+        matches!(self, Self::ParamsAlways | Self::ParamsFirstMulti)
     }
 
     pub fn attrib_first(&self) -> bool {
@@ -199,6 +215,7 @@ impl Default for FormatterConfig {
             sort_imports: false,
             pow_no_space: false,
             call_compact_args: true,
+            docs_style: DocCommentStyle::default(),
         }
     }
 }

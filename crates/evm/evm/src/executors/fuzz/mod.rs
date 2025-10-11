@@ -141,8 +141,10 @@ impl FuzzedExecutor {
 
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let input = if let Some(failure) = self.persisted_failure.take() {
-                failure.calldata
+            let input = if let Some(failure) = self.persisted_failure.take()
+                && func.selector() == failure.calldata[..4]
+            {
+                failure.calldata.clone()
             } else {
                 // If running with progress, then increment current run.
                 if let Some(progress) = progress {
@@ -222,8 +224,9 @@ impl FuzzedExecutor {
                             break 'stop;
                         }
                         TestCaseError::Reject(_) => {
-                            // Discard run and apply max rejects if configured.
-                            test_data.runs -= 1;
+                            // Discard run and apply max rejects if configured. Saturate to handle
+                            // the case of replayed failure, which doesn't count as a run.
+                            test_data.runs = test_data.runs.saturating_sub(1);
                             if self.config.max_test_rejects > 0 {
                                 test_data.rejects += 1;
                                 if test_data.rejects >= self.config.max_test_rejects {

@@ -1,5 +1,5 @@
 // config: line_length = 60
-// config: multiline_func_header = "params_first"
+// config: multiline_func_header = "params_always"
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
