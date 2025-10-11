@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
-use foundry_test_utils::{forgetest_init, str};
+use foundry_test_utils::{TestCommand, forgetest_init, str};
+use regex::Regex;
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
     prj.update_config(|config| config.optimizer = Some(true));
@@ -332,5 +333,403 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert; counterexample: calldata=0x5c7f60d70000000000000000000000000000000000000000000000000000000000000002 args=[2]] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
 ...
 
+"#]]);
+});
+
+forgetest_init!(fuzz_basic, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "Fuzz.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FuzzTest is Test {
+    constructor() {
+        emit log("constructor");
+    }
+
+    function setUp() public {
+        emit log("setUp");
+    }
+
+    function testShouldFailFuzz(uint8 x) public {
+        emit log("testFailFuzz");
+        require(x > 128, "should revert");
+    }
+
+    function testSuccessfulFuzz(uint128 a, uint128 b) public {
+        emit log("testSuccessfulFuzz");
+        assertEq(uint256(a) + uint256(b), uint256(a) + uint256(b));
+    }
+
+    function testToStringFuzz(bytes32 data) public {
+        vm.toString(data);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/Fuzz.t.sol:FuzzTest
+[FAIL: should revert; counterexample: calldata=[..] args=[..]] testShouldFailFuzz(uint8) (runs: [..], [AVG_GAS])
+[PASS] testSuccessfulFuzz(uint128,uint128) (runs: 256, [AVG_GAS])
+[PASS] testToStringFuzz(bytes32) (runs: 256, [AVG_GAS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 1 failed, 0 skipped (3 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Fuzz.t.sol:FuzzTest
+[FAIL: should revert; counterexample: calldata=[..] args=[..]] testShouldFailFuzz(uint8) (runs: [..], [AVG_GAS])
+
+Encountered a total of 1 failing tests, 2 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+// Test that showcases PUSH collection on normal fuzzing.
+// Ignored until we collect them in a smarter way.
+forgetest_init!(
+    #[ignore]
+    fuzz_collection,
+    |prj, cmd| {
+        prj.wipe_contracts();
+        prj.update_config(|config| {
+            config.invariant.depth = 100;
+            config.invariant.runs = 1000;
+            config.fuzz.runs = 1000;
+            config.fuzz.seed = Some(U256::from(6u32));
+        });
+        prj.add_test(
+            "FuzzCollection.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SampleContract {
+    uint256 public counter;
+    uint256 public counterX2;
+    address public owner = address(0xBEEF);
+    bool public found_needle;
+
+    event Incremented(uint256 counter);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "ONLY_OWNER");
+        _;
+    }
+
+    function compare(uint256 val) public {
+        if (val == 0x4446) {
+            found_needle = true;
+        }
+    }
+
+    function incrementBy(uint256 numToIncrement) public onlyOwner {
+        counter += numToIncrement;
+        counterX2 += numToIncrement * 2;
+
+        emit Incremented(counter);
+    }
+
+    function breakTheInvariant(uint256 x) public {
+        if (x == 0x5556) {
+            counterX2 = 0;
+        }
+    }
+}
+
+contract SampleContractTest is Test {
+    event Incremented(uint256 counter);
+
+    SampleContract public sample;
+
+    function setUp() public {
+        sample = new SampleContract();
+    }
+
+    function testIncrement(address caller) public {
+        vm.startPrank(address(caller));
+
+        vm.expectRevert("ONLY_OWNER");
+        sample.incrementBy(1);
+    }
+
+    function testNeedle(uint256 needle) public {
+        sample.compare(needle);
+        require(!sample.found_needle(), "needle found.");
+    }
+
+    function invariantCounter() public {
+        require(sample.counter() * 2 == sample.counterX2(), "broken counter.");
+    }
+}
+   "#,
+        );
+
+        cmd.args(["test"]).assert_failure().stdout_eq(str![[r#""#]]);
+    }
+);
+
+forgetest_init!(fuzz_failure_persist, |prj, cmd| {
+    prj.wipe_contracts();
+
+    let persist_dir = prj.cache().parent().unwrap().join("persist");
+    assert!(!persist_dir.exists());
+    prj.update_config(|config| {
+        config.fuzz.failure_persist_dir = Some(persist_dir.clone());
+    });
+
+    prj.add_test(
+        "FuzzFailurePersist.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+struct TestTuple {
+    address user;
+    uint256 amount;
+}
+
+contract FuzzFailurePersistTest is Test {
+    function test_persist_fuzzed_failure(
+        uint256 x,
+        int256 y,
+        address addr,
+        bool cond,
+        string calldata test,
+        TestTuple calldata tuple,
+        address[] calldata addresses
+    ) public {
+        // dummy assume to trigger runs
+        vm.assume(x > 1 && x < 1111111111111111111111111111);
+        vm.assume(y > 1 && y < 1111111111111111111111111111);
+        require(false);
+    }
+}
+   "#,
+    );
+
+    let mut calldata = None;
+    let expected = str![[r#"
+...
+Ran 1 test for test/FuzzFailurePersist.t.sol:FuzzFailurePersistTest
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] test_persist_fuzzed_failure(uint256,int256,address,bool,string,(address,uint256),address[]) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]];
+    let mut check = |cmd: &mut TestCommand, same: bool| {
+        let assert = cmd.assert_failure();
+        let output = assert.get_output();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let calldata = calldata.get_or_insert_with(|| {
+            let re = Regex::new(r"calldata=(0x[0-9a-fA-F]+)").unwrap();
+            dbg!(re.captures(&stdout).unwrap().get(1).unwrap().as_str().to_string())
+        });
+        assert_eq!(stdout.contains(calldata.as_str()), same, "\n{stdout}");
+        assert.stdout_eq(expected.clone());
+    };
+
+    cmd.arg("test");
+
+    // Run several times, asserting that the failure persists and is the same.
+    for _ in 0..3 {
+        check(&mut cmd, true);
+        assert!(persist_dir.exists());
+    }
+
+    // Change dir and run again, asserting that the failure persists. It should be a new failure.
+    let new_persist_dir = prj.cache().parent().unwrap().join("persist2");
+    assert!(!new_persist_dir.exists());
+    prj.update_config(|config| {
+        config.fuzz.failure_persist_dir = Some(new_persist_dir.clone());
+    });
+    check(&mut cmd, false);
+    assert!(new_persist_dir.exists());
+});
+
+// https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521
+// random values (instead edge cases) are generated if no fixtures defined
+forgetest_init!(fuzz_int, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "FuzzInt.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FuzzNumbersTest is Test {
+    function testPositive(int256) public {
+        assertTrue(true);
+    }
+
+    function testNegativeHalf(int256 val) public {
+        assertTrue(val < 2 ** 128 - 1);
+    }
+
+    function testNegative0(int256 val) public {
+        assertTrue(val == 0);
+    }
+
+    function testNegative1(int256 val) public {
+        assertTrue(val == -1);
+    }
+
+    function testNegative2(int128 val) public {
+        assertTrue(val == 1);
+    }
+
+    function testNegativeMax0(int256 val) public {
+        assertTrue(val == type(int256).max);
+    }
+
+    function testNegativeMax1(int256 val) public {
+        assertTrue(val == type(int256).max - 2);
+    }
+
+    function testNegativeMin0(int256 val) public {
+        assertTrue(val == type(int256).min);
+    }
+
+    function testNegativeMin1(int256 val) public {
+        assertTrue(val == type(int256).min + 2);
+    }
+
+    function testEquality(int256 x, int256 y) public {
+        int256 xy;
+
+        unchecked {
+            xy = x * y;
+        }
+
+        if ((x != 0 && xy / x != y)) {
+            return;
+        }
+
+        assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 10 tests for test/FuzzInt.t.sol:FuzzNumbersTest
+[FAIL: assertion failed[..]] testEquality(int256,int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative0(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative1(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative2(int128) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeHalf(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeMax0(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeMax1(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeMin0(int256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeMin1(int256) (runs: [..], [AVG_GAS])
+[PASS] testPositive(int256) (runs: 256, [AVG_GAS])
+Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 9 failed, 0 skipped (10 total tests)
+...
+"#]]);
+});
+
+forgetest_init!(fuzz_positive, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "FuzzPositive.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FuzzPositive is Test {
+    function testSuccessChecker(uint256 val) public {
+        assertTrue(true);
+    }
+
+    function testSuccessChecker2(int256 val) public {
+        assert(val == val);
+    }
+
+    function testSuccessChecker3(uint32 val) public {
+        assert(val + 0 == val);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/FuzzPositive.t.sol:FuzzPositive
+[PASS] testSuccessChecker(uint256) (runs: 256, [AVG_GAS])
+[PASS] testSuccessChecker2(int256) (runs: 256, [AVG_GAS])
+[PASS] testSuccessChecker3(uint32) (runs: 256, [AVG_GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521
+// random values (instead edge cases) are generated if no fixtures defined
+forgetest_init!(fuzz_uint, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "FuzzUint.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FuzzNumbersTest is Test {
+    function testPositive(uint256) public {
+        assertTrue(true);
+    }
+
+    function testNegativeHalf(uint256 val) public {
+        assertTrue(val < 2 ** 128 - 1);
+    }
+
+    function testNegative0(uint256 val) public {
+        assertTrue(val == 0);
+    }
+
+    function testNegative2(uint256 val) public {
+        assertTrue(val == 2);
+    }
+
+    function testNegative2Max(uint256 val) public {
+        assertTrue(val == type(uint256).max - 2);
+    }
+
+    function testNegativeMax(uint256 val) public {
+        assertTrue(val == type(uint256).max);
+    }
+
+    function testEquality(uint256 x, uint256 y) public {
+        uint256 xy;
+
+        unchecked {
+            xy = x * y;
+        }
+
+        if ((x != 0 && xy / x != y)) {
+            return;
+        }
+
+        assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/FuzzUint.t.sol:FuzzNumbersTest
+[FAIL: assertion failed[..]] testEquality(uint256,uint256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative0(uint256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative2(uint256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegative2Max(uint256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeHalf(uint256) (runs: [..], [AVG_GAS])
+[FAIL: assertion failed[..]] testNegativeMax(uint256) (runs: [..], [AVG_GAS])
+[PASS] testPositive(uint256) (runs: 256, [AVG_GAS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+...
 "#]]);
 });

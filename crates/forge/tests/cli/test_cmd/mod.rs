@@ -16,8 +16,8 @@ mod fuzz;
 mod invariant;
 mod logs;
 mod repros;
-mod trace;
 mod spec;
+mod trace;
 
 forgetest!(testdata, |_prj, cmd| {
     let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
@@ -33,7 +33,14 @@ forgetest!(testdata, |_prj, cmd| {
     }
     drop(dotenv);
 
-    cmd.arg("test").assert_success();
+    let mut args = vec!["test"];
+    if cfg!(feature = "isolate-by-default") {
+        args.push(
+            "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount)",
+        );
+    }
+
+    cmd.args(args).assert_success();
 });
 
 // tests that test filters are handled correctly
