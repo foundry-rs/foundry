@@ -12,6 +12,7 @@ use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod core;
+mod logs;
 mod repros;
 
 forgetest!(testdata, |_prj, cmd| {
