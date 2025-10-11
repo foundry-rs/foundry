@@ -323,7 +323,7 @@ impl TestRunnerConfig {
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
-        // self.coverage = N/A;
+        // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
 
