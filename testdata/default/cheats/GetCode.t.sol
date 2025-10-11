@@ -70,6 +70,7 @@ contract GetCodeTest is Test {
 
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfGetUnlinked() public {
+        vm.skip(true, "artifacts are always linked now");
         vm.expectRevert("vm.getCode: no matching artifact found");
         vm.getCode("UnlinkedContract.sol");
     }
