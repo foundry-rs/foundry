@@ -12,8 +12,11 @@ use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod core;
+mod fuzz;
+mod invariant;
 mod logs;
 mod repros;
+mod spec;
 
 forgetest!(testdata, |_prj, cmd| {
     let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
