@@ -30,6 +30,7 @@ contract Handler {
     }
 }
 
+/// forge-config: default.isolate = true
 contract Invariant is Test {
     Handler h;
 

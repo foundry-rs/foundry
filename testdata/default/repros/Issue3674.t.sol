@@ -9,6 +9,6 @@ contract Issue3674Test is Test {
         vm.createSelectFork("sepolia");
 
         vm.createSelectFork("avaxTestnet");
-        assert(vm.getNonce(msg.sender) > 0x17);
+        assertTrue(vm.getNonce(msg.sender) > 0x17);
     }
 }

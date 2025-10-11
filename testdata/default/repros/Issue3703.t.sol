@@ -6,6 +6,8 @@ import "utils/Test.sol";
 // https://github.com/foundry-rs/foundry/issues/3703
 contract Issue3703Test is Test {
     function setUp() public {
+        vm.skip(true, "flaky polygon RPCs");
+
         uint256 fork =
             vm.createSelectFork("polygon", bytes32(0xbed0c8c1b9ff8bf0452979d170c52893bb8954f18a904aa5bcbd0f709be050b9));
     }

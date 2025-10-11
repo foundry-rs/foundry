@@ -12,6 +12,7 @@ contract Box {
 }
 
 // https://github.com/foundry-rs/foundry/issues/6634
+/// forge-config: default.always_use_create_2_factory = true
 contract Issue6634Test is Test {
     function test_Create2FactoryCallRecordedInStandardTest() public {
         address CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
