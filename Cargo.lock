@@ -4659,6 +4659,7 @@ dependencies = [
  "eyre",
  "foundry-macros",
  "foundry-primitives",
+ "proptest",
  "revm",
  "serde",
  "serde_json",

@@ -771,7 +771,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens: Vec<serde_json::Value> = tokens
                 .iter()
                 .cloned()
-                .map(|t| serialize_value_as_json(t, None))
+                .map(|t| serialize_value_as_json(t, None, true))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
             let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());

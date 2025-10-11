@@ -153,15 +153,20 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 pub fn serialize_value_as_json(
     value: DynSolValue,
     defs: Option<&StructDefinitions>,
+    strict: bool,
 ) -> Result<Value> {
     if let Some(defs) = defs {
-        _serialize_value_as_json(value, defs)
+        _serialize_value_as_json(value, defs, strict)
     } else {
-        _serialize_value_as_json(value, &StructDefinitions::default())
+        _serialize_value_as_json(value, &StructDefinitions::default(), strict)
     }
 }
 
-fn _serialize_value_as_json(value: DynSolValue, defs: &StructDefinitions) -> Result<Value> {
+fn _serialize_value_as_json(
+    value: DynSolValue,
+    defs: &StructDefinitions,
+    strict: bool,
+) -> Result<Value> {
     match value {
         DynSolValue::Bool(b) => Ok(Value::Bool(b)),
         DynSolValue::String(s) => {
@@ -175,34 +180,38 @@ fn _serialize_value_as_json(value: DynSolValue, defs: &StructDefinitions) -> Res
         }
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
-        DynSolValue::Int(i, _) => {
-            if let Ok(n) = i64::try_from(i) {
-                // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
-            } else {
+        DynSolValue::Int(i, bits) => {
+            match (i64::try_from(i), strict) {
+                // In strict mode, return as number only if the type dictates so
+                (Ok(n), true) if bits <= 64 => Ok(Value::Number(n.into())),
+                // In normal mode, return as number if the number can be accurately represented.
+                (Ok(n), false) => Ok(Value::Number(n.into())),
                 // Otherwise, fallback to its string representation to preserve precision and ensure
                 // compatibility with alloy's `DynSolType` coercion.
-                Ok(Value::String(i.to_string()))
+                _ => Ok(Value::String(i.to_string())),
             }
         }
-        DynSolValue::Uint(i, _) => {
-            if let Ok(n) = u64::try_from(i) {
-                // Use `serde_json::Number` if the number can be accurately represented.
-                Ok(Value::Number(n.into()))
-            } else {
+        DynSolValue::Uint(i, bits) => {
+            match (u64::try_from(i), strict) {
+                // In strict mode, return as number only if the type dictates so
+                (Ok(n), true) if bits <= 64 => Ok(Value::Number(n.into())),
+                // In normal mode, return as number if the number can be accurately represented.
+                (Ok(n), false) => Ok(Value::Number(n.into())),
                 // Otherwise, fallback to its string representation to preserve precision and ensure
                 // compatibility with alloy's `DynSolType` coercion.
-                Ok(Value::String(i.to_string()))
+                _ => Ok(Value::String(i.to_string())),
             }
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
         DynSolValue::Array(e) | DynSolValue::FixedArray(e) => Ok(Value::Array(
-            e.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
+            e.into_iter()
+                .map(|v| _serialize_value_as_json(v, defs, strict))
+                .collect::<Result<_>>()?,
         )),
         DynSolValue::CustomStruct { name, prop_names, tuple } => {
             let values = tuple
                 .into_iter()
-                .map(|v| _serialize_value_as_json(v, defs))
+                .map(|v| _serialize_value_as_json(v, defs, strict))
                 .collect::<Result<Vec<_>>>()?;
             let mut map: HashMap<String, Value> = prop_names.into_iter().zip(values).collect();
 
@@ -222,7 +231,10 @@ fn _serialize_value_as_json(value: DynSolValue, defs: &StructDefinitions) -> Res
             Ok(Value::Object(map.into_iter().collect::<Map<String, Value>>()))
         }
         DynSolValue::Tuple(values) => Ok(Value::Array(
-            values.into_iter().map(|v| _serialize_value_as_json(v, defs)).collect::<Result<_>>()?,
+            values
+                .into_iter()
+                .map(|v| _serialize_value_as_json(v, defs, strict))
+                .collect::<Result<_>>()?,
         )),
         DynSolValue::Function(_) => eyre::bail!("cannot serialize function pointer"),
     }
@@ -317,5 +329,77 @@ mod tests {
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn test_serialize_uint_as_json(l in 0u64..u64::MAX, h in ((u64::MAX as u128) + 1)..u128::MAX) {
+            let l_min_bits = (64 - l.leading_zeros()) as usize;
+            let h_min_bits = (128 - h.leading_zeros()) as usize;
+
+            // values that fit in u64 should be serialized as a number in !strict mode
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Uint(l.try_into().unwrap(), l_min_bits), None, false).unwrap(),
+                serde_json::json!(l)
+            );
+            // values that dont fit in u64 should be serialized as a string in !strict mode
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Uint(h.try_into().unwrap(), h_min_bits), None, false).unwrap(),
+                serde_json::json!(h.to_string())
+            );
+
+            // values should be serialized according to the type
+            // since l_min_bits <= 64, expect the serialization to be a number
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Uint(l.try_into().unwrap(), l_min_bits), None, true).unwrap(),
+                serde_json::json!(l)
+            );
+            // since `h_min_bits` is specified for the number `l`, expect the serialization to be a string
+            // even though `l` fits in a u64
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Uint(l.try_into().unwrap(), h_min_bits), None, true).unwrap(),
+                serde_json::json!(l.to_string())
+            );
+            // since `h_min_bits` is specified for the number `h`, expect the serialization to be a string
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Uint(h.try_into().unwrap(), h_min_bits), None, true).unwrap(),
+                serde_json::json!(h.to_string())
+            );
+        }
+
+        #[test]
+        fn test_serialize_int_as_json(l in 0i64..=i64::MAX, h in ((i64::MAX as i128) + 1)..=i128::MAX) {
+            let l_min_bits = (64 - (l as u64).leading_zeros()) as usize + 1;
+            let h_min_bits = (128 - (h as u128).leading_zeros()) as usize + 1;
+
+            // values that fit in i64 should be serialized as a number in !strict mode
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Int(l.try_into().unwrap(), l_min_bits), None, false).unwrap(),
+                serde_json::json!(l)
+            );
+            // values that dont fit in i64 should be serialized as a string in !strict mode
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Int(h.try_into().unwrap(), h_min_bits), None, false).unwrap(),
+                serde_json::json!(h.to_string())
+            );
+
+            // values should be serialized according to the type
+            // since l_min_bits <= 64, expect the serialization to be a number
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Int(l.try_into().unwrap(), l_min_bits), None, true).unwrap(),
+                serde_json::json!(l)
+            );
+            // since `h_min_bits` is specified for the number `l`, expect the serialization to be a string
+            // even though `l` fits in an i64
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Int(l.try_into().unwrap(), h_min_bits), None, true).unwrap(),
+                serde_json::json!(l.to_string())
+            );
+            // since `h_min_bits` is specified for the number `h`, expect the serialization to be a string
+            assert_eq!(
+                serialize_value_as_json(DynSolValue::Int(h.try_into().unwrap(), h_min_bits), None, true).unwrap(),
+                serde_json::json!(h.to_string())
+            );
+        }
     }
 }
