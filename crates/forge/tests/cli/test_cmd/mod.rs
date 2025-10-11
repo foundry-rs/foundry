@@ -11,6 +11,7 @@ use foundry_test_utils::{
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+mod core;
 mod repros;
 
 forgetest!(testdata, |_prj, cmd| {
