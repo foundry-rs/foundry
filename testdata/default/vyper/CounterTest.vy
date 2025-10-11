@@ -8,7 +8,7 @@ counter: ICounter
 
 @external
 def setUp():
-    self.counter = ICounter(extcall vm.deployCode("vyper/Counter.vy"))
+    self.counter = ICounter(extcall vm.deployCode("default/vyper/Counter.vy"))
 
 @external
 def test_increment():

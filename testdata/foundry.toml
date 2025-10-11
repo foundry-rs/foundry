@@ -1,5 +1,5 @@
 [profile.default]
-src = "/dev/null"
+src = "./"
 test = "./"
 optimizer = true
 optimizer_runs = 200
