@@ -17,10 +17,10 @@ use alloy_serde::WithOtherFields;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::utils::{get_provider_url, has_batch_support, has_different_gas_calc};
 use foundry_common::{
     TransactionMaybeSigned,
-    provider::{RetryProvider, get_http_provider, try_get_http_provider},
+    provider::{RetryProvider},
     shell,
 };
 use foundry_config::Config;
@@ -49,8 +49,9 @@ pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block_number: Option<u64>,
+    config: &Config,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
+    let provider = get_provider_url(config, provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
 
     let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
@@ -185,6 +186,7 @@ impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
+        let config = &self.script_config.config.clone();
         let futs = self
             .sequence
             .sequences_mut()
@@ -192,7 +194,7 @@ impl BundledState {
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
-                let provider = Arc::new(get_http_provider(rpc_url));
+                let provider = Arc::new(get_provider_url(config, rpc_url)?);
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -268,7 +270,7 @@ impl BundledState {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
+            let provider = Arc::new(get_provider_url(&self.script_config.config,sequence.rpc_url())?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);

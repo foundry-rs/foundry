@@ -14,13 +14,12 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
+use foundry_cli::utils::{ensure_clean_constructor, get_provider_url, needs_setup};
 use foundry_common::{
     ContractsByArtifact,
     fmt::{format_token, format_token_raw},
-    provider::get_http_provider,
 };
-use foundry_config::NamedChain;
+use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -234,9 +233,9 @@ impl RpcData {
     }
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
-    async fn check_shanghai_support(&self) -> Result<()> {
+    async fn check_shanghai_support(&self, config: &Config) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = get_http_provider(rpc);
+            let provider = get_provider_url(config, rpc).unwrap();
             let id = provider.get_chain_id().await.ok()?;
             NamedChain::try_from(id).ok()
         });
@@ -307,7 +306,7 @@ impl ExecutedState {
                 )
             }
         }
-        rpc_data.check_shanghai_support().await?;
+        rpc_data.check_shanghai_support(&self.script_config.config).await?;
 
         Ok(PreSimulationState {
             args: self.args,

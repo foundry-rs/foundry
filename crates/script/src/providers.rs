@@ -1,8 +1,9 @@
 use alloy_primitives::map::{HashMap, hash_map::Entry};
 use alloy_provider::{Provider, utils::Eip1559Estimation};
 use eyre::{Result, WrapErr};
-use foundry_common::provider::{RetryProvider, get_http_provider};
-use foundry_config::Chain;
+use foundry_cli::utils::get_provider_url;
+use foundry_common::provider::{RetryProvider};
+use foundry_config::{Chain, Config};
 use std::{ops::Deref, sync::Arc};
 
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
@@ -17,11 +18,12 @@ impl ProvidersManager {
         &mut self,
         rpc: &str,
         is_legacy: bool,
+        config: &Config,
     ) -> Result<&ProviderInfo> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, is_legacy).await?;
+                let info = ProviderInfo::new(rpc, is_legacy, config).await?;
                 entry.insert(info)
             }
         })
@@ -52,8 +54,8 @@ pub enum GasPrice {
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
-        let provider = Arc::new(get_http_provider(rpc));
+    pub async fn new(rpc: &str, mut is_legacy: bool, config: &Config) -> Result<Self> {
+        let provider = Arc::new(get_provider_url(config, rpc).unwrap());
         let chain = provider.get_chain_id().await?;
 
         if let Some(chain) = Chain::from(chain).named() {
