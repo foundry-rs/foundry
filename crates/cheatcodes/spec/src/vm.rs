@@ -2997,6 +2997,13 @@ interface Vm {
     /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
     #[cheatcode(group = Utilities)]
     function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
+
+    /// RLP encodes a list of bytes into an RLP payload.
+    #[cheatcode(group = Utilities)]
+    function toRlp(bytes[] calldata data) external pure returns (bytes memory);
+    /// RLP decodes an RLP payload into a list of bytes.
+    #[cheatcode(group = Utilities)]
+    function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);
 }
 }
 
