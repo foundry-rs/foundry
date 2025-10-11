@@ -16,6 +16,7 @@ mod fuzz;
 mod invariant;
 mod logs;
 mod repros;
+mod trace;
 mod spec;
 
 forgetest!(testdata, |_prj, cmd| {
