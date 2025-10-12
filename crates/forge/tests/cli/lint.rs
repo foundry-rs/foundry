@@ -795,3 +795,84 @@ fn ensure_no_privileged_lint_id() {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }
 }
+
+forgetest!(build_skips_linting_for_old_solidity_versions, |prj, cmd| {
+    prj.wipe_contracts();
+    
+    // Add a contract with Solidity 0.7.x which has lint issues
+    const OLD_CONTRACT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.0;
+
+contract OldContract {
+    uint256 VARIABLE_MIXED_CASE_INFO;
+    
+    function FUNCTION_MIXED_CASE_INFO() public {}
+}
+"#;
+    
+    prj.add_source("OldContract", OLD_CONTRACT);
+    
+    // Configure linter to show all severities
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    
+    // Run forge build - should NOT show linting output because version < 0.8.0
+    // Should show a warning about skipping linting
+    let output = cmd.arg("build").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    
+    // Should contain warning about skipping linting
+    assert!(stderr.contains("Skipping linting"));
+    assert!(stderr.contains("Solar linter only supports Solidity 0.8"));
+    
+    // Should NOT contain any lint warnings
+    assert!(!stderr.contains("mixed-case"));
+});
+
+forgetest!(build_runs_linting_for_new_solidity_versions, |prj, cmd| {
+    prj.wipe_contracts();
+    
+    // Add a contract with Solidity 0.8.x which has lint issues
+    const NEW_CONTRACT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract NewContract {
+    uint256 VARIABLE_MIXED_CASE_INFO;
+    
+    function FUNCTION_MIXED_CASE_INFO() public {}
+}
+"#;
+    
+    prj.add_source("NewContract", NEW_CONTRACT);
+    
+    // Configure linter to show info severity
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Info],
+            exclude_lints: vec![],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    
+    // Run forge build - SHOULD show linting output because version >= 0.8.0
+    let output = cmd.arg("build").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    
+    // Should contain lint warnings
+    assert!(stderr.contains("mixed-case"));
+    
+    // Should NOT contain warning about skipping linting
+    assert!(!stderr.contains("Skipping linting"));
+});
+
