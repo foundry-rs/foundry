@@ -147,6 +147,7 @@ impl<'a> ContractRunner<'a> {
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
             result.extend(raw, TraceKind::Deployment);
             if reason.is_some() {
+                debug!(?reason, "deployment of library failed");
                 result.reason = reason;
                 return Ok(result);
             }
@@ -175,6 +176,7 @@ impl<'a> ContractRunner<'a> {
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
         result.extend(raw, TraceKind::Deployment);
         if reason.is_some() {
+            debug!(?reason, "deployment of test contract failed");
             result.reason = reason;
             return Ok(result);
         }
