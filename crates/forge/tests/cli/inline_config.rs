@@ -161,6 +161,8 @@ Encountered 1 failing test in test/inline.sol:Inline
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -191,6 +193,8 @@ Encountered 1 failing test in test/inline.sol:Inline
 [FAIL: invalid type: found string "2", expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });

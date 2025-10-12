@@ -80,7 +80,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        self.print_remaining_comments();
+        self.print_remaining_comments(is_first);
     }
 
     /// Prints a hardbreak if the item needs an isolated line break.
@@ -1823,7 +1823,7 @@ impl<'ast> State<'_, 'ast> {
             |this, var| match var {
                 SpannedOption::Some(var) => this.print_var(var, true),
                 SpannedOption::None(span) => {
-                    this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                    this.print_comments(span.hi(), CommentConfig::skip_ws().mixed_no_break_post());
                 }
             },
             |var| match var {
