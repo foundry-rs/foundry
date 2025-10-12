@@ -91,7 +91,7 @@ contract GasSnapshotTest is Test {
     function testSnapshotGasSectionDefaultGroupStop() public {
         vm.startSnapshotGas("testSnapshotGasSection");
 
-        flare.run(256);
+        flare.run(8);
 
         // vm.stopSnapshotGas() will use the last snapshot name.
         uint256 gasUsed = vm.stopSnapshotGas();
@@ -102,7 +102,7 @@ contract GasSnapshotTest is Test {
     function testSnapshotGasSectionCustomGroupStop() public {
         vm.startSnapshotGas("CustomGroup", "testSnapshotGasSection");
 
-        flare.run(256);
+        flare.run(8);
 
         // vm.stopSnapshotGas() will use the last snapshot name, even with custom group.
         uint256 gasUsed = vm.stopSnapshotGas();
@@ -113,7 +113,7 @@ contract GasSnapshotTest is Test {
     function testSnapshotGasSectionName() public {
         vm.startSnapshotGas("testSnapshotGasSectionName");
 
-        flare.run(256);
+        flare.run(8);
 
         uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSectionName");
         assertGt(gasUsed, 0);
@@ -123,7 +123,7 @@ contract GasSnapshotTest is Test {
     function testSnapshotGasSectionGroupName() public {
         vm.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
 
-        flare.run(256);
+        flare.run(8);
 
         uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
@@ -258,12 +258,12 @@ contract GasComparisonTest is Test {
 
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonFlareA");
-        flare.run(256);
+        flare.run(8);
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparative Solidity snapshot.
         _snapStart();
-        flare.run(256);
+        flare.run(8);
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonFlareB", b);
 
