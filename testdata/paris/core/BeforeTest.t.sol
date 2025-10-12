@@ -46,16 +46,18 @@ contract BeforeTestSelfDestructTest is Test {
 
     function kill_contract() external {
         uint256 killer_size = getSize(address(killer));
-        require(killer_size == 106);
+        assertEq(killer_size, 106);
         killer.kill();
+        assertEq(killer_size, 106);
     }
 
-    function testKill() public view {
+    /// forge-config: default.evm_version = "paris"
+    function testKill() public {
         uint256 killer_size = getSize(address(killer));
-        require(killer_size == 0);
+        assertEq(killer_size, 0);
     }
 
-    function getSize(address c) public view returns (uint32) {
+    function getSize(address c) internal view returns (uint32) {
         uint32 size;
         assembly {
             size := extcodesize(c)
@@ -64,12 +66,12 @@ contract BeforeTestSelfDestructTest is Test {
     }
 
     function testA() public {
-        require(a <= 3);
+        assertLe(a, 3);
         a += 1;
     }
 
-    function testSimpleA() public view {
-        require(a == 0);
+    function testSimpleA() public {
+        assertEq(a, 0);
     }
 
     function setB() public {
@@ -77,7 +79,7 @@ contract BeforeTestSelfDestructTest is Test {
     }
 
     function testB() public {
-        require(b == 100);
+        assertEq(b, 100);
     }
 
     function setBWithValue(uint256 value) public {
