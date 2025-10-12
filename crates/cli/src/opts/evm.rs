@@ -14,7 +14,7 @@ use foundry_config::{
 use serde::Serialize;
 
 use foundry_common::shell;
-use crate::opts::EvmRpcOpts;
+use crate::opts::RpcCommonOpts;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -44,7 +44,7 @@ pub struct EvmArgs {
     /// Common RPC options
     #[command(flatten)]
     #[serde(flatten)]
-    pub rpc: EvmRpcOpts,
+    pub rpc: RpcCommonOpts,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn rpc_url_present_when_some() {
         let args = EvmArgs { 
-            rpc: EvmRpcOpts { url: Some("http://localhost:8545".to_string()), ..Default::default() },
+            rpc: RpcCommonOpts { url: Some("http://localhost:8545".to_string()), ..Default::default() },
             ..Default::default() 
         };
         let data = args.data().expect("provider data");
