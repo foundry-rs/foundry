@@ -10,7 +10,6 @@ contract SelfDestructor {
 }
 
 // https://github.com/foundry-rs/foundry/issues/1543
-/// forge-config: default.evm_version = "paris"
 contract BeforeTestSelfDestructTest is Test {
     SelfDestructor killer;
     uint256 a;

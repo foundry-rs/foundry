@@ -66,7 +66,6 @@ abstract contract LastCallGasFixture is Test {
 }
 
 /// forge-config: default.isolate = true
-/// forge-config: default.evm_version = "paris"
 contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
@@ -88,7 +87,6 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
 }
 
 // Without isolation mode enabled the gas usage will be incorrect.
-/// forge-config: default.evm_version = "paris"
 contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();

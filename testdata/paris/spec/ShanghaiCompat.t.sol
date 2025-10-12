@@ -3,7 +3,6 @@ pragma solidity ^0.8.18;
 
 import "utils/Test.sol";
 
-/// forge-config: default.evm_version = "shanghai"
 contract ShanghaiCompat is Test {
     function testPush0() public {
         address target = address(uint160(uint256(0xc4f3)));

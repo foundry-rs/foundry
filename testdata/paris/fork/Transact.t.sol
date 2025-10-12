@@ -9,7 +9,6 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-/// forge-config: default.evm_version = "paris"
 contract TransactOnForkTest is Test {
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
