@@ -20,7 +20,8 @@ mod spec;
 mod trace;
 
 forgetest!(testdata, |_prj, cmd| {
-    let testdata = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
+    let testdata =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
 
     let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
