@@ -525,7 +525,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         let stdout = String::from_utf8_lossy(&output.stdout);
         let calldata = calldata.get_or_insert_with(|| {
             let re = Regex::new(r"calldata=(0x[0-9a-fA-F]+)").unwrap();
-            dbg!(re.captures(&stdout).unwrap().get(1).unwrap().as_str().to_string())
+            re.captures(&stdout).unwrap().get(1).unwrap().as_str().to_string()
         });
         assert_eq!(stdout.contains(calldata.as_str()), same, "\n{stdout}");
         assert.stdout_eq(expected.clone());
