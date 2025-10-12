@@ -52,6 +52,13 @@ pub struct WatchArgs {
     #[arg(long)]
     pub run_all: bool,
 
+    /// Re-run only previously failed tests first when a change is made.
+    ///
+    /// If all previously failed tests pass, the full test suite will be run automatically.
+    /// This is particularly useful for TDD workflows where you want fast feedback on failures.
+    #[arg(long, alias = "rerun-failures")]
+    pub rerun_failed: bool,
+
     /// File update debounce delay.
     ///
     /// During the delay, incoming change events are accumulated and
@@ -303,9 +310,23 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
 
     let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.to_string_lossy().into_owned();
+    let test_failures_file = config.test_failures_file.clone();
+    let rerun_failed = args.watch.rerun_failed;
+
     let config = args.watch.watchexec_config_with_override(
         || Ok([&config.test, &config.src]),
         move |events, command| {
+            // Check if we should prioritize rerunning failed tests
+            let has_failures = rerun_failed && test_failures_file.exists();
+
+            if has_failures {
+                // Smart mode: rerun failed tests first
+                trace!("Smart watch mode: will rerun failed tests first");
+                command.arg("--rerun");
+                // Don't add file-specific filters when rerunning failures
+                return;
+            }
+
             let mut changed_sol_test_files: HashSet<_> = events
                 .iter()
                 .flat_map(|e| e.paths())

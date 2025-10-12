@@ -1,6 +1,6 @@
 use crate::EnvMut;
 use alloy_chains::Chain;
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
@@ -84,17 +84,35 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     }
 }
 
-/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
-/// hardfork.
-pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+/// Derives the active [`BlobParams`] based on the given timestamp.
+///
+/// This falls back to regular ethereum blob params if no hardforks for the given chain id are
+/// detected.
+pub fn get_blob_params(chain_id: ChainId, timestamp: u64) -> BlobParams {
     let hardfork = EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
         .unwrap_or_default();
 
-    if hardfork >= EthereumHardfork::Prague {
-        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-    } else {
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+    match hardfork {
+        EthereumHardfork::Prague => BlobParams::prague(),
+        EthereumHardfork::Osaka => BlobParams::osaka(),
+        EthereumHardfork::Bpo1 => BlobParams::bpo1(),
+        EthereumHardfork::Bpo2 => BlobParams::bpo2(),
+
+        // future hardforks/unknown settings: update once decided
+        EthereumHardfork::Bpo3 => BlobParams::bpo2(),
+        EthereumHardfork::Bpo4 => BlobParams::bpo2(),
+        EthereumHardfork::Bpo5 => BlobParams::bpo2(),
+        EthereumHardfork::Amsterdam => BlobParams::bpo2(),
+
+        // fallback
+        _ => BlobParams::cancun(),
     }
+}
+
+/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
+/// hardfork.
+pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+    get_blob_params(chain_id, timestamp).update_fraction as u64
 }
 
 /// Returns the blob base fee update fraction based on the spec id.

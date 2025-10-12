@@ -122,29 +122,37 @@ alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
 alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
-hashbrown.opt-level = 3
-foldhash.opt-level = 3
-keccak.opt-level = 3
+alloy-evm.opt-level = 3
+
+bitvec.opt-level = 3
 revm.opt-level = 3
-revm-primitives.opt-level = 3
+revm-bytecode.opt-level = 3
+revm-context.opt-level = 3
+revm-context-interface.opt-level = 3
+revm-database.opt-level = 3
+revm-database-interface.opt-level = 3
+revm-handler.opt-level = 3
+revm-inspector.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
-revm-database-interface.opt-level = 3
-revm-database.opt-level = 3
-revm-bytecode.opt-level = 3
+revm-primitives.opt-level = 3
 revm-state.opt-level = 3
-revm-context-interface.opt-level = 3
-revm-context.opt-level = 3
-revm-inspector.opt-level = 3
+
+revm-inspectors.opt-level = 3
+
 ruint.opt-level = 3
+
 sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
-bitvec.opt-level = 3
+keccak.opt-level = 3
 
 # Fuzzing.
 proptest.opt-level = 3
 foundry-evm-fuzz.opt-level = 3
+rand.opt-level = 3
+rand_chacha.opt-level = 3
+ppv-lite86.opt-level = 3
 
 # Forking.
 axum.opt-level = 3
@@ -153,6 +161,8 @@ axum.opt-level = 3
 scrypt.opt-level = 3
 
 # Misc.
+hashbrown.opt-level = 3
+foldhash.opt-level = 3
 rayon.opt-level = 3
 rayon-core.opt-level = 3
 regex.opt-level = 3
@@ -359,7 +369,10 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
-jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"] }
+jiff = { version = "0.2", default-features = false, features = [
+    "std",
+    "perf-inline",
+] }
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"

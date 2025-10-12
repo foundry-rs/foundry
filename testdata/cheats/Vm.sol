@@ -308,6 +308,7 @@ interface Vm {
     function getDeployment(string calldata contractName) external view returns (address deployedAddress);
     function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
+    function getEvmVersion() external pure returns (string memory evm);
     function getFoundryVersion() external view returns (string memory version);
     function getLabel(address account) external view returns (string memory currentLabel);
     function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external view returns (bool found, bytes32 key, bytes32 parent);
@@ -482,6 +483,7 @@ interface Vm {
     function setArbitraryStorage(address target, bool overwrite) external;
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
     function setEnv(string calldata name, string calldata value) external;
+    function setEvmVersion(string calldata evm) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
     function setSeed(uint256 seed) external;
