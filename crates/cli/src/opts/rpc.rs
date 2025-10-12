@@ -16,10 +16,28 @@ use std::borrow::Cow;
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
-#[derive(Clone, Debug, Default, Parser)]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcOpts {
     #[command(flatten)]
     pub common: RpcCommonOpts,
+
+    /// JWT Secret for the RPC endpoint.
+    #[arg(long, env = "ETH_RPC_JWT_SECRET")]
+    pub jwt_secret: Option<String>,
+
+    /// Specify custom headers for RPC requests.
+    #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
+    pub rpc_headers: Option<Vec<String>>,
+
+    /// Sets the number of assumed available compute units per second for this provider.
+    #[arg(long, alias = "cups", value_name = "CUPS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rate-limit")]
+    #[serde(skip)]
+    pub no_rpc_rate_limit: bool,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -56,11 +74,30 @@ impl RpcOpts {
 
     /// Returns the JWT secret.
     pub fn jwt<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        self.common.jwt(config)
+        let jwt = match (self.jwt_secret.as_deref(), config) {
+            (Some(jwt), _) => Some(Cow::Borrowed(jwt)),
+            (None, Some(config)) => config.get_rpc_jwt_secret()?,
+            (None, None) => None,
+        };
+        Ok(jwt)
     }
 
     pub fn dict(&self) -> Dict {
-        let dict = self.common.dict();
+        let mut dict = self.common.dict();
+        
+        if let Ok(Some(jwt)) = self.jwt(None) {
+            dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
+        }
+        if let Some(headers) = &self.rpc_headers {
+            dict.insert("eth_rpc_headers".into(), headers.clone().into());
+        }
+        if let Some(cups) = self.compute_units_per_second {
+            dict.insert("compute_units_per_second".into(), cups.into());
+        }
+        if self.no_rpc_rate_limit {
+            dict.insert("no_rpc_rate_limit".into(), self.no_rpc_rate_limit.into());
+        }
+        
         // Flashbots URL is handled in the url() method, not in dict()
         dict
     }
