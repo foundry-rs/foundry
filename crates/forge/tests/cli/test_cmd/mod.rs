@@ -27,7 +27,7 @@ forgetest!(testdata, |_prj, cmd| {
     for (name, endpoint) in rpc_endpoints().iter() {
         if let Some(url) = endpoint.endpoint.as_url() {
             let key = format!("RPC_{}", name.to_uppercase());
-            cmd.env(&key, url);
+            // cmd.env(&key, url);
             writeln!(dotenv, "{key}={url}").unwrap();
         }
     }

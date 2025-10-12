@@ -1,4 +1,4 @@
-from . import ICounter
+from src import ICounter
 
 interface Vm:
     def deployCode(artifact_name: String[1024], args: Bytes[1024] = b"") -> address: nonpayable
@@ -8,7 +8,7 @@ counter: ICounter
 
 @external
 def setUp():
-    self.counter = ICounter(extcall vm.deployCode("default/vyper/Counter.vy"))
+    self.counter = ICounter(extcall vm.deployCode("src/Counter.vy"))
 
 @external
 def test_increment():

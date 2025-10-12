@@ -1,5 +1,5 @@
 [profile.default]
-src = "./"
+src = "src"
 test = "./"
 optimizer = true
 optimizer_runs = 200
