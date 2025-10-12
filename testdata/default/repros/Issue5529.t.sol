@@ -28,7 +28,7 @@ contract Issue5529Test is Test {
         vm.startPrank(address(1234));
         run();
     }
-    
+
     function run() private {
         address a = vm.computeCreate2Address(0, keccak256(type(Counter).creationCode), address(default_create2_factory));
         address b = address(new Counter{salt: 0}());

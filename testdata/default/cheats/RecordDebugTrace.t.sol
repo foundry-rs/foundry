@@ -69,7 +69,6 @@ contract RecordDebugTraceTest is Test {
      * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
-
     function testDebugTraceCanRecordOpcodeWithStackAndMemoryData() public {
         MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
 
