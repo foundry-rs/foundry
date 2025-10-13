@@ -584,55 +584,79 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
-        let post_break_prefix = |prefix: &'static str, line_len: usize| -> &'static str {
+        fn post_break_prefix(prefix: &'static str, has_content: bool) -> &'static str {
+            if !has_content {
+                return prefix;
+            }
             match prefix {
-                "///" if line_len > 3 => "/// ",
-                "//" if line_len > 2 => "// ",
-                "/*" if line_len > 2 => "/* ",
-                " *" if line_len > 2 => " * ",
+                "///" => "/// ",
+                "//" => "// ",
+                "/*" => "/* ",
+                " *" => " * ",
                 _ => prefix,
             }
-        };
+        }
 
         self.ibox(0);
-        let (prefix, content) = if is_doc {
-            // Doc comments preserve leading whitespaces (right after the prefix).
-            self.word(prefix);
-            let content = &line[prefix.len()..];
-            let (leading_ws, rest) =
-                content.split_at(content.chars().take_while(|&c| c.is_whitespace()).count());
+        self.word(prefix);
+
+        let content = &line[prefix.len()..];
+        let content = if is_doc {
+            // Doc comments preserve leading whitespaces (right after the prefix) as nbps.
+            let ws_len = content.chars().take_while(|&c| c.is_whitespace()).count();
+            let (leading_ws, rest) = content.split_at(ws_len);
             if !leading_ws.is_empty() {
                 self.word(leading_ws.to_owned());
             }
-            let prefix = post_break_prefix(prefix, rest.len());
-            (prefix, rest)
-        } else if line.starts_with("/*") && !line.starts_with("/* ") {
-            self.word(prefix);
-            (prefix, line[2..].trim_end())
+            rest
         } else {
-            let content = line[prefix.len()..].trim();
-            let prefix = post_break_prefix(prefix, content.len());
-            self.word(prefix);
-            (prefix, content)
+            // Non-doc comments: replace first whitespace with nbsp, rest of content continues
+            if let Some(first_char) = content.chars().next() {
+                if first_char.is_whitespace() {
+                    self.nbsp();
+                    &content[first_char.len_utf8()..]
+                } else {
+                    content
+                }
+            } else {
+                ""
+            }
         };
 
-        // Split the rest of the content into words.
-        let mut words = content.split_whitespace().peekable();
-        while let Some(word) = words.next() {
-            self.word(word.to_owned());
-            if let Some(next_word) = words.peek() {
-                if *next_word == "*/" {
-                    self.nbsp();
-                } else {
-                    self.s.scan_break(BreakToken {
-                        offset: break_offset,
-                        blank_space: 1,
-                        post_break: if matches!(prefix, "/* ") { None } else { Some(prefix) },
-                        ..Default::default()
-                    });
+        let post_break = post_break_prefix(prefix, !content.is_empty());
+
+        // Process content character by character to preserve consecutive whitespaces
+        let (mut chars, mut current_word) = (content.chars().peekable(), String::new());
+        while let Some(ch) = chars.next() {
+            if ch.is_whitespace() {
+                // Print current word
+                if !current_word.is_empty() {
+                    self.word(std::mem::take(&mut current_word));
                 }
+
+                // Preserve multiple spaces while adding a single break
+                let mut ws_count = 1;
+                while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                    ws_count += 1;
+                    chars.next();
+                }
+                self.s.scan_break(BreakToken {
+                    offset: break_offset,
+                    blank_space: ws_count,
+                    post_break: if post_break.starts_with("/*") { None } else { Some(post_break) },
+                    ..Default::default()
+                });
+                continue;
             }
+
+            current_word.push(ch);
         }
+
+        // Print final word
+        if !current_word.is_empty() {
+            self.word(current_word);
+        }
+
         self.end();
     }
 
