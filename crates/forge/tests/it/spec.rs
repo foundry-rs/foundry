@@ -97,9 +97,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    // Test evm version set in `setUp` and test constructor is accounted in test.
+    // Test evm version set in `setUp` is accounted in test.
     prj.add_test(
-        "TestSetEvmVersion.t.sol",
+        "TestSetupEvmVersion.t.sol",
         &r#"
 import {Test} from "forge-std/Test.sol";
 
@@ -114,7 +114,7 @@ interface ICreate2Deployer {
 
 EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
 
-contract TestSetEvmVersionInSetup is Test {
+contract TestSetupEvmVersion is Test {
     function setUp() public {
         evm.setEvmVersion("istanbul");
     }
@@ -125,8 +125,44 @@ contract TestSetEvmVersionInSetup is Test {
         ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
     }
 }
+   "#.replace("<rpc>", &endpoint),
+    );
+    cmd.forge_fuse()
+        .args(["test", "--mc", "TestSetupEvmVersion", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
+Traces:
+  [..] TestSetupEvmVersion::setUp()
+    ├─ [0] VM::setEvmVersion("istanbul")
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
-contract TestSetEvmVersionInConstructor is Test {
+  [..] TestSetupEvmVersion::test_evm_version_in_setup()
+    └─ ← [NotActivated] EvmError: NotActivated
+...
+
+"#]]);
+
+    // Test evm version set in constructor is accounted in test.
+    prj.add_test(
+        "TestConstructorEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+interface ICreate2Deployer {
+    function computeAddress(bytes32 salt, bytes32 codeHash) external view returns (address);
+}
+
+EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+contract TestConstructorEvmVersion is Test {
     constructor() {
         evm.setEvmVersion("istanbul");
     }
@@ -139,50 +175,16 @@ contract TestSetEvmVersionInConstructor is Test {
 }
    "#.replace("<rpc>", &endpoint),
     );
-    cmd.forge_fuse().args(["test", "--mc", "TestSetEvmVersion", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/TestSetEvmVersion.t.sol:TestSetEvmVersionInConstructor
+    cmd.forge_fuse()
+        .args(["test", "--mc", "TestConstructorEvmVersion", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
 [FAIL: EvmError: NotActivated] test_evm_version_in_constructor() ([GAS])
 Traces:
-  [..] TestSetEvmVersionInConstructor::test_evm_version_in_constructor()
+  [..] TestConstructorEvmVersion::test_evm_version_in_constructor()
     └─ ← [NotActivated] EvmError: NotActivated
-
-Backtrace:
-  at TestSetEvmVersionInConstructor.test_evm_version_in_constructor (test/TestSetEvmVersion.t.sol:29:2)
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/TestSetEvmVersion.t.sol:TestSetEvmVersionInSetup
-[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
-Traces:
-  [..] TestSetEvmVersionInSetup::setUp()
-    ├─ [0] VM::setEvmVersion("istanbul")
-    │   └─ ← [Return]
-    └─ ← [Stop]
-
-  [..] TestSetEvmVersionInSetup::test_evm_version_in_setup()
-    └─ ← [NotActivated] EvmError: NotActivated
-
-Backtrace:
-  at TestSetEvmVersionInSetup.test_evm_version_in_setup (test/TestSetEvmVersion.t.sol:17:2)
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/TestSetEvmVersion.t.sol:TestSetEvmVersionInConstructor
-[FAIL: EvmError: NotActivated] test_evm_version_in_constructor() ([GAS])
-
-Encountered 1 failing test in test/TestSetEvmVersion.t.sol:TestSetEvmVersionInSetup
-[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
-
-Encountered a total of 2 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+...
 
 "#]]);
 });
