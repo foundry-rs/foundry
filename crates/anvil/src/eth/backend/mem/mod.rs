@@ -2767,7 +2767,11 @@ impl Backend {
 
             let target_tx = block.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env = target_tx.to_revm_tx_env();
+            if env.networks.is_optimism() {
+                tx_env.enveloped_tx =
+                    Some(alloy_rlp::encode(target_tx.transaction.transaction).into());
+            }
 
             let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
 
