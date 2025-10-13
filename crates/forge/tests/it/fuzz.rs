@@ -276,7 +276,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 forgetest_init!(test_fuzz_fail_on_revert, |prj, cmd| {
     prj.wipe_contracts();
-    prj.update_config(|config| config.fuzz.fail_on_revert = false);
+    prj.update_config(|config| {
+        config.fuzz.fail_on_revert = false;
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
+    });
     prj.add_source(
         "Counter.sol",
         r#"
