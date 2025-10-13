@@ -12,8 +12,7 @@ use alloy_provider::{
     Provider,
     ext::TraceApi,
     network::{
-        AnyNetwork, AnyTxEnvelope, TransactionBuilder, TransactionResponse,
-        primitives::BlockTransactions,
+        AnyTxEnvelope, TransactionBuilder, TransactionResponse, primitives::BlockTransactions,
     },
 };
 use alloy_rpc_types::{
@@ -33,7 +32,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::AsEnvMut,
     executors::EvmError,
-    utils::{apply_chain_and_block_specific_env_changes, configure_tx_env, configure_tx_req_env},
+    utils::{configure_tx_env, configure_tx_req_env},
 };
 use revm::state::AccountInfo;
 use std::path::PathBuf;
@@ -485,13 +484,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
-                env.evm_env.block_env.beneficiary = block.header.beneficiary;
-                env.evm_env.block_env.difficulty = block.header.difficulty;
-                env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-                env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-                env.evm_env.block_env.gas_limit = block.header.gas_limit;
-                apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
+                configure_env_block(&mut env.as_env_mut(), block);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"));
@@ -535,8 +528,6 @@ impl VerifyBytecodeArgs {
                         }
                     }
                 }
-
-                configure_env_block(&mut env.as_env_mut(), block)
             }
 
             // Replace the `input` with local creation code in the creation tx.
