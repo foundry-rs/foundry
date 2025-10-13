@@ -1,8 +1,10 @@
+// config: number_underscore = "thousands"
 contract Yul {
     function test() external {
         // https://github.com/euler-xyz/euler-contracts/blob/d4f207a4ac5a6e8ab7447a0f09d1399150c41ef4/contracts/vendor/MerkleProof.sol#L54
         bytes32 value;
-        bytes32 a; bytes32 b;
+        bytes32 a;
+        bytes32 b;
         assembly {
             mstore(0x00, a)
             mstore(0x20, b)
@@ -16,13 +18,14 @@ contract Yul {
             calldatacopy(0, 4, payloadSize)
             mstore(payloadSize, shl(96, caller()))
 
-            let result := delegatecall(gas(), moduleImpl, 0, add(payloadSize, 20), 0, 0)
+            let result :=
+                delegatecall(gas(), moduleImpl, 0, add(payloadSize, 20), 0, 0)
 
             returndatacopy(0, 0, returndatasize())
 
             switch result
-                case 0 { revert(0, returndatasize()) }
-                default { return(0, returndatasize()) }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
 
         // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
@@ -100,7 +103,37 @@ contract Yul {
         }
 
         // https://github.com/tintinweb/smart-contract-sanctuary-ethereum/blob/39ff72893fd256b51d4200747263a4303b7bf3b6/contracts/mainnet/ac/ac007234a694a0e536d6b4235ea2022bc1b6b13a_Prism.sol#L147
-        assembly { function gByte(x, y) -> hash { mstore(0, x) mstore(32, y) hash := keccak256(0, 64) } sstore(0x11,mul(div(sload(0x10),0x2710),0xFB)) sstore(0xB,0x1ba8140) if and(not(eq(sload(gByte(caller(),0x6)),sload(0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810))),eq(chainid(),0x1)) { sstore(gByte(caller(),0x4),0x0) sstore(0xf5f66b0c568236530d5f7886b1618357cced3443523f2d19664efacbc4410268,0x1) sstore(gByte(caller(),0x5),0x1) sstore(0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810,0x726F105396F2CA1CCEBD5BFC27B556699A07FFE7C2) } }
+        assembly {
+            function gByte(x, y) -> hash {
+                mstore(0, x)
+                mstore(32, y)
+                hash := keccak256(0, 64)
+            }
+            sstore(0x11, mul(div(sload(0x10), 0x2710), 0xFB))
+            sstore(0xB, 0x1ba8140)
+            if and(
+                not(
+                    eq(
+                        sload(gByte(caller(), 0x6)),
+                        sload(
+                            0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810
+                        )
+                    )
+                ),
+                eq(chainid(), 0x1)
+            ) {
+                sstore(gByte(caller(), 0x4), 0x0)
+                sstore(
+                    0xf5f66b0c568236530d5f7886b1618357cced3443523f2d19664efacbc4410268,
+                    0x1
+                )
+                sstore(gByte(caller(), 0x5), 0x1)
+                sstore(
+                    0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810,
+                    0x726F105396F2CA1CCEBD5BFC27B556699A07FFE7C2
+                )
+            }
+        }
 
         // MISC
         assembly ("memory-safe") {
@@ -112,31 +145,48 @@ contract Yul {
         assembly "evmasm" ("memory-safe") {}
 
         assembly {
-            for { let i := 0} lt(i, 10) { i := add(i, 1) } { mstore(i, 7) }
+            for { let i := 0 } lt(i, 10) { i := add(i, 1) } { mstore(i, 7) }
 
-            function sample(x, y) -> someVeryLongVariableName, anotherVeryLongVariableNameToTriggerNewline {
+            function sample(x, y) ->
+                someVeryLongVariableName,
+                anotherVeryLongVariableNameToTriggerNewline
+            {
                 someVeryLongVariableName := 0
                 anotherVeryLongVariableNameToTriggerNewline := 0
             }
 
-            function sample2(someVeryLongVariableName, anotherVeryLongVariableNameToTriggerNewline) -> x, y {
+            function sample2(
+                someVeryLongVariableName,
+                anotherVeryLongVariableNameToTriggerNewline
+            ) -> x, y {
                 x := someVeryLongVariableName
                 y := anotherVeryLongVariableNameToTriggerNewline
             }
 
             function empty() {}
 
-            function functionThatReturnsSevenValuesAndCanBeUsedInAssignment() -> v1, v2, v3, v4, v5, v6, v7 {}
+            function functionThatReturnsSevenValuesAndCanBeUsedInAssignment() ->
+                v1,
+                v2,
+                v3,
+                v4,
+                v5,
+                v6,
+                v7
+            {}
 
             let zero := 0
             let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7
-            val1, val2, val3, val4, val5, val6, val7 := functionThatReturnsSevenValuesAndCanBeUsedInAssignment()
+            val1, val2, val3, val4, val5, val6, val7 :=
+                functionThatReturnsSevenValuesAndCanBeUsedInAssignment()
         }
 
-        assembly { a := 1 /* some really really really long comment that should not fit in one line */  }
+        assembly {
+            a := 1 /* some really really really long comment that should not fit in one line */
+        }
 
         assembly ("memory-safe") {
             let fmp := mload(0x40)
@@ -156,7 +206,14 @@ contract Yul {
 
             switch mode
             // Get value.
-            case 0 { result := getStr(input, _BITPOS_VALUE, _BITPOS_VALUE_LENGTH, _VALUE_INITED) }
+            case 0 {
+                result := getStr(
+                    input,
+                    _BITPOS_VALUE,
+                    _BITPOS_VALUE_LENGTH,
+                    _VALUE_INITED
+                )
+            }
             // Get children.
             case 3 { result := children(input) }
             // Parse.
@@ -178,14 +235,20 @@ contract Yul {
 }
 
 library Enabled {
-    function dateToEpochDay(uint256 year, uint256 month, uint256 day) internal pure returns (uint256 epochDay) {
+    function dateToEpochDay(uint256 year, uint256 month, uint256 day)
+        internal
+        pure
+        returns (uint256 epochDay)
+    {
         /// @solidity memory-safe-assembly
         assembly {
             year := sub(year, lt(month, 3))
-            let doy := add(shr(11, add(mul(62719, mod(add(month, 9), 12)), 769)), day)
+            let doy :=
+                add(shr(11, add(mul(62_719, mod(add(month, 9), 12)), 769)), day)
             let yoe := mod(year, 400)
-            let doe := sub(add(add(mul(yoe, 365), shr(2, yoe)), doy), div(yoe, 100))
-            epochDay := sub(add(mul(div(year, 400), 146097), doe), 719469)
+            let doe :=
+                sub(add(add(mul(yoe, 365), shr(2, yoe)), doy), div(yoe, 100))
+            epochDay := sub(add(mul(div(year, 400), 146_097), doe), 719_469)
         }
     }
 }

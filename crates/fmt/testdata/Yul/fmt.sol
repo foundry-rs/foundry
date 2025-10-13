@@ -232,3 +232,41 @@ contract Yul {
         }
     }
 }
+
+library Enabled {
+    function dateToEpochDay(uint256 year, uint256 month, uint256 day)
+        internal
+        pure
+        returns (uint256 epochDay)
+    {
+        /// @solidity memory-safe-assembly
+        assembly {
+            year := sub(year, lt(month, 3))
+            let doy :=
+                add(shr(11, add(mul(62719, mod(add(month, 9), 12)), 769)), day)
+            let yoe := mod(year, 400)
+            let doe :=
+                sub(add(add(mul(yoe, 365), shr(2, yoe)), doy), div(yoe, 100))
+            epochDay := sub(add(mul(div(year, 400), 146097), doe), 719469)
+        }
+    }
+}
+
+// forgefmt: disable-start
+library Disabled {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                   DATE TIME OPERATIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function dateToEpochDay(uint256 year, uint256 month, uint256 day) internal pure returns (uint256 epochDay) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            year := sub(year, lt(month, 3))
+            let doy := add(shr(11, add(mul(62719, mod(add(month, 9), 12)), 769)), day)
+            let yoe := mod(year, 400)
+            let doe := sub(add(add(mul(yoe, 365), shr(2, yoe)), doy), div(yoe, 100))
+            epochDay := sub(add(mul(div(year, 400), 146097), doe), 719469)
+        }
+    }
+}
+// forgefmt: disable-end
