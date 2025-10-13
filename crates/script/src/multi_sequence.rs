@@ -1,6 +1,6 @@
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{
-    DRY_RUN_DIR, ScriptSequence, SensitiveScriptSequence, now, sig_to_file_name,
+    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
 };
 use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
@@ -29,9 +29,9 @@ pub struct SensitiveMultiChainSequence {
 }
 
 impl SensitiveMultiChainSequence {
-    fn from_multi_sequence(sequence: MultiChainSequence) -> Self {
+    fn from_multi_sequence(sequence: &MultiChainSequence) -> Self {
         Self {
-            deployments: sequence.deployments.into_iter().map(|sequence| sequence.into()).collect(),
+            deployments: sequence.deployments.iter().map(SensitiveScriptSequence::from).collect(),
         }
     }
 }
@@ -115,7 +115,7 @@ impl MultiChainSequence {
 
         self.timestamp = now().as_millis();
 
-        let sensitive_sequence = SensitiveMultiChainSequence::from_multi_sequence(self.clone());
+        let sensitive_sequence = SensitiveMultiChainSequence::from_multi_sequence(&*self);
 
         // broadcast writes
         //../Contract-latest/run.json

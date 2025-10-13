@@ -1,8 +1,8 @@
 use crate::transaction::TransactionWithMetadata;
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{TxHash, hex, map::HashMap};
+use alloy_primitives::{hex, map::HashMap, TxHash};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
+use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -51,8 +51,8 @@ pub struct SensitiveScriptSequence {
     pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<ScriptSequence> for SensitiveScriptSequence {
-    fn from(sequence: ScriptSequence) -> Self {
+impl From<&ScriptSequence> for SensitiveScriptSequence {
+    fn from(sequence: &ScriptSequence) -> Self {
         Self {
             transactions: sequence
                 .transactions
@@ -99,31 +99,31 @@ impl ScriptSequence {
             return Ok(());
         }
 
-        let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
-
         self.timestamp = now().as_millis();
         let ts_name = format!("run-{}.json", self.timestamp);
 
-        let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();
+        let sensitive_script_sequence = SensitiveScriptSequence::from(&*self);
+
+        let Some((path, sensitive_path)) = self.paths.as_ref() else { return Ok(()) };
 
         // broadcast folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&path)?);
+        let mut writer = BufWriter::new(fs::create_file(path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
         writer.flush()?;
         if save_ts {
             //../run-[timestamp].json
-            fs::copy(&path, path.with_file_name(&ts_name))?;
+            fs::copy(path, path.with_file_name(&ts_name))?;
         }
 
         // cache folder writes
         //../run-latest.json
-        let mut writer = BufWriter::new(fs::create_file(&sensitive_path)?);
+        let mut writer = BufWriter::new(fs::create_file(sensitive_path)?);
         serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
         writer.flush()?;
         if save_ts {
             //../run-[timestamp].json
-            fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
+            fs::copy(sensitive_path, sensitive_path.with_file_name(&ts_name))?;
         }
 
         if !silent {
