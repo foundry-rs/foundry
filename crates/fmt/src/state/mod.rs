@@ -603,7 +603,11 @@ impl<'sess> State<'sess, '_> {
         let content = &line[prefix.len()..];
         let content = if is_doc {
             // Doc comments preserve leading whitespaces (right after the prefix) as nbps.
-            let ws_len = content.chars().take_while(|&c| c.is_whitespace()).count();
+            let ws_len = content
+                .char_indices()
+                .take_while(|(_, c)| c.is_whitespace())
+                .last()
+                .map_or(0, |(idx, c)| idx + c.len_utf8());
             let (leading_ws, rest) = content.split_at(ws_len);
             if !leading_ws.is_empty() {
                 self.word(leading_ws.to_owned());
