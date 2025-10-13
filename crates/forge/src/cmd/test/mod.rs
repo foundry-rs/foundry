@@ -898,24 +898,9 @@ impl TestArgs {
                 for test in &tests {
                     sh_println!("  • {}", test)?;
                 }
-                sh_println!()?;
-                sh_println!(
-                    "Run `forge test --rerun` to retry {} test{}",
-                    tests.len(),
-                    if tests.len() == 1 { "" } else { "s" }
-                )?;
-                sh_println!(
-                    "Or use `forge test --match-test \"{}\"` to run with filters",
-                    tests.join("|")
-                )?;
             }
             None => {
                 sh_println!("No test failures recorded from last run")?;
-                sh_println!()?;
-                sh_println!(
-                    "Failure records are saved to: {}",
-                    config.test_failures_file.display()
-                )?;
             }
         }
         Ok(TestOutcome::empty(None, false))
