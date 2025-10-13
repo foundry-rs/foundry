@@ -1312,7 +1312,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         Ok((_, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
-                                self.expected_revert = Some(expected_revert.clone());
+                                self.expected_revert = Some(expected_revert);
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1352,7 +1352,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if ecx.journaled_state.depth() > 0
-                && let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop()
+                && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
@@ -1384,9 +1384,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // vector if higher depths were not recorded. This
                     // preserves ordering of accesses.
                     if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.append(last_recorded_depth);
+                        last.extend(last_recorded_depth);
                     } else {
-                        recorded_account_diffs_stack.push(last_recorded_depth.clone());
+                        recorded_account_diffs_stack.push(last_recorded_depth);
                     }
                 }
             }

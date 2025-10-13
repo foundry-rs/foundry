@@ -147,6 +147,7 @@ impl<'a> ContractRunner<'a> {
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
             result.extend(raw, TraceKind::Deployment);
             if reason.is_some() {
+                debug!(?reason, "deployment of library failed");
                 result.reason = reason;
                 return Ok(result);
             }
@@ -175,6 +176,7 @@ impl<'a> ContractRunner<'a> {
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
         result.extend(raw, TraceKind::Deployment);
         if reason.is_some() {
+            debug!(?reason, "deployment of test contract failed");
             result.reason = reason;
             return Ok(result);
         }
@@ -1008,13 +1010,12 @@ impl<'a> FunctionRunner<'a> {
         let address = self.setup.address;
 
         // Apply before test configured functions (if any).
-        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count()
-            == 1
-        {
+        if self.cr.contract.abi.functions().any(|func| func.name.is_before_test_setup()) {
             for calldata in self.executor.call_sol_default(
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
+                debug!(?calldata, spec=%self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
