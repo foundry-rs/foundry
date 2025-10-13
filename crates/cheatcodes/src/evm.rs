@@ -1108,10 +1108,11 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { evm } = self;
-        ccx.ecx.cfg.spec = evm_spec_id(
+        let spec_id = evm_spec_id(
             EvmVersion::from_str(evm)
                 .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
         );
+        ccx.state.execution_evm_version = Some(spec_id);
         Ok(Default::default())
     }
 }
