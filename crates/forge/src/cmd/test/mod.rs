@@ -176,6 +176,10 @@ pub struct TestArgs {
     #[arg(long)]
     pub rerun: bool,
 
+    /// Show the test failures from the last test run.
+    #[arg(long, conflicts_with = "rerun")]
+    pub show_last_run: bool,
+
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
     pub summary: bool,
@@ -204,6 +208,13 @@ pub struct TestArgs {
 impl TestArgs {
     pub async fn run(mut self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
+
+        // Handle show-last-run command
+        if self.show_last_run {
+            let config = self.load_config()?;
+            return self.show_last_failures(&config);
+        }
+
         self.compile_and_run().await
     }
 
@@ -871,6 +882,45 @@ impl TestArgs {
         Ok(filter.merge_with_config(config))
     }
 
+    /// Show the test failures from the last test run.
+    fn show_last_failures(&self, config: &Config) -> Result<TestOutcome> {
+        match last_run_failures(config) {
+            Some(regex) => {
+                let pattern = regex.as_str();
+                let tests: Vec<&str> = pattern.split('|').collect();
+
+                sh_println!(
+                    "Last test run failures ({} test{}):",
+                    tests.len(),
+                    if tests.len() == 1 { "" } else { "s" }
+                )?;
+                sh_println!()?;
+                for test in &tests {
+                    sh_println!("  • {}", test)?;
+                }
+                sh_println!()?;
+                sh_println!(
+                    "Run `forge test --rerun` to retry {} test{}",
+                    tests.len(),
+                    if tests.len() == 1 { "" } else { "s" }
+                )?;
+                sh_println!(
+                    "Or use `forge test --match-test \"{}\"` to run with filters",
+                    tests.join("|")
+                )?;
+            }
+            None => {
+                sh_println!("No test failures recorded from last run")?;
+                sh_println!()?;
+                sh_println!(
+                    "Failure records are saved to: {}",
+                    config.test_failures_file.display()
+                )?;
+            }
+        }
+        Ok(TestOutcome::empty(None, false))
+    }
+
     /// Returns whether `BuildArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
@@ -942,13 +992,11 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
 
 /// Load persisted filter (with last test run failures) from file.
 fn last_run_failures(config: &Config) -> Option<regex::Regex> {
-    match fs::read_to_string(&config.test_failures_file) {
+    let failures_file = config.root.join(&config.test_failures_file);
+    match fs::read_to_string(&failures_file) {
         Ok(filter) => Regex::new(&filter)
             .inspect_err(|e| {
-                _ = sh_warn!(
-                    "failed to parse test filter from {:?}: {e}",
-                    config.test_failures_file
-                )
+                _ = sh_warn!("failed to parse test filter from {:?}: {e}", failures_file)
             })
             .ok(),
         Err(_) => None,
@@ -957,7 +1005,8 @@ fn last_run_failures(config: &Config) -> Option<regex::Regex> {
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+    let failures_file = config.root.join(&config.test_failures_file);
+    if outcome.failed() > 0 && fs::create_file(&failures_file).is_ok() {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
@@ -970,7 +1019,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
                 }
             }
         }
-        let _ = fs::write(&config.test_failures_file, filter);
+        let _ = fs::write(&failures_file, filter);
     }
 }
 
