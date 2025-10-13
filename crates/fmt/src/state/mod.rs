@@ -606,6 +606,9 @@ impl<'sess> State<'sess, '_> {
             }
             let prefix = post_break_prefix(prefix, rest.len());
             (prefix, rest)
+        } else if line.starts_with("/*") && !line.starts_with("/* ") {
+            self.word(prefix);
+            (prefix, line[2..].trim_end())
         } else {
             let content = line[prefix.len()..].trim();
             let prefix = post_break_prefix(prefix, content.len());
