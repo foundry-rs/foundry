@@ -546,13 +546,15 @@ impl<'sess> State<'sess, '_> {
             // Handle mixed with follow-up comment
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
-                    config.mixed_no_break = true;
+                    config.mixed_no_break_prev = true;
+                    config.mixed_no_break_post = true;
                     config.mixed_post_nbsp = cmnt.style.is_mixed();
                 }
 
                 // Ensure consecutive mixed comments don't have a double-space
                 if last_style.is_some_and(|s| s.is_mixed()) {
-                    config.mixed_no_break = true;
+                    config.mixed_no_break_prev = true;
+                    config.mixed_no_break_post = true;
                     config.mixed_prev_space = false;
                 }
             } else if config.offset != 0
@@ -693,7 +695,7 @@ impl<'sess> State<'sess, '_> {
                 let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
                 if !self.is_bol_or_only_ind() {
-                    match (never_break || config.mixed_no_break, config.mixed_prev_space) {
+                    match (never_break || config.mixed_no_break_prev, config.mixed_prev_space) {
                         (false, true) => config.space(&mut self.s),
                         (false, false) => config.zerobreak(&mut self.s),
                         (true, true) => self.nbsp(),
@@ -721,7 +723,7 @@ impl<'sess> State<'sess, '_> {
                 if config.mixed_post_nbsp {
                     config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
                     self.cursor.advance(1);
-                } else if !config.mixed_no_break {
+                } else if !config.mixed_no_break_post {
                     config.space(&mut self.s);
                     self.cursor.advance(1);
                 }
@@ -996,7 +998,8 @@ pub(crate) struct CommentConfig {
     // Config: mixed comments
     mixed_prev_space: bool,
     mixed_post_nbsp: bool,
-    mixed_no_break: bool,
+    mixed_no_break_prev: bool,
+    mixed_no_break_post: bool,
 }
 
 impl CommentConfig {
@@ -1020,7 +1023,8 @@ impl CommentConfig {
     pub(crate) fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
-        self.mixed_no_break = true;
+        self.mixed_no_break_prev = true;
+        self.mixed_no_break_post = true;
         self
     }
 
@@ -1030,7 +1034,13 @@ impl CommentConfig {
     }
 
     pub(crate) fn mixed_no_break(mut self) -> Self {
-        self.mixed_no_break = true;
+        self.mixed_no_break_prev = true;
+        self.mixed_no_break_post = true;
+        self
+    }
+
+    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+        self.mixed_no_break_post = true;
         self
     }
 
