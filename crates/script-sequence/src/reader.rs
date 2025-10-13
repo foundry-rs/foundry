@@ -26,7 +26,7 @@ impl BroadcastReader {
     /// Create a new `BroadcastReader` instance.
     pub fn new(contract_name: String, chain_id: u64, broadcast_path: &Path) -> Result<Self> {
         if !broadcast_path.is_dir() {
-            bail!("broadcast dir does not exist");
+            bail!("broadcast dir does not exist or is not a directory");
         }
 
         Ok(Self {
