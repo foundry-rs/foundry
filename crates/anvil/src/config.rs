@@ -17,6 +17,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_op_hardforks::OpHardfork;
@@ -65,7 +66,10 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
-use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
+use foundry_evm::{
+    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
+    utils::get_blob_params,
+};
 use foundry_evm_networks::NetworkConfigs;
 
 /// Default port the rpc will open
@@ -531,6 +535,14 @@ impl NodeConfig {
                 ),
             )
         }
+    }
+
+    /// Returns the [`BlobParams`] that should be used.
+    pub fn get_blob_params(&self) -> BlobParams {
+        get_blob_params(
+            self.chain_id.unwrap_or(Chain::mainnet().id()),
+            self.get_genesis_timestamp(),
+        )
     }
 
     /// Returns the hardfork to use
@@ -1083,6 +1095,7 @@ impl NodeConfig {
             !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
+            self.get_blob_params(),
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
@@ -1297,7 +1310,8 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                let blob_base_fee_update_fraction = get_blob_base_fee_update_fraction(
+                // derive the blobparams that are active at this timestamp
+                let blob_params = get_blob_params(
                     fork_chain_id
                         .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
                         .saturating_to(),
@@ -1306,15 +1320,16 @@ latest block number: {latest_block}"
 
                 env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                     blob_excess_gas,
-                    blob_base_fee_update_fraction,
+                    blob_params.update_fraction as u64,
                 ));
+
+                fees.set_blob_params(blob_params);
 
                 let next_block_blob_excess_gas =
                     fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
-
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
-                    blob_base_fee_update_fraction,
+                    blob_params.update_fraction as u64,
                 ));
             }
         }
