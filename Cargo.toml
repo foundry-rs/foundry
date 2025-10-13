@@ -444,7 +444,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
 # solar
-# solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-# solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-# solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-# solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
