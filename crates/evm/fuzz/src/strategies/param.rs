@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn can_fuzz_string_and_bytes_with_ast_literals_and_hashes() {
         use super::fuzz_param_from_state;
-        use crate::strategies::state::LiteralMaps;
+        use crate::strategies::LiteralMaps;
         use alloy_dyn_abi::DynSolType;
         use alloy_primitives::keccak256;
         use proptest::strategy::Strategy;

@@ -11,10 +11,13 @@ mod calldata;
 pub use calldata::{fuzz_calldata, fuzz_calldata_from_state};
 
 mod state;
-pub use state::{EvmFuzzState, LiteralMaps};
+pub use state::EvmFuzzState;
 
 mod invariants;
 pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call_strat};
 
 mod mutators;
 pub use mutators::BoundMutator;
+
+mod literals;
+pub use literals::{LiteralMaps, LiteralsCollector};
