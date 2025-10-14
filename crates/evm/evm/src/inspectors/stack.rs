@@ -638,7 +638,13 @@ impl InspectorStackRefMut<'_> {
     ) -> (InterpreterResult, Option<Address>) {
         let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
 
-        ecx.block.basefee = 0;
+        // If not isolate then set base fee and gas price to zero.
+        // See <https://github.com/foundry-rs/foundry/issues/7277#issuecomment-1971521826>
+        if !self.enable_isolation {
+            ecx.block.basefee = 0;
+            ecx.tx.gas_price = 0;
+        }
+
         ecx.tx.chain_id = Some(ecx.cfg.chain_id);
         ecx.tx.caller = caller;
         ecx.tx.kind = kind;
@@ -652,7 +658,6 @@ impl InspectorStackRefMut<'_> {
         if !ecx.cfg.disable_block_gas_limit {
             ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block.gas_limit);
         }
-        ecx.tx.gas_price = 0;
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
