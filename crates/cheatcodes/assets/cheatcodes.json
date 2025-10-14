@@ -5946,6 +5946,26 @@
     },
     {
       "func": {
+        "id": "fromRlp",
+        "description": "RLP decodes an RLP payload into a list of bytes.",
+        "declaration": "function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "fromRlp(bytes)",
+        "selector": "0x1e1d8b63",
+        "selectorBytes": [
+          30,
+          29,
+          139,
+          99
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "fsMetadata",
         "description": "Given a path, query the file system to get information about a file, directory, etc.",
         "declaration": "function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);",
@@ -11009,6 +11029,26 @@
         ]
       },
       "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "toRlp",
+        "description": "RLP encodes a list of bytes into an RLP payload.",
+        "declaration": "function toRlp(bytes[] calldata data) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "toRlp(bytes[])",
+        "selector": "0xa7ed3885",
+        "selectorBytes": [
+          167,
+          237,
+          56,
+          133
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },
