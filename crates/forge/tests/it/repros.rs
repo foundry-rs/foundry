@@ -295,7 +295,6 @@ test_repro!(6554; |config| {
     let mut prj_config = Config::clone(&config.runner.config);
     prj_config.fs_permissions.add(PathPermission::read_write(path));
     config.runner.config = Arc::new(prj_config);
-
 });
 
 // https://github.com/foundry-rs/foundry/issues/6759

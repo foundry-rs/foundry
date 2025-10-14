@@ -19,7 +19,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@dbda91f6efef3ee627f56175120aa9543687d830 # v3
+      - uses: DeterminateSystems/determinate-nix-action@762d7fdba79d046449732c729c1d3aaad021baa2 # v3
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -38,7 +38,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@dbda91f6efef3ee627f56175120aa9543687d830 # v3
+      - uses: DeterminateSystems/determinate-nix-action@762d7fdba79d046449732c729c1d3aaad021baa2 # v3
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
