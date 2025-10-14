@@ -1084,8 +1084,12 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         let root = tracer.traces();
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
-        let debug_steps: Vec<DebugStep> =
-            steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+        let debug_steps: Vec<DebugStep> = steps
+            .iter()
+            .map(|step| {
+                convert_call_trace_to_debug_step(step.step(), step.depth(), step.contract_addr())
+            })
+            .collect();
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
