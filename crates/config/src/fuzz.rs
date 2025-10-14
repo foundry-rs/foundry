@@ -89,16 +89,15 @@ pub struct FuzzDictionaryConfig {
 
 impl Default for FuzzDictionaryConfig {
     fn default() -> Self {
+        const MB: usize = 1024 * 1024;
+
         Self {
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,
-            // limit this to 300MB
-            max_fuzz_dictionary_addresses: (300 * 1024 * 1024) / 20,
-            // limit this to 300MB
-            max_fuzz_dictionary_values: (300 * 1024 * 1024) / 20,
-            // limit this to 200MB
-            max_fuzz_dictionary_literals: (200 * 1024 * 1024) / 32,
+            max_fuzz_dictionary_addresses: 300 * MB / 20,
+            max_fuzz_dictionary_values: 300 * MB / 32,
+            max_fuzz_dictionary_literals: 200 * MB / 32,
         }
     }
 }

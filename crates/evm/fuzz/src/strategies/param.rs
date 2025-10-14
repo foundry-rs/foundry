@@ -171,14 +171,14 @@ pub fn fuzz_param_from_state(
             .boxed(),
         DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::String => {
-            let state_clone = state.clone();
-            (any::<prop::sample::Index>(), any::<prop::sample::Index>())
-                .prop_flat_map(move |(use_ast_index, select_index)| {
-                    let dict = state_clone.dictionary_read();
+            let state = state.clone();
+            (proptest::bool::weighted(0.3), any::<prop::sample::Index>())
+                .prop_flat_map(move |(use_ast, select_index)| {
+                    let dict = state.dictionary_read();
 
-                    // AST string literals available: use 30/70 allocation
+                    // AST string literals available: 30% probability
                     let ast_strings = dict.ast_strings();
-                    if !ast_strings.is_empty() && use_ast_index.index(10) < 3 {
+                    if use_ast && !ast_strings.is_empty() {
                         let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
                         return Just(DynSolValue::String(s.clone())).boxed();
                     }
@@ -196,25 +196,30 @@ pub fn fuzz_param_from_state(
         }
         DynSolType::Bytes => {
             let state_clone = state.clone();
-            (value(), any::<prop::sample::Index>(), any::<prop::sample::Index>())
-                .prop_map(move |(word, use_ast_index, select_index)| {
+            (
+                value(),
+                proptest::bool::weighted(0.1),
+                proptest::bool::weighted(0.2),
+                any::<prop::sample::Index>(),
+            )
+                .prop_map(move |(word, use_ast_string, use_ast_bytes, select_index)| {
                     let dict = state_clone.dictionary_read();
 
-                    // Try string literals as bytes (10% chance)
+                    // Try string literals as bytes: 10% chance
                     let ast_strings = dict.ast_strings();
-                    if !ast_strings.is_empty() && use_ast_index.index(10) < 1 {
+                    if use_ast_string && !ast_strings.is_empty() {
                         let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
                         return DynSolValue::Bytes(s.as_bytes().to_vec());
                     }
 
-                    // Prefer hex literals (20% chance)
+                    // Try hex literals: 20% chance
                     let ast_bytes = dict.ast_bytes();
-                    if !ast_bytes.is_empty() && use_ast_index.index(10) < 3 {
+                    if use_ast_bytes && !ast_bytes.is_empty() {
                         let bytes = &ast_bytes.as_slice()[select_index.index(ast_bytes.len())];
                         return DynSolValue::Bytes(bytes.to_vec());
                     }
 
-                    // Fallback to the generated word from the dictionary (70% chance)
+                    // Fallback to the generated word from the dictionary: 70% chance
                     DynSolValue::Bytes(word.0.into())
                 })
                 .boxed()
