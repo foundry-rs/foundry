@@ -66,6 +66,19 @@ contract SimpleComments {
             /* hashMod */
         ) = _swapPre(2, TOTAL_SUPPLY / 1_000, false, zeroForOne1);
     }
+
+    // https://github.com/foundry-rs/foundry/issues/12045
+    function test6() {
+            (
+        // uint80 roundID
+        ,
+        int256 dataFeedAnswer,
+        // uint startedAt
+        ,
+        uint256 updatedAt,
+        // uint80 answeredInRound
+        ) = dataFeedContract.latestRoundData();
+    }
 }
 
 /*

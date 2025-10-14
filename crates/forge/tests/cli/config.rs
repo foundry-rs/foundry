@@ -132,6 +132,7 @@ hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
 override_spacing = false
 wrap_comments = false
+docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
@@ -347,7 +348,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        celo: false,
+        networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -457,7 +458,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
 
     let install = |cmd: &mut TestCommand, dep: &str| {
         cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
-Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
+Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag: None)
     Installed solmate[..]
 
 "#]]);
@@ -898,7 +899,7 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -910,7 +911,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
 
     // additional install don't edit `libs`
     cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
-Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
+Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
     Installed ds-test
 
 "#]]);
@@ -925,7 +926,7 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -1306,6 +1307,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,

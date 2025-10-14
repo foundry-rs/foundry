@@ -609,6 +609,18 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns the test or script execution evm version.
+    ///
+    /// **Note:** The execution evm version is not the same as the compilation one.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getEvmVersion() external pure returns (string memory evm);
+
+    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    ///
+    /// **Note:** The execution evm version is not the same as the compilation one.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function setEvmVersion(string calldata evm) external;
+
     // -------- Call Manipulation --------
     // --- Mocks ---
 

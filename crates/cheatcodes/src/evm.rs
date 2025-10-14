@@ -21,6 +21,7 @@ use foundry_common::{
         SlotInfo,
     },
 };
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -45,6 +46,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
+use foundry_config::evm_spec_id;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -1100,6 +1102,24 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         ccx.state.record_debug_steps_info = None;
 
         Ok(debug_steps.abi_encode())
+    }
+}
+
+impl Cheatcode for setEvmVersionCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { evm } = self;
+        let spec_id = evm_spec_id(
+            EvmVersion::from_str(evm)
+                .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
+        );
+        ccx.state.execution_evm_version = Some(spec_id);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getEvmVersionCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        Ok(ccx.ecx.cfg.spec.to_string().to_lowercase().abi_encode())
     }
 }
 

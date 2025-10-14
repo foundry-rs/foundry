@@ -12,7 +12,7 @@ use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, SolcLanguage, sourcemap::SourceMap},
+    artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
 use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
@@ -82,7 +82,8 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
@@ -131,7 +132,6 @@ impl CoverageArgs {
         let mut project = config.ephemeral_project()?;
 
         if self.ir_minimum {
-            // print warning message
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
@@ -139,30 +139,15 @@ impl CoverageArgs {
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
                  See more: https://github.com/foundry-rs/foundry/issues/3357"
             )?;
-
-            // Enable viaIR with minimum optimization: https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
-            // And also in new releases of Solidity: https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings.solc.settings =
-                project.settings.solc.settings.with_via_ir_minimum_optimization();
-
-            // Sanitize settings for solc 0.8.4 if version cannot be detected: https://github.com/foundry-rs/foundry/issues/9322
-            // But keep the EVM version: https://github.com/ethereum/solidity/issues/15775
-            let evm_version = project.settings.solc.evm_version;
-            let version = config.solc_version().unwrap_or_else(|| Version::new(0, 8, 4));
-            project.settings.solc.settings.sanitize(&version, SolcLanguage::Solidity);
-            project.settings.solc.evm_version = evm_version;
         } else {
             sh_warn!(
                 "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
                  If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
                  enables `viaIR` with minimum optimization resolving most of the errors"
             )?;
-
-            project.settings.solc.optimizer.disable();
-            project.settings.solc.optimizer.runs = None;
-            project.settings.solc.optimizer.details = None;
-            project.settings.solc.via_ir = None;
         }
+
+        config.disable_optimizations(&mut project, self.ir_minimum);
 
         let output = ProjectCompiler::default()
             .compile(&project)?

@@ -1094,7 +1094,7 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1222,7 +1222,7 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1392,7 +1392,7 @@ forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1478,7 +1478,7 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1707,7 +1707,7 @@ forgetest_async!(can_decode_custom_errors, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
