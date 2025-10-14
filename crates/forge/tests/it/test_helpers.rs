@@ -7,18 +7,19 @@ use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     Project, ProjectCompileOutput, SolcConfig, Vyper,
     artifacts::{EvmVersion, Libraries, Settings},
-    compilers::multi::MultiCompiler,
+    compilers::{multi::MultiCompiler, resolc::dual_compiled_contracts::DualCompiledContracts},
     utils::RuntimeOrHandle,
 };
 use foundry_config::{
     Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig, InvariantConfig, RpcEndpointUrl,
-    RpcEndpoints, fs_permissions::PathPermission,
+    RpcEndpoints, fs_permissions::PathPermission, revive,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
 use foundry_test_utils::{
     fd_lock, init_tracing,
     rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
 };
+use revive_strategy::ReviveExecutorStrategyBuilder;
 use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
@@ -173,6 +174,7 @@ pub struct ForgeTestData {
     pub output: ProjectCompileOutput,
     pub config: Arc<Config>,
     pub profile: ForgeTestProfile,
+    pub dual_compiled_contracts: Option<DualCompiledContracts>,
 }
 
 impl ForgeTestData {
@@ -185,7 +187,54 @@ impl ForgeTestData {
         let config = Arc::new(profile.config());
         let mut project = config.project().unwrap();
         let output = get_compiled(&mut project);
-        Self { project, output, config, profile }
+        Self { project, output, config, profile, dual_compiled_contracts: None }
+    }
+
+    /// Builds [ForgeTestData] for the given [ForgeTestProfile] with Revive compilation.
+    ///
+    /// This is required for tests that use `runner_revive()`.
+    pub fn new_with_revive(profile: ForgeTestProfile) -> Self {
+        install_crypto_provider();
+        init_tracing();
+        let config = Arc::new(profile.config());
+
+        let mut solc_config = (*config).clone();
+        solc_config.out = solc_config.out.join(revive::SOLC_ARTIFACTS_SUBDIR);
+        solc_config.build_info_path = Some(solc_config.out.join("build-info"));
+        let mut solc_project = solc_config.project().unwrap();
+
+        let output = get_compiled(&mut solc_project);
+
+        // Create resolc config with resolc compilation enabled
+        let mut resolc_config = (*config).clone();
+        resolc_config.resolc.resolc_compile = true;
+        let mut resolc_project = resolc_config.project().unwrap();
+
+        // Filter files compatible with resolc
+        let all_files: Vec<_> = solc_project.paths.input_files();
+        let files_to_compile: Vec<_> = all_files
+            .into_iter()
+            .filter(|path| {
+                // We skip all the other sources to avoid deploy-time linking issues
+                path.components().any(|c| c.as_os_str() == "revive")
+            })
+            .collect();
+        let resolc_output = get_resolc_compiled(&mut resolc_project, files_to_compile);
+
+        let dual_compiled_contracts = DualCompiledContracts::new(
+            &output,
+            &resolc_output,
+            &solc_project.paths,
+            &resolc_project.paths,
+        );
+
+        Self {
+            project: solc_project,
+            output,
+            config: Arc::new(solc_config),
+            profile,
+            dual_compiled_contracts: Some(dual_compiled_contracts),
+        }
     }
 
     /// Builds a base runner
@@ -275,6 +324,39 @@ impl ForgeTestData {
             )
             .unwrap()
     }
+
+    /// Builds a runner with revive strategy for polkadot/substrate testing
+    pub fn runner_revive(&self) -> MultiContractRunner {
+        let mut config = (*self.config).clone();
+        config.rpc_endpoints = rpc_endpoints();
+        config.allow_paths.push(manifest_root().to_path_buf());
+        if config.fs_permissions.is_empty() {
+            config.fs_permissions =
+                FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
+        }
+
+        let output = self.output.clone();
+        let dual_compiled_contracts = self.dual_compiled_contracts.as_ref().unwrap().clone();
+
+        let opts = config_evm_opts(&config);
+
+        let mut builder = self.base_runner();
+        let config = Arc::new(config);
+        let root = self.project.root();
+        builder.config = config.clone();
+
+        let mut strategy = ExecutorStrategy::new_revive(true);
+
+        strategy
+            .runner
+            .revive_set_dual_compiled_contracts(strategy.context.as_mut(), dual_compiled_contracts);
+
+        builder
+            .enable_isolation(opts.isolate)
+            .sender(config.sender)
+            .build::<MultiCompiler>(strategy, root, &output, opts.local_evm_env(), opts)
+            .unwrap()
+    }
 }
 
 /// Installs Vyper if it's not already present.
@@ -348,9 +430,48 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     out
 }
 
+pub fn get_resolc_compiled(
+    project: &mut Project,
+    files_to_compile: Vec<PathBuf>,
+) -> ProjectCompileOutput {
+    use foundry_common::compile::ProjectCompiler;
+
+    let lock_file_path = project.sources_path().join(".lock-revive");
+
+    let mut lock = fd_lock::new_lock(&lock_file_path);
+    let read = lock.read().unwrap();
+    let out;
+
+    let mut write = None;
+    if !project.cache_path().exists() || std::fs::read(&lock_file_path).unwrap() != b"1" {
+        drop(read);
+        write = Some(lock.write().unwrap());
+    }
+
+    let resolc_compiler = ProjectCompiler::new()
+        .files(files_to_compile)
+        .size_limits(revive::CONTRACT_SIZE_LIMIT, revive::CONTRACT_SIZE_LIMIT);
+
+    out = resolc_compiler.compile(project).unwrap();
+
+    if out.has_compiler_errors() {
+        panic!("Compiled with errors:\n{out}");
+    }
+
+    if let Some(ref mut write) = write {
+        write.write_all(b"1").unwrap();
+    }
+
+    out
+}
+
 /// Default data for the tests group.
 pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Default));
+
+/// Default data for Revive tests (with Revive compilation).
+pub static TEST_DATA_REVIVE: LazyLock<ForgeTestData> =
+    LazyLock::new(|| ForgeTestData::new_with_revive(ForgeTestProfile::Default));
 
 /// Data for tests requiring Paris support on Solc and EVM level.
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =

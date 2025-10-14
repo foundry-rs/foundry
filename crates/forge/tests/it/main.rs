@@ -9,6 +9,7 @@ mod fuzz;
 mod inline;
 mod invariant;
 mod repros;
+mod revive;
 mod spec;
 mod table;
 mod vyper;
