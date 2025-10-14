@@ -16,6 +16,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
 use std::sync::Arc;
+use crate::evm::journaled_account;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -375,9 +376,12 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
             }
         }
     }
+    let new_origin = new_origin.unwrap_or(ccx.ecx.tx.caller);
+    // Ensure new origin is loaded and touched.
+    let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.ecx.tx.caller),
+        new_origin,
         original_caller: ccx.caller,
         original_origin: ccx.ecx.tx.caller,
         depth,
