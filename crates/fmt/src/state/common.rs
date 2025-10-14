@@ -285,6 +285,15 @@ impl<'ast> State<'_, 'ast> {
             return false;
         };
 
+        // If first item is uninformed (just a comma), and it has its own comment, skip it.
+        // It will be dealt with when printing the item in the main loop of `commasep`.
+        if span.is_dummy()
+            && let Some(next_pos) = values.get(1).map(|v| get_span(v).lo())
+            && self.peek_comment_before(next_pos).is_some()
+        {
+            return true;
+        }
+
         // Check for comments before the first item.
         if let Some((cmnt_span, cmnt_style)) =
             self.peek_comment_before(span.lo()).map(|c| (c.span, c.style))
@@ -393,6 +402,7 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(0);
         }
 
+        let mut last_delimiter_break = !format.with_delimiters;
         let mut skip_last_break =
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
@@ -405,7 +415,10 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
 
-            print(self, value);
+            // Avoid printing the last uninformed item, so that we can handle line breaks.
+            if !(is_last && get_span(value).is_dummy()) {
+                print(self, value);
+            }
 
             if !is_last {
                 self.print_word(",");
@@ -430,26 +443,27 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 CommentConfig::skip_ws().no_breaks().mixed_prev_space()
             };
-            self.print_comments(next_pos, comment_config);
+            let with_trailing = self.print_comments(next_pos, comment_config).is_some();
 
-            if is_last && self.is_bol_or_only_ind() {
-                // if a trailing comment is printed at the very end, we have to manually adjust
-                // the offset to avoid having a double break.
-                self.break_offset_if_not_bol(0, -self.ind, false);
+            if is_last && with_trailing {
+                if self.is_bol_or_only_ind() {
+                    // if a trailing comment is printed at the very end, we have to manually adjust
+                    // the offset to avoid having a double break.
+                    self.break_offset_if_not_bol(0, -self.ind, false);
+                } else {
+                    self.s.break_offset(SIZE_INFINITY as usize, -self.ind);
+                }
                 skip_last_break = true;
+                last_delimiter_break = false;
             }
 
             // Final break if needed before the next value.
             if let Some(next_span) = next_span
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
+                && !next_span.is_dummy()
             {
-                if next_span.is_dummy() && !matches!(format.kind, ListFormatKind::AlwaysBreak) {
-                    // Don't add spaces between uninformed items (commas)
-                    self.zerobreak();
-                } else {
-                    format.print_break(false, values.len(), &mut self.s);
-                }
+                format.print_break(false, values.len(), &mut self.s);
             }
         }
 
@@ -475,7 +489,7 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.cursor.advance_to(pos_hi, true);
 
-        if !format.with_delimiters {
+        if last_delimiter_break {
             self.zerobreak();
         }
     }
