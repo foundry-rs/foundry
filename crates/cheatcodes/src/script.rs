@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
@@ -16,7 +16,6 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
 use std::sync::Arc;
-use crate::evm::journaled_account;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
