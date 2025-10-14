@@ -7,28 +7,11 @@ use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory, TraceMemberOrder};
 use spec::Vm::DebugStep;
 
-pub(crate) struct FlatStep<'a> {
-    step: &'a CallTraceStep,
-    depth: u64,
-    contract_addr: Address,
-}
-
-impl<'a> FlatStep<'a> {
-    fn new(step: &'a CallTraceStep, depth: u64, contract_addr: Address) -> Self {
-        FlatStep { step, depth, contract_addr }
-    }
-
-    pub fn step(&self) -> &CallTraceStep {
-        self.step
-    }
-
-    pub fn depth(&self) -> u64 {
-        self.depth
-    }
-
-    pub fn contract_addr(&self) -> Address {
-        self.contract_addr
-    }
+// Context for a CallTraceStep, includes depth and contract address.
+pub(crate) struct CallTraceStepCtx<'a> {
+    pub step: &'a CallTraceStep,
+    pub depth: u64,
+    pub contract_addr: Address,
 }
 
 // Do a depth first traverse of the nodes and steps and return steps
@@ -37,7 +20,7 @@ pub(crate) fn flatten_call_trace<'a>(
     root: usize,
     arena: &'a CallTraceArena,
     node_start_idx: usize,
-) -> Vec<FlatStep<'a>> {
+) -> Vec<CallTraceStepCtx<'a>> {
     let mut steps = Vec::new();
     let mut record_started = false;
 
@@ -55,7 +38,7 @@ fn recursive_flatten_call_trace<'a>(
     arena: &'a CallTraceArena,
     node_start_idx: usize,
     record_started: &mut bool,
-    flatten_steps: &mut Vec<FlatStep<'a>>,
+    flatten_steps: &mut Vec<CallTraceStepCtx<'a>>,
 ) {
     // Once node_idx exceeds node_start_idx, start recording steps
     // for all the recursive processing.
@@ -72,7 +55,7 @@ fn recursive_flatten_call_trace<'a>(
             TraceMemberOrder::Step(step_idx) => {
                 if *record_started {
                     let step = &node.trace.steps[*step_idx];
-                    flatten_steps.push(FlatStep::new(step, depth, contract_addr));
+                    flatten_steps.push(CallTraceStepCtx { step, depth, contract_addr });
                 }
             }
             TraceMemberOrder::Call(call_idx) => {
@@ -91,29 +74,31 @@ fn recursive_flatten_call_trace<'a>(
 }
 
 // Function to convert CallTraceStep to DebugStep
-pub(crate) fn convert_call_trace_to_debug_step(
-    step: &CallTraceStep,
-    depth: u64,
-    contract_addr: Address,
-) -> DebugStep {
-    let opcode = step.op.get();
-    let stack = get_stack_inputs_for_opcode(opcode, step.stack.as_deref());
+pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceStepCtx) -> DebugStep {
+    let opcode = ctx.step.op.get();
+    let stack = get_stack_inputs_for_opcode(opcode, ctx.step.stack.as_deref());
 
-    let memory = get_memory_input_for_opcode(opcode, step.stack.as_deref(), step.memory.as_ref());
+    let memory =
+        get_memory_input_for_opcode(opcode, ctx.step.stack.as_deref(), ctx.step.memory.as_ref());
 
-    let is_out_of_gas = step.status == Some(InstructionResult::OutOfGas)
-        || step.status == Some(InstructionResult::MemoryOOG)
-        || step.status == Some(InstructionResult::MemoryLimitOOG)
-        || step.status == Some(InstructionResult::PrecompileOOG)
-        || step.status == Some(InstructionResult::InvalidOperandOOG);
+    let is_out_of_gas = matches!(
+        ctx.step.status,
+        Some(
+            InstructionResult::OutOfGas
+                | InstructionResult::MemoryOOG
+                | InstructionResult::MemoryLimitOOG
+                | InstructionResult::PrecompileOOG
+                | InstructionResult::InvalidOperandOOG
+        )
+    );
 
     DebugStep {
         stack,
         memoryInput: memory,
-        opcode: step.op.get(),
-        depth,
+        opcode: ctx.step.op.get(),
+        depth: ctx.depth,
         isOutOfGas: is_out_of_gas,
-        contractAddr: contract_addr,
+        contractAddr: ctx.contract_addr,
     }
 }
 
