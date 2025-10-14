@@ -4,13 +4,71 @@ use alloy_primitives::{
     map::{B256IndexSet, HashMap, IndexSet},
 };
 use foundry_compilers::ProjectPathsConfig;
-use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use solar::{
     ast::{self, Visit},
     interface::source_map::FileName,
     sema::Compiler,
 };
-use std::{ops::ControlFlow, sync::Arc};
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, OnceLock},
+};
+
+#[derive(Debug, Default)]
+pub struct LiteralsDictionary {
+    /// Data required for initialization, captured from `EvmFuzzState::new`.
+    compiler: Option<Arc<Compiler>>,
+    paths_config: Option<ProjectPathsConfig>,
+    max_values: usize,
+
+    /// Lazy initialized literal maps.
+    maps: OnceLock<LiteralMaps>,
+}
+
+impl LiteralsDictionary {
+    pub fn new(
+        compiler: Option<Arc<Compiler>>,
+        paths_config: Option<ProjectPathsConfig>,
+        max_values: usize,
+    ) -> Self {
+        Self { compiler, paths_config, max_values, maps: OnceLock::default() }
+    }
+
+    /// Returns a reference to the `LiteralMaps`, initializing them on the first call.
+    pub fn get(&self) -> &LiteralMaps {
+        self.maps.get_or_init(|| {
+            if let Some(compiler) = &self.compiler {
+                let literals = LiteralsCollector::process(
+                    compiler,
+                    self.paths_config.as_ref(),
+                    self.max_values,
+                );
+                trace!(
+                    words = literals.words.values().map(|set| set.len()).sum::<usize>(),
+                    strings = literals.strings.len(),
+                    bytes = literals.bytes.len(),
+                    "collected source code literals for fuzz dictionary"
+                );
+                literals
+            } else {
+                LiteralMaps::default()
+            }
+        })
+    }
+
+    /// Takes ownership of the dictionary words, leaving an empty map in their place.
+    /// Ensures the map is initialized before taking its contents.
+    pub fn take_words(&mut self) -> HashMap<DynSolType, B256IndexSet> {
+        let _ = self.get();
+        self.maps.get_mut().map(|m| std::mem::take(&mut m.words)).unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    /// Test-only helper to seed the dictionary with literal values.
+    pub(crate) fn set(&mut self, map: super::LiteralMaps) {
+        let _ = self.maps.set(map);
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct LiteralMaps {

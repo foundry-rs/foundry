@@ -4262,7 +4262,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         "0x6162636431323334000000000000000000000000000000000000000000000000", /* bytes32("abcd1234") */
         7,
     );
-    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef", 1);
+    test_literal(500, "testFuzz_BytesFromHex", "bytes", "0xdeadbeef", 5);
     test_literal(600, "testFuzz_String", "string", "\"xyzzy\"", 35);
-    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 53); // abi.encodePacked("xyzzy")
+    test_literal(999, "testFuzz_BytesFromString", "bytes", "0x78797a7a79", 19); // abi.encodePacked("xyzzy")
 });
