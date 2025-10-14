@@ -22,7 +22,6 @@ use foundry_config::{
     },
     filter::expand_globs,
 };
-use semver::Version;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -116,15 +115,9 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            if !has_non_supported_solar_solidity_version(&output) {
-                self.lint(&project, &config, self.paths.as_deref(), &mut output)
-                    .wrap_err("Lint failed")?;
-            } else if !format_json && !shell::is_quiet() {
-                sh_warn!(
-                    "Skipping linting: Solar linter only supports Solidity 0.8.* and later. \
-                     Found files with pragma < 0.8.0."
-                )?;
-            }
+            self.lint(&project, &config, self.paths.as_deref(), &mut output)
+                .wrap_err("Lint failed")?;
+
         }
 
         Ok(output)
@@ -242,11 +235,4 @@ impl Provider for BuildArgs {
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
-}
-
-/// Checks if any compiled source files use Solidity version < 0.8.0.
-/// Solar linter only supports Solidity 0.8.* and later.
-fn has_non_supported_solar_solidity_version(output: &ProjectCompileOutput) -> bool {
-    const MIN_SUPPORTED_VERSION: Version = Version::new(0, 8, 0);
-    output.artifact_ids().any(|(id, _)| id.version < MIN_SUPPORTED_VERSION)
 }
