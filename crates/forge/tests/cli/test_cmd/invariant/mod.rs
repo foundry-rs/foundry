@@ -1,5 +1,16 @@
 use alloy_primitives::U256;
-use foundry_test_utils::{forgetest_init, str};
+use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
+
+mod storage;
+
+fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
+    cmd.assert_with(|redactions| {
+        redactions.extend([
+            ("[RUNS]", r"runs: \d+, calls: \d+, reverts: \d+"),
+            ("[SEQUENCE]", r"\[Sequence\].*(\n\t\t.*)*"),
+        ])
+    })
+}
 
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
 forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {

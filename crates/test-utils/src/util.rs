@@ -1047,11 +1047,17 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_with(
         &mut self,
-        f: impl FnOnce(snapbox::Assert) -> snapbox::Assert,
+        f: impl FnOnce(&mut snapbox::Redactions) -> snapbox::assert::Result<()>,
     ) -> OutputAssert {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
-            return assert.with_assert(f(test_assert()));
+            let mut redactions = test_redactions();
+            f(&mut redactions).unwrap();
+            return assert.with_assert(
+                snapbox::Assert::new()
+                    .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
+                    .redact_with(redactions),
+            );
         }
         assert
     }
@@ -1059,7 +1065,7 @@ impl TestCommand {
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
     pub fn assert(&mut self) -> OutputAssert {
-        self.assert_with(std::convert::identity)
+        self.assert_with(|_| Ok(()))
     }
 
     /// Runs the command and asserts that it resulted in success.
@@ -1151,12 +1157,6 @@ impl TestCommand {
         }
         child.wait_with_output()
     }
-}
-
-fn test_assert() -> snapbox::Assert {
-    snapbox::Assert::new()
-        .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
-        .redact_with(test_redactions())
 }
 
 fn test_redactions() -> snapbox::Redactions {
