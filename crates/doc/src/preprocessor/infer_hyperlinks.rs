@@ -1,5 +1,7 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Comments, Document, ParseItem, ParseSource, solang_ext::SafeUnwrap};
+use crate::{
+    Comments, Document, ParseItem, ParseSource, helpers::function_signature, solang_ext::SafeUnwrap,
+};
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,
@@ -97,22 +99,28 @@ impl InferInlineHyperlinks {
                     }
                 }
                 ParseSource::Function(fun) => {
-                    // TODO: handle overloaded functions
-                    // functions can be overloaded so we need to keep track of how many matches we
-                    // have so we can match the correct one
-                    if let Some(id) = &fun.name {
-                        // Note: constructors don't have a name
-                        if id.name == link.ref_name() {
-                            return Some(InlineLinkTarget::borrowed(
-                                &id.name,
-                                target_path.to_path_buf(),
-                            ));
-                        }
-                    } else if link.ref_name() == "constructor" {
-                        return Some(InlineLinkTarget::borrowed(
-                            "constructor",
-                            target_path.to_path_buf(),
-                        ));
+                    // functions can be overloaded; prefer exact match by name + parameter types
+                    let (target_name, target_args) = link.ref_name_exact();
+                    let target_args: Vec<String> =
+                        target_args.map(|s| s.to_ascii_lowercase()).collect();
+
+                    // Extract function name and params
+                    let fun_name = fun.name.as_ref().map(|n| n.name.as_str()).unwrap_or("");
+                    let is_constructor = fun.name.is_none() && link.ref_name() == "constructor";
+
+                    let params: Vec<String> = fun
+                        .params
+                        .iter()
+                        .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
+                        .map(|s| s.to_ascii_lowercase())
+                        .collect();
+
+                    let name_matches = (fun_name == target_name) || is_constructor;
+
+                    if name_matches && (target_args.is_empty() || target_args == params) {
+                        // Build section as full function signature for stable anchors
+                        let section = function_signature(fun);
+                        return Some(InlineLinkTarget::owned(section, target_path.to_path_buf()));
                     }
                 }
                 ParseSource::Variable(_) => {}
@@ -206,6 +214,10 @@ impl<'a> InlineLinkTarget<'a> {
     fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
         Self { section: Cow::Borrowed(section), target_path }
     }
+
+    fn owned(section: String, target_path: PathBuf) -> Self {
+        Self { section: Cow::Owned(section), target_path }
+    }
 }
 
 impl std::fmt::Display for InlineLinkTarget<'_> {
@@ -222,6 +234,8 @@ struct InlineLink<'a> {
     identifier: &'a str,
     part: Option<&'a str>,
     link: Option<&'a str>,
+    // whether link is cross-reference (external) using `xref-` prefix
+    is_xref: bool,
 }
 
 impl<'a> InlineLink<'a> {
@@ -231,6 +245,7 @@ impl<'a> InlineLink<'a> {
             identifier: cap.name("identifier")?.as_str(),
             part: cap.name("part").map(|m| m.as_str()),
             link: cap.name("link").map(|m| m.as_str()),
+            is_xref: cap.name("xref").is_some(),
         })
     }
 
@@ -272,7 +287,6 @@ impl<'a> InlineLink<'a> {
     /// Returns the name of the referenced item and its arguments, if any.
     ///
     /// Eg: `safeMint-address-uint256-` returns `("safeMint", ["address", "uint256"])`
-    #[expect(unused)]
     fn ref_name_exact(&self) -> (&str, impl Iterator<Item = &str> + '_) {
         let identifier = self.exact_identifier();
         let mut iter = identifier.split('-');
@@ -286,7 +300,7 @@ impl<'a> InlineLink<'a> {
 
     /// Returns true if the link is external.
     fn is_external(&self) -> bool {
-        self.part.is_some()
+        self.is_xref
     }
 }
 
