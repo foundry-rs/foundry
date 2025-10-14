@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
     Context, Journal,
@@ -29,6 +29,7 @@ use revm::{
     },
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
+    state::Bytecode,
 };
 
 pub fn new_evm_with_inspector<'db, I: InspectorExt>(
@@ -100,11 +101,15 @@ fn get_create2_factory_call_inputs(
     salt: U256,
     inputs: &CreateInputs,
     deployer: Address,
+    deployer_bytecode: Bytecode,
+    deployer_bytecode_hash: B256,
 ) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         caller: inputs.caller,
         bytecode_address: deployer,
+        bytecode: deployer_bytecode,
+        bytecode_hash: deployer_bytecode_hash,
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
@@ -289,9 +294,17 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
 
                 // Get CREATE2 deployer.
                 let create2_deployer = evm.inspector().create2_deployer();
+                let create2_bytecode = evm.inspector().create2_deployer_bytecode();
+                let create2_bytecode_hash = evm.inspector().create2_deployer_bytecode_hash();
 
                 // Generate call inputs for CREATE2 factory.
-                let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                let call_inputs = get_create2_factory_call_inputs(
+                    salt,
+                    inputs,
+                    create2_deployer,
+                    create2_bytecode,
+                    create2_bytecode_hash,
+                );
 
                 // Push data about current override to the stack.
                 self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
