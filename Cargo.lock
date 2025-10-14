@@ -239,13 +239,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.21.2"
-source = "git+https://github.com/alloy-rs/evm.git?rev=085ad53#085ad53fe56173c07eef4699ccf31651763dfd4e"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbd6f0ff2862cbd741f0422e7671ad3172c03c63a41f06a35278c31f2a9edf9b"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-hardforks",
- "alloy-op-hardforks",
+ "alloy-hardforks 0.4.0",
+ "alloy-op-hardforks 0.4.0",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -277,6 +278,19 @@ name = "alloy-hardforks"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "889eb3949b58368a09d4f16931c660275ef5fb08e5fbd4a96573b19c7085c41f"
+dependencies = [
+ "alloy-chains",
+ "alloy-eip2124",
+ "alloy-primitives",
+ "auto_impl",
+ "dyn-clone",
+]
+
+[[package]]
+name = "alloy-hardforks"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b16ee6b2c7d39da592d30a5f9607a83f50ee5ec2a2c301746cc81e91891f4ca"
 dependencies = [
  "alloy-chains",
  "alloy-eip2124",
@@ -353,13 +367,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-evm"
-version = "0.21.2"
-source = "git+https://github.com/alloy-rs/evm.git?rev=085ad53#085ad53fe56173c07eef4699ccf31651763dfd4e"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce6da9636f5edea0d4bacf451cf9472b2c281446eb2493bef53c53f9513520a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-evm",
- "alloy-op-hardforks",
+ "alloy-op-hardforks 0.4.0",
  "alloy-primitives",
  "auto_impl",
  "op-alloy-consensus",
@@ -375,7 +390,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "599c1d7dfbccb66603cb93fde00980d12848d32fe5e814f50562104a92df6487"
 dependencies = [
  "alloy-chains",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
+ "alloy-primitives",
+ "auto_impl",
+]
+
+[[package]]
+name = "alloy-op-hardforks"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af8bb236fc008fd3b83b2792e30ae79617a99ffc4c3f584f0c9b4ce0a2da52de"
+dependencies = [
+ "alloy-chains",
+ "alloy-hardforks 0.4.0",
  "alloy-primitives",
  "auto_impl",
 ]
@@ -1087,10 +1114,10 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
  "alloy-network",
  "alloy-op-evm",
- "alloy-op-hardforks",
+ "alloy-op-hardforks 0.3.5",
  "alloy-primitives",
  "alloy-provider",
  "alloy-pubsub",
@@ -2542,7 +2569,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-ens",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -4075,7 +4102,7 @@ version = "1.4.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
@@ -4761,7 +4788,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
  "alloy-json-abi",
  "alloy-network",
  "alloy-op-evm",
@@ -4881,7 +4908,7 @@ source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=be95912#be959129
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
- "alloy-hardforks",
+ "alloy-hardforks 0.3.5",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
@@ -8187,8 +8214,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.30.0"
-source = "git+https://github.com/zerosnacks/revm-inspectors.git?rev=340d37e#340d37ee743085574c13c4c0f42f47891fc69b50"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce1228a7989cc3d9af84c0de2abe39680a252c265877e67d2f0fb4f392cb690"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
