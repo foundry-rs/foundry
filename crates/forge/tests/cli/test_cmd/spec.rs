@@ -49,7 +49,7 @@ contract TestEvmVersion is Test {
    "#.replace("<rpc>", &endpoint),
     );
 
-    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -85,6 +85,97 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test evm version set in `setUp` is accounted in test.
+    prj.add_test(
+        "TestSetupEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+interface ICreate2Deployer {
+    function computeAddress(bytes32 salt, bytes32 codeHash) external view returns (address);
+}
+
+EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+contract TestSetupEvmVersion is Test {
+    function setUp() public {
+        evm.setEvmVersion("istanbul");
+    }
+
+    function test_evm_version_in_setup() public {
+        vm.createSelectFork("<rpc>");
+        // revert with NotActivated for istanbul
+        ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
+    }
+}
+   "#.replace("<rpc>", &endpoint),
+    );
+    cmd.forge_fuse()
+        .args(["test", "--mc", "TestSetupEvmVersion", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
+Traces:
+  [..] TestSetupEvmVersion::setUp()
+    ├─ [0] VM::setEvmVersion("istanbul")
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+  [..] TestSetupEvmVersion::test_evm_version_in_setup()
+    └─ ← [NotActivated] EvmError: NotActivated
+...
+
+"#]]);
+
+    // Test evm version set in constructor is accounted in test.
+    prj.add_test(
+        "TestConstructorEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+interface ICreate2Deployer {
+    function computeAddress(bytes32 salt, bytes32 codeHash) external view returns (address);
+}
+
+EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+contract TestConstructorEvmVersion is Test {
+    constructor() {
+        evm.setEvmVersion("istanbul");
+    }
+
+    function test_evm_version_in_constructor() public {
+        vm.createSelectFork("<rpc>");
+        // revert with NotActivated for istanbul
+        ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
+    }
+}
+   "#.replace("<rpc>", &endpoint),
+    );
+    cmd.forge_fuse()
+        .args(["test", "--mc", "TestConstructorEvmVersion", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: EvmError: NotActivated] test_evm_version_in_constructor() ([GAS])
+Traces:
+  [..] TestConstructorEvmVersion::test_evm_version_in_constructor()
+    └─ ← [NotActivated] EvmError: NotActivated
+...
 
 "#]]);
 });

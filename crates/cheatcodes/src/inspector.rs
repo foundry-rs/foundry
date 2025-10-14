@@ -61,6 +61,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
+    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
 };
 use serde_json::Value;
@@ -509,6 +510,8 @@ pub struct Cheatcodes {
     /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
     /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
     pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
+    // Custom execution evm version.
+    pub execution_evm_version: Option<SpecId>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -566,6 +569,7 @@ impl Cheatcodes {
             wallets: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit_sequence: Default::default(),
+            execution_evm_version: None,
         }
     }
 
@@ -695,6 +699,11 @@ impl Cheatcodes {
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Option<CallOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journaled_state.depth();
 
@@ -884,8 +893,6 @@ impl Cheatcodes {
                         is_fixed_gas_limit = false;
                     }
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    // Ensure account is touched.
-                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1596,6 +1603,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(input.gas_limit());
         // Check if we should intercept this create
         if self.intercept_next_create_call {
@@ -1665,9 +1677,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                // Ensure account is touched.
-                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
