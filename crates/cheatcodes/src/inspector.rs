@@ -865,6 +865,8 @@ impl Cheatcodes {
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
                 ecx.tx.caller = broadcast.new_origin;
+                // Ensure account is touched.
+                ecx.journaled_state.touch(broadcast.new_origin);
 
                 call.caller = broadcast.new_origin;
                 // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
@@ -893,8 +895,6 @@ impl Cheatcodes {
                         is_fixed_gas_limit = false;
                     }
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    // Ensure account is touched.
-                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1673,15 +1673,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             }
 
             ecx.tx.caller = broadcast.new_origin;
+            // Ensure account is touched.
+            ecx.journaled_state.touch(broadcast.new_origin);
 
             if curr_depth == broadcast.depth || broadcast.deploy_from_code {
                 // Reset deploy from code flag for upcoming calls;
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                // Ensure account is touched.
-                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
