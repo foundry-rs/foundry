@@ -293,12 +293,11 @@ impl Document {
         code: &str,
     ) -> Result<(), std::fmt::Error> {
         let func_sign = function_signature(func);
-        let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
         let comments =
             comments.merge_inheritdoc(&func_sign, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
-        // Write function name
-        writer.write_heading(&func_name)?;
+        // Write function heading as full signature for stable anchors
+        writer.write_heading(&func_sign)?;
 
         writer.writeln()?;
 
