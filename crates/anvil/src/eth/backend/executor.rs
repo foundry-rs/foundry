@@ -272,7 +272,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
 
-        if self.networks.optimism {
+        if self.networks.is_optimism() {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
@@ -470,7 +470,7 @@ where
     DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if env.networks.optimism {
+    if env.networks.is_optimism() {
         let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
         let op_context = OpContext {
             journaled_state: {

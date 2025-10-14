@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::IndentStyle;
+use foundry_config::fmt::{DocCommentStyle, IndentStyle};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, SourceMap},
@@ -360,7 +360,7 @@ impl State<'_, '_> {
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
-        if self.handle_span(ident.span, false) {
+        if self.handle_span(ident.span, true) {
             return;
         }
 
@@ -480,8 +480,29 @@ impl<'sess> State<'sess, '_> {
         let config_cache = config;
         let mut buffered_blank = None;
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
-            let cmnt = self.next_comment().unwrap();
+            let mut cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
+
+            // Merge consecutive line doc comments when converting to block style
+            if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
+                && cmnt.is_doc
+                && cmnt.kind == ast::CommentKind::Line
+            {
+                let mut ref_line = self.sm.lookup_char_pos(cmnt.span.hi()).line;
+                while let Some(next_cmnt) = self.peek_comment() {
+                    if !next_cmnt.is_doc
+                        || next_cmnt.kind != ast::CommentKind::Line
+                        || ref_line + 1 != self.sm.lookup_char_pos(next_cmnt.span.lo()).line
+                    {
+                        break;
+                    }
+
+                    let next_to_merge = self.next_comment().unwrap();
+                    cmnt.lines.extend(next_to_merge.lines);
+                    cmnt.span = cmnt.span.to(next_to_merge.span);
+                    ref_line += 1;
+                }
+            }
 
             // Ensure breaks are never skipped when there are multiple comments
             if self.peek_comment_before(pos).is_some() {
@@ -525,13 +546,15 @@ impl<'sess> State<'sess, '_> {
             // Handle mixed with follow-up comment
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
-                    config.mixed_no_break = true;
+                    config.mixed_no_break_prev = true;
+                    config.mixed_no_break_post = true;
                     config.mixed_post_nbsp = cmnt.style.is_mixed();
                 }
 
                 // Ensure consecutive mixed comments don't have a double-space
                 if last_style.is_some_and(|s| s.is_mixed()) {
-                    config.mixed_no_break = true;
+                    config.mixed_no_break_prev = true;
+                    config.mixed_no_break_post = true;
                     config.mixed_prev_space = false;
                 }
             } else if config.offset != 0
@@ -561,52 +584,83 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
-        let post_break_prefix = |prefix: &'static str, line_len: usize| -> &'static str {
+        fn post_break_prefix(prefix: &'static str, has_content: bool) -> &'static str {
+            if !has_content {
+                return prefix;
+            }
             match prefix {
-                "///" if line_len > 3 => "/// ",
-                "//" if line_len > 2 => "// ",
-                "/*" if line_len > 2 => "/* ",
-                " *" if line_len > 2 => " * ",
+                "///" => "/// ",
+                "//" => "// ",
+                "/*" => "/* ",
+                " *" => " * ",
                 _ => prefix,
             }
-        };
+        }
 
         self.ibox(0);
-        let (prefix, content) = if is_doc {
-            // Doc comments preserve leading whitespaces (right after the prefix).
-            self.word(prefix);
-            let content = &line[prefix.len()..];
-            let (leading_ws, rest) =
-                content.split_at(content.chars().take_while(|&c| c.is_whitespace()).count());
+        self.word(prefix);
+
+        let content = &line[prefix.len()..];
+        let content = if is_doc {
+            // Doc comments preserve leading whitespaces (right after the prefix) as nbps.
+            let ws_len = content
+                .char_indices()
+                .take_while(|(_, c)| c.is_whitespace())
+                .last()
+                .map_or(0, |(idx, c)| idx + c.len_utf8());
+            let (leading_ws, rest) = content.split_at(ws_len);
             if !leading_ws.is_empty() {
                 self.word(leading_ws.to_owned());
             }
-            let prefix = post_break_prefix(prefix, rest.len());
-            (prefix, rest)
+            rest
         } else {
-            let content = line[prefix.len()..].trim();
-            let prefix = post_break_prefix(prefix, content.len());
-            self.word(prefix);
-            (prefix, content)
+            // Non-doc comments: replace first whitespace with nbsp, rest of content continues
+            if let Some(first_char) = content.chars().next() {
+                if first_char.is_whitespace() {
+                    self.nbsp();
+                    &content[first_char.len_utf8()..]
+                } else {
+                    content
+                }
+            } else {
+                ""
+            }
         };
 
-        // Split the rest of the content into words.
-        let mut words = content.split_whitespace().peekable();
-        while let Some(word) = words.next() {
-            self.word(word.to_owned());
-            if let Some(next_word) = words.peek() {
-                if *next_word == "*/" {
-                    self.nbsp();
-                } else {
-                    self.s.scan_break(BreakToken {
-                        offset: break_offset,
-                        blank_space: 1,
-                        post_break: if matches!(prefix, "/* ") { None } else { Some(prefix) },
-                        ..Default::default()
-                    });
+        let post_break = post_break_prefix(prefix, !content.is_empty());
+
+        // Process content character by character to preserve consecutive whitespaces
+        let (mut chars, mut current_word) = (content.chars().peekable(), String::new());
+        while let Some(ch) = chars.next() {
+            if ch.is_whitespace() {
+                // Print current word
+                if !current_word.is_empty() {
+                    self.word(std::mem::take(&mut current_word));
                 }
+
+                // Preserve multiple spaces while adding a single break
+                let mut ws_count = 1;
+                while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                    ws_count += 1;
+                    chars.next();
+                }
+                self.s.scan_break(BreakToken {
+                    offset: break_offset,
+                    blank_space: ws_count,
+                    post_break: if post_break.starts_with("/*") { None } else { Some(post_break) },
+                    ..Default::default()
+                });
+                continue;
             }
+
+            current_word.push(ch);
         }
+
+        // Print final word
+        if !current_word.is_empty() {
+            self.word(current_word);
+        }
+
         self.end();
     }
 
@@ -662,12 +716,17 @@ impl<'sess> State<'sess, '_> {
 
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
+
+        if cmnt.is_doc {
+            cmnt = style_doc_comment(self.config.docs_style, cmnt);
+        }
+
         match cmnt.style {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
                 if !self.is_bol_or_only_ind() {
-                    match (never_break || config.mixed_no_break, config.mixed_prev_space) {
+                    match (never_break || config.mixed_no_break_prev, config.mixed_prev_space) {
                         (false, true) => config.space(&mut self.s),
                         (false, false) => config.zerobreak(&mut self.s),
                         (true, true) => self.nbsp(),
@@ -695,14 +754,16 @@ impl<'sess> State<'sess, '_> {
                 if config.mixed_post_nbsp {
                     config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
                     self.cursor.advance(1);
-                } else if !config.mixed_no_break {
+                } else if !config.mixed_no_break_post {
                     config.space(&mut self.s);
                     self.cursor.advance(1);
                 }
             }
             CommentStyle::Isolated => {
                 let Some(mut prefix) = cmnt.prefix() else { return };
-                config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                if !config.iso_no_break {
+                    config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
+                }
 
                 if self.config.wrap_comments {
                     // Merge and wrap comments
@@ -924,17 +985,24 @@ impl<'sess> State<'sess, '_> {
         );
     }
 
-    fn print_remaining_comments(&mut self) {
+    fn print_remaining_comments(&mut self, skip_leading_ws: bool) {
         // If there aren't any remaining comments, then we need to manually
         // make sure there is a line break at the end.
         if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
             self.hardbreak();
+            return;
         }
 
+        let mut is_leading = true;
         while let Some(cmnt) = self.next_comment() {
+            if cmnt.style.is_blank() && skip_leading_ws && is_leading {
+                continue;
+            }
+
+            is_leading = false;
             if let Some(cmnt) = self.handle_comment(cmnt, false) {
                 self.print_comment(cmnt, CommentConfig::default());
-            } else if self.peek_comment().is_none() {
+            } else if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
                 self.hardbreak();
             }
         }
@@ -961,7 +1029,8 @@ pub(crate) struct CommentConfig {
     // Config: mixed comments
     mixed_prev_space: bool,
     mixed_post_nbsp: bool,
-    mixed_no_break: bool,
+    mixed_no_break_prev: bool,
+    mixed_no_break_post: bool,
 }
 
 impl CommentConfig {
@@ -985,7 +1054,8 @@ impl CommentConfig {
     pub(crate) fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
-        self.mixed_no_break = true;
+        self.mixed_no_break_prev = true;
+        self.mixed_no_break_post = true;
         self
     }
 
@@ -995,7 +1065,13 @@ impl CommentConfig {
     }
 
     pub(crate) fn mixed_no_break(mut self) -> Self {
-        self.mixed_no_break = true;
+        self.mixed_no_break_prev = true;
+        self.mixed_no_break_post = true;
+        self
+    }
+
+    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+        self.mixed_no_break_post = true;
         self
     }
 
@@ -1053,4 +1129,48 @@ fn snippet_with_tabs(s: String, tab_width: usize) -> String {
     }
 
     formatted
+}
+
+/// Formats a doc comment with the requested style.
+///
+/// NOTE: assumes comments have already been normalized.
+fn style_doc_comment(style: DocCommentStyle, mut cmnt: Comment) -> Comment {
+    match style {
+        DocCommentStyle::Line if cmnt.kind == ast::CommentKind::Block => {
+            let mut new_lines = Vec::new();
+            for (pos, line) in cmnt.lines.iter().delimited() {
+                if pos.is_first || pos.is_last {
+                    // Skip the opening '/**' and closing '*/' lines
+                    continue;
+                }
+
+                // Convert ' * {content}' to '/// {content}'
+                let trimmed = line.trim_start();
+                if let Some(content) = trimmed.strip_prefix('*') {
+                    new_lines.push(format!("///{content}"));
+                } else if !trimmed.is_empty() {
+                    new_lines.push(format!("/// {trimmed}"));
+                }
+            }
+
+            cmnt.lines = new_lines;
+            cmnt.kind = ast::CommentKind::Line;
+            cmnt
+        }
+        DocCommentStyle::Block if cmnt.kind == ast::CommentKind::Line => {
+            let mut new_lines = vec!["/**".to_string()];
+
+            for line in &cmnt.lines {
+                // Convert '/// {content}' to ' * {content}'
+                new_lines.push(format!(" *{content}", content = &line[3..]))
+            }
+
+            new_lines.push(" */".to_string());
+            cmnt.lines = new_lines;
+            cmnt.kind = ast::CommentKind::Block;
+            cmnt
+        }
+        // Otherwise, no conversion needed.
+        _ => cmnt,
+    }
 }

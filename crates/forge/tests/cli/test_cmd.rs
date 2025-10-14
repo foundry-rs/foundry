@@ -602,6 +602,8 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 
 Encountered a total of 1 failing tests, 1 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -763,6 +765,8 @@ Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -812,6 +816,8 @@ Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
 [FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -864,6 +870,8 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
 "#]]);
 
     // Test failure filter should be persisted.
@@ -886,6 +894,8 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 [FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
@@ -2871,6 +2881,8 @@ Encountered 1 failing test in test/Foo.t.sol:ContractTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -3001,6 +3013,8 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 
 Encountered a total of 1 failing tests, 1 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]],
     );
 
@@ -3062,6 +3076,8 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 [FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -3236,6 +3252,99 @@ Traces:
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
     │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
+...
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10068>
+forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+    prj.add_source(
+        "CounterV1.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumberV1(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV1() public {
+        number++;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "CounterV2.sol",
+        r#"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+    "#,
+    );
+
+    // Upload Counter without path fails as there are multiple contracts with same name.
+    cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
+...
+Error: Multiple contracts found with the name `Counter`
+...
+
+"#]]);
+
+    // Upload without contract name should fail.
+    cmd.forge_fuse().args(["selectors", "upload", "src/Counter.sol"]).assert_failure().stderr_eq(
+        str![[r#"
+...
+Error: No contract name provided.
+...
+
+"#]],
+    );
+
+    // Upload single CounterV2.
+    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Uploading selectors for CounterV2...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#
+    ]]);
+
+    // Upload CounterV1 with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#]]);
+
+    // Upload Counter with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/Counter.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
 ...
 
 "#]]);
@@ -3654,6 +3763,8 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -3762,6 +3873,8 @@ Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractC
 
 Encountered a total of 3 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
+
 "#]]);
 });
 
@@ -3843,6 +3956,8 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 [FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -4034,6 +4149,8 @@ Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 [FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });

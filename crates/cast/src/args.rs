@@ -19,8 +19,9 @@ use foundry_common::{
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
     fs,
     selectors::{
-        SelectorKind, decode_calldata, decode_event_topic, decode_function_selector,
-        decode_selectors, pretty_calldata,
+        ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
+        decode_function_selector, decode_selectors, import_selectors, parse_signatures,
+        pretty_calldata,
     },
     shell, stdin,
 };
@@ -593,11 +594,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
-        CastSubcommand::UploadSignature { .. } => {
-            sh_warn!(
-                "Selector uploading is deprecated and is currently a no-op, as the upstream API has been removed."
-            )?;
-            sh_warn!("To upload selectors in the future, verify your contracts with Sourcify.")?;
+        CastSubcommand::UploadSignature { signatures } => {
+            let signatures = stdin::unwrap_vec(signatures)?;
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         // ENS
@@ -756,7 +761,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens: Vec<serde_json::Value> = tokens
                 .iter()
                 .cloned()
-                .map(serialize_value_as_json)
+                .map(|t| serialize_value_as_json(t, None))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
             let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());

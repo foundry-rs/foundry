@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.0"
+version = "1.4.1"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.89"
@@ -122,29 +122,37 @@ alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
 alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
-hashbrown.opt-level = 3
-foldhash.opt-level = 3
-keccak.opt-level = 3
+alloy-evm.opt-level = 3
+
+bitvec.opt-level = 3
 revm.opt-level = 3
-revm-primitives.opt-level = 3
+revm-bytecode.opt-level = 3
+revm-context.opt-level = 3
+revm-context-interface.opt-level = 3
+revm-database.opt-level = 3
+revm-database-interface.opt-level = 3
+revm-handler.opt-level = 3
+revm-inspector.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
-revm-database-interface.opt-level = 3
-revm-database.opt-level = 3
-revm-bytecode.opt-level = 3
+revm-primitives.opt-level = 3
 revm-state.opt-level = 3
-revm-context-interface.opt-level = 3
-revm-context.opt-level = 3
-revm-inspector.opt-level = 3
+
+revm-inspectors.opt-level = 3
+
 ruint.opt-level = 3
+
 sha2.opt-level = 3
 sha3.opt-level = 3
 tiny-keccak.opt-level = 3
-bitvec.opt-level = 3
+keccak.opt-level = 3
 
 # Fuzzing.
 proptest.opt-level = 3
 foundry-evm-fuzz.opt-level = 3
+rand.opt-level = 3
+rand_chacha.opt-level = 3
+ppv-lite86.opt-level = 3
 
 # Forking.
 axum.opt-level = 3
@@ -153,6 +161,8 @@ axum.opt-level = 3
 scrypt.opt-level = 3
 
 # Misc.
+hashbrown.opt-level = 3
+foldhash.opt-level = 3
 rayon.opt-level = 3
 rayon-core.opt-level = 3
 regex.opt-level = 3
@@ -209,42 +219,42 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.1", default-features = false, features = [
+foundry-compilers = { version = "0.19.5", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
 foundry-fork-db = "0.18"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
-solar = { package = "solar-compiler", version = "=0.1.7", default-features = false }
+solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
 
 ## alloy
-alloy-consensus = { version = "1.0.36", default-features = false }
-alloy-contract = { version = "1.0.36", default-features = false }
-alloy-eips = { version = "1.0.36", default-features = false }
-alloy-eip5792 = { version = "1.0.36", default-features = false }
-alloy-ens = { version = "1.0.36", default-features = false }
-alloy-genesis = { version = "1.0.36", default-features = false }
-alloy-json-rpc = { version = "1.0.36", default-features = false }
-alloy-network = { version = "1.0.36", default-features = false }
-alloy-provider = { version = "1.0.36", default-features = false }
-alloy-pubsub = { version = "1.0.36", default-features = false }
-alloy-rpc-client = { version = "1.0.36", default-features = false }
-alloy-rpc-types = { version = "1.0.36", default-features = true }
-alloy-rpc-types-beacon = { version = "1.0.36", default-features = true }
-alloy-serde = { version = "1.0.36", default-features = false }
-alloy-signer = { version = "1.0.36", default-features = false }
-alloy-signer-aws = { version = "1.0.36", default-features = false }
-alloy-signer-gcp = { version = "1.0.36", default-features = false }
-alloy-signer-ledger = { version = "1.0.36", default-features = false }
-alloy-signer-local = { version = "1.0.36", default-features = false }
-alloy-signer-trezor = { version = "1.0.36", default-features = false }
-alloy-transport = { version = "1.0.36", default-features = false }
-alloy-transport-http = { version = "1.0.36", default-features = false }
-alloy-transport-ipc = { version = "1.0.36", default-features = false }
-alloy-transport-ws = { version = "1.0.36", default-features = false }
+alloy-consensus = { version = "1.0.38", default-features = false }
+alloy-contract = { version = "1.0.38", default-features = false }
+alloy-eips = { version = "1.0.38", default-features = false }
+alloy-eip5792 = { version = "1.0.38", default-features = false }
+alloy-ens = { version = "1.0.38", default-features = false }
+alloy-genesis = { version = "1.0.38", default-features = false }
+alloy-json-rpc = { version = "1.0.38", default-features = false }
+alloy-network = { version = "1.0.38", default-features = false }
+alloy-provider = { version = "1.0.38", default-features = false }
+alloy-pubsub = { version = "1.0.38", default-features = false }
+alloy-rpc-client = { version = "1.0.38", default-features = false }
+alloy-rpc-types = { version = "1.0.38", default-features = true }
+alloy-rpc-types-beacon = { version = "1.0.38", default-features = true }
+alloy-serde = { version = "1.0.38", default-features = false }
+alloy-signer = { version = "1.0.38", default-features = false }
+alloy-signer-aws = { version = "1.0.38", default-features = false }
+alloy-signer-gcp = { version = "1.0.38", default-features = false }
+alloy-signer-ledger = { version = "1.0.38", default-features = false }
+alloy-signer-local = { version = "1.0.38", default-features = false }
+alloy-signer-trezor = { version = "1.0.38", default-features = false }
+alloy-transport = { version = "1.0.38", default-features = false }
+alloy-transport-http = { version = "1.0.38", default-features = false }
+alloy-transport-ipc = { version = "1.0.38", default-features = false }
+alloy-transport-ws = { version = "1.0.38", default-features = false }
 alloy-hardforks = { version = "0.3.2", default-features = false }
 alloy-op-hardforks = { version = "0.3.2", default-features = false }
 
@@ -359,7 +369,10 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
-jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"] }
+jiff = { version = "0.2", default-features = false, features = [
+    "std",
+    "perf-inline",
+] }
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
@@ -427,7 +440,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "dani/bump-solar" }
+# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
 
 # solar

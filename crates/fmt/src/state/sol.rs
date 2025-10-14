@@ -10,16 +10,20 @@ use crate::{
 };
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
-use solar::parse::{
-    ast::{self, Span},
-    interface::BytePos,
+use solar::{
+    ast::BoxSlice,
+    interface::SpannedOption,
+    parse::{
+        ast::{self, Span},
+        interface::BytePos,
+    },
 };
 use std::{collections::HashMap, fmt::Debug};
 
 #[rustfmt::skip]
 macro_rules! get_span {
-    () => { |value| Some(value.span) };
-    (()) => { |value| Some(value.span()) };
+    () => { |value| value.span };
+    (()) => { |value| value.span() };
 }
 
 /// Language-specific pretty printing: Solidity.
@@ -76,7 +80,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        self.print_remaining_comments();
+        self.print_remaining_comments(is_first);
     }
 
     /// Prints a hardbreak if the item needs an isolated line break.
@@ -456,7 +460,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(-self.ind);
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
-            MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
@@ -686,7 +690,10 @@ impl<'ast> State<'_, 'ast> {
         // 1. exactly matches the name of a base contract as declared in the `contract is`;
         // this does not account for inheritance;
         let is_contract_base = self.contract.is_some_and(|contract| {
-            contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
+            contract
+                .bases
+                .iter()
+                .any(|contract_base| contract_base.name.to_string() == modifier.name.to_string())
         });
         // 2. assume that title case names in constructors are bases.
         // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
@@ -1216,12 +1223,17 @@ impl<'ast> State<'_, 'ast> {
                 exprs,
                 span.lo(),
                 span.hi(),
-                |this, expr| {
-                    if let Some(expr) = expr {
-                        this.print_expr(expr);
+                |this, expr| match expr.as_ref() {
+                    SpannedOption::Some(expr) => this.print_expr(expr),
+                    SpannedOption::None(span) => {
+                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
                     }
                 },
-                |e| e.as_deref().map(|e| e.span),
+                |expr| match expr.as_ref() {
+                    SpannedOption::Some(expr) => expr.span,
+                    // Manually handled by printing the comment when `None`
+                    SpannedOption::None(..) => Span::DUMMY,
+                },
                 ListFormat::compact().break_single(is_binary_expr(&expr.kind)),
             ),
             ast::ExprKind::TypeCall(ty) => {
@@ -1669,7 +1681,7 @@ impl<'ast> State<'_, 'ast> {
                 s.print_expr(arg.value);
                 s.end();
             },
-            |arg| Some(arg.name.span.until(arg.value.span)),
+            |arg| arg.name.span.until(arg.value.span),
             list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
         );
         self.word("}");
@@ -1797,7 +1809,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_multi_decl_stmt(
         &mut self,
         span: Span,
-        vars: &'ast [Option<ast::VariableDefinition<'ast>>],
+        vars: &'ast BoxSlice<'ast, SpannedOption<ast::VariableDefinition<'ast>>>,
         init_expr: &'ast ast::Expr<'ast>,
     ) {
         let space_left = self.space_left();
@@ -1808,24 +1820,26 @@ impl<'ast> State<'_, 'ast> {
             vars,
             span.lo(),
             init_expr.span.lo(),
-            |this, var| {
-                // NOTE(rusowsky): unless we add more spans to solar, it is not possible to print
-                // comments between the commas of unhandled vars
-                if let Some(var) = var {
-                    this.print_var(var, true);
+            |this, var| match var {
+                SpannedOption::Some(var) => this.print_var(var, true),
+                SpannedOption::None(span) => {
+                    this.print_comments(span.hi(), CommentConfig::skip_ws().mixed_no_break_post());
                 }
             },
-            |v| v.as_ref().map(|v| v.span),
+            |var| match var {
+                SpannedOption::Some(var) => var.span,
+                // Manually handled by printing the comment when `None`
+                SpannedOption::None(..) => Span::DUMMY,
+            },
             ListFormat::consistent(),
         );
         self.end();
         self.word(" =");
 
         // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars
-            .iter()
-            .fold(0, |acc, v| acc + v.as_ref().map_or(0, |v| self.estimate_size(v.span)) + 2)
-            + 2;
+        let vars_size = vars.iter().fold(0, |acc, var| {
+            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
+        }) + 2;
         self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width

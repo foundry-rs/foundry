@@ -7,7 +7,7 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Context;
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt,
     sync::{
@@ -17,8 +17,9 @@ use std::{
     time::Duration,
 };
 
-const BASE_URL: &str = "https://sourcify.dev/server";
-const SELECTOR_LOOKUP_URL: &str = "https://sourcify.dev/server/signature-database/v1/lookup";
+const BASE_URL: &str = "https://api.openchain.xyz";
+const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
+const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -27,11 +28,11 @@ const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_TIMEDOUT_REQ: usize = 4usize;
 
 /// List of signatures for a given [`SelectorKind`].
-pub type SourcifySignatures = Vec<String>;
+pub type OpenChainSignatures = Vec<String>;
 
-/// A client that can request API data from Sourcify.
+/// A client that can request API data from OpenChain.
 #[derive(Clone, Debug)]
-pub struct SourcifyClient {
+pub struct OpenChainClient {
     inner: reqwest::Client,
     /// Whether the connection is spurious, or API is down
     spurious_connection: Arc<AtomicBool>,
@@ -41,14 +42,14 @@ pub struct SourcifyClient {
     max_timedout_requests: usize,
 }
 
-impl SourcifyClient {
+impl OpenChainClient {
     /// Creates a new client with default settings.
     pub fn new() -> eyre::Result<Self> {
         let inner = RuntimeTransportBuilder::new(BASE_URL.parse().unwrap())
             .with_timeout(REQ_TIMEOUT)
             .build()
             .reqwest_client()
-            .wrap_err("failed to build Sourcify client")?;
+            .wrap_err("failed to build OpenChain client")?;
         Ok(Self {
             inner,
             spurious_connection: Default::default(),
@@ -69,6 +70,24 @@ impl SourcifyClient {
             .inspect_err(|err| self.on_reqwest_err(err))
     }
 
+    /// Sends a new post request
+    async fn post_json<T: Serialize + std::fmt::Debug, R: DeserializeOwned>(
+        &self,
+        url: &str,
+        body: &T,
+    ) -> reqwest::Result<R> {
+        trace!(%url, body=?serde_json::to_string(body), "POST");
+        self.inner
+            .post(url)
+            .json(body)
+            .send()
+            .await
+            .inspect_err(|err| self.on_reqwest_err(err))?
+            .json()
+            .await
+            .inspect_err(|err| self.on_reqwest_err(err))
+    }
+
     fn on_reqwest_err(&self, err: &reqwest::Error) {
         fn is_connectivity_err(err: &reqwest::Error) -> bool {
             if err.is_timeout() || err.is_connect() {
@@ -85,7 +104,7 @@ impl SourcifyClient {
         }
 
         if is_connectivity_err(err) {
-            warn!("spurious network detected for Sourcify");
+            warn!("spurious network detected for OpenChain");
             let previous = self.timedout_requests.fetch_add(1, Ordering::SeqCst);
             if previous >= self.max_timedout_requests {
                 self.set_spurious();
@@ -110,19 +129,19 @@ impl SourcifyClient {
         Ok(())
     }
 
-    /// Decodes the given function or event selector using Sourcify
+    /// Decodes the given function or event selector using OpenChain
     pub async fn decode_selector(
         &self,
         selector: SelectorKind,
-    ) -> eyre::Result<SourcifySignatures> {
+    ) -> eyre::Result<OpenChainSignatures> {
         Ok(self.decode_selectors(&[selector]).await?.pop().unwrap())
     }
 
-    /// Decodes the given function, error or event selectors using Sourcify.
+    /// Decodes the given function, error or event selectors using OpenChain.
     pub async fn decode_selectors(
         &self,
         selectors: &[SelectorKind],
-    ) -> eyre::Result<Vec<SourcifySignatures>> {
+    ) -> eyre::Result<Vec<OpenChainSignatures>> {
         if selectors.is_empty() {
             return Ok(vec![]);
         }
@@ -157,7 +176,7 @@ impl SourcifyClient {
             Err(err) => eyre::bail!("could not decode response: {err}: {text}"),
         };
         if !ok {
-            eyre::bail!("Sourcify returned an error: {text}");
+            eyre::bail!("OpenChain returned an error: {text}");
         }
 
         Ok(selectors
@@ -180,16 +199,16 @@ impl SourcifyClient {
             .collect())
     }
 
-    /// Fetches a function signature given the selector using Sourcify
+    /// Fetches a function signature given the selector using OpenChain
     pub async fn decode_function_selector(
         &self,
         selector: Selector,
-    ) -> eyre::Result<SourcifySignatures> {
+    ) -> eyre::Result<OpenChainSignatures> {
         self.decode_selector(SelectorKind::Function(selector)).await
     }
 
     /// Fetches all possible signatures and attempts to abi decode the calldata
-    pub async fn decode_calldata(&self, calldata: &str) -> eyre::Result<SourcifySignatures> {
+    pub async fn decode_calldata(&self, calldata: &str) -> eyre::Result<OpenChainSignatures> {
         let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
         if calldata.len() < 8 {
             eyre::bail!(
@@ -204,18 +223,18 @@ impl SourcifyClient {
         Ok(sigs)
     }
 
-    /// Fetches an event signature given the 32 byte topic using Sourcify.
-    pub async fn decode_event_topic(&self, topic: B256) -> eyre::Result<SourcifySignatures> {
+    /// Fetches an event signature given the 32 byte topic using OpenChain.
+    pub async fn decode_event_topic(&self, topic: B256) -> eyre::Result<OpenChainSignatures> {
         self.decode_selector(SelectorKind::Event(topic)).await
     }
 
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
     /// ```no_run
-    /// use foundry_common::selectors::SourcifyClient;
+    /// use foundry_common::selectors::OpenChainClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let pretty_data = SourcifyClient::new()?
+    /// let pretty_data = OpenChainClient::new()?
     ///     .pretty_calldata(
     ///         "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5"
     ///             .to_string(),
@@ -261,16 +280,52 @@ impl SourcifyClient {
         }
         Ok(possible_info)
     }
+
+    /// uploads selectors to OpenChain using the given data
+    pub async fn import_selectors(
+        &self,
+        data: SelectorImportData,
+    ) -> eyre::Result<SelectorImportResponse> {
+        self.ensure_not_spurious()?;
+
+        let request = match data {
+            SelectorImportData::Abi(abis) => {
+                let functions_and_errors: OpenChainSignatures = abis
+                    .iter()
+                    .flat_map(|abi| {
+                        abi.functions()
+                            .map(|func| func.signature())
+                            .chain(abi.errors().map(|error| error.signature()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+
+                let events = abis
+                    .iter()
+                    .flat_map(|abi| abi.events().map(|event| event.signature()))
+                    .collect::<Vec<_>>();
+
+                SelectorImportRequest { function: functions_and_errors, event: events }
+            }
+            SelectorImportData::Raw(raw) => {
+                let function_and_error =
+                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
+                SelectorImportRequest { function: function_and_error, event: raw.event }
+            }
+        };
+
+        Ok(self.post_json(SELECTOR_IMPORT_URL, &request).await?)
+    }
 }
 
 pub enum SelectorOrSig {
     Selector(String),
-    Sig(SourcifySignatures),
+    Sig(OpenChainSignatures),
 }
 
 pub struct PossibleSigs {
     method: SelectorOrSig,
-    data: SourcifySignatures,
+    data: OpenChainSignatures,
 }
 
 impl PossibleSigs {
@@ -303,7 +358,7 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
-/// The kind of selector to fetch from Sourcify.
+/// The kind of selector to fetch from OpenChain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SelectorKind {
     /// A function selector.
@@ -332,29 +387,31 @@ impl SelectorKind {
     }
 }
 
-/// Decodes the given function or event selector using Sourcify.
-pub async fn decode_selector(selector: SelectorKind) -> eyre::Result<SourcifySignatures> {
-    SourcifyClient::new()?.decode_selector(selector).await
+/// Decodes the given function or event selector using OpenChain.
+pub async fn decode_selector(selector: SelectorKind) -> eyre::Result<OpenChainSignatures> {
+    OpenChainClient::new()?.decode_selector(selector).await
 }
 
-/// Decodes the given function or event selectors using Sourcify.
-pub async fn decode_selectors(selectors: &[SelectorKind]) -> eyre::Result<Vec<SourcifySignatures>> {
-    SourcifyClient::new()?.decode_selectors(selectors).await
+/// Decodes the given function or event selectors using OpenChain.
+pub async fn decode_selectors(
+    selectors: &[SelectorKind],
+) -> eyre::Result<Vec<OpenChainSignatures>> {
+    OpenChainClient::new()?.decode_selectors(selectors).await
 }
 
-/// Fetches a function signature given the selector using Sourcify.
-pub async fn decode_function_selector(selector: Selector) -> eyre::Result<SourcifySignatures> {
-    SourcifyClient::new()?.decode_function_selector(selector).await
+/// Fetches a function signature given the selector using OpenChain.
+pub async fn decode_function_selector(selector: Selector) -> eyre::Result<OpenChainSignatures> {
+    OpenChainClient::new()?.decode_function_selector(selector).await
 }
 
-/// Fetches all possible signatures and attempts to abi decode the calldata using Sourcify.
-pub async fn decode_calldata(calldata: &str) -> eyre::Result<SourcifySignatures> {
-    SourcifyClient::new()?.decode_calldata(calldata).await
+/// Fetches all possible signatures and attempts to abi decode the calldata using OpenChain.
+pub async fn decode_calldata(calldata: &str) -> eyre::Result<OpenChainSignatures> {
+    OpenChainClient::new()?.decode_calldata(calldata).await
 }
 
-/// Fetches an event signature given the 32 byte topic using Sourcify.
-pub async fn decode_event_topic(topic: B256) -> eyre::Result<SourcifySignatures> {
-    SourcifyClient::new()?.decode_event_topic(topic).await
+/// Fetches an event signature given the 32 byte topic using OpenChain.
+pub async fn decode_event_topic(topic: B256) -> eyre::Result<OpenChainSignatures> {
+    OpenChainClient::new()?.decode_event_topic(topic).await
 }
 
 /// Pretty print calldata and if available, fetch possible function signatures.
@@ -376,20 +433,75 @@ pub async fn pretty_calldata(
     calldata: impl AsRef<str>,
     offline: bool,
 ) -> eyre::Result<PossibleSigs> {
-    SourcifyClient::new()?.pretty_calldata(calldata, offline).await
+    OpenChainClient::new()?.pretty_calldata(calldata, offline).await
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RawSelectorImportData {
-    pub function: SourcifySignatures,
-    pub event: SourcifySignatures,
-    pub error: SourcifySignatures,
+    pub function: OpenChainSignatures,
+    pub event: OpenChainSignatures,
+    pub error: OpenChainSignatures,
 }
 
 impl RawSelectorImportData {
     pub fn is_empty(&self) -> bool {
         self.function.is_empty() && self.event.is_empty() && self.error.is_empty()
     }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SelectorImportData {
+    Abi(Vec<JsonAbi>),
+    Raw(RawSelectorImportData),
+}
+
+#[derive(Debug, Default, Serialize)]
+struct SelectorImportRequest {
+    function: OpenChainSignatures,
+    event: OpenChainSignatures,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectorImportEffect {
+    imported: HashMap<String, String>,
+    duplicated: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectorImportResult {
+    function: SelectorImportEffect,
+    event: SelectorImportEffect,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SelectorImportResponse {
+    result: SelectorImportResult,
+}
+
+impl SelectorImportResponse {
+    /// Print info about the functions which were uploaded or already known
+    pub fn describe(&self) {
+        self.result.function.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Function {k}: {v}");
+        });
+        self.result.event.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Event {k}: {v}");
+        });
+        self.result.function.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Function {k}: {v}");
+        });
+        self.result.event.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Event {k}: {v}");
+        });
+
+        let _ = sh_println!("Selectors successfully uploaded to OpenChain");
+    }
+}
+
+/// uploads selectors to OpenChain using the given data
+pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
+    OpenChainClient::new()?.import_selectors(data).await
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

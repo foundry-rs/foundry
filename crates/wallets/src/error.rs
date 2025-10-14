@@ -32,10 +32,10 @@ pub enum WalletSignerError {
     Trezor(#[from] TrezorError),
     #[error(transparent)]
     #[cfg(feature = "aws-kms")]
-    Aws(#[from] AwsSignerError),
+    Aws(#[from] Box<AwsSignerError>),
     #[error(transparent)]
     #[cfg(feature = "gcp-kms")]
-    Gcp(#[from] GcpSignerError),
+    Gcp(#[from] Box<GcpSignerError>),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
