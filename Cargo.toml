@@ -281,9 +281,9 @@ op-alloy-rpc-types = "0.20.0"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "29.0.0", default-features = false }
+revm = { version = "30.1.0", default-features = false }
 revm-inspectors = { version = "0.30.0", features = ["serde"] }
-op-revm = { version = "10.0.0", default-features = false }
+op-revm = { version = "11.0.0", default-features = false }
 ## alloy-evm
 alloy-evm = "0.21.1"
 alloy-op-evm = "0.21.1"
@@ -430,18 +430,18 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
-# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "085ad53" }
+alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "085ad53" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "74e215d" }
+revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "340d37e" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "be95912" }
 
 # solar
 # solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
