@@ -155,6 +155,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type Tx = TxEnv;
+    type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
         &self.inner.block
