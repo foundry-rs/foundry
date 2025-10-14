@@ -290,6 +290,7 @@ interface Vm {
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
     function foundryVersionCmp(string calldata version) external view returns (int256);
+    function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
     function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
@@ -543,6 +544,7 @@ interface Vm {
     function toBase64(bytes calldata data) external pure returns (string memory);
     function toBase64(string calldata data) external pure returns (string memory);
     function toLowercase(string calldata input) external pure returns (string memory output);
+    function toRlp(bytes[] calldata data) external pure returns (bytes memory);
     function toString(address value) external pure returns (string memory stringifiedValue);
     function toString(bytes calldata value) external pure returns (string memory stringifiedValue);
     function toString(bytes32 value) external pure returns (string memory stringifiedValue);
