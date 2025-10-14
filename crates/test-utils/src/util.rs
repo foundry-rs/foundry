@@ -1045,12 +1045,21 @@ impl TestCommand {
 
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
-    pub fn assert(&mut self) -> OutputAssert {
+    pub fn assert_with(
+        &mut self,
+        f: impl FnOnce(snapbox::Assert) -> snapbox::Assert,
+    ) -> OutputAssert {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
-            return assert.with_assert(test_assert());
+            return assert.with_assert(f(test_assert()));
         }
         assert
+    }
+
+    /// Runs the command, returning a [`snapbox`] object to assert the command output.
+    #[track_caller]
+    pub fn assert(&mut self) -> OutputAssert {
+        self.assert_with(std::convert::identity)
     }
 
     /// Runs the command and asserts that it resulted in success.
