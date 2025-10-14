@@ -893,8 +893,6 @@ impl Cheatcodes {
                         is_fixed_gas_limit = false;
                     }
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    // Ensure account is touched.
-                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1679,9 +1677,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                // Ensure account is touched.
-                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
