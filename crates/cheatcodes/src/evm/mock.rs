@@ -59,7 +59,8 @@ impl Cheatcode for mockCall_0Call {
 impl Cheatcode for mockCall_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.ecx.journaled_state.load_account(*callee)?;
+        let _ = make_acc_non_empty(callee, ccx)?;
+
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
         Ok(Default::default())
     }
@@ -85,7 +86,8 @@ impl Cheatcode for mockCall_2Call {
 impl Cheatcode for mockCall_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.ecx.journaled_state.load_account(*callee)?;
+        let _ = make_acc_non_empty(callee, ccx)?;
+
         mock_call(
             ccx.state,
             callee,
