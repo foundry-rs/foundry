@@ -153,7 +153,7 @@ impl ExtTester {
         // Export vyper and forge in test command - workaround for snekmate venom tests.
         if let Some(vyper) = &prj.inner.project().compiler.vyper {
             let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
-            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_bin = prj.forge_path();
             let forge_dir = forge_bin.parent().expect("forge path should have a parent");
 
             let existing_path = std::env::var_os("PATH").unwrap_or_default();
@@ -579,7 +579,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
         let this = env::current_exe().unwrap();
-        let exe_root = this.parent().expect("executable's directory").to_path_buf();
+        let exe_root = canonicalize(this.parent().expect("executable's directory"));
         Self { exe_root, inner: Arc::new(project) }
     }
 
@@ -816,19 +816,20 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
-        let mut cmd = Command::new(forge);
+        let mut cmd = Command::new(self.forge_path());
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
+    fn forge_path(&self) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    }
+
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let cast = cast.canonicalize().unwrap_or_else(|_| cast.clone());
+        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
@@ -1203,4 +1204,9 @@ impl OutputExt for Output {
 
 pub fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
+}
+
+fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
+    foundry_common::fs::canonicalize_path(path.as_ref())
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
 }
