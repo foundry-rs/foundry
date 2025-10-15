@@ -6486,6 +6486,46 @@
     },
     {
       "func": {
+        "id": "getProfile_0",
+        "description": "Derives the `ProfileMetadata` from the `foundry.toml` for the active profile.",
+        "declaration": "function getProfile() external returns (ProfileMetadata);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getProfile()",
+        "selector": "0xd6afc9b1",
+        "selectorBytes": [
+          214,
+          175,
+          201,
+          177
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getProfile_1",
+        "description": "Derives the `ProfileMetadata` from the `foundry.toml` for the given profile.\nReverts if the profile does not exist or the path cannot be resolved.",
+        "declaration": "function getProfile(string calldata profile) external returns (ProfileMetadata);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getProfile(string)",
+        "selector": "0x0de98693",
+        "selectorBytes": [
+          13,
+          233,
+          134,
+          147
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getRawBlockHeader",
         "description": "Gets the RLP encoded block header for a given block number.\nReturns the block header in the same format as `cast block <block_number> --raw`.",
         "declaration": "function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);",

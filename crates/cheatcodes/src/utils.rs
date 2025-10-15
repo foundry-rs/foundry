@@ -29,6 +29,36 @@ pub struct IgnoredTraces {
     pub last_pause_call: Option<(usize, usize)>,
 }
 
+impl Cheatcode for getProfile_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        Ok(ProfileMetadata {
+            artifacts: ccx.state.config.paths.artifacts.display().to_string(),
+            evm: ccx.ecx.cfg.spec.to_string().to_lowercase(),
+        }
+        .abi_encode())
+    }
+}
+
+impl Cheatcode for getProfile_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { profile } = self;
+
+        let root = &state.config.root;
+        let (out_path, evm_version) =
+            foundry_config::Config::extract_profile_metadata(root, profile)
+                .map_err(|e| fmt_err!("failed to extract metadata for profile '{profile}': {e}"))?;
+        let spec_id = foundry_config::evm_spec_id(evm_version);
+
+        Ok(ProfileMetadata {
+            artifacts: if out_path.is_absolute() { out_path } else { root.join(&out_path) }
+                .display()
+                .to_string(),
+            evm: spec_id.to_string().to_lowercase(),
+        }
+        .abi_encode())
+    }
+}
+
 impl Cheatcode for labelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { account, newLabel } = self;
@@ -512,5 +542,80 @@ impl Cheatcode for fromRlpCall {
             .map_err(|e| fmt_err!("Failed to decode RLP: {e}"))?;
 
         Ok(decoded.abi_encode())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::CheatsConfig;
+    use std::sync::Arc;
+
+    fn cheats_with_root(root: PathBuf) -> Cheatcodes {
+        let config = CheatsConfig { root, ..Default::default() };
+        Cheatcodes::new(Arc::new(config))
+    }
+
+    #[test]
+    fn test_get_profile_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cheats = cheats_with_root(temp_dir.path().to_path_buf());
+
+        // Create base.toml for extends test
+        std::fs::write(
+            temp_dir.path().join("base.toml"),
+            r#"
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+[profile.chain3]
+out = "base-artifacts"
+evm_version = "London"
+        "#,
+        )
+        .unwrap();
+        // Create foundry.toml
+        let config_content = r#"
+[profile.default]
+extends = "base.toml"
+
+[profile.chain1]
+src = "src"
+out = "out/chain1"
+solc_version = "0.8.20"
+libs = ["lib"]
+
+[profile.chain2]
+src = "src"
+out = "artifacts/chain2"
+libs = ["lib"]
+evm_version = "London"
+
+[profile.chain3]
+extends = "base.toml"
+evm_version = "Cancun"
+        "#;
+        std::fs::write(&temp_dir.path().join("foundry.toml"), config_content).unwrap();
+
+        // profile metadata is properly loaded (even when with toml file inheritance)
+        let success_cases = [
+            ("default", "out", "prague"),
+            ("chain1", "out/chain1", "shanghai"),
+            ("chain2", "artifacts/chain2", "london"),
+            ("chain3", "base-artifacts", "cancun"),
+        ];
+        for (profile, artifacts_path, evm) in success_cases {
+            let result =
+                getProfile_1Call { profile: profile.to_string() }.apply(&mut cheats).unwrap();
+            let metadata = ProfileMetadata::abi_decode(&result).unwrap();
+            assert_eq!(PathBuf::from(&metadata.artifacts), temp_dir.path().join(artifacts_path));
+            assert_eq!(metadata.evm, evm);
+        }
+
+        // non-existent profile returns error
+        let result = getProfile_1Call { profile: "non_existent".to_string() }.apply(&mut cheats);
+        assert!(result.is_err() && result.unwrap_err().to_string().contains("non_existent"));
     }
 }

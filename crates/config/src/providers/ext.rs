@@ -52,12 +52,29 @@ pub(crate) struct TomlFileProvider {
     env_var: Option<&'static str>,
     env_val: OnceCell<Option<String>>,
     default: PathBuf,
+    /// Optional profile to use for extends resolution. If None, uses Config::selected_profile()
+    profile: Option<Profile>,
     cache: OnceCell<Result<Map<Profile, Dict>, Error>>,
 }
 
 impl TomlFileProvider {
     pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
-        Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
+        Self { env_var, env_val: OnceCell::new(), default, profile: None, cache: OnceCell::new() }
+    }
+
+    /// Creates a new provider with a specific profile for extends resolution
+    pub(crate) fn with_profile(
+        env_var: Option<&'static str>,
+        default: PathBuf,
+        profile: Profile,
+    ) -> Self {
+        Self {
+            env_var,
+            env_val: OnceCell::new(),
+            default,
+            profile: Some(profile),
+            cache: OnceCell::new(),
+        }
     }
 
     fn env_val(&self) -> Option<&str> {
@@ -106,7 +123,7 @@ impl TomlFileProvider {
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
 
         // Check if the currently active profile has an 'extends' field
-        let selected_profile = Config::selected_profile();
+        let selected_profile = self.profile.clone().unwrap_or_else(Config::selected_profile);
         let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
             let profile_str = selected_profile.to_string();
             profiles.get(&profile_str).and_then(|cfg| cfg.extends.as_ref())

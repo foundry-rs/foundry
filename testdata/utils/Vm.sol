@@ -317,6 +317,8 @@ interface Vm {
     function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
+    function getProfile() external returns (ProfileMetadata);
+    function getProfile(string calldata profile) external returns (ProfileMetadata);
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);

@@ -4417,6 +4417,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
+ "tempfile",
  "thiserror 2.0.17",
  "toml 0.9.8",
  "tracing",
