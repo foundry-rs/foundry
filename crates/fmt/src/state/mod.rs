@@ -389,11 +389,11 @@ impl State<'_, '_> {
                 } else if !first && let Some(char) = line.chars().next() {
                     // A line break or a space are required if this line:
                     // - starts with an operator.
+                    // - starts with one of the ternary operators
                     // - starts with a bracket and fmt config forces bracket spacing.
                     match char {
-                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' => {
-                            size += 1
-                        }
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
+                        | ':' => size += 1,
                         '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
