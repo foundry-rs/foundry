@@ -69,13 +69,6 @@ impl Printer {
         false
     }
 
-    pub fn last_token_is_hardbreak(&self) -> bool {
-        if let Some(token) = self.last_token() {
-            return token.is_hardbreak();
-        }
-        false
-    }
-
     pub fn last_token_is_space(&self) -> bool {
         if let Some(token) = self.last_token()
             && token.is_space()
@@ -131,10 +124,6 @@ impl Printer {
         })
     }
 
-    pub fn space_if_nonempty(&mut self) {
-        self.scan_break(BreakToken { blank_space: 1, if_nonempty: true, ..BreakToken::default() });
-    }
-
     pub fn hardbreak_if_nonempty(&mut self) {
         self.scan_break(BreakToken {
             blank_space: SIZE_INFINITY as usize,
@@ -143,39 +132,8 @@ impl Printer {
         });
     }
 
-    // Doesn't actually print trailing comma since it's not allowed in Solidity.
-    pub fn trailing_comma(&mut self, is_last: bool) {
-        if is_last {
-            self.zerobreak();
-        } else {
-            self.word(",");
-            self.space();
-        }
-    }
-
-    pub fn trailing_comma_or_space(&mut self, is_last: bool) {
-        if is_last {
-            self.scan_break(BreakToken {
-                blank_space: 1,
-                pre_break: Some(","),
-                ..BreakToken::default()
-            });
-        } else {
-            self.word(",");
-            self.space();
-        }
-    }
-
     pub fn neverbreak(&mut self) {
         self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
-    }
-
-    pub fn last_brace_is_closed(&self, kw: &str) -> bool {
-        self.out.rsplit_once(kw).is_none_or(|(_, relevant)| {
-            let open = relevant.chars().filter(|c| *c == '{').count();
-            let close = relevant.chars().filter(|c| *c == '}').count();
-            open == close
-        })
     }
 }
 

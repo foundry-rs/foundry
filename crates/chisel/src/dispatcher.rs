@@ -21,7 +21,6 @@ use foundry_evm::{
     },
 };
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
     sema::ast::Base,
@@ -34,7 +33,6 @@ use std::{
     process::Command,
 };
 use tempfile::Builder;
-use tracing::debug;
 use yansi::Paint;
 
 /// Prompt arrow character.
@@ -53,18 +51,6 @@ pub const CHISEL_CHAR: &str = "⚒️";
 pub struct ChiselDispatcher {
     pub session: ChiselSession,
     pub helper: SolidityHelper,
-}
-
-/// A response from the Etherscan API's `getabi` action
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EtherscanABIResponse {
-    /// The status of the response
-    /// "1" = success | "0" = failure
-    pub status: String,
-    /// The message supplied by the API
-    pub message: String,
-    /// The result returned by the API. Will be `None` if the request failed.
-    pub result: Option<String>,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
@@ -215,7 +201,7 @@ impl ChiselDispatcher {
     }
 
     async fn execute_and_replace(&mut self, mut new_source: SessionSource) -> Result<()> {
-        let (_, mut res) = new_source.execute().await?;
+        let mut res = new_source.execute().await?;
         let failed = !res.success;
         if new_source.config.traces || failed {
             if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await {
@@ -410,7 +396,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_mem_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((_, mem)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
@@ -425,7 +411,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_stack_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((stack, _)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };

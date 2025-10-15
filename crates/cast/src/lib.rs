@@ -1,7 +1,7 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
@@ -30,12 +30,12 @@ use foundry_common::{
     TransactionReceiptWithRevertReason,
     abi::{coerce_value, encode_function_args, get_event, get_func},
     compile::etherscan_project,
+    flatten,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell,
 };
-use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
-use foundry_evm_core::ic::decode_instructions;
+use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -200,7 +200,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(if decoded.is_empty() {
             res.to_string()
         } else if shell::is_json() {
-            let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
+            let tokens = decoded
+                .into_iter()
+                .map(|value| serialize_value_as_json(value, None))
+                .collect::<eyre::Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
@@ -2192,7 +2195,7 @@ impl SimpleCast {
         let project = etherscan_project(metadata, tmp.path())?;
         let target_path = project.find_contract_path(&metadata.contract_name)?;
 
-        let flattened = Flattener::new(project, &target_path)?.flatten();
+        let flattened = flatten(project, &target_path)?;
 
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
@@ -2222,23 +2225,9 @@ impl SimpleCast {
     /// ```
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
-
-        for step in decode_instructions(code)? {
-            write!(output, "{:08x}: ", step.pc)?;
-
-            if let Some(op) = step.op {
-                write!(output, "{op}")?;
-            } else {
-                write!(output, "INVALID")?;
-            }
-
-            if !step.immediate.is_empty() {
-                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
-            }
-
-            writeln!(output)?;
+        for (pc, inst) in InstIter::new(code).with_pc() {
+            writeln!(output, "{pc:08x}: {inst}")?;
         }
-
         Ok(output)
     }
 
@@ -2511,7 +2500,7 @@ mod tests {
         let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
         let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
         let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
-        let json_value = serialize_value_as_json(DynSolValue::Array(decoded)).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None).unwrap();
         let expected = serde_json::json!([
             [
                 [
@@ -2567,23 +2556,21 @@ mod tests {
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
         let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
+        assert_eq!(disassembled, "00000000: PUSH1\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-
         let disassembled = Cast::disassemble(incomplete).unwrap();
-
-        assert_eq!(
-            disassembled,
-            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
-        );
+        assert_eq!(disassembled, "00000000: PUSH32\n");
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
-        let disassembled = Cast::disassemble(complete);
-        assert!(disassembled.is_ok());
+        let disassembled = Cast::disassemble(complete).unwrap();
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+        );
     }
 }

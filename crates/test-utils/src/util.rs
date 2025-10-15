@@ -20,7 +20,7 @@ use std::{
     fs::{self, File},
     io::{BufWriter, IsTerminal, Read, Seek, Write},
     path::{Path, PathBuf},
-    process::{ChildStdin, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     sync::{
         Arc, LazyLock,
         atomic::{AtomicUsize, Ordering},
@@ -147,13 +147,13 @@ impl ExtTester {
         self
     }
 
-    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
+    pub fn setup_forge_prj(&self, recursive: bool) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Export vyper and forge in test command - workaround for snekmate venom tests.
         if let Some(vyper) = &prj.inner.project().compiler.vyper {
             let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
-            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_bin = prj.forge_path();
             let forge_dir = forge_bin.parent().expect("forge path should have a parent");
 
             let existing_path = std::env::var_os("PATH").unwrap_or_default();
@@ -170,7 +170,7 @@ impl ExtTester {
         // Clone the external repository.
         let repo_url = format!("https://github.com/{}/{}.git", self.org, self.name);
         let root = prj.root().to_str().unwrap();
-        clone_remote(&repo_url, root);
+        clone_remote(&repo_url, root, recursive);
 
         // Checkout the revision.
         if self.rev.is_empty() {
@@ -224,7 +224,7 @@ impl ExtTester {
             return;
         }
 
-        let (prj, mut test_cmd) = self.setup_forge_prj();
+        let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
         self.run_install_commands(prj.root().to_str().unwrap());
@@ -423,9 +423,14 @@ pub fn get_vyper() -> Vyper {
 }
 
 /// Clones a remote repository into the specified directory. Panics if the command fails.
-pub fn clone_remote(repo_url: &str, target_dir: &str) {
+pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone"]);
+    if recursive {
+        cmd.args(["--recursive", "--shallow-submodules"]);
+    } else {
+        cmd.args(["--depth=1", "--no-checkout", "--filter=blob:none", "--no-recurse-submodules"]);
+    }
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
@@ -574,7 +579,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
         let this = env::current_exe().unwrap();
-        let exe_root = this.parent().expect("executable's directory").to_path_buf();
+        let exe_root = canonicalize(this.parent().expect("executable's directory"));
         Self { exe_root, inner: Arc::new(project) }
     }
 
@@ -784,7 +789,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
@@ -799,26 +804,27 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
-            stdin_fun: None,
+            stdin: None,
             redact_output: true,
         }
     }
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
-        let mut cmd = Command::new(forge);
+        let mut cmd = Command::new(self.forge_path());
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
+    fn forge_path(&self) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    }
+
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let cast = cast.canonicalize().unwrap_or_else(|_| cast.clone());
+        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
@@ -897,7 +903,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    stdin: Option<Vec<u8>>,
     /// If true, command output is redacted.
     redact_output: bool,
 }
@@ -949,8 +955,9 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
-        self.stdin_fun = Some(Box::new(fun));
+    /// Set the stdin bytes for the next command.
+    pub fn stdin(&mut self, stdin: impl Into<Vec<u8>>) -> &mut Self {
+        self.stdin = Some(stdin.into());
         self
     }
 
@@ -1130,8 +1137,8 @@ impl TestCommand {
         test_debug!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
-        if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap());
+        if let Some(bytes) = self.stdin.take() {
+            child.stdin.take().unwrap().write_all(&bytes)?;
         }
         child.wait_with_output()
     }
@@ -1192,4 +1199,9 @@ impl OutputExt for Output {
 
 pub fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
+}
+
+fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
+    foundry_common::fs::canonicalize_path(path.as_ref())
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
 }

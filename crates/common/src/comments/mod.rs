@@ -233,7 +233,21 @@ impl<'ast> CommentGatherer<'ast> {
                 let pos_in_file = self.start_bpos + BytePos(self.pos as u32);
                 let line_begin_in_file = line_begin_pos(self.sf, pos_in_file);
                 let line_begin_pos = (line_begin_in_file - self.start_bpos).to_usize();
-                let col = CharPos(self.text[line_begin_pos..self.pos].chars().count());
+                let mut col = CharPos(self.text[line_begin_pos..self.pos].chars().count());
+
+                // To preserve alignment in multi-line non-doc comments, normalize the block based
+                // on its least-indented line.
+                if !is_doc && token_text.contains('\n') {
+                    col = token_text.lines().skip(1).fold(col, |min, line| {
+                        if line.is_empty() {
+                            return min;
+                        }
+                        std::cmp::min(
+                            CharPos(line.chars().count() - line.trim_start().chars().count()),
+                            min,
+                        )
+                    })
+                };
 
                 let lines = self.split_block_comment_into_lines(token_text, is_doc, col);
                 self.comments.push(Comment { is_doc, kind, style, lines, span })

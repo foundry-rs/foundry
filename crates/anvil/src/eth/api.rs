@@ -36,6 +36,7 @@ use alloy_consensus::{
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
+    eip4844::BlobTransactionSidecar,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -171,6 +172,7 @@ impl EthApi {
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
+            EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
             EthRequest::EthGetAccount(addr, block) => {
@@ -194,6 +196,7 @@ impl EthApi {
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
+            EthRequest::EthHashrate(()) => self.hashrate().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
@@ -201,6 +204,7 @@ impl EthApi {
             EthRequest::EthBlobBaseFee(_) => self.blob_base_fee().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
+            EthRequest::EthCoinbase(()) => self.author().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
             }
@@ -283,6 +287,9 @@ impl EthApi {
             }
             EthRequest::GetBlobByTransactionHash(hash) => {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
+            }
+            EthRequest::GetBlobSidecarsByBlockId(block_id) => {
+                self.anvil_get_blob_sidecars_by_block_id(block_id).to_rpc_result()
             }
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -770,7 +777,7 @@ impl EthApi {
         if let Some(fork) = self.get_fork() {
             // check if the number predates the fork, if in fork mode
             if let BlockRequest::Number(number) = self.block_request(block_number).await?
-                && fork.predates_fork(number)
+                && fork.predates_fork_inclusive(number)
             {
                 // if this predates the fork we need to fetch balance, nonce, code individually
                 // because the provider might not support this endpoint
@@ -1350,6 +1357,15 @@ impl EthApi {
     pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
+    pub fn anvil_get_blob_sidecars_by_block_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlobTransactionSidecar>> {
+        node_info!("anvil_getBlobSidecarsByBlockId");
+        Ok(self.backend.get_blob_sidecars_by_block_id(block_id)?)
     }
 
     /// Get transaction by its hash.

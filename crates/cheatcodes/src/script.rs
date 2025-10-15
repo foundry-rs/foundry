@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
@@ -285,6 +285,8 @@ pub struct Broadcast {
     pub depth: usize,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether `vm.deployCode` cheatcode is used to deploy from code.
+    pub deploy_from_code: bool,
 }
 
 /// Contains context for wallet management.
@@ -373,13 +375,17 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
             }
         }
     }
+    let new_origin = new_origin.unwrap_or(ccx.ecx.tx.caller);
+    // Ensure new origin is loaded and touched.
+    let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.ecx.tx.caller),
+        new_origin,
         original_caller: ccx.caller,
         original_origin: ccx.ecx.tx.caller,
         depth,
         single_call,
+        deploy_from_code: false,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
     ccx.state.broadcast = Some(broadcast);

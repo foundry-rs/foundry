@@ -3,7 +3,7 @@
 //! Foundry configuration.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -37,7 +37,7 @@ use foundry_compilers::{
     },
     error::SolcError,
     multi::{MultiCompilerParser, MultiCompilerRestrictions},
-    solc::{CliSettings, SolcSettings},
+    solc::{CliSettings, SolcLanguage, SolcSettings},
 };
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
@@ -128,6 +128,7 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 pub mod extend;
 use extend::Extends;
 
+use foundry_evm_networks::NetworkConfigs;
 pub use semver;
 
 /// Foundry configuration
@@ -530,9 +531,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Whether to enable Celo precompiles.
-    #[serde(default)]
-    pub celo: bool,
+    /// Networks with enabled features.
+    #[serde(flatten)]
+    pub networks: NetworkConfigs,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -678,6 +679,9 @@ impl Config {
 
     /// TOML section for profiles
     pub const PROFILE_SECTION: &'static str = "profile";
+
+    /// External config sections, ignored from warnings.
+    pub const EXTERNAL_SECTION: &'static str = "external";
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
@@ -915,6 +919,7 @@ impl Config {
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
         self.snapshots = p(&root, &self.snapshots);
+        self.test_failures_file = p(&root, &self.test_failures_file);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -1172,6 +1177,28 @@ impl Config {
         }
 
         Ok(project)
+    }
+
+    /// Disables optimizations and enables viaIR with minimum optimization if `ir_minimum` is true.
+    pub fn disable_optimizations(&self, project: &mut Project, ir_minimum: bool) {
+        if ir_minimum {
+            // Enable viaIR with minimum optimization: https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+            // And also in new releases of Solidity: https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+            project.settings.solc.settings = std::mem::take(&mut project.settings.solc.settings)
+                .with_via_ir_minimum_optimization();
+
+            // Sanitize settings for solc 0.8.4 if version cannot be detected: https://github.com/foundry-rs/foundry/issues/9322
+            // But keep the EVM version: https://github.com/ethereum/solidity/issues/15775
+            let evm_version = project.settings.solc.evm_version;
+            let version = self.solc_version().unwrap_or_else(|| Version::new(0, 8, 4));
+            project.settings.solc.settings.sanitize(&version, SolcLanguage::Solidity);
+            project.settings.solc.evm_version = evm_version;
+        } else {
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
+        }
     }
 
     /// Cleans the project.
@@ -2218,44 +2245,18 @@ impl Config {
     /// This normalizes the default `evm_version` if a `solc` was provided in the config.
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
-    #[expect(clippy::disallowed_macros)]
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        let evm_version = figment.extract_inner::<EvmVersion>("evm_version").ok().or_else(|| {
-            figment
-                .extract_inner::<String>("evm_version")
-                .ok()
-                .and_then(|s| s.parse::<EvmVersion>().ok())
-        });
-
-        let solc_version = figment
-            .extract_inner::<SolcReq>("solc")
-            .ok()
-            .and_then(|solc| solc.try_version().ok())
-            .and_then(|v| self.evm_version.normalize_version_solc(&v));
-
         if figment.contains("evm_version") {
-            // Check compatibility if both evm_version and solc are provided
-            // First try to extract as EvmVersion directly, then fallback to string parsing for
-            // case-insensitive support
-            if let Some(evm_version) = evm_version {
-                figment = figment.merge(("evm_version", evm_version));
-
-                if let Some(solc_version) = solc_version
-                    && solc_version != evm_version
-                {
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(&format!(
-                            "Warning: evm_version '{evm_version}' may be incompatible with solc version. Consider using '{solc_version}'"
-                        ))
-                    );
-                }
-            }
             return figment;
         }
 
         // Normalize `evm_version` based on the provided solc version.
-        if let Some(version) = solc_version {
+        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = solc
+                .try_version()
+                .ok()
+                .and_then(|version| self.evm_version.normalize_version_solc(&version))
+        {
             figment = figment.merge(("evm_version", version));
         }
 
@@ -2569,7 +2570,7 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            celo: false,
+            networks: Default::default(),
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
@@ -6347,20 +6348,20 @@ mod tests {
     }
 
     #[test]
-    fn test_evm_version_solc_compatibility_warning() {
+    fn warns_on_unknown_keys_in_profile() {
         figment::Jail::expect_with(|jail| {
-            // Create a config with incompatible evm_version and solc version
-            // Using Cancun with an older solc version (Berlin) that doesn't support it
             jail.create_file(
                 "foundry.toml",
                 r#"
-            [profile.default]
-            evm_version = "Cancun"
-            solc = "0.8.5"
-        "#,
+                [profile.default]
+                unknown_key_xyz = 123
+                "#,
             )?;
 
-            let _config = Config::load().unwrap();
+            let cfg = Config::load().unwrap();
+            assert!(cfg.warnings.iter().any(
+                |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
+            ));
             Ok(())
         });
     }

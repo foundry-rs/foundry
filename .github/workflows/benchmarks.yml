@@ -29,7 +29,7 @@ env:
 jobs:
   run-benchmarks:
     name: Run All Benchmarks
-    runs-on: depot-ubuntu-24.04
+    runs-on: foundry-runner
     permissions:
       contents: write
     steps:
@@ -50,8 +50,7 @@ jobs:
 
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
       - name: Setup Foundry
         env:
@@ -155,7 +154,7 @@ jobs:
   publish-results:
     name: Publish Results
     needs: run-benchmarks
-    runs-on: depot-ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write

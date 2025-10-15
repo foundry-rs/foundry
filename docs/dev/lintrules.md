@@ -11,7 +11,7 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
 2. **HIR Generation**: The AST is then lowered into a High-level Intermediate Representation (HIR) that includes type information and semantic analysis.
 3. **Early Lint Passes**: The `EarlyLintVisitor` traverses the AST, invoking registered "early lint passes" (`EarlyLintPass` implementations) for syntax-level checks.
 4. **Late Lint Passes**: The `LateLintVisitor` traverses the HIR, invoking registered "late lint passes" (`LateLintPass` implementations) for semantic analysis.
-5. **Emitting Diagnostics**: If a lint pass identifies a violation, it uses the `LintContext` to emit a diagnostic (either `warning` or `note`) that pinpoints the issue. Lints can now also provide code fix suggestions through snippets.
+5. **Emitting Diagnostics**: If a lint pass identifies a violation, it uses the `LintContext` to emit a diagnostic (either `warning` or `note`) that pinpoints the issue. Lints can also provide code fix suggestions through the `Suggestion` API, which integrates with solar's diagnostic system to support different applicability levels.
 
 ### Key Components
 
@@ -21,12 +21,16 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
   - `SolLint`: A struct implementing the `Lint` trait, used to hold the metadata for each specific Solidity lint rule.
 - **`EarlyLintPass<'ast>` Trait**: Lints that operate directly on AST nodes implement this trait. It contains methods (like `check_expr`, `check_item_function`, etc.) called by the AST visitor.
 - **`LateLintPass<'hir>` Trait**: Lints that require type information and semantic analysis implement this trait. It contains methods (like `check_contract`, `check_function`, etc.) called by the HIR visitor.
-- **`LintContext<'s>`**: Provides contextual information to lint passes during execution, such as access to the session for emitting diagnostics and methods for emitting fixes.
+- **`LintContext<'s>`**: Provides contextual information to lint passes during execution, such as access to the session for emitting diagnostics and methods for emitting suggestions.
 - **`EarlyLintVisitor<'a, 's, 'ast>`**: The visitor that traverses the AST and dispatches checks to the registered `EarlyLintPass` instances.
 - **`LateLintVisitor<'a, 's, 'hir>`**: The visitor that traverses the HIR and dispatches checks to the registered `LateLintPass` instances.
-- **`Snippet` Enum**: Represents code fix suggestions that can be either a code block or a diff, with optional descriptions.
+- **`Suggestion` Struct**: Represents code fix suggestions with different kinds (fix or example) and applicability levels, integrated with solar's diagnostic system.
 
 ## Developing a new lint rule
+
+We recommend you start by writing out some Solidity code that you want to trigger a lint in [`crates/lint/testdata`](https://github.com/foundry-rs/foundry/tree/master/crates/lint/testdata). Name the file after your lint rule.
+
+Next, choose whether you want an [early or late lint pass](#choosing-between-early-and-late-passes). If your lint is early, you can use use [Solar](https://github.com/paradigmxyz/solar) to dump the AST and find the patterns you need to match on in your lint code using `solar -Zdump=ast crates/lint/testdata/<file.sol>`. If your lint is late, you can use `solar -Zdump=hir crates/lint/testdata/<file.sol>`.
 
 1. Specify an issue that is being addressed in the PR description.
 2. In your PR:
@@ -71,41 +75,47 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
 
 ### Providing Code Fix Suggestions
 
-Lints can now provide actionable code fix suggestions using the `emit_with_fix` method:
+Lints can provide actionable code fix suggestions using the `emit_with_suggestion` method. The `Suggestion` API integrates with solar's diagnostic system and supports different applicability levels:
 
 ```rust
-// Example: Suggesting a code diff with a span
-cx.emit_with_fix(
+use solar::interface::diagnostics::Applicability;
+
+// Example: Suggesting a machine-applicable fix
+cx.emit_with_suggestion(
     lint,
     node.span,
-    Snippet::Diff {
-        desc: Some("use inline assembly for gas optimization"),
-        span: Some(node.span), // Optional: specify the span to replace
-        add: optimized_assembly_code,
-    }
+    Suggestion::fix(
+        corrected_name,
+        Applicability::MachineApplicable,
+    )
+    .with_desc("consider using")
 );
 
-// Example: Suggesting a code diff without a span (uses the lint's span)
-cx.emit_with_fix(
+// Example: Suggesting a fix with a specific span
+cx.emit_with_suggestion(
     lint,
     node.span,
-    Snippet::Diff {
-        desc: Some("rename to follow naming convention"),
-        span: None, // Will use the lint's span
-        add: corrected_name,
-    }
+    Suggestion::fix(
+        optimized_code,
+        Applicability::MaybeIncorrect,
+    )
+    .with_desc("use inline assembly for gas optimization")
+    .with_span(replacement_span)
 );
 
-// Example: Suggesting a code block
-cx.emit_with_fix(
+// Example: Providing an example (non-applicable suggestion)
+cx.emit_with_suggestion(
     lint,
     node.span,
-    Snippet::Block {
-        desc: Some("suggested implementation"),
-        code: suggested_code,
-    }
+    Suggestion::example("some example")
 );
 ```
+
+**Applicability Levels:**
+- `MachineApplicable`: The suggestion can be applied automatically with high confidence
+- `MaybeIncorrect`: The suggestion might not be correct in all cases and should be reviewed
+- `HasPlaceholders`: The suggestion contains placeholders that need to be filled in
+- `Unspecified`: No applicability specified
 
 3. Add comprehensive tests in `lint/testdata/`:
    - Create `MyNewLint.sol` with various examples (triggering and non-triggering cases, edge cases).
@@ -133,5 +143,5 @@ The testing framework runs the linter on the `.sol` file and compares its standa
 - If you need to generate / bless (re-generate) the output files:
   ```sh
   // using the default cargo cmd for running tests
-  cargo test -p forge --test ui -- --bless
+  cargo bless-lints
   ```
