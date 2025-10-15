@@ -934,6 +934,9 @@ impl Config {
 
         self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
+        self.ignored_file_paths =
+            self.ignored_file_paths.into_iter().map(|path| p(&root, &path)).collect();
+
         self.fs_permissions.join_all(&root);
 
         if let Some(model_checker) = &mut self.model_checker {
