@@ -23,7 +23,7 @@ impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
 
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
-    pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+    pub(super) fn print_lit_inner(&mut self, lit: &'ast ast::Lit<'ast>, is_yul: bool) {
         let ast::Lit { span, symbol, ref kind } = *lit;
         if self.handle_span(span, false) {
             return;
@@ -48,7 +48,7 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
-                self.print_num_literal(symbol.as_str());
+                self.print_num_literal(symbol.as_str(), is_yul);
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
@@ -56,7 +56,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_num_literal(&mut self, source: &str) {
+    fn print_num_literal(&mut self, source: &str, is_yul: bool) {
         fn strip_underscores_if(b: bool, s: &str) -> Cow<'_, str> {
             if b && s.contains('_') { Cow::Owned(s.replace('_', "")) } else { Cow::Borrowed(s) }
         }
@@ -66,9 +66,13 @@ impl<'ast> State<'_, 'ast> {
             config: config::NumberUnderscore,
             string: &str,
             is_dec: bool,
+            is_yul: bool,
             reversed: bool,
         ) {
-            if !config.is_thousands() || !is_dec || string.len() < 5 {
+            // The underscore thousand separator is only valid in Solidity decimal numbers.
+            // It is not supported by hex numbers, nor Yul literals.
+            // https://github.com/foundry-rs/foundry/issues/12111
+            if !config.is_thousands() || !is_dec || is_yul || string.len() < 5 {
                 out.push_str(string);
                 return;
             }
@@ -96,7 +100,7 @@ impl<'ast> State<'_, 'ast> {
         };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
-        let strip_underscores = !config.is_preserve();
+        let strip_underscores = !config.is_preserve() || is_yul;
         let mut val = &strip_underscores_if(strip_underscores, val)[..];
         let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
         let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
@@ -115,12 +119,12 @@ impl<'ast> State<'_, 'ast> {
         if val.is_empty() {
             out.push('0');
         } else {
-            add_underscores(&mut out, config, val, is_dec, false);
+            add_underscores(&mut out, config, val, is_dec, is_yul, false);
         }
         if source.contains('.') {
             out.push('.');
             if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, is_dec, true);
+                add_underscores(&mut out, config, fract, is_dec, is_yul, true);
             } else {
                 out.push('0');
             }
@@ -128,7 +132,7 @@ impl<'ast> State<'_, 'ast> {
         if !exp.is_empty() {
             out.push('e');
             out.push_str(exp_sign);
-            add_underscores(&mut out, config, exp, is_dec, false);
+            add_underscores(&mut out, config, exp, is_dec, is_yul, false);
         }
 
         self.word(out);
