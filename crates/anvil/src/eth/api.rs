@@ -774,7 +774,7 @@ impl EthApi {
         if let Some(fork) = self.get_fork() {
             // check if the number predates the fork, if in fork mode
             if let BlockRequest::Number(number) = self.block_request(block_number).await?
-                && fork.predates_fork(number)
+                && fork.predates_fork_inclusive(number)
             {
                 // if this predates the fork we need to fetch balance, nonce, code individually
                 // because the provider might not support this endpoint

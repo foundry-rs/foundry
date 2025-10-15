@@ -1638,6 +1638,22 @@ async fn test_fork_get_account_info() {
             code: Default::default(),
         }
     );
+
+    // Check account info at block number, see https://github.com/foundry-rs/foundry/issues/12072
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14352720829244098514u64),
+            nonce: 6690,
+            code: Default::default(),
+        }
+    );
 }
 
 fn assert_hardfork_config(
