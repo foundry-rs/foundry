@@ -458,7 +458,7 @@ Genesis Number
             port: 0,
             no_mining: true,
             mixed_mining: false,
-            enable_tracing: true,
+            enable_tracing: false,
             silent: true,
             ..Default::default()
         }

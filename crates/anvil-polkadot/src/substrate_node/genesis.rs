@@ -1,6 +1,6 @@
 //! Genesis settings
 
-use crate::config::AnvilNodeConfig;
+use crate::{config::AnvilNodeConfig, substrate_node::service::storage::well_known_keys};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::Address;
 use codec::Encode;
@@ -16,30 +16,6 @@ use polkadot_sdk::{
     },
 };
 use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
-
-// Hex-encode key: 0x9527366927478e710d3f7fb77c6d1f89
-pub const CHAIN_ID_KEY: [u8; 16] = [
-    149u8, 39u8, 54u8, 105u8, 39u8, 71u8, 142u8, 113u8, 13u8, 63u8, 127u8, 183u8, 124u8, 109u8,
-    31u8, 137u8,
-];
-
-// Hex-encode key: 0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb
-// twox_128(b"Timestamp") ++ twox_128(b"Now")
-// corresponds to `Timestamp::Now` storage item in pallet-timestamp
-pub const TIMESTAMP_KEY: [u8; 32] = [
-    240u8, 195u8, 101u8, 195u8, 207u8, 89u8, 214u8, 113u8, 235u8, 114u8, 218u8, 14u8, 122u8, 65u8,
-    19u8, 196u8, 159u8, 31u8, 5u8, 21u8, 244u8, 98u8, 205u8, 207u8, 132u8, 224u8, 241u8, 214u8,
-    4u8, 93u8, 252u8, 187u8,
-];
-
-// Hex-encode key: 0x26aa394eea5630e07c48ae0c9558cef702a5c1b19ab7a04f536c519aca4983ac
-// twox_128(b"System") ++ twox_128(b"Number")
-// corresponds to `System::Number` storage item in pallet-system
-pub const BLOCK_NUMBER_KEY: [u8; 32] = [
-    38u8, 170u8, 57u8, 78u8, 234u8, 86u8, 48u8, 224u8, 124u8, 72u8, 174u8, 12u8, 149u8, 88u8,
-    206u8, 247u8, 2u8, 165u8, 193u8, 177u8, 154u8, 183u8, 160u8, 79u8, 83u8, 108u8, 81u8, 154u8,
-    202u8, 73u8, 131u8, 172u8,
-];
 
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
@@ -81,9 +57,9 @@ impl<'a> From<&'a AnvilNodeConfig> for GenesisConfig {
 impl GenesisConfig {
     pub fn as_storage_key_value(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         let storage = vec![
-            (CHAIN_ID_KEY.to_vec(), self.chain_id.encode()),
-            (TIMESTAMP_KEY.to_vec(), self.timestamp.encode()),
-            (BLOCK_NUMBER_KEY.to_vec(), self.number.encode()),
+            (well_known_keys::CHAIN_ID.to_vec(), self.chain_id.encode()),
+            (well_known_keys::TIMESTAMP.to_vec(), self.timestamp.encode()),
+            (well_known_keys::BLOCK_NUMBER_KEY.to_vec(), self.number.encode()),
         ];
         // TODO: add other fields
         storage
@@ -199,15 +175,16 @@ mod tests {
             GenesisConfig { number: block_number, timestamp, chain_id, ..Default::default() };
         let genesis_storage = genesis_config.as_storage_key_value();
         assert!(
-            genesis_storage.contains(&(BLOCK_NUMBER_KEY.to_vec(), block_number.encode())),
+            genesis_storage
+                .contains(&(well_known_keys::BLOCK_NUMBER_KEY.to_vec(), block_number.encode())),
             "Block number not found in genesis key-value storage"
         );
         assert!(
-            genesis_storage.contains(&(TIMESTAMP_KEY.to_vec(), timestamp.encode())),
+            genesis_storage.contains(&(well_known_keys::TIMESTAMP.to_vec(), timestamp.encode())),
             "Timestamp not found in genesis key-value storage"
         );
         assert!(
-            genesis_storage.contains(&(CHAIN_ID_KEY.to_vec(), chain_id.encode())),
+            genesis_storage.contains(&(well_known_keys::CHAIN_ID.to_vec(), chain_id.encode())),
             "Chain id not found in genesis key-value storage"
         );
     }

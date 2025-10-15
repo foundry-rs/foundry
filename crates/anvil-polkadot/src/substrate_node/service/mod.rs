@@ -1,46 +1,47 @@
 use crate::{
     AnvilNodeConfig,
     substrate_node::{
-        genesis::DevelopmentGenesisBlockBuilder,
-        host::{PublicKeyToHashOverride, SenderAddressRecoveryOverride},
         mining_engine::{MiningEngine, MiningMode, run_mining_engine},
         rpc::spawn_rpc_server,
     },
 };
 use anvil::eth::backend::time::TimeManager;
+use parking_lot::Mutex;
 use polkadot_sdk::{
-    sc_basic_authorship, sc_consensus, sc_consensus_manual_seal, sc_executor,
+    parachains_common::opaque::Block,
+    sc_basic_authorship, sc_consensus, sc_consensus_manual_seal,
     sc_service::{
         self, Configuration, RpcHandlers, SpawnTaskHandle, TaskManager,
         error::Error as ServiceError,
     },
-    sc_transaction_pool, sp_io, sp_timestamp,
-    sp_wasm_interface::ExtendedHostFunctions,
+    sc_transaction_pool, sp_timestamp,
 };
 use std::sync::Arc;
-use substrate_runtime::{OpaqueBlock as Block, RuntimeApi};
 use tokio_stream::wrappers::ReceiverStream;
 
-type Executor = sc_executor::WasmExecutor<
-    ExtendedHostFunctions<
-        ExtendedHostFunctions<sp_io::SubstrateHostFunctions, SenderAddressRecoveryOverride>,
-        PublicKeyToHashOverride,
-    >,
->;
-pub type FullClient = sc_service::TFullClient<Block, RuntimeApi, Executor>;
+pub use backend::{BackendError, BackendWithOverlay, StorageOverrides};
+pub use client::Client;
+
+mod backend;
+mod client;
+mod executor;
+pub mod storage;
 
 pub type Backend = sc_service::TFullBackend<Block>;
-pub type TransactionPoolHandle = sc_transaction_pool::TransactionPoolHandle<Block, FullClient>;
+
+pub type TransactionPoolHandle = sc_transaction_pool::TransactionPoolHandle<Block, Client>;
+
 type SelectChain = sc_consensus::LongestChain<Backend, Block>;
 
 #[derive(Clone)]
 pub struct Service {
     pub spawn_handle: SpawnTaskHandle,
-    pub client: Arc<FullClient>,
+    pub client: Arc<Client>,
     pub backend: Arc<Backend>,
     pub tx_pool: Arc<TransactionPoolHandle>,
     pub rpc_handlers: RpcHandlers,
     pub mining_engine: Arc<MiningEngine>,
+    pub storage_overrides: Arc<Mutex<StorageOverrides>>,
     pub genesis_block_number: u64,
 }
 
@@ -49,27 +50,14 @@ pub fn new(
     anvil_config: &AnvilNodeConfig,
     config: Configuration,
 ) -> Result<(Service, TaskManager), ServiceError> {
-    let backend = sc_service::new_db_backend(config.db_config())?;
+    let storage_overrides = Arc::new(Mutex::new(StorageOverrides::default()));
 
-    let wasm_executor = sc_service::new_wasm_executor(&config.executor);
-    let genesis_block_builder = DevelopmentGenesisBlockBuilder::new(
+    let (client, backend, keystore, mut task_manager) = client::new_client(
         anvil_config.get_genesis_number(),
-        config.chain_spec.as_storage_builder(),
-        !config.no_genesis(),
-        backend.clone(),
-        wasm_executor.clone(),
+        &config,
+        sc_service::new_wasm_executor(&config.executor),
+        storage_overrides.clone(),
     )?;
-
-    let (client, backend, keystore_container, mut task_manager) =
-        sc_service::new_full_parts_with_genesis_builder(
-            &config,
-            None,
-            wasm_executor,
-            backend,
-            genesis_block_builder,
-            false,
-        )?;
-    let client = Arc::new(client);
 
     let transaction_pool = Arc::from(
         sc_transaction_pool::Builder::new(
@@ -115,7 +103,7 @@ pub fn new(
         client.clone(),
         config,
         transaction_pool.clone(),
-        keystore_container.keystore(),
+        keystore,
         backend.clone(),
     )?;
 
@@ -166,6 +154,7 @@ pub fn new(
             tx_pool: transaction_pool,
             rpc_handlers,
             mining_engine,
+            storage_overrides,
             genesis_block_number: anvil_config.get_genesis_number(),
         },
         task_manager,

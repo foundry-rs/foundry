@@ -1,6 +1,7 @@
-use crate::substrate_node::service::{Backend, FullClient};
+use crate::substrate_node::service::{Backend, Client, TransactionPoolHandle};
 use jsonrpsee::RpcModule;
 use polkadot_sdk::{
+    parachains_common::opaque::Block,
     sc_chain_spec::ChainSpec,
     sc_client_api::{Backend as ClientBackend, HeaderBackend},
     sc_client_db::{BlocksPruning, PruningMode},
@@ -23,20 +24,18 @@ use polkadot_sdk::{
         self, Configuration, RpcHandlers, SpawnTaskHandle, TaskManager,
         error::Error as ServiceError,
     },
-    sc_transaction_pool::TransactionPoolWrapper,
     sc_utils::mpsc::{TracingUnboundedSender, tracing_unbounded},
     sp_keystore::KeystorePtr,
     substrate_frame_rpc_system::SystemApiServer as _,
 };
 use std::sync::Arc;
-use substrate_runtime::OpaqueBlock as Block;
 
 pub fn spawn_rpc_server(
     genesis_number: u64,
     task_manager: &mut TaskManager,
-    client: Arc<FullClient>,
+    client: Arc<Client>,
     mut config: Configuration,
-    transaction_pool: Arc<TransactionPoolWrapper<Block, FullClient>>,
+    transaction_pool: Arc<TransactionPoolHandle>,
     keystore: KeystorePtr,
     backend: Arc<Backend>,
 ) -> Result<RpcHandlers, ServiceError> {
@@ -100,8 +99,8 @@ pub fn spawn_rpc_server(
 fn gen_rpc_module(
     genesis_number: u64,
     spawn_handle: SpawnTaskHandle,
-    client: Arc<FullClient>,
-    transaction_pool: Arc<TransactionPoolWrapper<Block, FullClient>>,
+    client: Arc<Client>,
+    transaction_pool: Arc<TransactionPoolHandle>,
     keystore: KeystorePtr,
     system_rpc_tx: TracingUnboundedSender<Request<Block>>,
     impl_name: String,

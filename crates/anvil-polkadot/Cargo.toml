@@ -125,6 +125,7 @@ tempfile.workspace = true
 itertools.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
+lru = "0.16.0"
 
 # cli
 clap = { version = "4", features = [
@@ -146,6 +147,7 @@ alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
+assert_matches = "1.5.0"
 rstest = "0.26.1"
 
 op-alloy-rpc-types.workspace = true

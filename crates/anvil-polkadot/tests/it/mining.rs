@@ -54,7 +54,7 @@ async fn test_invalid_mining() {
 async fn test_manual_mining_with_no_of_blocks() {
     let node_args = NodeArgs::parse_from(["anvil", "--no-mining", "--port", "0"]);
     let (mut anvil_node_config, substrate_node_config) = node_args.into_node_config().unwrap();
-    anvil_node_config = anvil_node_config.set_silent(true);
+    anvil_node_config = anvil_node_config.set_silent(true).with_tracing(false);
     let mut node = TestNode::new(anvil_node_config, substrate_node_config).await.unwrap();
     assert!(
         !unwrap_response::<bool>(node.eth_rpc(EthRequest::GetAutoMine(())).await.unwrap()).unwrap()
@@ -127,7 +127,7 @@ async fn test_manual_mining_with_interval() {
 async fn test_interval_mining() {
     let node_args = NodeArgs::parse_from(["anvil", "--block-time", "3", "--port", "0"]);
     let (mut anvil_node_config, substrate_node_config) = node_args.into_node_config().unwrap();
-    anvil_node_config = anvil_node_config.set_silent(true);
+    anvil_node_config = anvil_node_config.set_silent(true).with_tracing(false);
     let mut node = TestNode::new(anvil_node_config, substrate_node_config).await.unwrap();
     // enable interval mining
     assert_eq!(

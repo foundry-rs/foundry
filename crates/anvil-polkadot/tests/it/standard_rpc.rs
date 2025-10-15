@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::utils::{BlockWaitTimeout, TestNode, unwrap_response};
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::TransactionRequest;
@@ -12,6 +10,7 @@ use polkadot_sdk::pallet_revive::{
     self,
     evm::{Account, HashesOrTransactionInfos},
 };
+use std::time::Duration;
 use subxt::utils::H160;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -102,7 +101,7 @@ async fn test_send_transaction() {
         .send_transaction(transaction, Some(BlockWaitTimeout::new(1, Duration::from_secs(1))))
         .await
         .unwrap();
-    std::thread::sleep(Duration::from_millis(500));
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let transaction_receipt = node.get_transaction_receipt(tx_hash).await;
 
     assert_eq!(transaction_receipt.block_number, pallet_revive::U256::from(1));
@@ -147,7 +146,7 @@ async fn test_send_to_uninitialized() {
         .send_transaction(transaction, Some(BlockWaitTimeout::new(1, Duration::from_secs(1))))
         .await
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let alith_final_balance = node.get_balance(alith.address(), None).await;
     assert_eq!(node.get_balance(charleth.address(), None).await, transfer_amount);
@@ -160,7 +159,7 @@ async fn test_send_to_uninitialized() {
         .send_transaction(transaction, Some(BlockWaitTimeout::new(2, Duration::from_secs(1))))
         .await
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let transaction_receipt = node.get_transaction_receipt(tx_hash).await;
     let alith_final_balance_2 = node.get_balance(alith.address(), None).await;
     let charlet_final_balance = node.get_balance(charleth.address(), None).await;

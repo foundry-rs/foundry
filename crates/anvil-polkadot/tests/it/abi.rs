@@ -5,3 +5,9 @@ sol!(
     SimpleStorage,
     "test-data/SimpleStorage.json"
 );
+
+sol!(
+    #[derive(Debug)]
+    DoubleStorage,
+    "test-data/DoubleStorage.json"
+);

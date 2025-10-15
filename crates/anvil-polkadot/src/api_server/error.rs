@@ -1,6 +1,9 @@
-use crate::substrate_node::mining_engine::MiningError;
+use crate::substrate_node::{mining_engine::MiningError, service::BackendError};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use polkadot_sdk::pallet_revive_eth_rpc::{EthRpcError, client::ClientError};
+use polkadot_sdk::{
+    pallet_revive_eth_rpc::{EthRpcError, client::ClientError},
+    sp_api,
+};
 use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
@@ -13,9 +16,18 @@ pub enum Error {
     InvalidParams(String),
     #[error("Revive call failed: {0}")]
     ReviveRpc(#[from] EthRpcError),
+    #[error(transparent)]
+    Backend(#[from] BackendError),
+    #[error("Nonce overflowing the substrate nonce type")]
+    NonceOverflow,
+    #[error(transparent)]
+    RuntimeApi(#[from] sp_api::ApiError),
+    #[error("Error encountered while creating a BalanceWithDust from a U256 balance")]
+    BalanceConversion,
     #[error("Internal error: {0}")]
     InternalError(String),
 }
+
 impl From<subxt::Error> for Error {
     fn from(err: subxt::Error) -> Self {
         Self::ReviveRpc(EthRpcError::ClientError(err.into()))
@@ -71,12 +83,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 Error::InvalidParams(error_message) => {
                     RpcError::invalid_params(error_message).into()
                 }
-                Error::ReviveRpc(client_error) => {
-                    RpcError::internal_error_with(format!("{client_error}")).into()
-                }
-                Error::InternalError(error_message) => {
-                    RpcError::internal_error_with(error_message).into()
-                }
+                err => RpcError::internal_error_with(format!("{err}")).into(),
             },
         }
     }

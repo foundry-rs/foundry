@@ -17,18 +17,16 @@ use frame_system::limits::BlockWeights;
 use pallet_revive::{AccountId32Mapper, evm::runtime::EthExtra};
 use pallet_transaction_payment::{FeeDetails, RuntimeDispatchInfo};
 use polkadot_sdk::{
-    parachains_common::{
-        AccountId, Balance, BlockNumber, Hash as CommonHash, Header, Nonce, Signature,
-    },
+    parachains_common::{AccountId, BlockNumber, Hash as CommonHash, Header, Nonce, Signature},
     polkadot_sdk_frame::{
         deps::sp_genesis_builder,
         runtime::{apis, prelude::*},
     },
     *,
 };
-use sp_weights::{ConstantMultiplier, IdentityFee};
 
-pub use polkadot_sdk::polkadot_sdk_frame::runtime::types_common::OpaqueBlock;
+pub use polkadot_sdk::parachains_common::Balance;
+use sp_weights::{ConstantMultiplier, IdentityFee};
 
 pub mod currency {
     use super::Balance;

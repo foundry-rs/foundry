@@ -111,10 +111,9 @@ async fn test_impersonate_account() {
         TransactionRequest::default().value(transfer_amount).from(dest_addr).to(alith_addr);
     let err = node.send_transaction(transaction.clone(), None).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::InternalError);
-    assert_eq!(
-        err.message,
-        format!("Account not found for address {}", dest_addr.to_string().to_lowercase())
-    );
+    assert!(err.message.contains(
+        format!("Account not found for address {}", dest_addr.to_string().to_lowercase()).as_str()
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -180,8 +179,7 @@ async fn test_auto_impersonate(#[case] rpc_driven: bool) {
         TransactionRequest::default().value(transfer_amount).from(dest_addr).to(alith_addr);
     let err = node.send_transaction(transaction.clone(), None).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::InternalError);
-    assert_eq!(
-        err.message,
-        format!("Account not found for address {}", dest_addr.to_string().to_lowercase())
-    );
+    assert!(err.message.contains(
+        format!("Account not found for address {}", dest_addr.to_string().to_lowercase()).as_str()
+    ));
 }

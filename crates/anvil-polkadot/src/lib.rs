@@ -119,10 +119,9 @@ pub async fn spawn(
             .map_err(sc_cli::Error::Service)?;
 
     // Spawn the other tasks.
-    let api_handle =
-        spawn_anvil_tasks(anvil_config, &substrate_service, &task_manager, logging_manager)
-            .await
-            .map_err(|err| sc_cli::Error::Application(err.into()))?;
+    let api_handle = spawn_anvil_tasks(anvil_config, &substrate_service, logging_manager)
+        .await
+        .map_err(|err| sc_cli::Error::Application(err.into()))?;
 
     Ok((substrate_service, task_manager, api_handle))
 }
@@ -130,7 +129,6 @@ pub async fn spawn(
 pub async fn spawn_anvil_tasks(
     anvil_config: AnvilNodeConfig,
     service: &Service,
-    task_manager: &TaskManager,
     logging_manager: LoggingManager,
 ) -> Result<ApiHandle> {
     // Spawn the api server.
@@ -146,18 +144,15 @@ pub async fn spawn_anvil_tasks(
         // Spawn the server future on a new task.
         let srv =
             server::serve_on(tcp_listener, anvil_config.server_config.clone(), api_handle.clone());
-        let spawn_handle = &service.spawn_handle;
-        spawn_handle.spawn(
-            "anvil",
-            "anvil-tcp",
-            async move { srv.await.expect("TCP server failure") },
-        );
+        service
+            .spawn_handle
+            .spawn("anvil", "anvil-tcp", async move { srv.await.expect("TCP server failure") });
     }
 
     // If configured, spawn the IPC server.
     anvil_config
         .get_ipc_path()
-        .map(|path| try_spawn_ipc(task_manager, path, api_handle.clone()))
+        .map(|path| try_spawn_ipc(&service.spawn_handle, path, api_handle.clone()))
         .transpose()?;
 
     anvil_config.print()?;

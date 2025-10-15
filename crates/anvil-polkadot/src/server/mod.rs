@@ -4,7 +4,7 @@ use anvil_server::{ServerConfig, ipc::IpcEndpoint};
 use axum::Router;
 use futures::StreamExt;
 use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
-use polkadot_sdk::sc_service::TaskManager;
+use polkadot_sdk::sc_service::SpawnTaskHandle;
 use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
@@ -42,19 +42,9 @@ pub fn router(api_handle: ApiHandle, config: ServerConfig) -> Router {
     anvil_server::http_ws_router(config, http, ws)
 }
 
-/// Launches an ipc server at the given path in a new task
-///
-/// # Panics
-///
-/// Panics if setting up the IPC connection was unsuccessful.
-#[track_caller]
-pub fn spawn_ipc(task_manager: &TaskManager, path: String, api_handle: ApiHandle) {
-    try_spawn_ipc(task_manager, path, api_handle).expect("failed to establish ipc connection")
-}
-
 /// Launches an ipc server at the given path in a new task.
 pub fn try_spawn_ipc(
-    task_manager: &TaskManager,
+    spawn_handle: &SpawnTaskHandle,
     path: String,
     api_handle: ApiHandle,
 ) -> io::Result<()> {
@@ -62,7 +52,6 @@ pub fn try_spawn_ipc(
     let ipc = IpcEndpoint::new(handler, path);
     let incoming = ipc.incoming()?;
 
-    let spawn_handle = task_manager.spawn_handle();
     let inner_spawn_handle = spawn_handle.clone();
 
     spawn_handle.spawn("ipc", "anvil", async move {
