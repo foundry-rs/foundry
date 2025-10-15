@@ -1045,14 +1045,11 @@ impl TestCommand {
 
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
-    pub fn assert_with(
-        &mut self,
-        f: impl FnOnce(&mut snapbox::Redactions) -> snapbox::assert::Result<()>,
-    ) -> OutputAssert {
+    pub fn assert_with(&mut self, f: &[RegexRedaction]) -> OutputAssert {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
             let mut redactions = test_redactions();
-            f(&mut redactions).unwrap();
+            insert_redactions(f, &mut redactions);
             return assert.with_assert(
                 snapbox::Assert::new()
                     .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
@@ -1065,7 +1062,7 @@ impl TestCommand {
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
     pub fn assert(&mut self) -> OutputAssert {
-        self.assert_with(|_| Ok(()))
+        self.assert_with(&[])
     }
 
     /// Runs the command and asserts that it resulted in success.
@@ -1161,8 +1158,7 @@ impl TestCommand {
 
 fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
-        let mut r = snapbox::Redactions::new();
-        let redactions = [
+        make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
@@ -1185,13 +1181,25 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
-        ];
-        for (placeholder, re) in redactions {
-            r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
-        }
-        r
+        ])
     });
     REDACTIONS.clone()
+}
+
+/// A tuple of a placeholder and a regex replacement string.
+type RegexRedaction = (&'static str, &'static str);
+
+/// Creates a [`snapbox`] redactions object from a list of regex redactions.
+fn make_redactions(redactions: &[RegexRedaction]) -> snapbox::Redactions {
+    let mut r = snapbox::Redactions::new();
+    insert_redactions(redactions, &mut r);
+    r
+}
+
+fn insert_redactions(redactions: &[RegexRedaction], r: &mut snapbox::Redactions) {
+    for &(placeholder, re) in redactions {
+        r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
+    }
 }
 
 /// Extension trait for [`Output`].
