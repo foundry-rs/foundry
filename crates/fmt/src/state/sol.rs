@@ -461,6 +461,11 @@ impl<'ast> State<'_, 'ast> {
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::All
+                if header.parameters.len() > 1 && !self.can_header_be_inlined(header) =>
+            {
+                ListFormat::always_break()
+            }
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
@@ -2429,6 +2434,8 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+        const FUNCTION: usize = 8;
+
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
@@ -2445,7 +2452,8 @@ impl<'ast> State<'_, 'ast> {
                 .fold(0, |len, p| if len != 0 { len + 2 } else { 8 } + self.estimate_size(p.span))
         });
 
-        self.estimate_header_params_size(header)
+        FUNCTION
+            + self.estimate_header_params_size(header)
             + visibility
             + mutability
             + modifiers
