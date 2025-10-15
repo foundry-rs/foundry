@@ -156,7 +156,7 @@ impl DocBuilder {
                         };
 
                         // Visit the parse tree
-                        let mut doc = Parser::new(comments, source);
+                        let mut doc = Parser::new(comments, source, self.fmt.tab_width);
                         source_unit
                             .visit(&mut doc)
                             .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
