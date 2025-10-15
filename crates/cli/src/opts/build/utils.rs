@@ -83,18 +83,17 @@ pub fn configure_pcx(
     Ok(())
 }
 
-/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`] and [`SolcVersionedInput`].
+/// Extracts Solar-compatible sources from a [`ProjectCompileOutput`].
 ///
 /// # Note:
 /// uses `output.graph().source_files()` and `output.artifact_ids()` rather than `output.sources()`
 /// because sources aren't populated when build is skipped when there are no changes in the source
 /// code. <https://github.com/foundry-rs/foundry/issues/12018>
-pub fn configure_pcx_from_compile_output(
-    pcx: &mut ParsingContext<'_>,
+pub fn get_solar_sources_from_compile_output(
     config: &Config,
     output: &ProjectCompileOutput,
     target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
+) -> Result<SolcVersionedInput> {
     let is_solidity_file = |path: &Path| -> bool {
         path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
     };
@@ -159,6 +158,17 @@ pub fn configure_pcx_from_compile_output(
         version,
     );
 
+    Ok(solc)
+}
+
+/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`].
+pub fn configure_pcx_from_compile_output(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    output: &ProjectCompileOutput,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<()> {
+    let solc = get_solar_sources_from_compile_output(config, output, target_paths)?;
     configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
     Ok(())
 }
