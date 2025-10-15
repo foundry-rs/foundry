@@ -919,6 +919,7 @@ impl Config {
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
         self.snapshots = p(&root, &self.snapshots);
+        self.test_failures_file = p(&root, &self.test_failures_file);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
