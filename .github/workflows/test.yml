@@ -28,7 +28,7 @@ jobs:
 
   docs:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -55,7 +55,7 @@ jobs:
     if: github.ref_name == 'master' && github.event_name == 'push'
     needs: [docs]
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       pages: write
       id-token: write
@@ -69,7 +69,7 @@ jobs:
 
   doctest:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -85,7 +85,7 @@ jobs:
 
   typos:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -96,7 +96,7 @@ jobs:
 
   clippy:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -115,7 +115,7 @@ jobs:
 
   rustfmt:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -130,7 +130,7 @@ jobs:
 
   forge-fmt:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -148,7 +148,7 @@ jobs:
 
   crate-checks:
     runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -213,7 +213,7 @@ jobs:
       - crate-checks
       - deny
       - codeql
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
