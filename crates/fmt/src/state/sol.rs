@@ -944,6 +944,10 @@ impl<'ast> State<'_, 'ast> {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
+    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+        self.print_lit_inner(lit, false);
+    }
+
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span, false) {
             return;
