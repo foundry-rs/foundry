@@ -2,10 +2,7 @@ use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{
-    errors::convert_solar_errors,
-    fs::{self, canonicalize_path},
-};
+use foundry_common::{errors::convert_solar_errors, fs};
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
@@ -59,13 +56,13 @@ impl FmtArgs {
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
             .iter()
-            .flat_map(canonicalize_path)
+            .flat_map(fs::canonicalize_path)
             .collect::<Vec<_>>();
 
         // Expand lib globs separately - we only exclude these during discovery, not explicit paths
         let libs = expand_globs(&config.root, config.libs.iter().filter_map(|p| p.to_str()))?
             .iter()
-            .flat_map(canonicalize_path)
+            .flat_map(fs::canonicalize_path)
             .collect::<Vec<_>>();
 
         // Helper to check if a file path is under any ignored or lib directory
@@ -73,7 +70,7 @@ impl FmtArgs {
             let check_against_dir = |dir: &PathBuf| {
                 file_path.starts_with(dir)
                     || cwd.join(file_path).starts_with(dir)
-                    || canonicalize_path(file_path).map_or(false, |p| p.starts_with(dir))
+                    || fs::canonicalize_path(file_path).is_ok_and(|p| p.starts_with(dir))
             };
 
             ignored.iter().any(&check_against_dir)
