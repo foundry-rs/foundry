@@ -746,8 +746,15 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/utils/DSTest.sol");
-        self.add_source("test.sol", s)
+        self.add_source("test.sol", include_str!("../../../testdata/utils/DSTest.sol"))
+    }
+
+    /// Adds custom test utils under the "test/utils" directory.
+    pub fn insert_utils(&self) {
+        self.add_test("utils/DSTest.sol", include_str!("../../../testdata/utils/DSTest.sol"));
+        self.add_test("utils/Test.sol", include_str!("../../../testdata/utils/Test.sol"));
+        self.add_test("utils/Vm.sol", include_str!("../../../testdata/utils/Vm.sol"));
+        self.add_test("utils/console.sol", include_str!("../../../testdata/utils/console.sol"));
     }
 
     /// Adds `console.sol` as a source under "console.sol"
