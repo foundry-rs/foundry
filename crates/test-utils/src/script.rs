@@ -115,11 +115,16 @@ impl ScriptTester {
     }
 
     /// Initialises the test contracts by copying them into the workspace
-    fn copy_testdata(current_dir: &Path) -> Result<()> {
+    fn copy_testdata(root: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::create_dir_all(current_dir.join("utils"))?;
-        fs::copy(testdata.join("utils/Vm.sol"), current_dir.join("utils/Vm.sol"))?;
-        fs::copy(testdata.join("utils/DSTest.sol"), current_dir.join("utils/test.sol"))?;
+        let from_dir = testdata.join("utils");
+        let to_dir = root.join("utils");
+        fs::create_dir_all(&to_dir)?;
+        for entry in fs::read_dir(&from_dir)? {
+            let file = &entry?.path();
+            let name = file.file_name().unwrap();
+            fs::copy(file, to_dir.join(name))?;
+        }
         Ok(())
     }
 
