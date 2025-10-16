@@ -288,6 +288,14 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.nbsp();
 
+        if let Some(layout) = layout
+            && !self.handle_span(layout.span, false)
+        {
+            self.word("layout at ");
+            self.print_expr(layout.slot);
+            self.print_sep(Separator::Space);
+        }
+
         if let Some(first) = bases.first().map(|base| base.span())
             && let Some(last) = bases.last().map(|base| base.span())
             && self.inline_config.is_disabled(first.to(last))
@@ -296,26 +304,30 @@ impl<'ast> State<'_, 'ast> {
         } else if !bases.is_empty() {
             self.word("is");
             self.space();
-            for (pos, base) in bases.iter().delimited() {
+            let last = bases.len() - 1;
+            for (i, base) in bases.iter().enumerate() {
                 if !self.handle_span(base.span(), false) {
                     self.print_modifier_call(base, false);
-                    if !pos.is_last {
+                    if i != last {
                         self.word(",");
-                        self.space();
+                        if self
+                            .print_comments(
+                                bases[i + 1].span().lo(),
+                                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                            )
+                            .is_none()
+                        {
+                            self.space();
+                        }
                     }
                 }
             }
-            self.space();
+            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.space();
+            }
             self.s.offset(-self.ind);
         }
         self.end();
-        if let Some(layout) = layout
-            && !self.handle_span(layout.span, false)
-        {
-            self.word("layout at ");
-            self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
-        }
 
         self.print_word("{");
         self.end();
@@ -461,6 +473,11 @@ impl<'ast> State<'_, 'ast> {
         let header_style = self.config.multiline_func_header;
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
+            MultilineFuncHeaderStyle::All
+                if header.parameters.len() > 1 && !self.can_header_be_inlined(header) =>
+            {
+                ListFormat::always_break()
+            }
             MultilineFuncHeaderStyle::AllParams
                 if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
             {
@@ -937,6 +954,10 @@ impl<'ast> State<'_, 'ast> {
     /// Prints a raw AST string literal, which is unescaped.
     fn print_ast_str_lit(&mut self, strlit: &'ast ast::StrLit) {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
+    }
+
+    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+        self.print_lit_inner(lit, false);
     }
 
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
@@ -2429,6 +2450,8 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+        const FUNCTION: usize = 8;
+
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
@@ -2445,7 +2468,8 @@ impl<'ast> State<'_, 'ast> {
                 .fold(0, |len, p| if len != 0 { len + 2 } else { 8 } + self.estimate_size(p.span))
         });
 
-        self.estimate_header_params_size(header)
+        FUNCTION
+            + self.estimate_header_params_size(header)
             + visibility
             + mutability
             + modifiers

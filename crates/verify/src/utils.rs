@@ -1,7 +1,10 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_provider::{Provider, network::AnyRpcBlock};
+use alloy_provider::{
+    Provider,
+    network::{AnyNetwork, AnyRpcBlock},
+};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -17,8 +20,8 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
+    opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
 };
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
@@ -335,6 +338,7 @@ pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
 }
 
 pub fn deploy_contract(
