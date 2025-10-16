@@ -13,7 +13,7 @@ contract ProjectRootTest is Test {
             vm.skip(true, "CARGO_MANIFEST_DIR environment variable is not set");
         }
         manifestDirBytes = bytes(manifestDir);
-        
+
         for (uint256 i = 0; i < 7; i++) {
             manifestDirBytes.pop();
         }
