@@ -752,15 +752,16 @@ impl<'ast> State<'_, 'ast> {
         lhs_size: usize,
         space_left: usize,
         ty: Option<&ast::TypeKind<'ast>>,
+        cache: bool,
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
         let rhs_size = self.estimate_size(rhs.span);
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
-        let rhs_fits_alone_on_new_line =
+        let fits_alone_no_cmnts =
             fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
-        let force_break = overflows && rhs_fits_alone_on_new_line;
+        let force_break = overflows && fits_alone_no_cmnts;
 
         // Set up precall size tracking
         if lhs_size <= space_left {
@@ -847,7 +848,7 @@ impl<'ast> State<'_, 'ast> {
                     if !self.is_bol_or_only_ind() {
                         let needs_offset = !callee_doesnt_fit
                             && rhs_size + lhs_size + 1 >= space_left
-                            && rhs_fits_alone_on_new_line;
+                            && fits_alone_no_cmnts;
                         let separator = if callee_doesnt_fit || needs_offset {
                             Separator::Space
                         } else {
@@ -873,6 +874,9 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
         }
+
+        self.var_init = cache;
+        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -948,10 +952,7 @@ impl<'ast> State<'_, 'ast> {
             }
             self.end();
 
-            self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind));
-
-            self.var_init = cache;
-            self.call_stack.reset_precall();
+            self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
             self.end();
         }
@@ -1334,21 +1335,14 @@ impl<'ast> State<'_, 'ast> {
 
     /// Prints a simple assignment expression of the form `lhs = rhs`.
     fn print_assign_expr(&mut self, lhs: &'ast ast::Expr<'ast>, rhs: &'ast ast::Expr<'ast>) {
-        let prev_var_init = self.var_init;
+        let cache = self.var_init;
         self.var_init = true;
 
-        // Estimate layout constraints
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
-
-        // Print LHS and '='
         self.print_expr(lhs);
         self.word(" =");
-
-        self.print_assign_rhs(rhs, lhs_size + 2, space_left, None);
-
-        self.var_init = prev_var_init;
-        self.call_stack.reset_precall();
+        self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
     }
 
     /// Prints a binary operator expression. Handles operator chains and formatting.
