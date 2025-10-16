@@ -5,7 +5,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -167,11 +167,8 @@ fn locked_write_line_windows(path: &Path, line: &str) -> Result<()> {
         .map_err(|err| FsPathError::open(err, path))?;
     file.lock().map_err(|err| FsPathError::lock(err, path))?;
 
-    let mut contents = read_inner(path, &mut file)?;
-    contents.extend_from_slice(line.as_bytes());
-    contents.push(b'\n');
-    file.rewind().map_err(|err| FsPathError::write(err, path))?;
-    file.write_all(&contents).map_err(|err| FsPathError::write(err, path))?;
+    file.seek(SeekFrom::End(0)).map_err(|err| FsPathError::write(err, path))?;
+    writeln!(file, "{line}").map_err(|err| FsPathError::write(err, path))?;
 
     file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
