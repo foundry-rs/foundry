@@ -1330,4 +1330,86 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 ...
 "#]]);
 });
+
+forgetest_init!(invariant_test1, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+    });
+
+    prj.add_test(
+        "InvariantTest1.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantBreaker {
+    bool public flag0 = true;
+    bool public flag1 = true;
+
+    function set0(int256 val) public returns (bool) {
+        if (val % 100 == 0) {
+            flag0 = false;
+        }
+        return flag0;
+    }
+
+    function set1(int256 val) public returns (bool) {
+        if (val % 10 == 0 && !flag0) {
+            flag1 = false;
+        }
+        return flag1;
+    }
+}
+
+contract InvariantTest is Test {
+    InvariantBreaker inv;
+
+    function setUp() public {
+        inv = new InvariantBreaker();
+    }
+
+    function invariant_neverFalse() public {
+        require(inv.flag1(), "false");
+    }
+
+    function statefulFuzz_neverFalseWithInvariantAlias() public {
+        require(inv.flag1(), "false");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false]
+	[SEQUENCE]
+ invariant_neverFalse() ([RUNS])
+
+[STATS]
+
+[FAIL: false]
+	[SEQUENCE]
+ statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false]
+	[SEQUENCE]
+ invariant_neverFalse() ([RUNS])
+[FAIL: false]
+	[SEQUENCE]
+ statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
 });
