@@ -5,6 +5,7 @@ use alloy_provider::{Network, Provider, network::BlockResponse};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
+use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
@@ -19,6 +20,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
     origin: Address,
     disable_block_gas_limit: bool,
     enable_tx_gas_limit: bool,
+    configs: NetworkConfigs,
 ) -> eyre::Result<(Env, N::BlockResponse)> {
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
@@ -78,7 +80,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
         },
     };
 
-    apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block);
+    apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block, configs);
 
     Ok((env, block))
 }
