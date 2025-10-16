@@ -611,7 +611,7 @@ impl Cheatcode for etchCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, newRuntimeBytecode } = self;
         ccx.ensure_not_precompile(target)?;
-        ccx.ecx.journaled_state.load_account(*target)?;
+        ensure_loaded_account(ccx.ecx, *target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
