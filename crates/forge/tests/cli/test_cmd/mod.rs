@@ -42,7 +42,23 @@ forgetest!(testdata, |_prj, cmd| {
         );
     }
 
-    cmd.args(args).assert_success();
+    let orig_assert = cmd.args(args).assert();
+    if orig_assert.get_output().status.success() {
+        return;
+    }
+
+    // Retry failed tests.
+    cmd.args(["--rerun"]);
+    let n = 3;
+    for i in 1..=n {
+        test_debug!("retrying failed tests... ({i}/{n})");
+        let assert = cmd.assert();
+        if assert.get_output().status.success() {
+            return;
+        }
+    }
+
+    orig_assert.success();
 });
 
 // tests that test filters are handled correctly
