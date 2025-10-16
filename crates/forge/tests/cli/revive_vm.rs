@@ -1,59 +1,5 @@
 use foundry_compilers::artifacts::EvmVersion;
 
-forgetest!(can_translate_balances_after_switch_to_pvm, |prj, cmd| {
-    prj.insert_ds_test();
-    prj.insert_vm();
-    prj.insert_console();
-    prj.add_source(
-        "BalanceTranslationTest.t.sol",
-        r#"
-import "./test.sol";
-import "./Vm.sol";
-import {console} from "./console.sol";
-
-contract BalanceTranslationTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function test_BalanceTranslationRevmPvm() public {
-        uint256 amount = 10 ether;
-        vm.deal(address(this), amount);
-
-        uint256 initialBalance = address(this).balance;
-        assertEq(initialBalance, amount);
-
-        vm.pvm(true);
-
-        uint256 currentBalance = address(this).balance;
-        console.log(initialBalance, currentBalance);
-        assertEq(initialBalance, currentBalance);
-    }
-}
-"#,
-    )
-    .unwrap();
-    prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
-
-    let res = cmd.args(["test", "--resolc", "-vvv"]).assert_success();
-    res.stderr_eq(str![""]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-[COMPILING_FILES] with [RESOLC_VERSION]
-[RESOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for src/BalanceTranslationTest.t.sol:BalanceTranslationTest
-[PASS] test_BalanceTranslationRevmPvm() ([GAS])
-Logs:
-  10000000000000000000 10000000000000000000
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-});
-
 forgetest!(counter_test, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -91,7 +37,6 @@ contract CounterTest is DSTest {
   Counter public counter;
 
   function setUp() public {
-    vm.pvm(true);
     counter = new Counter(); 
     counter.setNumber(5);
     assertEq(counter.number(), 5);
@@ -128,7 +73,7 @@ contract CounterTest is DSTest {
     .unwrap();
     prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
 
-    let res = cmd.args(["test", "--resolc", "-vvv"]).assert();
+    let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -164,7 +109,6 @@ contract SetNonce is DSTest {
   Vm constant vm = Vm(HEVM_ADDRESS);
 
   function test_SetNonce() public {
-      vm.pvm(true);
       uint64 original = vm.getNonce(address(this));
       vm.setNonce(address(this), 64);
       uint64 newValue = vm.getNonce(address(this));
@@ -177,7 +121,7 @@ contract SetNonce is DSTest {
     .unwrap();
     prj.update_config(|config| config.evm_version = EvmVersion::Cancun);
 
-    let res = cmd.args(["test", "--resolc", "-vvv"]).assert_success();
+    let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -210,7 +154,6 @@ contract Roll is DSTest {
   Vm constant vm = Vm(HEVM_ADDRESS);
 
   function test_Roll() public {
-      vm.pvm(true);
       uint256 original = block.number;
       vm.roll(10);
       uint256 newValue = block.number;
@@ -222,7 +165,7 @@ contract Roll is DSTest {
     )
     .unwrap();
 
-    let res = cmd.args(["test", "--resolc", "-vvv"]).assert_success();
+    let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -255,7 +198,6 @@ contract Warp is DSTest {
   Vm constant vm = Vm(HEVM_ADDRESS);
 
   function test_Warp() public {
-      vm.pvm(true);
       uint256 original = block.timestamp;
       vm.warp(100);
       uint256 newValue = block.timestamp;
@@ -267,7 +209,6 @@ contract Warp is DSTest {
     )
     .unwrap();
 
-    cmd.env("RUST_LOG", "revive_strategy");
     let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -276,12 +217,6 @@ Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
-[..] INFO revive_strategy::cheatcodes: startup PVM migration initiated
-[..] INFO revive_strategy::cheatcodes: switching to PVM
-[..] INFO revive_strategy::cheatcodes: startup PVM migration completed
-[..] INFO revive_strategy::cheatcodes: cheatcode=pvmCall { enabled: true } using_pvm=true
-[..] INFO revive_strategy::cheatcodes: already in PVM
-[..] INFO revive_strategy::cheatcodes: cheatcode=warpCall { newTimestamp: 100 } using_pvm=true
 
 Ran 1 test for src/Warp.t.sol:Warp
 [PASS] test_Warp() ([GAS])
@@ -319,7 +254,6 @@ function test_Balance() public {
     )
     .unwrap();
 
-    cmd.env("RUST_LOG", "revive_strategy");
     let res = cmd.args(["test", "--resolc", "-vvv", "--resolc-startup"]).assert_success();
     res.stderr_eq(str![""]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -328,13 +262,6 @@ Compiler run successful!
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
-[..] INFO revive_strategy::cheatcodes: startup PVM migration initiated
-[..] INFO revive_strategy::cheatcodes: switching to PVM
-[..] INFO revive_strategy::cheatcodes: startup PVM migration completed
-[..] INFO revive_strategy::cheatcodes: cheatcode=dealCall { account: 0x7fa9385be102ac3eac297483dd6233d62b3e1496, newBalance: 64000000000000000000 } using_pvm=true
-[..] INFO revive_strategy::cheatcodes: operation="get_balance" using_pvm=true target=0x7fa9385be102ac3eac297483dd6233d62b3e1496 balance=64000000000000000000
-[..] INFO revive_strategy::cheatcodes: cheatcode=dealCall { account: 0x7fa9385be102ac3eac297483dd6233d62b3e1496, newBalance: 65000000000000000000 } using_pvm=true
-[..] INFO revive_strategy::cheatcodes: operation="get_balance" using_pvm=true target=0x7fa9385be102ac3eac297483dd6233d62b3e1496 balance=65000000000000000000
 
 Ran 1 test for src/Balance.t.sol:Balance
 [PASS] test_Balance() ([GAS])

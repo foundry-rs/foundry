@@ -6,7 +6,9 @@
 //! THIS IS WORK IN PROGRESS. It is not yet complete and may change in the future.
 #![allow(clippy::disallowed_macros)]
 use polkadot_sdk::{
-    frame_system, pallet_balances,
+    frame_support::traits::{OnGenesis, fungible::Mutate},
+    frame_system::{self, Pallet},
+    pallet_balances,
     pallet_revive::{self, AddressMapper},
     polkadot_runtime_common::BuildStorage,
     sp_core::H160,
@@ -53,7 +55,23 @@ impl ExtBuilder {
         pallet_revive::GenesisConfig::<Runtime>::default().assimilate_storage(&mut t).unwrap();
         let mut ext = sp_io::TestExternalities::new(t);
         ext.register_extension(KeystoreExt::new(MemoryKeystore::new()));
-        ext.execute_with(|| System::set_block_number(0));
+        ext.execute_with(|| {
+            Pallet::<Runtime>::on_genesis();
+            System::set_block_number(0);
+
+            // Set a large balance for pallet account to handle storage deposits during contract
+            // migration Using a reasonable large value to avoid overflow when minting
+            let pallet_account = pallet_revive::Pallet::<Runtime>::account_id();
+            let large_balance: Balance = 1_000_000_000_000_000_000_000_000_000_u128;
+            let _ = <Runtime as pallet_revive::Config>::Currency::mint_into(
+                &pallet_account,
+                large_balance,
+            );
+
+            let _ = pallet_revive::Pallet::<Runtime>::map_account(
+                frame_system::RawOrigin::Signed(pallet_account).into(),
+            );
+        });
         ext
     }
 }

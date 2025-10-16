@@ -25,7 +25,7 @@ use polkadot_sdk::{
     pallet_balances,
     pallet_revive::{
         self, AccountInfo, AddressMapper, BalanceOf, BalanceWithDust, BumpNonce, Code, Config,
-        DepositLimit, Pallet, evm::GasEncoder,
+        ContractInfo, DepositLimit, Pallet, evm::GasEncoder,
     },
     polkadot_sdk_frame::prelude::OriginFor,
     sp_core::{self, H160},
@@ -59,25 +59,57 @@ impl PvmCheatcodeInspectorStrategyBuilder for CheatcodeInspectorStrategy {
     }
 }
 
+/// Controls the automatic migration to PVM mode during test execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PvmStartupMigration {
+    /// Defer database migration to a later execution point.
+    /// This is the initial state - waiting for the test contract to be deployed.
+    Defer,
+    /// Allow database migration to PVM.
+    /// Set by `base_contract_deployed()` when the test contract is deployed.
+    #[default]
+    Allow,
+    /// Database migration has already been performed.
+    /// Prevents redundant migrations.
+    Done,
+}
+
+impl PvmStartupMigration {
+    /// Check if startup migration is allowed
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
+
+    /// Allow migrating the database to PVM storage
+    pub fn allow(&mut self) {
+        *self = Self::Allow;
+    }
+
+    /// Mark the migration as completed
+    pub fn done(&mut self) {
+        *self = Self::Done;
+    }
+}
 /// PVM-specific strategy context.
 #[derive(Debug, Default, Clone)]
 pub struct PvmCheatcodeInspectorStrategyContext {
     /// Whether we're using PVM mode
-    /// Currently unused but kept for future PVM-specific logic
     pub using_pvm: bool,
-    /// Whether to start in PVM mode (from config)
-    pub resolc_startup: bool,
+    /// Controls automatic migration to PVM mode
+    pub pvm_startup_migration: PvmStartupMigration,
     pub dual_compiled_contracts: DualCompiledContracts,
-    base_contract_deployed: bool,
 }
 
 impl PvmCheatcodeInspectorStrategyContext {
     pub fn new(dual_compiled_contracts: DualCompiledContracts, resolc_startup: bool) -> Self {
         Self {
             using_pvm: false, // Start in EVM mode by default
-            resolc_startup,
+            pvm_startup_migration: if resolc_startup {
+                PvmStartupMigration::Defer // Will be set to Allow when test contract deploys
+            } else {
+                PvmStartupMigration::Done // Disabled - never migrate
+            },
             dual_compiled_contracts,
-            base_contract_deployed: false,
         }
     }
 }
@@ -275,7 +307,8 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
     fn base_contract_deployed(&self, ctx: &mut dyn CheatcodeInspectorStrategyContext) {
         let ctx = get_context_ref_mut(ctx);
 
-        ctx.base_contract_deployed = true;
+        tracing::debug!("allowing startup PVM migration");
+        ctx.pvm_startup_migration.allow();
     }
 
     fn record_broadcastable_create_transactions(
@@ -332,9 +365,10 @@ impl CheatcodeInspectorStrategyRunner for PvmCheatcodeInspectorStrategyRunner {
     ) {
         let ctx = get_context_ref_mut(ctx);
 
-        if ctx.resolc_startup && ctx.base_contract_deployed {
+        if ctx.pvm_startup_migration.is_allowed() && !ctx.using_pvm {
             tracing::info!("startup PVM migration initiated");
             select_pvm(ctx, ecx);
+            ctx.pvm_startup_migration.done();
             tracing::info!("startup PVM migration completed");
         }
     }
@@ -390,30 +424,48 @@ fn select_pvm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, 
 
     tracing::info!("switching to PVM");
     ctx.using_pvm = true;
-    let persistent_accounts = data.journaled_state.database.persistent_accounts().clone();
-    for address in persistent_accounts {
-        let acc = data.journaled_state.load_account(address).expect("just loaded above");
-        let amount = acc.data.info.balance;
-        let nonce = acc.data.info.nonce;
 
-        let amount_pvm =
-            sp_core::U256::from_little_endian(&amount.as_le_bytes()).min(u128::MAX.into());
-        let balance_native =
-            BalanceWithDust::<BalanceOf<Runtime>>::from_value::<Runtime>(amount_pvm).unwrap();
-        let balance = Pallet::<Runtime>::convert_native_to_evm(balance_native);
-        let amount_evm = U256::from_limbs(balance.0);
-        if amount != amount_evm {
-            let _ = sh_err!(
-                "Amount mismatch {amount} != {amount_evm}, Polkadot balances are u128. Test results may be incorrect."
-            );
-        }
-        let min_balance = pallet_balances::Pallet::<Runtime>::minimum_balance();
-        execute_with_externalities(|externalities| {
-            externalities.execute_with(|| {
+    let block_number = data.block.number;
+    let timestamp = data.block.timestamp;
+
+    execute_with_externalities(|externalities| {
+        externalities.execute_with(|| {
+            System::set_block_number(block_number.saturating_to());
+            Timestamp::set_timestamp(timestamp.saturating_to::<u64>() * 1000);
+
+            let test_contract = data.journaled_state.database.get_test_contract_address();
+            let persistent_accounts = data.journaled_state.database.persistent_accounts().clone();
+
+            for address in persistent_accounts.into_iter().chain([data.tx.caller]) {
+                let acc = data.journaled_state.load_account(address).expect("failed to load account");
+                let amount = acc.data.info.balance;
+                let nonce = acc.data.info.nonce;
                 let account_id =
                     AccountId::to_fallback_account_id(&H160::from_slice(address.as_slice()));
-                let current_nonce = System::account_nonce(&account_id);
 
+                // Convert EVM balance to PVM balance with precision handling
+                // TODO: needs to be replaced with `set_evm_balance`` once new pallet-revive is used
+                let amount_pvm =
+                    sp_core::U256::from_little_endian(&amount.as_le_bytes()).min(u128::MAX.into());
+                let balance_native =
+                    BalanceWithDust::<BalanceOf<Runtime>>::from_value::<Runtime>(amount_pvm).unwrap();
+                let balance = Pallet::<Runtime>::convert_native_to_evm(balance_native);
+                let amount_evm = U256::from_limbs(balance.0);
+
+                if amount != amount_evm {
+                    let _ = sh_err!(
+                        "Amount mismatch {amount} != {amount_evm}, Polkadot balances are u128. Test results may be incorrect."
+                    );
+                }
+
+                let min_balance = pallet_balances::Pallet::<Runtime>::minimum_balance();
+                <Runtime as Config>::Currency::set_balance(
+                    &account_id,
+                    balance_native.into_rounded_balance().saturating_add(min_balance),
+                );
+                // END OF THE BLOCK TO BE REMOVED
+
+                let current_nonce = System::account_nonce(&account_id);
                 assert!(
                     current_nonce as u64 <= nonce,
                     "Cannot set nonce lower than current nonce: {current_nonce} > {nonce}"
@@ -423,13 +475,47 @@ fn select_pvm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, 
                     System::inc_account_nonce(&account_id);
                 }
 
-                <Runtime as Config>::Currency::set_balance(
-                    &account_id,
-                    balance_native.into_rounded_balance().saturating_add(min_balance),
-                );
-            })
-        });
-    }
+                // TODO handle immutables
+                // Migrate bytecode for deployed contracts (skip test contract)
+                if test_contract != Some(address)
+                    && let Some(bytecode) = acc.data.info.code.as_ref() {
+
+                    let account_h160 = H160::from_slice(address.as_slice());
+
+                    // Skip if contract already exists in PVM
+                    if AccountInfo::<Runtime>::load_contract(&account_h160).is_none() {
+                        if let Some(pvm_bytecode) = ctx.dual_compiled_contracts
+                            .find_by_evm_deployed_bytecode_with_immutables(bytecode.original_byte_slice())
+                            .and_then(|(_, contract)| {
+                                contract.resolc_bytecode.as_bytes()
+                            })
+                        {
+                            let origin = OriginFor::<Runtime>::signed(Pallet::<Runtime>::account_id());
+                            let code_hash = Pallet::<Runtime>::bare_upload_code(
+                                origin,
+                                pvm_bytecode.to_vec(),
+                                BalanceOf::<Runtime>::MAX,
+                            )
+                            .ok()
+                            .map(|upload_result| upload_result.code_hash)
+                            .expect("Failed to upload PVM bytecode");
+
+                            let contract_info = ContractInfo::<Runtime>::new(&account_h160, nonce as u32, code_hash)
+                                .expect("Failed to create contract info");
+
+                            AccountInfo::<Runtime>::insert_contract(&account_h160, contract_info);
+
+                        } else {
+                            tracing::info!(
+                                address = ?address,
+                                "no PVM equivalent found for EVM bytecode, skipping migration"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    });
 }
 
 fn select_evm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, '_>) {
@@ -441,7 +527,6 @@ fn select_evm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, 
     tracing::info!("switching to EVM");
     ctx.using_pvm = false;
 
-    // Migrate state from PVM back to EVM
     execute_with_externalities(|externalities| {
         externalities.execute_with(|| {
             let block_number = System::block_number();
@@ -463,15 +548,29 @@ fn select_evm(ctx: &mut PvmCheatcodeInspectorStrategyContext, data: Ecx<'_, '_, 
 
                 // Migrate bytecode for deployed contracts (skip test contract)
                 if test_contract != Some(address)
-                    && let Some(bytecode) = AccountInfo::<Runtime>::load_contract(&account_evm)
-                        .map(|info| hex::encode(info.code_hash))
-                        .and_then(|hash| {
-                            ctx.dual_compiled_contracts.find_by_resolc_bytecode_hash(hash)
-                        })
-                        .and_then(|(_, contract)| contract.evm_deployed_bytecode.as_bytes())
-                        .and_then(|bytes| Bytecode::new_raw_checked(bytes.clone()).ok())
+                    && let Some(info) = AccountInfo::<Runtime>::load_contract(&account_evm)
                 {
-                    data.journaled_state.set_code(address, bytecode);
+                    let hash = hex::encode(info.code_hash);
+                    if let Some((code_hash, bytecode)) = ctx
+                        .dual_compiled_contracts
+                        .find_by_resolc_bytecode_hash(hash)
+                        .and_then(|(_, contract)| {
+                            contract.evm_deployed_bytecode.as_bytes().map(|evm_bytecode| {
+                                (
+                                    contract.evm_bytecode_hash,
+                                    Bytecode::new_raw(evm_bytecode.clone()),
+                                )
+                            })
+                        })
+                    {
+                        account.info.code_hash = code_hash;
+                        account.info.code = Some(bytecode);
+                    } else {
+                        tracing::info!(
+                            address = ?address,
+                            "no EVM equivalent found for PVM bytecode, skipping migration"
+                        );
+                    }
                 }
             }
         })
@@ -542,9 +641,9 @@ impl foundry_cheatcodes::CheatcodeInspectorStrategyExt for PvmCheatcodeInspector
         let (res, _call_trace, prestate_trace) = execute_with_externalities(|externalities| {
             externalities.execute_with(|| {
                 trace::<Runtime, _, _>(|| {
-                    let origin = OriginFor::<Runtime>::signed(AccountId::to_fallback_account_id(
-                        &H160::from_slice(input.caller().as_slice()),
-                    ));
+                    // TODO: Find a way how to do it correctly
+                    // Use pallet-revive origin to bypass EIP-3607.
+                    let origin = OriginFor::<Runtime>::signed(Pallet::<Runtime>::account_id());
                     let evm_value = sp_core::U256::from_little_endian(&input.value().as_le_bytes());
 
                     let (gas_limit, storage_deposit_limit) =

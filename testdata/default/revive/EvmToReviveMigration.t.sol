@@ -80,7 +80,7 @@ contract EvmReviveMigrationTest is DSTest {
         assertEq(alice.balance, evmBalance, "Balance precision should be preserved in migration back to Revive");
     }
 
-    function testBytecodeMigration() public {
+    function testBytecodeMigrationToEvm() public {
         SimpleStorage storageContract = new SimpleStorage();
 
         // Mark the contract as persistent so it migrates
@@ -94,7 +94,25 @@ contract EvmReviveMigrationTest is DSTest {
         assertEq(storageContract.get(), 42);
 
         storageContract.set(100);
+        assertEq(storageContract.get(), 100);
+    }
 
+    function testBytecodeMigrationToRevive() public {
+        vm.pvm(false);
+        SimpleStorage storageContract = new SimpleStorage();
+
+        // Mark the contract as persistent so it migrates
+        vm.makePersistent(address(storageContract));
+
+        storageContract.set(42);
+        assertEq(storageContract.get(), 42);
+
+        vm.pvm(true);
+
+        // TODO: Enable after contract storage migration is on place
+        // assertEq(storageContract.get(), 42);
+
+        storageContract.set(100);
         assertEq(storageContract.get(), 100);
     }
 
