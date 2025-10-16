@@ -21,17 +21,7 @@ fn init_script_cmd(
     cmd.forge_fuse();
     cmd.set_current_dir(project_root);
 
-    cmd.args([
-        "script",
-        "-R",
-        "ds-test/=lib/",
-        "-R",
-        "cheats/=cheats/",
-        target_contract,
-        "--root",
-        project_root.to_str().unwrap(),
-        "-vvvvv",
-    ]);
+    cmd.args(["script", target_contract, "--root", project_root.to_str().unwrap(), "-vvvvv"]);
 
     if let Some(rpc_url) = endpoint {
         cmd.args(["--fork-url", rpc_url]);
@@ -127,9 +117,9 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::create_dir_all(current_dir.join("cheats"))?;
-        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("cheats/Vm.sol"))?;
-        fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
+        fs::create_dir_all(current_dir.join("utils"))?;
+        fs::copy(testdata.join("utils/Vm.sol"), current_dir.join("utils/Vm.sol"))?;
+        fs::copy(testdata.join("utils/DSTest.sol"), current_dir.join("utils/test.sol"))?;
         Ok(())
     }
 

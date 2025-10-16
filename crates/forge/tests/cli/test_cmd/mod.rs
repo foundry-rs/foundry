@@ -19,6 +19,7 @@ mod repros;
 mod spec;
 mod trace;
 
+// Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
