@@ -190,11 +190,11 @@ Ran 2 tests for test/Trace.t.sol:TraceTest
 Traces:
   [..] TraceTest::setUp()
     ├─ [..] TraceTest::create()
-    │   ├─ [..] → new Node 0@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [..] → new Node 0@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 1911 bytes of code
-    │   ├─ [0] VM::label(Node 0: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], "Node 0")
+    │   ├─ [0] VM::label(Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], "Node 0")
     │   │   └─ ← [Return]
-    │   └─ ← [Return] Node 0: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    │   └─ ← [Return] Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
     └─ ← [Stop]
 
   [..] TraceTest::testRecurseCall()
@@ -256,109 +256,109 @@ Traces:
 Traces:
   [..] TraceTest::setUp()
     ├─ [..] TraceTest::create()
-    │   ├─ [..] → new Node 0@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [..] → new Node 0@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 1911 bytes of code
-    │   ├─ [0] VM::label(Node 0: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], "Node 0")
+    │   ├─ [0] VM::label(Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], "Node 0")
     │   │   └─ ← [Return]
-    │   └─ ← [Return] Node 0: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    │   └─ ← [Return] Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
     └─ ← [Stop]
 
   [..] TraceTest::testRecurseCreate()
     ├─ [..] Node 0::recurseCreate(8, 0)
     │   ├─ [..] TraceTest::create()
-    │   │   ├─ [..] → new Node 1@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
+    │   │   ├─ [..] → new Node 1@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   │   ├─  storage changes:
     │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   ├─ [0] VM::label(Node 1: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9], "Node 1")
+    │   │   ├─ [0] VM::label(Node 1: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], "Node 1")
     │   │   │   └─ ← [Return]
     │   │   ├─  storage changes:
     │   │   │   @ 32: 1 → 2
-    │   │   └─ ← [Return] Node 1: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
+    │   │   └─ ← [Return] Node 1: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
     │   ├─ emit CreatedChild(childDepth: 1)
     │   ├─ [..] Node 1::recurseCreate(8, 1)
     │   │   ├─ [..] TraceTest::create()
-    │   │   │   ├─ [..] → new Node 2@0xc7183455a4C133Ae270771860664b6B7ec320bB1
+    │   │   │   ├─ [..] → new Node 2@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   │   │   ├─  storage changes:
     │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   ├─ [0] VM::label(Node 2: [0xc7183455a4C133Ae270771860664b6B7ec320bB1], "Node 2")
+    │   │   │   ├─ [0] VM::label(Node 2: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a], "Node 2")
     │   │   │   │   └─ ← [Return]
     │   │   │   ├─  storage changes:
     │   │   │   │   @ 32: 2 → 3
-    │   │   │   └─ ← [Return] Node 2: [0xc7183455a4C133Ae270771860664b6B7ec320bB1]
+    │   │   │   └─ ← [Return] Node 2: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     │   │   ├─ emit CreatedChild(childDepth: 2)
     │   │   ├─ [..] Node 2::recurseCreate(8, 2)
     │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   ├─ [..] → new Node 3@0xa0Cb889707d426A7A386870A03bc70d1b0697598
+    │   │   │   │   ├─ [..] → new Node 3@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   ├─ [0] VM::label(Node 3: [0xa0Cb889707d426A7A386870A03bc70d1b0697598], "Node 3")
+    │   │   │   │   ├─ [0] VM::label(Node 3: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9], "Node 3")
     │   │   │   │   │   └─ ← [Return]
     │   │   │   │   ├─  storage changes:
     │   │   │   │   │   @ 32: 3 → 4
-    │   │   │   │   └─ ← [Return] Node 3: [0xa0Cb889707d426A7A386870A03bc70d1b0697598]
+    │   │   │   │   └─ ← [Return] Node 3: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
     │   │   │   ├─ emit CreatedChild(childDepth: 3)
     │   │   │   ├─ [..] Node 3::recurseCreate(8, 3)
     │   │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   │   ├─ [..] → new Node 4@0x1d1499e622D69689cdf9004d05Ec547d650Ff211
+    │   │   │   │   │   ├─ [..] → new Node 4@0xc7183455a4C133Ae270771860664b6B7ec320bB1
     │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   │   ├─ [0] VM::label(Node 4: [0x1d1499e622D69689cdf9004d05Ec547d650Ff211], "Node 4")
+    │   │   │   │   │   ├─ [0] VM::label(Node 4: [0xc7183455a4C133Ae270771860664b6B7ec320bB1], "Node 4")
     │   │   │   │   │   │   └─ ← [Return]
     │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   @ 32: 4 → 5
-    │   │   │   │   │   └─ ← [Return] Node 4: [0x1d1499e622D69689cdf9004d05Ec547d650Ff211]
+    │   │   │   │   │   └─ ← [Return] Node 4: [0xc7183455a4C133Ae270771860664b6B7ec320bB1]
     │   │   │   │   ├─ emit CreatedChild(childDepth: 4)
     │   │   │   │   ├─ [..] Node 4::recurseCreate(8, 4)
     │   │   │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   │   │   ├─ [..] → new Node 5@0xA4AD4f68d0b91CFD19687c881e50f3A00242828c
+    │   │   │   │   │   │   ├─ [..] → new Node 5@0xa0Cb889707d426A7A386870A03bc70d1b0697598
     │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   │   │   ├─ [0] VM::label(Node 5: [0xA4AD4f68d0b91CFD19687c881e50f3A00242828c], "Node 5")
+    │   │   │   │   │   │   ├─ [0] VM::label(Node 5: [0xa0Cb889707d426A7A386870A03bc70d1b0697598], "Node 5")
     │   │   │   │   │   │   │   └─ ← [Return]
     │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   @ 32: 5 → 6
-    │   │   │   │   │   │   └─ ← [Return] Node 5: [0xA4AD4f68d0b91CFD19687c881e50f3A00242828c]
+    │   │   │   │   │   │   └─ ← [Return] Node 5: [0xa0Cb889707d426A7A386870A03bc70d1b0697598]
     │   │   │   │   │   ├─ emit CreatedChild(childDepth: 5)
     │   │   │   │   │   ├─ [..] Node 5::recurseCreate(8, 5)
     │   │   │   │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   │   │   │   ├─ [..] → new Node 6@0x03A6a84cD762D9707A21605b548aaaB891562aAb
+    │   │   │   │   │   │   │   ├─ [..] → new Node 6@0x1d1499e622D69689cdf9004d05Ec547d650Ff211
     │   │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   │   │   │   ├─ [0] VM::label(Node 6: [0x03A6a84cD762D9707A21605b548aaaB891562aAb], "Node 6")
+    │   │   │   │   │   │   │   ├─ [0] VM::label(Node 6: [0x1d1499e622D69689cdf9004d05Ec547d650Ff211], "Node 6")
     │   │   │   │   │   │   │   │   └─ ← [Return]
     │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   @ 32: 6 → 7
-    │   │   │   │   │   │   │   └─ ← [Return] Node 6: [0x03A6a84cD762D9707A21605b548aaaB891562aAb]
+    │   │   │   │   │   │   │   └─ ← [Return] Node 6: [0x1d1499e622D69689cdf9004d05Ec547d650Ff211]
     │   │   │   │   │   │   ├─ emit CreatedChild(childDepth: 6)
     │   │   │   │   │   │   ├─ [..] Node 6::recurseCreate(8, 6)
     │   │   │   │   │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   │   │   │   │   ├─ [..] → new Node 7@0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF
+    │   │   │   │   │   │   │   │   ├─ [..] → new Node 7@0xA4AD4f68d0b91CFD19687c881e50f3A00242828c
     │   │   │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   │   │   │   │   ├─ [0] VM::label(Node 7: [0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF], "Node 7")
+    │   │   │   │   │   │   │   │   ├─ [0] VM::label(Node 7: [0xA4AD4f68d0b91CFD19687c881e50f3A00242828c], "Node 7")
     │   │   │   │   │   │   │   │   │   └─ ← [Return]
     │   │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   │   @ 32: 7 → 8
-    │   │   │   │   │   │   │   │   └─ ← [Return] Node 7: [0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF]
+    │   │   │   │   │   │   │   │   └─ ← [Return] Node 7: [0xA4AD4f68d0b91CFD19687c881e50f3A00242828c]
     │   │   │   │   │   │   │   ├─ emit CreatedChild(childDepth: 7)
     │   │   │   │   │   │   │   ├─ [..] Node 7::recurseCreate(8, 7)
     │   │   │   │   │   │   │   │   ├─ [..] TraceTest::create()
-    │   │   │   │   │   │   │   │   │   ├─ [..] → new Node 8@0x15cF58144EF33af1e14b5208015d11F9143E27b9
+    │   │   │   │   │   │   │   │   │   ├─ [..] → new Node 8@0x03A6a84cD762D9707A21605b548aaaB891562aAb
     │   │   │   │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
     │   │   │   │   │   │   │   │   │   │   └─ ← [Return] 1911 bytes of code
-    │   │   │   │   │   │   │   │   │   ├─ [0] VM::label(Node 8: [0x15cF58144EF33af1e14b5208015d11F9143E27b9], "Node 8")
+    │   │   │   │   │   │   │   │   │   ├─ [0] VM::label(Node 8: [0x03A6a84cD762D9707A21605b548aaaB891562aAb], "Node 8")
     │   │   │   │   │   │   │   │   │   │   └─ ← [Return]
     │   │   │   │   │   │   │   │   │   ├─  storage changes:
     │   │   │   │   │   │   │   │   │   │   @ 32: 8 → 9
-    │   │   │   │   │   │   │   │   │   └─ ← [Return] Node 8: [0x15cF58144EF33af1e14b5208015d11F9143E27b9]
+    │   │   │   │   │   │   │   │   │   └─ ← [Return] Node 8: [0x03A6a84cD762D9707A21605b548aaaB891562aAb]
     │   │   │   │   │   │   │   │   ├─ emit CreatedChild(childDepth: 8)
     │   │   │   │   │   │   │   │   ├─ [..] Node 8::recurseCreate(8, 8)
     │   │   │   │   │   │   │   │   │   └─ ← [Return] 8
