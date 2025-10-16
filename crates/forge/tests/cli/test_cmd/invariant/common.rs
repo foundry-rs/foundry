@@ -621,3 +621,107 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+// Here we test that the fuzz engine can include a contract created during the fuzz
+// in its fuzz dictionary and eventually break the invariant.
+// Specifically, can Judas, a created contract from Jesus, break Jesus contract
+// by revealing his identity.
+forgetest_init!(
+    #[cfg_attr(windows, ignore = "for some reason there's different rng")]
+    invariant_inner_contract,
+    |prj, cmd| {
+        prj.wipe_contracts();
+        prj.update_config(|config| {
+            config.invariant.depth = 10;
+        });
+
+        prj.add_test(
+            "InvariantInnerContract.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract Jesus {
+    address fren;
+    bool public identity_revealed;
+
+    function create_fren() public {
+        fren = address(new Judas());
+    }
+
+    function kiss() public {
+        require(msg.sender == fren);
+        identity_revealed = true;
+    }
+}
+
+contract Judas {
+    Jesus jesus;
+
+    constructor() {
+        jesus = Jesus(msg.sender);
+    }
+
+    function betray() public {
+        jesus.kiss();
+    }
+}
+
+contract InvariantInnerContract is Test {
+    Jesus jesus;
+
+    function setUp() public {
+        jesus = new Jesus();
+    }
+
+    function invariantHideJesus() public {
+        require(jesus.identity_revealed() == false, "jesus betrayed");
+    }
+}
+"#,
+        );
+
+        assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
+[FAIL: jesus betrayed]
+	[SEQUENCE]
+ invariantHideJesus() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantInnerContract.t.sol:InvariantInnerContract
+[FAIL: jesus betrayed]
+	[SEQUENCE]
+ invariantHideJesus() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+
+        // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
+        prj.update_config(|config| {
+            config.fuzz.seed = Some(U256::from(119u32));
+        });
+        cmd.assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
+[FAIL: invariantHideJesus replay failure]
+	[Sequence] (original: 2, shrunk: 2)
+		sender=0x0000000000000000000000000000000000000635 addr=[test/InvariantInnerContract.t.sol:Jesus]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=create_fren() args=[]
+		sender=0x0000000000000000000000000000000000000253 addr=[test/InvariantInnerContract.t.sol:Judas]0x104fBc016F4bb334D775a19E8A6510109AC63E00 calldata=betray() args=[]
+ invariantHideJesus() (runs: 1, calls: 1, reverts: 1)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+    }
+);
