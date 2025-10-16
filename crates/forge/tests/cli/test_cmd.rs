@@ -4154,3 +4154,62 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/7277>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(can_run_isolate_with_cheatcodes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "TxGasPriceTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Example {
+    uint256 public gasPrice;
+
+    function saveTxGasPrice() public {
+        gasPrice = tx.gasprice;
+    }
+}
+
+contract ExampleTest is Test {
+    Example public example;
+
+    function setUp() public {
+        example = new Example();
+        vm.txGasPrice(10 gwei);
+    }
+
+    function test_SaveGasPrice() public {
+        example.saveTxGasPrice();
+        assertEq(example.gasPrice(), 10 gwei);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TxGasPriceTest.t.sol:ExampleTest
+[PASS] test_SaveGasPrice() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Should pass with isolate mode.
+    cmd.forge_fuse().args(["test", "--isolate"]).assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/TxGasPriceTest.t.sol:ExampleTest
+[PASS] test_SaveGasPrice() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});

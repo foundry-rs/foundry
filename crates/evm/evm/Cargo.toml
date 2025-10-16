@@ -44,6 +44,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_eip3607",
     "optional_block_gas_limit",
     "optional_no_base_fee",
+    "optional_balance_check",
     "arbitrary",
     "c-kzg",
 ] }
