@@ -25,6 +25,7 @@ contract Test {
 "#;
 
 forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
+    prj.wipe_contracts();
     prj.add_lib("SomeLib.sol", UNFORMATTED);
     cmd.args(["fmt", ".", "--check"]);
     cmd.assert_success();
