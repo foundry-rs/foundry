@@ -1145,3 +1145,58 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest_init!(invariant_excluded_senders, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantExcludedSenders.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InvariantSenders {
+    function checkSender() external {
+        require(msg.sender != 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, "sender cannot be cheatcode address");
+        require(msg.sender != 0x000000000000000000636F6e736F6c652e6c6f67, "sender cannot be console address");
+        require(msg.sender != 0x4e59b44847b379578588920cA78FbF26c0B4956C, "sender cannot be CREATE2 deployer");
+    }
+}
+
+contract InvariantExcludedSendersTest is Test {
+    InvariantSenders target;
+
+    function setUp() public {
+        target = new InvariantSenders();
+    }
+
+    function invariant_check_sender() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+ [FILE]:7:5:
+  |
+7 |     function checkSender() external {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 1 test for test/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest
+[PASS] invariant_check_sender() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
