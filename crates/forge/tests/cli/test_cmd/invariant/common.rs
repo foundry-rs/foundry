@@ -725,3 +725,84 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 "#]]);
     }
 );
+
+// https://github.com/foundry-rs/foundry/issues/7219
+forgetest!(invariant_preserve_state, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantPreserveState.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract Handler is Test {
+    function thisFunctionReverts() external {
+        if (block.number < 10) {} else {
+            revert();
+        }
+    }
+
+    function advanceTime(uint256 blocks) external {
+        blocks = blocks % 10;
+        vm.roll(block.number + blocks);
+        vm.warp(block.timestamp + blocks * 12);
+    }
+}
+
+contract InvariantPreserveState is Test {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = handler.thisFunctionReverts.selector;
+        selectors[1] = handler.advanceTime.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    function invariant_preserve_state() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantPreserveState.t.sol:InvariantPreserveState
+[FAIL: EvmError: Revert]
+	[SEQUENCE]
+ invariant_preserve_state() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantPreserveState.t.sol:InvariantPreserveState
+[FAIL: EvmError: Revert]
+	[SEQUENCE]
+ invariant_preserve_state() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
