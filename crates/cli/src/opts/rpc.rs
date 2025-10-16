@@ -63,13 +63,11 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.flashbots, self.common.url.as_deref(), config) {
-            (true, ..) => Some(Cow::Borrowed(FLASHBOTS_URL)),
-            (false, Some(url), _) => Some(Cow::Borrowed(url)),
-            (false, None, Some(config)) => config.get_rpc_url().transpose()?,
-            (false, None, None) => None,
-        };
-        Ok(url)
+        if self.flashbots {
+            Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
+        } else {
+            self.common.url(config)
+        }
     }
 
     /// Returns the JWT secret.
