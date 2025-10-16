@@ -1225,4 +1225,50 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
 "#]]);
     }
 );
+
+forgetest_init!(invariant_shrink_fail_on_revert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.fail_on_revert = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 200;
+    });
+
+    prj.add_test(
+        "InvariantShrinkFailOnRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ShrinkFailOnRevert {
+    uint256 cond;
+
+    function work(uint256 x) public {
+        if (x % 2 != 0 && x < 9000) {
+            cond++;
+        }
+        require(cond < 10, "condition met");
+    }
+}
+
+contract ShrinkFailOnRevertTest is Test {
+    ShrinkFailOnRevert target;
+
+    function setUp() public {
+        target = new ShrinkFailOnRevert();
+    }
+
+    function invariant_shrink_fail_on_revert() public view {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
+[FAIL: condition met]
+	[Sequence] (original: [..], shrunk: 10)
+...
+"#]]);
+});
 });
