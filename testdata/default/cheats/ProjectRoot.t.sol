@@ -12,8 +12,7 @@ contract ProjectRootTest is Test {
         if (bytes(manifestDir).length == 0) {
             vm.skip(true, "CARGO_MANIFEST_DIR environment variable is not set");
         }
-        string memory manifestDirNormalized = vm.replace(manifestDir, "\\", "/");
-        manifestDirBytes = bytes(manifestDirNormalized);
+        manifestDirBytes = bytes(manifestDir);
         
         for (uint256 i = 0; i < 7; i++) {
             manifestDirBytes.pop();
@@ -25,6 +24,10 @@ contract ProjectRootTest is Test {
         }
         bytes memory expectedRootDir = abi.encodePacked(manifestDirBytes, "ata");
 
-        assertEq(vm.projectRoot(), string(expectedRootDir));
+        assertEq(normalizePath(vm.projectRoot()), normalizePath(string(expectedRootDir)));
+    }
+
+    function normalizePath(string memory path) internal pure returns (string memory memory) {
+        return vm.replace(path, "\\", "/");
     }
 }
