@@ -283,7 +283,7 @@ impl FilledTransactionsState {
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = tx.rpc.to_owned();
-            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
+            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy, &self.script_config.config).await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.

@@ -838,7 +838,7 @@ async fn test_reset_fork_on_new_blocks() {
 
     let anvil_provider = handle.http_provider();
     let endpoint = next_http_rpc_endpoint();
-    let provider = Arc::new(get_http_provider(&endpoint));
+    let provider = Arc::new(get_http_provider(&endpoint, false));
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 

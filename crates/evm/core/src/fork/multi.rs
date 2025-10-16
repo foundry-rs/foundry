@@ -544,6 +544,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
             .maybe_initial_backoff(fork.evm_opts.fork_retry_backoff)
             .maybe_headers(fork.evm_opts.fork_headers.clone())
             .compute_units_per_second(fork.evm_opts.get_compute_units_per_second())
+            .accept_invalid_certs(fork.evm_opts.eth_rpc_accept_invalid_certs)
             .build()?,
     );
 
