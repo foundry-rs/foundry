@@ -93,7 +93,7 @@ contract Yul {
             // empty bytes
             mstore(0xe0, 0x80)
 
-            let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
+            let s2 := call(sub(gas(), 5_000), pair, 0, 0x7c, 0xa4, 0, 0)
             if iszero(s2) {
                 revert(3, 3)
             }
