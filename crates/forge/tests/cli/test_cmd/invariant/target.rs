@@ -1313,3 +1313,75 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest!(invariant_handler_failure, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+    });
+
+    prj.add_test(
+        "InvariantHandlerFailure.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract Handler is Test {
+    function doSomething() public {
+        require(false, "failed on revert");
+    }
+}
+
+contract InvariantHandlerFailure is Test {
+    bytes4[] internal selectors;
+
+    Handler handler;
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.doSomething.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function statefulFuzz_BrokenInvariant() public {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantHandlerFailure.t.sol:InvariantHandlerFailure
+[FAIL: failed on revert]
+	[SEQUENCE]
+ statefulFuzz_BrokenInvariant() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantHandlerFailure.t.sol:InvariantHandlerFailure
+[FAIL: failed on revert]
+	[SEQUENCE]
+ statefulFuzz_BrokenInvariant() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
