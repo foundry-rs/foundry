@@ -212,31 +212,13 @@ contract Issue2851Test is Test {
 ...
 Ran 1 test for test/Issue2851.t.sol:Issue2851Test
 [FAIL: assertion failed: 0 != 1]
-	[Sequence] (original: 148, shrunk: 1)
-		sender=0x0000000000000000000000000000000000000561 addr=[test/Issue2851.t.sol:Backdoor]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=backdoor(uint256) args=[6912213124124532 [6.912e15]]
- invariantNotZero() (runs: 0, calls: 0, reverts: 1)
-
-╭----------+----------+-------+---------+----------╮
-| Contract | Selector | Calls | Reverts | Discards |
-+==================================================+
-| Backdoor | backdoor | 149   | 1       | 0        |
-╰----------+----------+-------+---------+----------╯
-
+...
+ invariantNotZero() ([..])
+...
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/Issue2851.t.sol:Issue2851Test
-[FAIL: assertion failed: 0 != 1]
-	[Sequence] (original: 148, shrunk: 1)
-		sender=0x0000000000000000000000000000000000000561 addr=[test/Issue2851.t.sol:Backdoor]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=backdoor(uint256) args=[6912213124124532 [6.912e15]]
- invariantNotZero() (runs: 0, calls: 0, reverts: 1)
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
-
+...
 "#]]);
 });
 
