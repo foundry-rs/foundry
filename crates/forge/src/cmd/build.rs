@@ -185,13 +185,20 @@ impl BuildArgs {
                 return Ok(());
             }
 
-            let compiler = output.parser_mut().solc_mut().compiler_mut();
+            // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
+            // compiler, we should reuse the parser from the project output.
+            let mut compiler = solar::sema::Compiler::new(
+                solar::interface::Session::builder().with_stderr_emitter().build(),
+            );
+
+            // Load the solar-compatible sources to the pcx before linting
             compiler.enter_mut(|compiler| {
-                compiler.drop_asts();
                 let mut pcx = compiler.parse();
                 configure_pcx_from_solc(&mut pcx, &config.project_paths(), &solar_sources, true);
+                pcx.set_resolve_imports(true);
+                pcx.parse();
             });
-            linter.lint(&input_files, config.deny, compiler)?;
+            linter.lint(&input_files, config.deny, &mut compiler)?;
         }
 
         Ok(())

@@ -48,6 +48,10 @@ import { ContractWithLints } from "./ContractWithLints.sol";
 
 import { _PascalCaseInfo } from "./ContractWithLints.sol";
 import "./ContractWithLints.sol";
+
+contract Dummy {
+    bool foo;
+}
 "#;
 
 const COUNTER_A: &str = r#"
