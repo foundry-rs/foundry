@@ -202,6 +202,7 @@ fmt_tests! {
     PragmaDirective,
     Repros,
     ReprosCalls,
+    ReprosFunctionDefs,
     ReturnStatement,
     RevertNamedArgsStatement,
     RevertStatement,
