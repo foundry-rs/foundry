@@ -55,3 +55,5 @@ contract AnotherContract is
     Adminable, /* 1 inherited components */
     UUPSUpgradeable /* 1 inherited component */
 {}
+
+contract WithLayoutAndBase layout at 69 is Base {}
