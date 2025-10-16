@@ -732,7 +732,7 @@ contract DynamicTargetContract is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
 [FAIL: wrong target selector called]

@@ -71,16 +71,16 @@ contract LegacyAssertionsTest {
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
-[FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 2 tests for test/LegacyAssertions.t.sol:LegacyAssertionsTest
 [PASS] testFlagNotSetSuccess() ([GAS])
 [FAIL] testFlagSetFailure() ([GAS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/LegacyAssertions.t.sol:NoAssertionsRevertTest
+[FAIL: assertion failed: 1 != 2] testMultipleAssertFailures() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 1 tests passed, 2 failed, 0 skipped (3 total tests)
 
