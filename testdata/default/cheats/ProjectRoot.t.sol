@@ -8,7 +8,10 @@ contract ProjectRootTest is Test {
 
     function testProjectRoot() public {
         // .../crates/forge
-        string memory manifestDir = vm.envString("CARGO_MANIFEST_DIR");
+        string memory manifestDir = vm.envOr("CARGO_MANIFEST_DIR", string(""));
+        if (bytes(manifestDir).length == 0) {
+            vm.skip(true, "CARGO_MANIFEST_DIR environment variable is not set");
+        }
         string memory manifestDirNormalized = vm.replace(manifestDir, "\\", "/");
         manifestDirBytes = bytes(manifestDirNormalized);
         
