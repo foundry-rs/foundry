@@ -1163,4 +1163,66 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(
+    #[cfg_attr(windows, ignore = "for some reason there's different rng")]
+    invariant_shrink_big_sequence,
+    |prj, cmd| {
+        prj.wipe_contracts();
+        prj.update_config(|config| {
+            config.fuzz.seed = Some(U256::from(119u32));
+            config.invariant.runs = 1;
+            config.invariant.depth = 1000;
+        });
+
+        prj.add_test(
+            "InvariantShrinkBigSequence.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract ShrinkBigSequence {
+    uint256 cond;
+
+    function work(uint256 x) public {
+        if (x % 2 != 0 && x < 9000) {
+            cond++;
+        }
+    }
+
+    function checkCond() public view {
+        require(cond < 77, "condition met");
+    }
+}
+
+contract ShrinkBigSequenceTest is Test {
+    ShrinkBigSequence target;
+
+    function setUp() public {
+        target = new ShrinkBigSequence();
+    }
+
+    function invariant_shrink_big_sequence() public view {
+        target.checkCond();
+    }
+}
+"#,
+        );
+
+        // ensure shrinks to same sequence of 77
+        cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
+[FAIL: condition met]
+	[Sequence] (original: [..], shrunk: 77)
+...
+"#]]);
+        cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
+[FAIL: invariant_shrink_big_sequence replay failure]
+	[Sequence] (original: [..], shrunk: 77)
+...
+"#]]);
+    }
+);
 });
