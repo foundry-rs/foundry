@@ -63,9 +63,9 @@ pub enum FsPathError {
     #[error("failed to write to json file: {path:?}: {source}")]
     WriteJson { source: serde_json::Error, path: PathBuf },
 
-    #[error("failed to lock file {path:?} for {kind}s: {source}", kind = kind.context())]
+    #[error("failed to lock file {path:?} for {kind}: {source}", kind = kind.context())]
     Lock { kind: FsOp, source: io::Error, path: PathBuf },
-    #[error("failed to unlock file {path:?} for {kind}s: {source}", kind = kind.context())]
+    #[error("failed to unlock file {path:?} for {kind}: {source}", kind = kind.context())]
     Unlock { kind: FsOp, source: io::Error, path: PathBuf },
 }
 
