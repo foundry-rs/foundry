@@ -806,3 +806,95 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+// add code so contract is accounted as valid sender
+// see https://github.com/foundry-rs/foundry/issues/4245
+forgetest!(invariant_reentrancy, |prj, cmd| {
+    prj.insert_utils();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.invariant.call_override = true;
+    });
+
+    prj.add_test(
+        "InvariantReentrancy.t.sol",
+        r#"
+import "./utils/Test.sol";
+
+contract Malicious {
+    function world() public {
+        payable(msg.sender).call("");
+    }
+}
+
+contract Vulnerable {
+    bool public open_door = false;
+    bool public stolen = false;
+    Malicious mal;
+
+    constructor(address _mal) {
+        mal = Malicious(_mal);
+    }
+
+    function hello() public {
+        open_door = true;
+        mal.world();
+        open_door = false;
+    }
+
+    function backdoor() public {
+        require(open_door, "");
+        stolen = true;
+    }
+}
+
+contract InvariantReentrancy is Test {
+    Vulnerable vuln;
+    Malicious mal;
+
+    function setUp() public {
+        mal = new Malicious();
+        vuln = new Vulnerable(address(mal));
+    }
+
+    // do not include `mal` in identified contracts
+    // see https://github.com/foundry-rs/foundry/issues/4245
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(vuln);
+        return targets;
+    }
+
+    function invariantNotStolen() public {
+        require(vuln.stolen() == false, "stolen");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReentrancy.t.sol:InvariantReentrancy
+[FAIL: stolen]
+	[SEQUENCE]
+ invariantNotStolen() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReentrancy.t.sol:InvariantReentrancy
+[FAIL: stolen]
+	[SEQUENCE]
+ invariantNotStolen() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
