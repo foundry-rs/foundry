@@ -2063,6 +2063,7 @@ impl<'ast> State<'_, 'ast> {
         if let Some((first, other)) = clauses.split_first() {
             // Print the 'try' clause
             let ast::TryCatchClause { args, block, span: try_span, .. } = first;
+            self.cbox(0);
             self.ibox(0);
             self.print_word("try ");
             self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
@@ -2079,12 +2080,22 @@ impl<'ast> State<'_, 'ast> {
 
             if !args.is_empty() {
                 self.print_word("returns ");
-                self.print_parameter_list(
+                self.print_word("(");
+                self.zerobreak();
+                self.end();
+                let span = args.span.with_hi(block.span.lo());
+                self.commasep(
                     args,
-                    args.span.with_hi(block.span.lo()),
-                    ListFormat::compact(),
+                    span.lo(),
+                    span.hi(),
+                    |fmt, var| fmt.print_var(var, false),
+                    get_span!(),
+                    ListFormat::compact().no_delimiters(),
                 );
+                self.print_word(")");
                 self.nbsp();
+            } else {
+                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
