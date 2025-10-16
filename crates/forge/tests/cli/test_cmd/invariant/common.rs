@@ -993,3 +993,120 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
+
+forgetest_init!(invariant_scrape_values, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+    });
+
+    prj.add_test(
+        "InvariantScrapeValues.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FindFromReturnValue {
+    bool public found = false;
+
+    function seed() public returns (int256) {
+        int256 mystery = 13337;
+        return (1337 + mystery);
+    }
+
+    function find(int256 i) public {
+        int256 mystery = 13337;
+        if (i == 1337 + mystery) {
+            found = true;
+        }
+    }
+}
+
+contract FindFromReturnValueTest is Test {
+    FindFromReturnValue target;
+
+    function setUp() public {
+        target = new FindFromReturnValue();
+    }
+
+    /// forge-config: default.invariant.runs = 50
+    /// forge-config: default.invariant.depth = 300
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_value_not_found() public view {
+        require(!target.found(), "value from return found");
+    }
+}
+
+contract FindFromLogValue {
+    event FindFromLog(int256 indexed mystery, bytes32 rand);
+
+    bool public found = false;
+
+    function seed() public {
+        int256 mystery = 13337;
+        emit FindFromLog(1337 + mystery, keccak256(abi.encodePacked("mystery")));
+    }
+
+    function find(int256 i) public {
+        int256 mystery = 13337;
+        if (i == 1337 + mystery) {
+            found = true;
+        }
+    }
+}
+
+contract FindFromLogValueTest is Test {
+    FindFromLogValue target;
+
+    function setUp() public {
+        target = new FindFromLogValue();
+    }
+
+    /// forge-config: default.invariant.runs = 50
+    /// forge-config: default.invariant.depth = 300
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_value_not_found() public view {
+        require(!target.found(), "value from logs found");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
+[FAIL: value from return found]
+	[SEQUENCE]
+ invariant_value_not_found() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
+[FAIL: value from logs found]
+	[SEQUENCE]
+ invariant_value_not_found() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantScrapeValues.t.sol:FindFromLogValueTest
+[FAIL: value from logs found]
+	[SEQUENCE]
+ invariant_value_not_found() ([RUNS])
+
+Encountered 1 failing test in test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
+[FAIL: value from return found]
+	[SEQUENCE]
+ invariant_value_not_found() ([RUNS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
+});
