@@ -864,3 +864,85 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
+
+forgetest_init!(invariant_assume, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        // Should not treat vm.assume as revert.
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantAssume.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Handler is Test {
+    function doSomething(uint256 param) public {
+        vm.assume(param == 0);
+    }
+}
+
+contract InvariantAssume is Test {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function invariant_dummy() public {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:7:5:
+  |
+7 |     function doSomething(uint256 param) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
+[PASS] invariant_dummy() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test that max_assume_rejects is respected.
+    prj.update_config(|config| {
+        config.invariant.max_assume_rejects = 1;
+    });
+
+    assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
+[FAIL: `vm.assume` rejected too many inputs (1 allowed)] invariant_dummy() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantAssume.t.sol:InvariantAssume
+[FAIL: `vm.assume` rejected too many inputs (1 allowed)] invariant_dummy() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
