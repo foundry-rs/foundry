@@ -23,6 +23,7 @@ use foundry_evm::{
     Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
     opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
 };
+use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
 use semver::{BuildMetadata, Version};
@@ -331,14 +332,14 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, config: NetworkConfigs) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block, config);
 }
 
 pub fn deploy_contract(
