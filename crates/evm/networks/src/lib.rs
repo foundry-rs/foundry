@@ -14,7 +14,6 @@ use alloy_primitives::{Address, map::AddressHashMap};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-// use alloy_provider::{Network, network::BlockResponse};
 
 pub mod celo;
 
