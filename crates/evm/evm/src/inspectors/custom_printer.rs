@@ -62,7 +62,7 @@ where
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
-        self.gas_inspector.step_end(&mut interpreter.gas);
+        self.gas_inspector.step_end(&interpreter.gas);
     }
 
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {

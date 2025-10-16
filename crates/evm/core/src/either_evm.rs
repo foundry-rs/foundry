@@ -106,6 +106,7 @@ where
     type Inspector = I;
     type Precompiles = P;
     type Spec = SpecId;
+    type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
         match self {
