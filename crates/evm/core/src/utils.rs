@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
+use foundry_evm_networks::NetworkConfigs;
 use revm::primitives::{
     eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     hardfork::SpecId,
@@ -30,6 +31,7 @@ pub fn cold_path() {
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     env: EnvMut<'_>,
     block: &N::BlockResponse,
+    configs: NetworkConfigs,
 ) {
     use NamedChain::*;
 
@@ -76,6 +78,11 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
             }
             _ => {}
         }
+    }
+
+    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+        // <https://github.com/foundry-rs/foundry/issues/4232>
+        env.block.prevrandao = Some(B256::random());
     }
 
     // if difficulty is `0` we assume it's past merge

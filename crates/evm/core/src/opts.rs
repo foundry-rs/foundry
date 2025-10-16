@@ -139,6 +139,7 @@ impl EvmOpts {
             self.sender,
             self.disable_block_gas_limit,
             self.enable_tx_gas_limit,
+            self.networks,
         )
         .await
         .wrap_err_with(|| {
