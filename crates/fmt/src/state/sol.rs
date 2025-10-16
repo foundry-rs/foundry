@@ -848,14 +848,20 @@ impl<'ast> State<'_, 'ast> {
                 self.s.ibox(self.ind);
                 self.print_expr(init);
                 self.end();
-            } else if is_binary_expr(&init.kind) {
-                if !self.is_bol_or_only_ind() {
-                    self.print_sep_unhandled(Separator::Space);
-                }
-                if matches!(ty.kind, ast::TypeKind::Elementary(..) | ast::TypeKind::Mapping(..)) {
+            } else if let ast::ExprKind::Binary(_, op, _) = &init.kind {
+                if self.estimate_lhs_size(&init, &op) + pre_init_size > init_space_left {
+                    if !self.is_bol_or_only_ind() {
+                        self.print_sep_unhandled(Separator::Space);
+                    }
                     self.s.offset(self.ind);
+                    self.s.ibox(self.ind);
+                    self.print_expr(init);
+                    self.end();
+                } else {
+                    self.print_sep(Separator::Nbsp);
+                    self.neverbreak();
+                    self.print_expr(init);
                 }
-                self.print_expr(init);
             } else {
                 let callee_doesnt_fit = if let ast::ExprKind::Call(call_expr, ..) = &init.kind {
                     let callee_size = get_callee_head_size(call_expr);
@@ -2503,6 +2509,15 @@ impl<'ast> State<'_, 'ast> {
 
     fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
         self.estimate_header_params_size(header) <= self.space_left()
+    }
+
+    fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, _) if op.kind.group() == parent_op.kind.group() => {
+                self.estimate_lhs_size(&lhs, op)
+            }
+            _ => self.estimate_size(expr.span),
+        }
     }
 
     fn has_comments_between_elements<I>(&self, limits: Span, elements: I) -> bool
