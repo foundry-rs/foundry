@@ -7,7 +7,11 @@ contract ProjectRootTest is Test {
     bytes public manifestDirBytes;
 
     function testProjectRoot() public {
-        manifestDirBytes = bytes(vm.envString("CARGO_MANIFEST_DIR"));
+        // .../crates/forge
+        string memory manifestDir = vm.envString("CARGO_MANIFEST_DIR");
+        string memory manifestDirNormalized = vm.replace(manifestDir, "\\", "/");
+        manifestDirBytes = bytes(manifestDirNormalized);
+        
         for (uint256 i = 0; i < 7; i++) {
             manifestDirBytes.pop();
         }
