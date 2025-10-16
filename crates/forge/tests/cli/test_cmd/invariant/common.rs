@@ -708,19 +708,27 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
         prj.update_config(|config| {
             config.fuzz.seed = Some(U256::from(119u32));
+            // Disable persisted failures for rerunning the test.
+            config.invariant.failure_persist_dir = Some(
+                config
+                    .invariant
+                    .failure_persist_dir
+                    .as_ref()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("persistence2"),
+            );
         });
         cmd.assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
-[FAIL: invariantHideJesus replay failure]
-	[Sequence] (original: [..], shrunk: 2)
+[FAIL: jesus betrayed]
+	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() ([..])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+ invariantHideJesus() (runs: 0, calls: 0, reverts: 1)
 ...
 "#]]);
     }
