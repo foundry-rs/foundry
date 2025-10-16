@@ -1110,3 +1110,57 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
 });
+
+forgetest_init!(invariant_sequence_no_reverts, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.depth = 15;
+        config.invariant.fail_on_revert = false;
+        // Use original counterexample to test sequence len.
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "InvariantSequenceNoReverts.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SequenceNoReverts {
+    uint256 public count;
+
+    function work(uint256 x) public {
+        require(x % 2 != 0);
+        count++;
+    }
+}
+
+contract SequenceNoRevertsTest is Test {
+    SequenceNoReverts target;
+
+    function setUp() public {
+        target = new SequenceNoReverts();
+    }
+
+    function invariant_no_reverts() public view {
+        require(target.count() < 10, "condition met");
+    }
+}
+"#,
+    );
+
+    // ensure original counterexample len is 10 (even without shrinking)
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantSequenceNoReverts.t.sol:SequenceNoRevertsTest
+[FAIL: condition met]
+	[Sequence] (original: 10, shrunk: 10)
+...
+ invariant_no_reverts() ([..])
+...
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
+});
