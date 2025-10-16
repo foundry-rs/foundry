@@ -24,6 +24,15 @@ contract Test {
 }
 "#;
 
+forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
+    prj.add_lib("SomeLib.sol", UNFORMATTED);
+    cmd.args(["fmt", ".", "--check"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["fmt", "lib/SomeLib.sol", "--check"]);
+    cmd.assert_failure();
+});
+
 // Test that fmt can format a simple contract file
 forgetest_init!(fmt_file, |prj, cmd| {
     prj.add_raw_source("FmtTest.sol", UNFORMATTED);
