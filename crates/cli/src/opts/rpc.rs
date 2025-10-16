@@ -82,7 +82,7 @@ impl RpcOpts {
 
     pub fn dict(&self) -> Dict {
         let mut dict = self.common.dict();
-        
+
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
@@ -95,7 +95,7 @@ impl RpcOpts {
         if self.no_rpc_rate_limit {
             dict.insert("no_rpc_rate_limit".into(), self.no_rpc_rate_limit.into());
         }
-        
+
         // Flashbots URL is handled in the url() method, not in dict()
         dict
     }
