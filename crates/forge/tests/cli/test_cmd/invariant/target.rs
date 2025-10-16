@@ -4,7 +4,7 @@ forgetest!(filters, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
-        config.invariant.runs = 10;
+        config.invariant.runs = 50;
         config.invariant.depth = 10;
     });
 
@@ -666,6 +666,7 @@ forgetest!(fuzzed_selected_targets, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
+        config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
     });
 
