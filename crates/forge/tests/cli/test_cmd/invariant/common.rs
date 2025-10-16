@@ -714,10 +714,10 @@ No files changed, compilation skipped
 
 Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 [FAIL: invariantHideJesus replay failure]
-	[Sequence] (original: 2, shrunk: 2)
-		sender=0x0000000000000000000000000000000000000635 addr=[test/InvariantInnerContract.t.sol:Jesus]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=create_fren() args=[]
-		sender=0x0000000000000000000000000000000000000253 addr=[test/InvariantInnerContract.t.sol:Judas]0x104fBc016F4bb334D775a19E8A6510109AC63E00 calldata=betray() args=[]
- invariantHideJesus() (runs: 1, calls: 1, reverts: 1)
+	[Sequence] (original: [..], shrunk: 2)
+		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
+		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
+ invariantHideJesus() ([..])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
