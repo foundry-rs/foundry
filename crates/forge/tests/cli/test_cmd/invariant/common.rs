@@ -1271,4 +1271,63 @@ Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
 ...
 "#]]);
 });
+
+forgetest_init!(invariant_shrink_with_assert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 15;
+    });
+
+    prj.add_test(
+        "InvariantShrinkWithAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    function decrement() public {
+        number--;
+    }
+}
+
+contract InvariantShrinkWithAssert is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_with_assert() public {
+        assertTrue(counter.number() < 2, "wrong counter assert");
+    }
+
+    function invariant_with_require() public {
+        require(counter.number() < 2, "wrong counter require");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
+[FAIL: wrong counter assert]
+	[Sequence] (original: 2, shrunk: 2)
+...
+ invariant_with_assert() ([..])
+...
+[FAIL: wrong counter require]
+	[Sequence] (original: 2, shrunk: 2)
+...
+ invariant_with_require() ([..])
+...
+"#]]);
+});
 });
