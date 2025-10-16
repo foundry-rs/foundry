@@ -308,7 +308,7 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     // Assert that with verbose output the json output includes the traces
     cmd.args(["test", "-vvv", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json": Json]);
+        .stdout_eq(file!["../../fixtures/SimpleContractTestVerbose.json": Json]);
 });
 
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
@@ -320,7 +320,7 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     // Assert that without verbose output the json output does not include the traces
     cmd.args(["test", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json": Json]);
+        .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
@@ -2967,7 +2967,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 forgetest_init!(colored_traces, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
+        .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
 });
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
