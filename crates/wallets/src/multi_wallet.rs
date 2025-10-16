@@ -534,6 +534,7 @@ mod tests {
             ("ledger", "--mnemonic-indexes", 1),
             ("trezor", "--mnemonic-indexes", 2),
             ("aws", "--mnemonic-indexes", 10),
+            ("turnkey", "--mnemonic-indexes", 11),
         ];
 
         for test_case in wallet_options {
@@ -548,6 +549,7 @@ mod tests {
                 "ledger" => assert!(args.ledger),
                 "trezor" => assert!(args.trezor),
                 "aws" => assert!(args.aws),
+                "turnkey" => assert!(args.turnkey),
                 _ => panic!("Should have matched one of the previous wallet options"),
             }
 
