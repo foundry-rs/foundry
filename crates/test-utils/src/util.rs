@@ -1,4 +1,4 @@
-use crate::init_tracing;
+use crate::{init_tracing, rpc::rpc_endpoints};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, Project, ProjectCompileOutput,
@@ -646,6 +646,13 @@ impl TestProject {
     pub fn write_config(&self, config: Config) {
         let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
+    }
+
+    /// Writes [`rpc_endpoints`] to the project's config.
+    pub fn add_rpc_endpoints(&self) {
+        self.update_config(|config| {
+            config.rpc_endpoints = rpc_endpoints();
+        });
     }
 
     /// Adds a source file to the project.

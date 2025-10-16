@@ -898,3 +898,98 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest_init!(invariant_roll_fork, |prj, cmd| {
+    prj.add_rpc_endpoints();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+    });
+
+    prj.add_test(
+        "InvariantRollFork.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256 supply);
+}
+
+contract RollForkHandler is Test {
+    uint256 public totalSupply;
+
+    function work() external {
+        vm.rollFork(block.number + 1);
+        totalSupply = IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F).totalSupply();
+    }
+}
+
+contract InvariantRollForkBlockTest is Test {
+    RollForkHandler forkHandler;
+
+    function setUp() public {
+        vm.createSelectFork("mainnet", 19812632);
+        forkHandler = new RollForkHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_fork_handler_block() public {
+        require(block.number < 19812634, "too many blocks mined");
+    }
+}
+
+contract InvariantRollForkStateTest is Test {
+    RollForkHandler forkHandler;
+
+    function setUp() public {
+        vm.createSelectFork("mainnet", 19812632);
+        forkHandler = new RollForkHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    function invariant_fork_handler_state() public {
+        require(forkHandler.totalSupply() < 3254378807384273078310283461, "wrong supply");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
+	[SEQUENCE]
+ invariant_fork_handler_state() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
+[FAIL: too many blocks mined]
+	[SEQUENCE]
+ invariant_fork_handler_block() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
+[FAIL: too many blocks mined]
+	[SEQUENCE]
+ invariant_fork_handler_block() ([RUNS])
+
+Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
+	[SEQUENCE]
+ invariant_fork_handler_state() ([RUNS])
+
+Encountered a total of 2 failing tests, 2 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
+});
