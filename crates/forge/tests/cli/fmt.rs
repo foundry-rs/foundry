@@ -26,7 +26,10 @@ contract Test {
 
 forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
     prj.wipe_contracts();
+    prj.update_config(|config| config.fmt.ignore = vec!["src/ignore/".to_string()]);
+
     prj.add_lib("SomeLib.sol", UNFORMATTED);
+    prj.add_raw_source("ignore/IgnoredContract.sol", UNFORMATTED);
     cmd.args(["fmt", ".", "--check"]);
     cmd.assert_success();
 
