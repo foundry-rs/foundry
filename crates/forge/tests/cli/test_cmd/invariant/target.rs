@@ -763,3 +763,104 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest!(invariant_after_invariant, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_ds_test();
+
+    prj.add_test(
+        "InvariantAfterInvariant.t.sol",
+        r#"
+import { DSTest as Test } from "src/test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract AfterInvariantHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantAfterInvariantTest is Test {
+    AfterInvariantHandler handler;
+
+    function setUp() public {
+        handler = new AfterInvariantHandler();
+    }
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.inc.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    function afterInvariant() public {
+        require(handler.count() < 10, "afterInvariant failure");
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 11
+    function invariant_after_invariant_failure() public view {
+        require(handler.count() < 20, "invariant after invariant failure");
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 11
+    function invariant_failure() public view {
+        require(handler.count() < 9, "invariant failure");
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 5
+    function invariant_success() public view {
+        require(handler.count() < 11, "invariant should not fail");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/InvariantAfterInvariant.t.sol:InvariantAfterInvariantTest
+[FAIL: afterInvariant failure]
+	[SEQUENCE]
+ invariant_after_invariant_failure() ([RUNS])
+
+[STATS]
+
+[FAIL: invariant failure]
+	[SEQUENCE]
+ invariant_failure() ([RUNS])
+
+[STATS]
+
+[PASS] invariant_success() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 2 failed, 0 skipped (3 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/InvariantAfterInvariant.t.sol:InvariantAfterInvariantTest
+[FAIL: afterInvariant failure]
+	[SEQUENCE]
+ invariant_after_invariant_failure() ([RUNS])
+[FAIL: invariant failure]
+	[SEQUENCE]
+ invariant_failure() ([RUNS])
+
+Encountered a total of 2 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]);
+});
