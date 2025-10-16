@@ -27,7 +27,7 @@ contract ProjectRootTest is Test {
         assertEq(normalizePath(vm.projectRoot()), normalizePath(string(expectedRootDir)));
     }
 
-    function normalizePath(string memory path) internal pure returns (string memory memory) {
+    function normalizePath(string memory path) internal pure returns (string memory) {
         return vm.replace(path, "\\", "/");
     }
 }
