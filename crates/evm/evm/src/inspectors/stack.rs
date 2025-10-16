@@ -1075,6 +1075,26 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
+
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        call_inspectors!(
+            [
+                &mut self.tracer,
+                &mut self.printer,
+                &mut self.cheatcodes,
+                &mut self.log_collector,
+                &mut self.line_coverage,
+                &mut self.edge_coverage,
+                &mut self.fuzzer,
+                &mut self.script_execution_inspector,
+                &mut self.chisel_state,
+                &mut self.revert_diag,
+            ],
+            |inspector| Inspector::<EthEvmContext<&mut dyn DatabaseExt>>::selfdestruct(
+                inspector, contract, target, value,
+            ),
+        );
+    }
 }
 
 impl InspectorExt for InspectorStackRefMut<'_> {
