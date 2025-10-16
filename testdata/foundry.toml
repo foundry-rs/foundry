@@ -46,7 +46,7 @@ ignore = ["cheats/Vm.sol"]
 [lint]
 lint_on_build = false
 
-# These are set in .env when running through `cargo (nex)test`.
+# These are set in .env, which is populated when running through `cargo (nex)test`.
 [rpc_endpoints]
 mainnet = "${RPC_MAINNET}"
 mainnet2 = "${RPC_MAINNET2}"
