@@ -1075,3 +1075,73 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest_init!(invariant_custom_error, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantCustomError.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ContractWithCustomError {
+    error InvariantCustomError(uint256, string);
+
+    function revertWithInvariantCustomError() external {
+        revert InvariantCustomError(111, "custom");
+    }
+}
+
+contract Handler is Test {
+    ContractWithCustomError target;
+
+    constructor() {
+        target = new ContractWithCustomError();
+    }
+
+    function revertTarget() external {
+        target.revertWithInvariantCustomError();
+    }
+}
+
+contract InvariantCustomError is Test {
+    Handler handler;
+
+    function setUp() external {
+        handler = new Handler();
+    }
+
+    function invariant_decode_error() public {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantCustomError.t.sol:InvariantCustomError
+[FAIL: InvariantCustomError(111, "custom")]
+	[SEQUENCE]
+ invariant_decode_error() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantCustomError.t.sol:InvariantCustomError
+[FAIL: InvariantCustomError(111, "custom")]
+	[SEQUENCE]
+ invariant_decode_error() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
