@@ -1157,7 +1157,19 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(self.ignored_file_paths.clone())
+            .ignore_paths(
+                self.ignored_file_paths
+                    .iter()
+                    .map(|path| {
+                        // Convert to relative path for path matching in foundry-compilers
+                        if let Ok(relative) = path.strip_prefix(&self.root) {
+                            relative.to_path_buf()
+                        } else {
+                            path.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
