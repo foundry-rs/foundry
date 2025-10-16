@@ -67,8 +67,7 @@ pub fn locked_read_to_string(path: impl AsRef<Path>) -> Result<String> {
     file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
     let contents = read_inner(path, &mut file)?;
     file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
-    Ok(String::from_utf8(contents)
-        .map_err(|err| FsPathError::read(std::io::Error::other(err), path))?)
+    String::from_utf8(contents).map_err(|err| FsPathError::read(std::io::Error::other(err), path))
 }
 
 /// Reads the entire contents of a locked shared file into a bytes vector.
@@ -162,6 +161,7 @@ pub fn locked_write_line(path: impl AsRef<Path>, line: &str) -> Result<()> {
 fn locked_write_line_windows(path: &Path, line: &str) -> Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
+        .truncate(false)
         .create(true)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
