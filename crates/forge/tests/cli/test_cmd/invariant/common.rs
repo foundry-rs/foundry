@@ -900,6 +900,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
+    prj.wipe_contracts();
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
@@ -954,17 +955,8 @@ contract InvariantRollForkStateTest is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
-[FAIL: wrong supply]
-	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
 	[SEQUENCE]
@@ -974,7 +966,16 @@ Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 3 test suites [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
+	[SEQUENCE]
+ invariant_fork_handler_state() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
@@ -987,7 +988,7 @@ Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStat
 	[SEQUENCE]
  invariant_fork_handler_state() ([RUNS])
 
-Encountered a total of 2 failing tests, 2 tests succeeded
+Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
@@ -1071,10 +1072,10 @@ contract FindFromLogValueTest is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
-[FAIL: value from return found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
+[FAIL: value from logs found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 
@@ -1082,8 +1083,8 @@ Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
-[FAIL: value from logs found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
+[FAIL: value from return found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 
