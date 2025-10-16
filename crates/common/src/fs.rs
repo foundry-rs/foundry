@@ -1,6 +1,6 @@
 //! Contains various `std::fs` wrapper functions that also contain the target path in their errors.
 
-use crate::errors::{FsOp, FsPathError};
+use crate::errors::FsPathError;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -64,10 +64,10 @@ pub fn locked_read_to_string(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
     let file =
         fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
-    file.lock_shared().map_err(|err| FsPathError::lock(FsOp::Read, err, path))?;
+    file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
     let mut contents = String::new();
     (&file).read_to_string(&mut contents).map_err(|err| FsPathError::read(err, path))?;
-    file.unlock().map_err(|err| FsPathError::unlock(FsOp::Read, err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
     Ok(contents)
 }
 
@@ -76,11 +76,11 @@ pub fn locked_read(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     let path = path.as_ref();
     let file =
         fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
-    file.lock_shared().map_err(|err| FsPathError::lock(FsOp::Read, err, path))?;
+    file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
     let file_len = file.metadata().map_err(|err| FsPathError::open(err, path))?.len() as usize;
     let mut buffer = Vec::with_capacity(file_len);
     (&file).read_to_end(&mut buffer).map_err(|err| FsPathError::read(err, path))?;
-    file.unlock().map_err(|err| FsPathError::unlock(FsOp::Read, err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
     Ok(buffer)
 }
 
@@ -130,9 +130,9 @@ pub fn locked_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
         .truncate(true)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
-    file.lock().map_err(|err| FsPathError::lock(FsOp::Write, err, path))?;
+    file.lock().map_err(|err| FsPathError::lock(err, path))?;
     file.write_all(contents.as_ref()).map_err(|err| FsPathError::write(err, path))?;
-    file.unlock().map_err(|err| FsPathError::unlock(FsOp::Write, err, path))
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
 
 /// Writes a line in an exclusive locked file.
@@ -143,9 +143,9 @@ pub fn locked_write_line(path: impl AsRef<Path>, line: &String) -> Result<()> {
         .create(true)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
-    file.lock().map_err(|err| FsPathError::lock(FsOp::WriteLine, err, path))?;
+    file.lock().map_err(|err| FsPathError::lock(err, path))?;
     writeln!(file, "{line}").map_err(|err| FsPathError::write(err, path))?;
-    file.unlock().map_err(|err| FsPathError::unlock(FsOp::WriteLine, err, path))
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
 
 /// Wrapper for `std::fs::copy`

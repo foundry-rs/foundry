@@ -1,7 +1,7 @@
 //! Commonly used errors
 
 mod fs;
-pub use fs::*;
+pub use fs::FsPathError;
 
 mod private {
     use eyre::Chain;

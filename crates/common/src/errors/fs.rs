@@ -6,24 +6,6 @@ use std::{
 #[expect(unused_imports)]
 use std::fs::{self, File};
 
-/// File system operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FsOp {
-    Read,
-    Write,
-    WriteLine,
-}
-
-impl FsOp {
-    fn context(&self) -> &'static str {
-        match self {
-            Self::Read => "reads",
-            Self::Write => "writes",
-            Self::WriteLine => "writing a line",
-        }
-    }
-}
-
 /// Various error variants for `fs` operations that serve as an addition to the io::Error which
 /// does not provide any information about the path.
 #[derive(Debug, thiserror::Error)]
@@ -56,17 +38,16 @@ pub enum FsPathError {
     /// Provides additional path context for [`File::open`].
     #[error("failed to open file {path:?}: {source}")]
     Open { source: io::Error, path: PathBuf },
+    #[error("failed to lock file {path:?}: {source}")]
+    Lock { source: io::Error, path: PathBuf },
+    #[error("failed to unlock file {path:?}: {source}")]
+    Unlock { source: io::Error, path: PathBuf },
     /// Provides additional path context for the file whose contents should be parsed as JSON.
     #[error("failed to parse json file: {path:?}: {source}")]
     ReadJson { source: serde_json::Error, path: PathBuf },
     /// Provides additional path context for the new JSON file.
     #[error("failed to write to json file: {path:?}: {source}")]
     WriteJson { source: serde_json::Error, path: PathBuf },
-
-    #[error("failed to lock file {path:?} for {kind}s: {source}", kind = kind.context())]
-    Lock { kind: FsOp, source: io::Error, path: PathBuf },
-    #[error("failed to unlock file {path:?} for {kind}s: {source}", kind = kind.context())]
-    Unlock { kind: FsOp, source: io::Error, path: PathBuf },
 }
 
 impl FsPathError {
@@ -116,13 +97,13 @@ impl FsPathError {
     }
 
     /// Returns the complementary error variant for [`File::lock`].
-    pub fn lock(kind: FsOp, source: io::Error, path: impl Into<PathBuf>) -> Self {
-        Self::Lock { kind, source, path: path.into() }
+    pub fn lock(source: io::Error, path: impl Into<PathBuf>) -> Self {
+        Self::Lock { source, path: path.into() }
     }
 
     /// Returns the complementary error variant for [`File::unlock`].
-    pub fn unlock(kind: FsOp, source: io::Error, path: impl Into<PathBuf>) -> Self {
-        Self::Unlock { kind, source, path: path.into() }
+    pub fn unlock(source: io::Error, path: impl Into<PathBuf>) -> Self {
+        Self::Unlock { source, path: path.into() }
     }
 }
 
