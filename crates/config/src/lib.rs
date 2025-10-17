@@ -934,6 +934,9 @@ impl Config {
 
         self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
+        self.ignored_file_paths =
+            self.ignored_file_paths.into_iter().map(|path| p(&root, &path)).collect();
+
         self.fs_permissions.join_all(&root);
 
         if let Some(model_checker) = &mut self.model_checker {
@@ -1154,7 +1157,19 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(self.ignored_file_paths.clone())
+            .ignore_paths(
+                self.ignored_file_paths
+                    .iter()
+                    .map(|path| {
+                        // Convert to relative path for path matching in foundry-compilers
+                        if let Ok(relative) = path.strip_prefix(&self.root) {
+                            relative.to_path_buf()
+                        } else {
+                            path.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
