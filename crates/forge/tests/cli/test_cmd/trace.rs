@@ -80,6 +80,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(trace_test, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
