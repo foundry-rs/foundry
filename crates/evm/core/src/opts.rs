@@ -4,10 +4,14 @@ use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{CreateFork, configure_env},
 };
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
+use foundry_common::{
+    ALCHEMY_FREE_TIER_CUPS,
+    provider::{ProviderBuilder, RetryProvider},
+};
 use foundry_config::{Chain, Config, GasLimit};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
@@ -112,6 +116,25 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
+    /// Returns a `RetryProvider` for `self.fork_url`, if any.
+    pub fn fork_provider(&self) -> eyre::Result<Option<RetryProvider>> {
+        match &self.fork_url {
+            Some(fork_url) => self.fork_provider_with_url(fork_url).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Returns a `RetryProvider` for the given fork URL configured with options in `self`.
+    pub fn fork_provider_with_url(&self, fork_url: &str) -> eyre::Result<RetryProvider> {
+        ProviderBuilder::new(fork_url)
+            .maybe_max_retry(self.fork_retries)
+            .maybe_initial_backoff(self.fork_retry_backoff)
+            .maybe_headers(self.fork_headers.clone())
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()
+    }
+
     /// Configures a new `revm::Env`
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
@@ -124,14 +147,22 @@ impl EvmOpts {
         }
     }
 
-    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
-    /// And the block that was used to configure the environment.
+    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
+    /// and the block that was used to configure the environment.
     pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
-        let provider = ProviderBuilder::new(fork_url)
-            .compute_units_per_second(self.get_compute_units_per_second())
-            .build()?;
+        let provider = self.fork_provider_with_url(fork_url)?;
+        self.fork_evm_env_with_provider(fork_url, &provider).await
+    }
+
+    /// Returns the `revm::Env` that is configured with settings retrieved from the provider,
+    /// and the block that was used to configure the environment.
+    pub async fn fork_evm_env_with_provider<P: Provider<N>, N: Network>(
+        &self,
+        fork_url: &str,
+        provider: &P,
+    ) -> eyre::Result<(crate::Env, N::BlockResponse)> {
         environment(
-            &provider,
+            provider,
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
