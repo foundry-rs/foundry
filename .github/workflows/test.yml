@@ -17,8 +17,8 @@ env:
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
   SCCACHE_LOG: debug
-  SCCACHE_NO_DAEMON: 1
   SCCACHE_LOG_MILLIS: 1
+  SCCACHE_ERROR_LOG: /tmp/sccache_log.txt
 
 jobs:
   nextest:
@@ -115,6 +115,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features
         env:
           RUSTFLAGS: -Dwarnings
+      - run: sccache --show-stats
+      - run: cat /tmp/sccache_log.txt
 
   rustfmt:
     runs-on: depot-ubuntu-latest
