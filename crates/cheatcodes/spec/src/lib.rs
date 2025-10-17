@@ -92,6 +92,7 @@ impl Cheatcodes<'static> {
                 Vm::SignedDelegation::STRUCT.clone(),
                 Vm::PotentialRevert::STRUCT.clone(),
                 Vm::AccessListItem::STRUCT.clone(),
+                Vm::ProfileMetadata::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
