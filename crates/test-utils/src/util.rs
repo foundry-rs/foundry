@@ -218,12 +218,6 @@ impl ExtTester {
 
     /// Runs the test.
     pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
         let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
