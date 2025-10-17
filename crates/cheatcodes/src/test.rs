@@ -75,15 +75,29 @@ impl Cheatcode for skip_0Call {
 impl Cheatcode for skip_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { skipTest, reason } = self;
-        if *skipTest {
-            // Skip should not work if called deeper than at test level.
-            // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journaled_state.depth <= 1, "`skip` can only be used at test level");
-            Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
-        } else {
-            Ok(Default::default())
-        }
+        if *skipTest { skip(ccx, reason) } else { Ok(Default::default()) }
     }
+}
+
+impl Cheatcode for skip_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self {} = self;
+        skip(ccx, "")
+    }
+}
+
+impl Cheatcode for skip_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { reason } = self;
+        skip(ccx, reason)
+    }
+}
+
+fn skip(ccx: &mut CheatsCtxt, reason: &str) -> Result {
+    // Skip should not work if called deeper than at test level.
+    // Since we're not returning the magic skip bytes, this will cause a test failure.
+    ensure!(ccx.ecx.journaled_state.depth <= 1, "`skip` can only be used at test level");
+    Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
 }
 
 impl Cheatcode for getChain_0Call {

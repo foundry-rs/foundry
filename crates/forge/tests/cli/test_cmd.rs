@@ -1938,24 +1938,24 @@ forgetest_init!(skip_output, |prj, cmd| {
             Vm constant vm = Vm(HEVM_ADDRESS);
 
             function test_skipUnit() public {
-                vm.skip(true);
+                vm.skip();
             }
             function test_skipUnitReason() public {
-                vm.skip(true, "unit");
+                vm.skip("unit");
             }
 
             function test_skipFuzz(uint) public {
-                vm.skip(true);
+                vm.skip();
             }
             function test_skipFuzzReason(uint) public {
-                vm.skip(true, "fuzz");
+                vm.skip("fuzz");
             }
 
             function invariant_skipInvariant() public {
-                vm.skip(true);
+                vm.skip();
             }
             function invariant_skipInvariantReason() public {
-                vm.skip(true, "invariant");
+                vm.skip("invariant");
             }
         }
     "#,
@@ -1986,7 +1986,7 @@ import "forge-std/Test.sol";
 contract SkipCounterSetup is Test {
 
     function setUp() public {
-        vm.skip(true, "skip counter test");
+        vm.skip("skip counter test");
     }
 
     function test_require1() public pure {
@@ -2047,11 +2047,11 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             }
 
             function test_junit_skip() public {
-                vm.skip(true);
+                vm.skip();
             }
 
             function test_junit_skip_with_message() public {
-                vm.skip(true, "skipped test");
+                vm.skip("skipped test");
             }
 
             function test_junit_pass_fuzz(uint256 a) public {

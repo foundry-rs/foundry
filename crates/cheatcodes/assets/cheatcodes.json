@@ -10267,7 +10267,9 @@
         ]
       },
       "group": "testing",
-      "status": "stable",
+      "status": {
+        "deprecated": "replaced by `skip()` (remove the boolean argument)"
+      },
       "safety": "unsafe"
     },
     {
@@ -10284,6 +10286,48 @@
           42,
           128,
           167
+        ]
+      },
+      "group": "testing",
+      "status": {
+        "deprecated": "replaced by `skip(string)` (remove the boolean argument)"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "skip_2",
+        "description": "Marks a test as skipped. Must be called at the top level of a test.",
+        "declaration": "function skip() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "skip()",
+        "selector": "0x1d2aa5b3",
+        "selectorBytes": [
+          29,
+          42,
+          165,
+          179
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "skip_3",
+        "description": "Marks a test as skipped with a reason. Must be called at the top level of a test.",
+        "declaration": "function skip(string calldata reason) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "skip(string)",
+        "selector": "0x6fad198f",
+        "selectorBytes": [
+          111,
+          173,
+          25,
+          143
         ]
       },
       "group": "testing",

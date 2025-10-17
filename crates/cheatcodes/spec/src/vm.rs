@@ -1218,12 +1218,20 @@ interface Vm {
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
 
     /// Marks a test as skipped. Must be called at the top level of a test.
-    #[cheatcode(group = Testing, safety = Unsafe)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Deprecated(Some("replaced by `skip()` (remove the boolean argument)")))]
     function skip(bool skipTest) external;
 
     /// Marks a test as skipped with a reason. Must be called at the top level of a test.
-    #[cheatcode(group = Testing, safety = Unsafe)]
+    #[cheatcode(group = Testing, safety = Unsafe, status = Deprecated(Some("replaced by `skip(string)` (remove the boolean argument)")))]
     function skip(bool skipTest, string calldata reason) external;
+
+    /// Marks a test as skipped. Must be called at the top level of a test.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function skip() external;
+
+    /// Marks a test as skipped with a reason. Must be called at the top level of a test.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function skip(string calldata reason) external;
 
     /// Asserts that the given condition is true.
     #[cheatcode(group = Testing, safety = Safe)]
