@@ -1520,7 +1520,7 @@ impl Backend {
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
-    ///  - `nonce` check is skipped if `request.nonce` is None
+    ///  - `nonce` check is skipped
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1571,6 +1571,9 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
+        // Disable nonce check in revm
+        env.evm_env.cfg_env.disable_nonce_check = true;
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1608,9 +1611,6 @@ impl Backend {
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
-        } else {
-            // Disable nonce check in revm
-            env.evm_env.cfg_env.disable_nonce_check = true;
         }
 
         if env.evm_env.block_env.basefee == 0 {
