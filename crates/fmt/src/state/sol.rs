@@ -1710,7 +1710,16 @@ impl<'ast> State<'_, 'ast> {
                 s.end();
             },
             |arg| arg.name.span.until(arg.value.span),
-            list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
+            list_format
+                .break_cmnts()
+                .break_single(true)
+                .without_ind(self.call_stack.is_chain())
+                .with_delimiters(
+                    !(self.emit_or_revert
+                        && self
+                            .peek_comment_before(args.first().map_or(pos_hi, |a| a.value.span.lo()))
+                            .is_none()),
+                ),
         );
         self.word("}");
 
@@ -2097,7 +2106,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     |fmt, var| fmt.print_var(var, false),
                     get_span!(),
-                    ListFormat::compact().no_delimiters(),
+                    ListFormat::compact().with_delimiters(false),
                 );
                 self.print_word(")");
                 self.nbsp();
@@ -2236,15 +2245,17 @@ impl<'ast> State<'_, 'ast> {
         };
         self.s.cbox(0);
         self.print_path(path, false);
+        self.emit_or_revert = path.segments().len() > 1;
         self.print_call_args(
             args,
-            if args.len() == 1 {
-                ListFormat::compact().break_cmnts()
+            if self.config.call_compact_args {
+                ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
             } else {
-                ListFormat::compact().break_cmnts().no_delimiters()
+                ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
             },
             path.to_string().len(),
         );
+        self.emit_or_revert = false;
         self.end();
     }
 

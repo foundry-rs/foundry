@@ -867,9 +867,9 @@ impl ListFormat {
         self
     }
 
-    pub(crate) fn no_delimiters(mut self) -> Self {
+    pub(crate) fn with_delimiters(mut self, without: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
-            self.with_delimiters = false;
+            self.with_delimiters = without;
         }
         self
     }
