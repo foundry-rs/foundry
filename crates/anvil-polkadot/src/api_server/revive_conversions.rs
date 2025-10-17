@@ -1,10 +1,12 @@
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::Address;
-use alloy_rpc_types::{AccessList, SignedAuthorization, TransactionRequest};
+use alloy_rpc_types::{
+    AccessList, FilterBlockOption, FilterSet, SignedAuthorization, Topic, TransactionRequest,
+};
 use polkadot_sdk::{
     pallet_revive::evm::{
-        AccessListEntry, AuthorizationListEntry, BlockNumberOrTagOrHash, BlockTag, Byte, Bytes,
-        GenericTransaction, InputOrData,
+        self, AccessListEntry, AddressOrAddresses, AuthorizationListEntry, BlockNumberOrTagOrHash,
+        BlockTag, Byte, Bytes, Filter, FilterTopic, FilterTopics, GenericTransaction, InputOrData,
     },
     sp_core,
 };
@@ -67,6 +69,27 @@ impl From<ReviveAddress> for Address {
     }
 }
 
+pub struct ReviveBlockNumberOrTag(pub evm::BlockNumberOrTag);
+
+impl From<BlockNumberOrTag> for ReviveBlockNumberOrTag {
+    fn from(value: BlockNumberOrTag) -> Self {
+        Self(match value {
+            BlockNumberOrTag::Latest => evm::BlockNumberOrTag::BlockTag(BlockTag::Latest),
+            BlockNumberOrTag::Finalized => evm::BlockNumberOrTag::BlockTag(BlockTag::Finalized),
+            BlockNumberOrTag::Safe => evm::BlockNumberOrTag::BlockTag(BlockTag::Safe),
+            BlockNumberOrTag::Earliest => evm::BlockNumberOrTag::BlockTag(BlockTag::Earliest),
+            BlockNumberOrTag::Pending => evm::BlockNumberOrTag::BlockTag(BlockTag::Pending),
+            BlockNumberOrTag::Number(num) => evm::BlockNumberOrTag::U256(evm::U256::from(num)),
+        })
+    }
+}
+
+impl ReviveBlockNumberOrTag {
+    pub fn inner(self) -> evm::BlockNumberOrTag {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ReviveBlockId(BlockNumberOrTagOrHash);
 
@@ -84,22 +107,9 @@ impl From<Option<BlockId>> for ReviveBlockId {
                 BlockId::Hash(rpc_hash) => BlockNumberOrTagOrHash::BlockHash(H256::from_slice(
                     rpc_hash.block_hash.as_slice(),
                 )),
-                BlockId::Number(number_or_tag) => match number_or_tag {
-                    BlockNumberOrTag::Number(num) => BlockNumberOrTagOrHash::BlockNumber(
-                        polkadot_sdk::pallet_revive::U256::from(num),
-                    ),
-                    BlockNumberOrTag::Latest => BlockNumberOrTagOrHash::BlockTag(BlockTag::Latest),
-                    BlockNumberOrTag::Earliest => {
-                        BlockNumberOrTagOrHash::BlockTag(BlockTag::Earliest)
-                    }
-                    BlockNumberOrTag::Pending => {
-                        BlockNumberOrTagOrHash::BlockTag(BlockTag::Pending)
-                    }
-                    BlockNumberOrTag::Safe => BlockNumberOrTagOrHash::BlockTag(BlockTag::Safe),
-                    BlockNumberOrTag::Finalized => {
-                        BlockNumberOrTagOrHash::BlockTag(BlockTag::Finalized)
-                    }
-                },
+                BlockId::Number(number_or_tag) => {
+                    ReviveBlockNumberOrTag::from(number_or_tag).inner().into()
+                }
             },
         ))
     }
@@ -218,5 +228,87 @@ pub(crate) fn convert_to_generic_transaction(
             .map(|addr| ReviveAddress::from(addr).inner()),
         r#type: transaction_request.transaction_type.map(Byte::from),
         value: transaction_request.value.map(|value| SubstrateU256::from(value).inner()),
+    }
+}
+
+struct ReviveFilterTopics(FilterTopics);
+
+impl ReviveFilterTopics {
+    fn into_inner(self) -> FilterTopics {
+        self.0
+    }
+}
+
+impl From<[Topic; 4]> for ReviveFilterTopics {
+    fn from(value: [Topic; 4]) -> Self {
+        let topics: Vec<FilterTopic> = value
+            .into_iter()
+            .filter(|t| !t.is_empty())
+            .map(|topic| {
+                let hashes: Vec<H256> =
+                    topic.into_iter().map(|hash| H256::from_slice(hash.as_ref())).collect();
+                match hashes.len() {
+                    1 => FilterTopic::Single(hashes[0]),
+                    _ => FilterTopic::Multiple(hashes),
+                }
+            })
+            .collect();
+        Self(topics)
+    }
+}
+
+struct ReviveAddressOrAddresses(AddressOrAddresses);
+
+impl ReviveAddressOrAddresses {
+    fn into_inner(self) -> AddressOrAddresses {
+        self.0
+    }
+}
+
+impl From<FilterSet<Address>> for ReviveAddressOrAddresses {
+    fn from(value: FilterSet<Address>) -> Self {
+        let addresses: Vec<Address> = value.into_iter().collect();
+        let address_or_addresses = match addresses.len() {
+            0 => AddressOrAddresses::Address(Default::default()),
+            1 => AddressOrAddresses::Address(ReviveAddress::from(addresses[0]).inner()),
+            _ => AddressOrAddresses::Addresses(
+                addresses.into_iter().map(|address| ReviveAddress::from(address).inner()).collect(),
+            ),
+        };
+        Self(address_or_addresses)
+    }
+}
+
+pub struct ReviveFilter(Filter);
+
+impl ReviveFilter {
+    pub fn into_inner(self) -> Filter {
+        self.0
+    }
+}
+
+impl From<alloy_rpc_types::Filter> for ReviveFilter {
+    fn from(value: alloy_rpc_types::Filter) -> Self {
+        let address = if value.address.is_empty() {
+            None
+        } else {
+            Some(ReviveAddressOrAddresses::from(value.address).into_inner())
+        };
+        let topics = if value.topics.iter().all(|t| t.is_empty()) {
+            None
+        } else {
+            Some(ReviveFilterTopics::from(value.topics).into_inner())
+        };
+        let (from_block, to_block, block_hash) = match value.block_option {
+            FilterBlockOption::Range { from_block, to_block } => (
+                from_block.map(|fb| ReviveBlockNumberOrTag::from(fb).inner()),
+                to_block.map(|tb| ReviveBlockNumberOrTag::from(tb).inner()),
+                None,
+            ),
+            FilterBlockOption::AtBlockHash(hash) => {
+                (None, None, Some(H256::from_slice(hash.as_ref())))
+            }
+        };
+        Self(Filter { address, from_block, to_block, block_hash, topics })
     }
 }

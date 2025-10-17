@@ -4,10 +4,7 @@ use crate::utils::{TestNode, assert_with_tolerance, unwrap_response};
 use alloy_primitives::U256;
 use anvil_core::eth::EthRequest;
 use anvil_polkadot::config::{AnvilNodeConfig, SubstrateNodeConfig};
-use anvil_rpc::{
-    error::{ErrorCode, RpcError},
-    response::ResponseResult,
-};
+use anvil_rpc::error::ErrorCode;
 
 // Tests --------- EvmSetTime
 
@@ -17,14 +14,12 @@ async fn test_evm_set_time_invalid_param() {
     let substrate_node_config = SubstrateNodeConfig::new(&anvil_node_config);
     let mut node = TestNode::new(anvil_node_config, substrate_node_config).await.unwrap();
     // Try to set the time too far ahead.
-    assert!(matches!(
+    let err = unwrap_response::<u64>(
         node.eth_rpc(EthRequest::EvmSetTime(U256::from(u64::MAX))).await.unwrap(),
-        ResponseResult::Error(RpcError {
-            code: ErrorCode::InvalidParams,
-            message,
-            data: None
-        }) if message == "The timestamp is too big"
-    ));
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    assert_eq!(err.message, "The timestamp is too big");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -15,12 +15,15 @@ use anvil_polkadot::{
         service::{Service, storage::well_known_keys},
     },
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use codec::Decode;
 use eyre::{Result, WrapErr};
 use futures::{StreamExt, channel::oneshot};
 use polkadot_sdk::{
-    pallet_revive::evm::{Block, ReceiptInfo},
+    pallet_revive::evm::{Block, HashesOrTransactionInfos, ReceiptInfo},
     polkadot_sdk_frame::traits::Header,
     sc_cli::CliConfiguration,
     sc_client_api::{BlockBackend, BlockchainEvents},
@@ -37,8 +40,8 @@ const NATIVE_TO_ETH_RATIO: u128 = 1000000;
 pub const EXISTENTIAL_DEPOSIT: u128 = substrate_runtime::currency::DOLLARS * NATIVE_TO_ETH_RATIO;
 
 pub struct BlockWaitTimeout {
-    block_number: u32,
-    timeout: Duration,
+    pub block_number: u32,
+    pub timeout: Duration,
 }
 
 impl BlockWaitTimeout {
@@ -164,6 +167,9 @@ impl TestNode {
         n: u32,
         timeout: std::time::Duration,
     ) -> eyre::Result<()> {
+        if n <= self.best_block_number().await {
+            return Ok(());
+        }
         tokio::time::timeout(timeout, self.wait_for_block_with_number(n))
             .await
             .map_err(|e| e.into())
@@ -218,6 +224,20 @@ impl TestNode {
         self.send_transaction(deploy_contract_tx, block_wait).await.unwrap()
     }
 
+    pub async fn get_storage_at(&mut self, storage_key: U256, contract_address: H160) -> U256 {
+        let result = self
+            .eth_rpc(EthRequest::EthGetStorageAt(
+                Address::from(ReviveAddress::new(contract_address)),
+                storage_key,
+                None,
+            ))
+            .await
+            .unwrap();
+        let hex_string = unwrap_response::<String>(result).unwrap();
+        let hex_value = hex_string.strip_prefix("0x").unwrap_or(&hex_string);
+        U256::from_str_radix(hex_value, 16).unwrap()
+    }
+
     async fn wait_for_block_with_number(&self, n: u32) {
         let mut import_stream = self.service.client.import_notification_stream();
 
@@ -267,6 +287,13 @@ impl TestNode {
     }
 }
 
+pub fn is_transaction_in_block(transactions: &HashesOrTransactionInfos, transaction: H256) -> bool {
+    if let HashesOrTransactionInfos::Hashes(transactions) = transactions {
+        return transactions.contains(&transaction);
+    }
+    false
+}
+
 pub fn assert_with_tolerance<T>(actual: T, expected: T, tolerance: T, message: &str)
 where
     T: PartialOrd + std::ops::Sub<Output = T> + Debug + Copy,
@@ -285,11 +312,12 @@ where
     T: serde::de::DeserializeOwned,
 {
     match response {
-        ResponseResult::Success(value) => Ok(serde_json::from_value(value).unwrap()),
+        ResponseResult::Success(value) => serde_json::from_value(value.clone())
+            .or_else(|_| serde_json::from_str(&serde_json::to_string(&value)?))
+            .map_err(|_| RpcError::new(ErrorCode::ParseError)),
         ResponseResult::Error(err) => Err(err),
     }
 }
-
 pub struct ContractCode {
     pub init: Vec<u8>,
     pub runtime: Option<Vec<u8>>,
