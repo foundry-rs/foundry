@@ -8,13 +8,13 @@ use crate::Env;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{U256, map::HashMap};
 use alloy_provider::network::BlockResponse;
-use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
     FutureExt, StreamExt,
     channel::mpsc::{Receiver, Sender, channel},
-    stream::{Fuse, Stream},
+    stream::Fuse,
     task::{Context, Poll},
 };
 use revm::context::BlockEnv;
@@ -95,6 +95,7 @@ impl MultiFork {
         match tokio::runtime::Handle::try_current() {
             Ok(rt) => _ = rt.spawn(fut),
             Err(_) => {
+                trace!(target: "fork::multi", "spawning multifork backend thread");
                 _ = std::thread::Builder::new()
                     .name("multi-fork-backend".into())
                     .spawn(move || {
@@ -201,7 +202,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<RetryProvider>>;
+type Handler = BackendHandler<RetryProvider>;
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
@@ -384,14 +385,12 @@ impl Future for MultiForkHandler {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pin = self.get_mut();
+        let this = self.get_mut();
 
         // Receive new requests.
         loop {
-            match Pin::new(&mut pin.incoming).poll_next(cx) {
-                Poll::Ready(Some(req)) => {
-                    pin.on_request(req);
-                }
+            match this.incoming.poll_next_unpin(cx) {
+                Poll::Ready(Some(req)) => this.on_request(req),
                 Poll::Ready(None) => {
                     // Channel closed, but we still need to drive the fork handlers to completion.
                     trace!(target: "fork::multi", "request channel closed");
@@ -402,23 +401,23 @@ impl Future for MultiForkHandler {
         }
 
         // Advance all tasks.
-        for n in (0..pin.pending_tasks.len()).rev() {
-            let task = pin.pending_tasks.swap_remove(n);
+        for n in (0..this.pending_tasks.len()).rev() {
+            let task = this.pending_tasks.swap_remove(n);
             match task {
                 ForkTask::Create(mut fut, id, sender, additional_senders) => {
                     if let Poll::Ready(resp) = fut.poll_unpin(cx) {
                         match resp {
                             Ok((fork_id, fork, handler)) => {
-                                if let Some(fork) = pin.forks.get(&fork_id).cloned() {
-                                    pin.insert_new_fork(
+                                if let Some(fork) = this.forks.get(&fork_id).cloned() {
+                                    this.insert_new_fork(
                                         fork.inc_senders(fork_id),
                                         fork,
                                         sender,
                                         additional_senders,
                                     );
                                 } else {
-                                    pin.handlers.push((fork_id.clone(), handler));
-                                    pin.insert_new_fork(fork_id, fork, sender, additional_senders);
+                                    this.handlers.push((fork_id.clone(), handler));
+                                    this.insert_new_fork(fork_id, fork, sender, additional_senders);
                                 }
                             }
                             Err(err) => {
@@ -429,7 +428,7 @@ impl Future for MultiForkHandler {
                             }
                         }
                     } else {
-                        pin.pending_tasks.push(ForkTask::Create(
+                        this.pending_tasks.push(ForkTask::Create(
                             fut,
                             id,
                             sender,
@@ -441,33 +440,33 @@ impl Future for MultiForkHandler {
         }
 
         // Advance all handlers.
-        for n in (0..pin.handlers.len()).rev() {
-            let (id, mut handler) = pin.handlers.swap_remove(n);
+        for n in (0..this.handlers.len()).rev() {
+            let (id, mut handler) = this.handlers.swap_remove(n);
             match handler.poll_unpin(cx) {
                 Poll::Ready(_) => {
                     trace!(target: "fork::multi", "fork {:?} completed", id);
                 }
                 Poll::Pending => {
-                    pin.handlers.push((id, handler));
+                    this.handlers.push((id, handler));
                 }
             }
         }
 
-        if pin.handlers.is_empty() && pin.incoming.is_done() {
+        if this.handlers.is_empty() && this.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
             return Poll::Ready(());
         }
 
         // Periodically flush cached RPC state.
-        if pin
+        if this
             .flush_cache_interval
             .as_mut()
             .map(|interval| interval.poll_tick(cx).is_ready())
             .unwrap_or_default()
-            && !pin.forks.is_empty()
+            && !this.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
-            let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
+            let forks = this.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
             // Flush this on new thread to not block here.
             std::thread::Builder::new()
                 .name("flusher".into())
@@ -538,17 +537,10 @@ impl Drop for ShutDownMultiFork {
 ///
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend.
 async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork, Handler)> {
-    let provider = Arc::new(
-        ProviderBuilder::new(fork.url.as_str())
-            .maybe_max_retry(fork.evm_opts.fork_retries)
-            .maybe_initial_backoff(fork.evm_opts.fork_retry_backoff)
-            .maybe_headers(fork.evm_opts.fork_headers.clone())
-            .compute_units_per_second(fork.evm_opts.get_compute_units_per_second())
-            .build()?,
-    );
+    let provider = fork.evm_opts.fork_provider_with_url(&fork.url)?;
 
     // Initialise the fork environment.
-    let (env, block) = fork.evm_opts.fork_evm_env(&fork.url).await?;
+    let (env, block) = fork.evm_opts.fork_evm_env_with_provider(&fork.url, &provider).await?;
     fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.evm_env.block_env.clone(), fork.url.clone());
 

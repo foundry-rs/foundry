@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity =0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract TestContract {}
 
-contract GetDeployedCodeTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract GetDeployedCodeTest is Test {
     address public constant overrideAddress = 0x0000000000000000000000000000000000000064;
 
     event Payload(address sender, address target, bytes data);

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "../logs/console.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 struct MyStruct {
     uint256 value;
@@ -27,9 +25,7 @@ contract MyContract {
     }
 }
 
-contract ForkTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ForkTest is Test {
     uint256 mainnetFork;
     uint256 optimismFork;
 
@@ -150,7 +146,7 @@ contract ForkTest is DSTest {
         assertEq(dummy.val(), expectedValue);
     }
 
-    // checks diagnostic
+    /// forge-config: default.allow_internal_expect_revert = true
     function testNonExistingContractRevert() public {
         vm.selectFork(mainnetFork);
         DummyContract dummy = new DummyContract();
@@ -164,7 +160,8 @@ contract ForkTest is DSTest {
         assertEq(dummyAddress, address(dummy));
 
         // this will revert since `dummy` does not exists on the currently active fork
-        string memory msg2 = dummy.hello();
+        vm.expectRevert();
+        dummy.noop();
     }
 
     struct EthGetLogsJsonParseable {
@@ -244,6 +241,8 @@ contract ForkTest is DSTest {
 
 contract DummyContract {
     uint256 public val;
+
+    function noop() external pure {}
 
     function hello() external view returns (string memory) {
         return "hello";

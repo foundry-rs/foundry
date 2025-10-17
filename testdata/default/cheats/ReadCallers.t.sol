@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Target {
     function consumeNewCaller() external {}
 }
 
-contract ReadCallersTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ReadCallersTest is Test {
     function testReadCallersWithNoActivePrankOrBroadcast() public {
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;

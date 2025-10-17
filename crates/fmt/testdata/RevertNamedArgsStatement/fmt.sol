@@ -31,5 +31,7 @@ contract RevertNamedArgsStatement {
         revert /* comment2 */ SimpleError({ /* comment3 */ // comment4
             val: 0 // comment 5
         });
+
+        revert Errors.Unauthorized({caller: msg.sender, neededRole: role});
     }
 }
