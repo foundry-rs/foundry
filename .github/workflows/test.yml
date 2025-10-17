@@ -16,7 +16,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
-  SCCACHE_LOG: trace
+  SCCACHE_LOG: debug
+  SCCACHE_LOG_MILLIS: 1
 
 jobs:
   nextest:
