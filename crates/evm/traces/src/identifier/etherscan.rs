@@ -101,12 +101,11 @@ impl EtherscanIdentifier {
 
         // construct the map
         for res in outputs {
-            let (addr, name, project, output, _root) = res.wrap_err_with(|| {
-                format!("Failed to compile {name} at {addr}")
-            })?;
-            sources.insert(&output, project.root(), None).wrap_err_with(|| {
-                format!("Failed to insert compiled contract {name} at {addr}")
-            })?;
+            let (addr, name, project, output, _root) =
+                res.wrap_err("Failed to compile Etherscan contract")?;
+            sources
+                .insert(&output, project.root(), None)
+                .wrap_err_with(|| format!("Failed to insert contract {name} at {addr}"))?;
         }
 
         Ok(sources)
