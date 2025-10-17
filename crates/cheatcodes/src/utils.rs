@@ -597,7 +597,7 @@ evm_version = "London"
 extends = "base.toml"
 evm_version = "Cancun"
         "#;
-        std::fs::write(&temp_dir.path().join("foundry.toml"), config_content).unwrap();
+        std::fs::write(temp_dir.path().join("foundry.toml"), config_content).unwrap();
 
         // profile metadata is properly loaded (even when with toml file inheritance)
         let success_cases = [
