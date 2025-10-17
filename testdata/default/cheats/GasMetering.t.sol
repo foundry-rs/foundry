@@ -58,8 +58,7 @@ contract GasMeteringTest is Test {
 
         uint256 gas_end_resume_metered = gas_start_metered - gasleft();
 
-        // Not the same in via-ir.
-        // assertEq(gas_end_normal, gas_end_resume_metered);
+        assertEq(gas_end_normal, gas_end_resume_metered);
         assertEq(gas_end_not_metered, 0);
     }
 
