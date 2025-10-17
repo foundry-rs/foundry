@@ -58,16 +58,29 @@ pub fn transaction_request_to_typed(
 
     // Special case: OP-stack deposit tx
     if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
-        let mint = other.get_deserialized::<U256>("mint")?.map(|m| m.to::<u128>()).ok()?;
+        let mint = match other.get_deserialized::<U256>("mint") {
+            Some(Ok(m)) => m.to::<u128>(),
+            Some(Err(_)) | None => return None,
+        };
+
+        let source_hash = match other.get_deserialized::<B256>("sourceHash") {
+            Some(Ok(hash)) => hash,
+            Some(Err(_)) | None => return None,
+        };
+
+        let is_system_transaction = match other.get_deserialized::<bool>("isSystemTx") {
+            Some(Ok(value)) => value,
+            Some(Err(_)) | None => return None,
+        };
 
         return Some(TypedTransactionRequest::Deposit(TxDeposit {
             from: from.unwrap_or_default(),
-            source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
+            source_hash,
             to: to.unwrap_or_default(),
             mint,
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
-            is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
+            is_system_transaction,
             input: input.into_input().unwrap_or_default(),
         }));
     }
@@ -1534,16 +1547,20 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                             .map(|l| l.inner)
                             .collect(),
                     },
-                    deposit_nonce: other
+                    deposit_nonce: match other
                         .get_deserialized::<U64>("depositNonce")
                         .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
-                    deposit_receipt_version: other
+                    {
+                        Ok(Some(v)) => Some(v.to()),
+                        Ok(None) | Err(_) => None,
+                    },
+                    deposit_receipt_version: match other
                         .get_deserialized::<U64>("depositReceiptVersion")
                         .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
+                    {
+                        Ok(Some(v)) => Some(v.to()),
+                        Ok(None) | Err(_) => None,
+                    },
                 },
                 logs_bloom: receipt_with_bloom.logs_bloom,
             }),
