@@ -98,7 +98,10 @@ jobs:
             ~/.config/.foundry/cache
             testdata/cache
             testdata/out
-          key: ${{ runner.os }}-foundry-${{ matrix.name }}
+          # Use a unique key for each run to always update the cache.
+          key: foundry-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: |
+            foundry-${{ matrix.name }}-
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - name: Setup Git config
         run: |

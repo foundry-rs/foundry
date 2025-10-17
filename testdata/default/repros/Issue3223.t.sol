@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3223
-contract Issue3223Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+/// forge-config: default.sender = "0xF0959944122fb1ed4CfaBA645eA06EED30427BAA"
+contract Issue3223Test is Test {
     uint256 fork1;
     uint256 fork2;
 

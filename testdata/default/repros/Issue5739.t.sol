@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 interface IERC20 {
     function totalSupply() external view returns (uint256 supply);
 }
 
 // https://github.com/foundry-rs/foundry/issues/5739
-contract Issue5739Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue5739Test is Test {
     IERC20 dai;
 
     function setUp() public {

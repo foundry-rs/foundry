@@ -409,9 +409,8 @@ mod tests {
                     .to_string_lossy();
                 let identifier = format!("{source}:{}", id.name);
 
-                // Skip ds-test as it always has no dependencies etc. (and the path is outside root
-                // so is not sanitized)
-                if identifier.contains("DSTest") {
+                // Skip test utils as they always have no dependencies.
+                if identifier.contains("utils/") {
                     return None;
                 }
 
@@ -701,7 +700,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib",
                     &[(
                         "default/linking/nested/Nested.t.sol:Lib",
-                        address!("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74"),
+                        address!("0x773253227cce756e50c3993ec6366b3ec27786f9"),
                     )],
                 )
                 .assert_dependencies(
@@ -711,12 +710,12 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
+                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
+                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
                                 .unwrap(),
                         ),
                     ],
@@ -726,12 +725,12 @@ mod tests {
                     &[
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
+                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
+                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
                                 .unwrap(),
                         ),
                     ],

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract RollTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract RollTest is Test {
     function testRoll() public {
         vm.roll(10);
         assertEq(block.number, 10, "roll failed");
