@@ -1686,32 +1686,39 @@ impl<'ast> State<'_, 'ast> {
 
         self.word("{");
         // Use the start position of the first argument's name for comment processing.
-        let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
-
-        self.commasep(
-            args,
-            list_lo,
-            pos_hi,
-            // Closure to print a single named argument (`name: value`)
-            |s, arg| {
-                s.cbox(0);
-                s.print_ident(&arg.name);
-                s.word(":");
-                if s.same_source_line(arg.name.span.hi(), arg.value.span.hi())
-                    || !s.print_trailing_comment(arg.name.span.hi(), None)
-                {
-                    s.nbsp();
-                }
-                s.print_comments(
-                    arg.value.span.lo(),
-                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
-                );
-                s.print_expr(arg.value);
-                s.end();
-            },
-            |arg| arg.name.span.until(arg.value.span),
-            list_format.break_cmnts().break_single(true).without_ind(self.call_stack.is_chain()),
-        );
+        if let Some(first_arg) = args.first() {
+            let list_lo = first_arg.name.span.lo();
+            self.commasep(
+                args,
+                list_lo,
+                pos_hi,
+                // Closure to print a single named argument (`name: value`)
+                |s, arg| {
+                    s.cbox(0);
+                    s.print_ident(&arg.name);
+                    s.word(":");
+                    if s.same_source_line(arg.name.span.hi(), arg.value.span.hi())
+                        || !s.print_trailing_comment(arg.name.span.hi(), None)
+                    {
+                        s.nbsp();
+                    }
+                    s.print_comments(
+                        arg.value.span.lo(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                    );
+                    s.print_expr(arg.value);
+                    s.end();
+                },
+                |arg| arg.name.span.until(arg.value.span),
+                list_format
+                    .break_cmnts()
+                    .break_single(true)
+                    .without_ind(self.call_stack.is_chain())
+                    .with_delimiters(!self.emit_or_revert),
+            );
+        } else if self.config.bracket_spacing {
+            self.nbsp();
+        }
         self.word("}");
 
         if !cache {
@@ -2097,7 +2104,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     |fmt, var| fmt.print_var(var, false),
                     get_span!(),
-                    ListFormat::compact().no_delimiters(),
+                    ListFormat::compact().with_delimiters(false),
                 );
                 self.print_word(")");
                 self.nbsp();
@@ -2236,15 +2243,17 @@ impl<'ast> State<'_, 'ast> {
         };
         self.s.cbox(0);
         self.print_path(path, false);
+        self.emit_or_revert = path.segments().len() > 1;
         self.print_call_args(
             args,
-            if args.len() == 1 {
-                ListFormat::compact().break_cmnts()
+            if self.config.call_compact_args {
+                ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
             } else {
-                ListFormat::compact().break_cmnts().no_delimiters()
+                ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
             },
             path.to_string().len(),
         );
+        self.emit_or_revert = false;
         self.end();
     }
 

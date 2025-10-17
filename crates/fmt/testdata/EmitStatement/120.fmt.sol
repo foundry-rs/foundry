@@ -28,4 +28,10 @@ function emitEvent() {
         strategyMock,
         depositAmount / 6 // 1 withdrawal not queued so decreased
     );
+
+    // https://github.com/foundry-rs/foundry/issues/12146
+    emit ISablierComptroller.DisableCustomFeeUSD(protocol, caller, users.sender, 0, feeUSD);
+    emit ISablierComptroller.DisableCustomFeeUSD({
+        protocol: protocol, caller: caller, user: users.sender, previousMinFeeUSD: 0, newMinFeeUSD: feeUSD
+    });
 }
