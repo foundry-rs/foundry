@@ -1140,7 +1140,11 @@ impl TestCommand {
         if let Some(bytes) = self.stdin.take() {
             child.stdin.take().unwrap().write_all(&bytes)?;
         }
-        child.wait_with_output()
+        let output = child.wait_with_output()?;
+        test_debug!("exited with {}", output.status);
+        test_trace!("\n--- stdout ---\n{}\n--- /stdout ---", output.stdout_lossy());
+        test_trace!("\n--- stderr ---\n{}\n--- /stderr ---", output.stderr_lossy());
+        Ok(output)
     }
 }
 
@@ -1189,11 +1193,18 @@ fn test_redactions() -> snapbox::Redactions {
 pub trait OutputExt {
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
+
+    /// Returns the stderr as lossy string
+    fn stderr_lossy(&self) -> String;
 }
 
 impl OutputExt for Output {
     fn stdout_lossy(&self) -> String {
         lossy_string(&self.stdout)
+    }
+
+    fn stderr_lossy(&self) -> String {
+        lossy_string(&self.stderr)
     }
 }
 
