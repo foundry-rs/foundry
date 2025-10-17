@@ -71,7 +71,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
             caller: origin,
             gas_price,
             chain_id: Some(chain_id),
-            gas_limit: block.header().gas_limit() as u64,
+            gas_limit: block.header().gas_limit(),
             ..Default::default()
         },
     };
