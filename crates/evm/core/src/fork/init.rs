@@ -21,7 +21,10 @@ pub async fn environment<N: Network, P: Provider<N>>(
     enable_tx_gas_limit: bool,
     configs: NetworkConfigs,
 ) -> eyre::Result<(Env, N::BlockResponse)> {
-    let bn = pin_block.map(BlockNumberOrTag::Number).unwrap_or_default();
+    let bn = match pin_block {
+        Some(bn) => BlockNumberOrTag::Number(bn),
+        None => BlockNumberOrTag::Latest,
+    };
     let (gas_price, chain_id, block) = tokio::try_join!(
         option_try_or_else(override_gas_price, async || provider.get_gas_price().await),
         option_try_or_else(override_chain_id, async || provider.get_chain_id().await),
