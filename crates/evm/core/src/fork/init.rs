@@ -28,11 +28,11 @@ pub async fn environment<N: Network, P: Provider<N>>(
         provider.get_block_by_number(bn)
     )?;
     let Some(block) = block else {
-        let bn_display = match bn {
-            BlockNumberOrTag::Number(bn) => bn.to_string(),
-            x => x.to_string(),
+        let bn_msg = match bn {
+            BlockNumberOrTag::Number(bn) => format!("block number: {bn}"),
+            bn => format!("{bn} block"),
         };
-        if let Ok(latest_block) = provider.get_block_number().await {
+        let latest_msg = if let Ok(latest_block) = provider.get_block_number().await {
             // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
             // the block, and the block number is less than equal the latest block, then
             // the user is forking from a non-archive node with an older block number.
@@ -41,12 +41,11 @@ pub async fn environment<N: Network, P: Provider<N>>(
             {
                 error!("{NON_ARCHIVE_NODE_WARNING}");
             }
-            eyre::bail!(
-                "failed to get block {bn_display}; \
-                 latest block number: {latest_block}"
-            );
-        }
-        eyre::bail!("failed to get block {bn_display}");
+            format!("; latest block number: {latest_block}")
+        } else {
+            Default::default()
+        };
+        eyre::bail!("failed to get {bn_msg}{latest_msg}");
     };
 
     let cfg = configure_env(chain_id, memory_limit, disable_block_gas_limit, enable_tx_gas_limit);
