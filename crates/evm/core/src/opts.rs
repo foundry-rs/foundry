@@ -131,7 +131,6 @@ impl EvmOpts {
             .maybe_initial_backoff(self.fork_retry_backoff)
             .maybe_headers(self.fork_headers.clone())
             .compute_units_per_second(self.get_compute_units_per_second())
-            .compute_units_per_second(self.get_compute_units_per_second())
             .build()
     }
 
@@ -268,13 +267,10 @@ impl EvmOpts {
 
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
-        if let Some(ref url) = self.fork_url {
+        if let Some(url) = &self.fork_url
+            && let Ok(provider) = self.fork_provider_with_url(url)
+        {
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = ProviderBuilder::new(url.as_str())
-                .compute_units_per_second(self.get_compute_units_per_second())
-                .build()
-                .ok()
-                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
