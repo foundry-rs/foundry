@@ -4,10 +4,6 @@
   "type": "module",
   "homepage": "https://getfoundry.sh/forge",
   "description": "Fast and flexible Ethereum testing framework",
-  "main": "./dist/index.mjs",
-  "engines": {
-    "node": ">=20"
-  },
   "bin": {
     "forge": "./bin/forge.mjs"
   },

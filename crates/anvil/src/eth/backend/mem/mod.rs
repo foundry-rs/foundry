@@ -8,7 +8,7 @@ use crate::{
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
-            db::{Db, MaybeFullDatabase, SerializableState},
+            db::{Db, MaybeFullDatabase, SerializableState, StateDb},
             env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
@@ -27,8 +27,7 @@ use crate::{
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
     },
-    evm::celo_precompile::{self, CELO_TRANSFER_ADDRESS},
-    inject_precompiles,
+    inject_custom_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
@@ -43,7 +42,10 @@ use alloy_consensus::{
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
-    eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams,
+    Encodable2718,
+    eip1559::BaseFeeParams,
+    eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
+    eip7840::BlobParams,
     eip7910::SystemContract,
 };
 use alloy_evm::{
@@ -58,7 +60,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
-    map::HashMap, utils::Unit,
+    map::HashMap,
 };
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
@@ -72,8 +74,8 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{
-            GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
         },
         parity::LocalizedTransactionTrace,
     },
@@ -85,8 +87,8 @@ use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction, has_optimism_fields,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
         transaction_request_to_typed,
     },
     wallet::WalletCapabilities,
@@ -98,18 +100,21 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
     decode::RevertDecoder,
     inspectors::AccessListInspector,
-    traces::{CallTraceDecoder, TracingInspectorConfig},
+    traces::{
+        CallTraceDecoder, FourByteInspector, GethTraceBuilder, TracingInspector,
+        TracingInspectorConfig,
+    },
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
     OpContext, OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
@@ -117,13 +122,9 @@ use revm::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
-    database::{CacheDB, WrapDatabaseRef},
+    database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::{
-        PrecompileId, PrecompileSpecId, Precompiles,
-        secp256r1::{P256VERIFY, P256VERIFY_ADDRESS, P256VERIFY_BASE_GAS_FEE},
-        u64_to_address,
-    },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
@@ -160,13 +161,6 @@ pub const MIN_CREATE_GAS: u128 = 53000;
 // Executor
 pub const EXECUTOR: Address = address!("0x6634F723546eCc92277e8a2F93d4f248bf1189ea");
 pub const EXECUTOR_PK: &str = "0x502d47e1421cb9abef497096728e69f07543232b93ef24de4998e18b5fd9ba0f";
-// P256 Batch Delegation Contract: https://odyssey-explorer.ithaca.xyz/address/0x35202a6E6317F3CC3a177EeEE562D3BcDA4a6FcC
-pub const P256_DELEGATION_CONTRACT: Address =
-    address!("0x35202a6e6317f3cc3a177eeee562d3bcda4a6fcc");
-// Runtime code of the P256 delegation contract
-pub const P256_DELEGATION_RUNTIME_CODE: &[u8] = &hex!(
-    "60806040526004361015610018575b361561001657005b005b5f3560e01c806309c5eabe146100c75780630cb6aaf1146100c257806330f6a8e5146100bd5780635fce1927146100b8578063641cdfe2146100b357806376ba882d146100ae5780638d80ff0a146100a9578063972ce4bc146100a4578063a78fc2441461009f578063a82e44e01461009a5763b34893910361000e576108e1565b6108b5565b610786565b610646565b6105ba565b610529565b6103f8565b6103a2565b61034c565b6102c0565b61020b565b634e487b7160e01b5f52604160045260245ffd5b6040810190811067ffffffffffffffff8211176100fc57604052565b6100cc565b6080810190811067ffffffffffffffff8211176100fc57604052565b60a0810190811067ffffffffffffffff8211176100fc57604052565b90601f8019910116810190811067ffffffffffffffff8211176100fc57604052565b6040519061016a608083610139565b565b67ffffffffffffffff81116100fc57601f01601f191660200190565b9291926101948261016c565b916101a26040519384610139565b8294818452818301116101be578281602093845f960137010152565b5f80fd5b9080601f830112156101be578160206101dd93359101610188565b90565b60206003198201126101be576004359067ffffffffffffffff82116101be576101dd916004016101c2565b346101be57610219366101e0565b3033036102295761001690610ae6565b636f6a1b8760e11b5f5260045ffd5b634e487b7160e01b5f52603260045260245ffd5b5f54811015610284575f8080526005919091027f290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e5630191565b610238565b8054821015610284575f52600560205f20910201905f90565b906040516102af816100e0565b602060018294805484520154910152565b346101be5760203660031901126101be576004355f548110156101be576102e69061024c565b5060ff815416600182015491610306600360ff60028401541692016102a2565b926040519215158352602083015260028110156103385760a09260209160408401528051606084015201516080820152f35b634e487b7160e01b5f52602160045260245ffd5b346101be575f3660031901126101be576020600254604051908152f35b6004359063ffffffff821682036101be57565b6064359063ffffffff821682036101be57565b6084359063ffffffff821682036101be57565b346101be5760203660031901126101be576103bb610369565b303303610229576103cb9061024c565b50805460ff19169055005b60609060231901126101be57602490565b60609060831901126101be57608490565b346101be5760803660031901126101be57610411610369565b60205f61041d366103d6565b60015461043161042c82610a0b565b600155565b60405184810191825260e086901b6001600160e01b031916602083015261046581602484015b03601f198101835282610139565b51902060ff61047660408401610a19565b161583146104fe576104b2601b925b85813591013590604051948594859094939260ff6060936080840197845216602083015260408201520152565b838052039060015afa156104f9575f51306001600160a01b03909116036104ea576104df6100169161024c565b50805460ff19169055565b638baa579f60e01b5f5260045ffd5b610a27565b6104b2601c92610485565b60409060031901126101be57600490565b6044359060028210156101be57565b346101be5760803660031901126101be5761054336610509565b61054b61051a565b606435903033036102295761059192610580610587926040519461056e86610101565b60018652602086015260408501610a32565b36906105f3565b6060820152610a3e565b5f545f1981019081116105b55760405163ffffffff919091168152602090f35b0390f35b6109f7565b6100166105c6366101e0565b610ae6565b60409060231901126101be57604051906105e4826100e0565b60243582526044356020830152565b91908260409103126101be5760405161060b816100e0565b6020808294803584520135910152565b6084359081151582036101be57565b60a4359081151582036101be57565b359081151582036101be57565b346101be5760a03660031901126101be5760043567ffffffffffffffff81116101be576106779036906004016101c2565b610680366105cb565b61068861037c565b61069061061b565b906002546106a56106a082610a0b565b600255565b6040516106bb8161045788602083019586610b6a565b51902091610747575b6106d06106d69161024c565b50610b7b565b906106e86106e48351151590565b1590565b610738576020820151801515908161072e575b5061071f576107129260606106e493015191610ce3565b6104ea5761001690610ae6565b632572e3a960e01b5f5260045ffd5b905042115f6106fb565b637dd286d760e11b5f5260045ffd5b905f61077361045761076760209460405192839187830160209181520190565b60405191828092610b58565b039060025afa156104f9575f51906106c4565b346101be5760e03660031901126101be576107a036610509565b6107a861051a565b6064359060205f6107b8366103e7565b6001546107c761042c82610a0b565b60408051808601928352883560208401528589013591830191909152606082018790526107f78160808401610457565b51902060ff61080860408401610a19565b161583146108aa5760408051918252601b602083015282359082015290830135606082015280608081015b838052039060015afa156104f9575f51306001600160a01b03909116036104ea5761087a926105806105879261086761015b565b6001815294602086015260408501610a32565b6105b161089361088a5f54610ad8565b63ffffffff1690565b60405163ffffffff90911681529081906020820190565b610833601c92610485565b346101be575f3660031901126101be576020600154604051908152f35b359061ffff821682036101be57565b346101be5760c03660031901126101be5760043567ffffffffffffffff81116101be576109129036906004016101c2565b61091b366105cb565b906064359167ffffffffffffffff83116101be5760a060031984360301126101be576040516109498161011d565b836004013567ffffffffffffffff81116101be5761096d90600436918701016101c2565b8152602484013567ffffffffffffffff81116101be57840193366023860112156101be5760846109db916109ae610016973690602460048201359101610188565b60208501526109bf604482016108d2565b60408501526109d0606482016108d2565b606085015201610639565b60808201526109e861038f565b916109f161062a565b93610bc3565b634e487b7160e01b5f52601160045260245ffd5b5f1981146105b55760010190565b3560ff811681036101be5790565b6040513d5f823e3d90fd5b60028210156103385752565b5f54680100000000000000008110156100fc57806001610a6192015f555f610289565b610ac557610a7e82511515829060ff801983541691151516179055565b6020820151600182015560028101604083015160028110156103385761016a9360039260609260ff8019835416911617905501519101906020600191805184550151910155565b634e487b7160e01b5f525f60045260245ffd5b5f198101919082116105b557565b80519060205b828110610af857505050565b808201805160f81c600182015160601c91601581015160358201519384915f9493845f14610b4257505050506001146101be575b15610b3a5701605501610aec565b3d5f803e3d5ffd5b5f95508594506055019130811502175af1610b2c565b805191908290602001825e015f815290565b6020906101dd939281520190610b58565b90604051610b8881610101565b6060610bbe6003839560ff8154161515855260018101546020860152610bb860ff60028301541660408701610a32565b016102a2565b910152565b93909192600254610bd66106a082610a0b565b604051610bec8161045789602083019586610b6a565b51902091610c50575b6106d0610c019161024c565b91610c0f6106e48451151590565b6107385760208301518015159081610c46575b5061071f57610c399360606106e494015192610e0d565b6104ea5761016a90610ae6565b905042115f610c22565b905f610c7061045761076760209460405192839187830160209181520190565b039060025afa156104f9575f5190610bf5565b3d15610cad573d90610c948261016c565b91610ca26040519384610139565b82523d5f602084013e565b606090565b8051601f101561028457603f0190565b8051602010156102845760400190565b908151811015610284570160200190565b5f9291839260208251920151906020815191015191604051936020850195865260408501526060840152608083015260a082015260a08152610d2660c082610139565b519060145afa610d34610c83565b81610d74575b81610d43575090565b600160f81b91506001600160f81b031990610d6f90610d6190610cb2565b516001600160f81b03191690565b161490565b80516020149150610d3a565b60405190610d8f604083610139565b6015825274113a3cb832911d113bb2b130baba34371733b2ba1160591b6020830152565b9061016a6001610de3936040519485916c1131b430b63632b733b2911d1160991b6020840152602d830190610b58565b601160f91b815203601e19810185520183610139565b610e069060209392610b58565b9081520190565b92919281516025815110908115610f0a575b50610ef957610e2c610d80565b90610e596106e460208501938451610e53610e4c606089015161ffff1690565b61ffff1690565b91610f9b565b610f01576106e4610e8d610e88610457610e83610ea1956040519283916020830160209181520190565b611012565b610db3565b8351610e53610e4c604088015161ffff1690565b610ef9575f610eb96020925160405191828092610b58565b039060025afa156104f9575f610ee360209261076783519151610457604051938492888401610df9565b039060025afa156104f9576101dd915f51610ce3565b505050505f90565b50505050505f90565b610f2b9150610f1e610d616106e492610cc2565b6080850151151590610f31565b5f610e1f565b906001600160f81b0319600160f81b831601610f955780610f85575b610f8057601f60fb1b600160fb1b821601610f69575b50600190565b600160fc1b90811614610f7c575f610f63565b5f90565b505f90565b50600160fa1b8181161415610f4d565b50505f90565b80519282515f5b858110610fb457505050505050600190565b8083018084116105b5578281101561100757610fe56001600160f81b0319610fdc8488610cd2565b51169187610cd2565b516001600160f81b03191603610ffd57600101610fa2565b5050505050505f90565b505050505050505f90565b80516060929181611021575050565b9092506003600284010460021b604051937f4142434445464748494a4b4c4d4e4f505152535455565758595a616263646566601f527f6768696a6b6c6d6e6f707172737475767778797a303132333435363738392d5f603f52602085019282860191602083019460208284010190600460038351955f85525b0191603f8351818160121c16515f538181600c1c1651600153818160061c165160025316516003535f5181520190878210156110db5760049060039061109a565b5095505f93600393604092520160405206600204809303613d3d60f01b81525203825256fea26469706673582212200ba93b78f286a25ece47e9403c47be9862f9b8b70ba1a95098667b90c47308b064736f6c634300081a0033"
-);
 // Experimental ERC20
 pub const EXP_ERC20_CONTRACT: Address = address!("0x238c8CD93ee9F8c7Edf395548eF60c0d2e46665E");
 // Runtime code of the experimental ERC20 contract
@@ -240,7 +234,6 @@ pub struct Backend {
     print_traces: bool,
     /// Recorder used for decoding traces, used together with print_traces
     call_trace_decoder: Arc<CallTraceDecoder>,
-    odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -272,7 +265,6 @@ impl Backend {
         print_logs: bool,
         print_traces: bool,
         call_trace_decoder: Arc<CallTraceDecoder>,
-        odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -325,43 +317,6 @@ impl Backend {
             (cfg.slots_in_an_epoch, cfg.precompile_factory.clone(), cfg.disable_pool_balance_checks)
         };
 
-        let (capabilities, executor_wallet) = if odyssey {
-            // Insert account that sponsors the delegated txs. And deploy P256 delegation contract.
-            let mut db = db.write().await;
-
-            let _ = db.set_code(
-                P256_DELEGATION_CONTRACT,
-                Bytes::from_static(P256_DELEGATION_RUNTIME_CODE),
-            );
-
-            // Insert EXP ERC20 contract
-            let _ = db.set_code(EXP_ERC20_CONTRACT, Bytes::from_static(EXP_ERC20_RUNTIME_CODE));
-
-            let init_balance = Unit::ETHER.wei().saturating_mul(U256::from(10_000)); // 10K ETH
-
-            // Add ETH
-            let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
-            let _ = db.set_balance(EXECUTOR, init_balance);
-
-            let mut capabilities = HashMap::default();
-
-            let chain_id = env.read().evm_env.cfg_env.chain_id;
-            capabilities.insert(
-                chain_id,
-                Capabilities {
-                    delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
-                },
-            );
-
-            let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
-
-            let executor_wallet = EthereumWallet::new(signer);
-
-            (WalletCapabilities(capabilities), Some(executor_wallet))
-        } else {
-            (WalletCapabilities(Default::default()), None)
-        };
-
         let backend = Self {
             db,
             blockchain,
@@ -378,15 +333,14 @@ impl Backend {
             print_logs,
             print_traces,
             call_trace_decoder,
-            odyssey,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
-            capabilities: Arc::new(RwLock::new(capabilities)),
-            executor_wallet: Arc::new(RwLock::new(executor_wallet)),
+            capabilities: Arc::new(RwLock::new(WalletCapabilities(Default::default()))),
+            executor_wallet: Arc::new(RwLock::new(None)),
             disable_pool_balance_checks,
         };
 
@@ -418,10 +372,6 @@ impl Backend {
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
         self.states.write().update_interval_mine_block_time(block_time)
-    }
-
-    pub(crate) fn executor_wallet(&self) -> Option<EthereumWallet> {
-        self.executor_wallet.read().clone()
     }
 
     /// Adds an address to the wallet's delegation capability.
@@ -846,12 +796,7 @@ impl Backend {
 
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        self.env.read().is_optimism
-    }
-
-    /// Returns true if Celo features are active
-    pub fn is_celo(&self) -> bool {
-        self.env.read().is_celo
+        self.env.read().networks.is_optimism()
     }
 
     /// Returns the precompiles for the current spec.
@@ -864,19 +809,8 @@ impl Backend {
             precompiles_map.insert(precompile.id().name().to_string(), *address);
         }
 
-        if self.odyssey {
-            precompiles_map.insert(
-                PrecompileId::P256Verify.name().to_string(),
-                u64_to_address(P256VERIFY_ADDRESS),
-            );
-        }
-
-        if self.is_celo() {
-            precompiles_map.insert(
-                celo_precompile::PRECOMPILE_ID_CELO_TRANSFER.clone().name().to_string(),
-                CELO_TRANSFER_ADDRESS,
-            );
-        }
+        // Extend with configured network precompiles.
+        precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
             for (precompile, _) in &factory.precompiles() {
@@ -1216,11 +1150,15 @@ impl Backend {
     }
 
     /// Returns the environment for the next block
+    ///
+    /// This is used for obtaining the evm environment for the next (pending) block (e.g.
+    /// transaction validation in eth_sendrawTransaction)
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(U256::from(1));
         env.evm_env.block_env.basefee = self.base_fee();
+        env.evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         env.evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
@@ -1239,20 +1177,10 @@ impl Backend {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-
-        if self.odyssey {
-            inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
-        }
-
-        if self.is_celo() {
-            evm.precompiles_mut()
-                .apply_precompile(&celo_precompile::CELO_TRANSFER_ADDRESS, move |_| {
-                    Some(celo_precompile::precompile())
-                });
-        }
+        self.env.read().networks.inject_precompiles(evm.precompiles_mut());
 
         if let Some(factory) = &self.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
+            inject_custom_precompiles(&mut evm, factory.precompiles());
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1280,7 +1208,7 @@ impl Backend {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
 
-        if env.is_optimism {
+        if env.networks.is_optimism() {
             env.tx.enveloped_tx =
                 Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
         }
@@ -1351,9 +1279,7 @@ impl Backend {
             print_traces: self.print_traces,
             call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            celo: self.is_celo(),
+            networks: self.env.read().networks,
             blob_params: self.blob_params(),
             cheats: self.cheats().clone(),
         };
@@ -1441,10 +1367,8 @@ impl Backend {
                     print_logs: self.print_logs,
                     print_traces: self.print_traces,
                     call_trace_decoder: self.call_trace_decoder.clone(),
-                    odyssey: self.odyssey,
+                    networks: self.env.read().networks,
                     precompile_factory: self.precompile_factory.clone(),
-                    optimism: self.is_optimism(),
-                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                     cheats: self.cheats().clone(),
                 };
@@ -1596,7 +1520,7 @@ impl Backend {
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
-    ///  - `nonce` check is skipped if `request.nonce` is None
+    ///  - `nonce` check is skipped
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1647,6 +1571,9 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
+        // Disable nonce check in revm
+        env.evm_env.cfg_env.disable_nonce_check = true;
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1684,9 +1611,6 @@ impl Backend {
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
-        } else {
-            // Disable nonce check in revm
-            env.evm_env.cfg_env.disable_nonce_check = true;
         }
 
         if env.evm_env.block_env.basefee == 0 {
@@ -1985,8 +1909,9 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
-            opts;
+        let GethDebugTracingCallOptions {
+            tracing_options, block_overrides, state_overrides, ..
+        } = opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, mut block| {
@@ -2018,6 +1943,12 @@ impl Backend {
                             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
+
+                            inspector.print_logs();
+                            if self.print_traces {
+                                inspector.print_traces(self.call_trace_decoder.clone());
+                            }
+
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
 
                             Ok(tracing_inspector
@@ -2025,9 +1956,31 @@ impl Backend {
                                 .geth_call_traces(call_config, result.gas_used())
                                 .into())
                         }
+                        GethDebugBuiltInTracerType::PreStateTracer => {
+                            let pre_state_config = tracer_config
+                                .into_pre_state_config()
+                                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+
+                            let mut inspector = TracingInspector::new(
+                                TracingInspectorConfig::from_geth_prestate_config(
+                                    &pre_state_config,
+                                ),
+                            );
+
+                            let env = self.build_call_env(request, fee_details, block);
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+                            let result = evm.transact(env.tx)?;
+
+                            drop(evm);
+
+                            Ok(inspector
+                                .into_geth_builder()
+                                .geth_prestate_traces(&result, &pre_state_config, cache_db)?
+                                .into())
+                        }
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer
-                        | GethDebugBuiltInTracerType::PreStateTracer
                         | GethDebugBuiltInTracerType::MuxTracer
                         | GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
@@ -2146,7 +2099,7 @@ impl Backend {
         hash: B256,
     ) -> Result<Vec<Log>, BlockchainError> {
         if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
-            return Ok(self.mined_logs_for_block(filter, block));
+            return Ok(self.mined_logs_for_block(filter, block, hash));
         }
 
         if let Some(fork) = self.get_fork() {
@@ -2157,9 +2110,8 @@ impl Backend {
     }
 
     /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
-    fn mined_logs_for_block(&self, filter: Filter, block: Block) -> Vec<Log> {
+    fn mined_logs_for_block(&self, filter: Filter, block: Block, block_hash: B256) -> Vec<Log> {
         let mut all_logs = Vec::new();
-        let block_hash = block.header.hash_slow();
         let mut block_log_index = 0u32;
 
         let storage = self.blockchain.storage.read();
@@ -2220,8 +2172,8 @@ impl Backend {
         }
 
         for number in from..=to {
-            if let Some(block) = self.get_block(number) {
-                all_logs.extend(self.mined_logs_for_block(filter.clone(), block));
+            if let Some((block, hash)) = self.get_block_with_hash(number) {
+                all_logs.extend(self.mined_logs_for_block(filter.clone(), block, hash));
             }
         }
 
@@ -2279,7 +2231,7 @@ impl Backend {
 
     fn mined_block_by_hash(&self, hash: B256) -> Option<AnyRpcBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
-        Some(self.convert_block(block))
+        Some(self.convert_block_with_hash(block, Some(hash)))
     }
 
     pub(crate) async fn mined_transactions_by_block_number(
@@ -2348,7 +2300,8 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn get_block(&self, id: impl Into<BlockId>) -> Option<Block> {
+    /// Returns the block and its hash for the given id
+    fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
         let hash = match id.into() {
             BlockId::Hash(hash) => hash.block_hash,
             BlockId::Number(number) => {
@@ -2376,7 +2329,12 @@ impl Backend {
                 }
             }
         };
-        self.get_block_by_hash(hash)
+        let block = self.get_block_by_hash(hash)?;
+        Some((block, hash))
+    }
+
+    pub fn get_block(&self, id: impl Into<BlockId>) -> Option<Block> {
+        self.get_block_with_hash(id).map(|(block, _)| block)
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
@@ -2384,28 +2342,33 @@ impl Backend {
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyRpcBlock> {
-        let block = self.get_block(number)?;
-        let mut block = self.convert_block(block);
+        let (block, hash) = self.get_block_with_hash(number)?;
+        let mut block = self.convert_block_with_hash(block, Some(hash));
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
     pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyRpcBlock> {
-        let block = self.get_block(id)?;
+        let (block, hash) = self.get_block_with_hash(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let mut block = self.convert_block(block);
+        let mut block = self.convert_block_with_hash(block, Some(hash));
         block.inner.transactions = BlockTransactions::Full(transactions);
-
         Some(block)
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
     pub fn convert_block(&self, block: Block) -> AnyRpcBlock {
+        self.convert_block_with_hash(block, None)
+    }
+
+    /// Takes a block as it's stored internally and returns the eth api conform block format.
+    /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
+    pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
 
-        let hash = header.hash_slow();
+        let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let Header { number, withdrawals_root, .. } = header;
 
         let block = AlloyBlock {
@@ -2518,19 +2481,16 @@ impl Backend {
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
                 .map(|block| (block.header.hash, block))
-                && let Some(state) = self.states.write().get(&block_hash)
             {
-                let block = BlockEnv {
-                    number: U256::from(block_number),
-                    beneficiary: block.header.beneficiary,
-                    timestamp: U256::from(block.header.timestamp),
-                    difficulty: block.header.difficulty,
-                    prevrandao: block.header.mix_hash,
-                    basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                    gas_limit: block.header.gas_limit,
-                    ..Default::default()
-                };
-                return Ok(f(Box::new(state), block));
+                let read_guard = self.states.upgradable_read();
+                if let Some(state_db) = read_guard.get_state(&block_hash) {
+                    return Ok(get_block_env(state_db, block_number, block, f));
+                } else {
+                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                    if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
+                }
             }
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
@@ -2714,7 +2674,7 @@ impl Backend {
                 .await;
         }
 
-        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()).await {
             return trace;
         }
 
@@ -2725,16 +2685,19 @@ impl Backend {
         Ok(GethTrace::Default(Default::default()))
     }
 
-    /// Traces the transaction with the js tracer
-    #[cfg(feature = "js-tracer")]
-    pub async fn trace_tx_with_js_tracer(
+    fn replay_tx_with_inspector<I, F, T>(
         &self,
         hash: B256,
-        code: String,
-        opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingOptions { tracer_config, .. } = opts;
-
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<OpHaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, Env) -> T,
+    {
         let block = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { block_hash, .. } = storage
@@ -2766,69 +2729,98 @@ impl Backend {
             })
             .collect();
 
-        let mut states = self.states.write();
-        let parent_state =
-            states.get(&block.header.parent_hash).ok_or(BlockchainError::BlockNotFound)?;
-        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
 
-        // configure the blockenv for the block of the transaction
-        let mut env = self.env.read().clone();
+            // configure the blockenv for the block of the transaction
+            let mut env = self.env.read().clone();
 
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(block.header.number),
-            beneficiary: block.header.beneficiary,
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            prevrandao: Some(block.header.mix_hash),
-            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.header.gas_limit,
-            ..Default::default()
+            env.evm_env.block_env = BlockEnv {
+                number: U256::from(block.header.number),
+                beneficiary: block.header.beneficiary,
+                timestamp: U256::from(block.header.timestamp),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                gas_limit: block.header.gas_limit,
+                ..Default::default()
+            };
+
+            let executor = TransactionExecutor {
+                db: &mut cache_db,
+                validator: self,
+                pending: pool_txs.into_iter(),
+                block_env: env.evm_env.block_env.clone(),
+                cfg_env: env.evm_env.cfg_env.clone(),
+                parent_hash: block.header.parent_hash,
+                gas_used: 0,
+                blob_gas_used: 0,
+                enable_steps_tracing: self.enable_steps_tracing,
+                print_logs: self.print_logs,
+                print_traces: self.print_traces,
+                call_trace_decoder: self.call_trace_decoder.clone(),
+                precompile_factory: self.precompile_factory.clone(),
+                networks: self.env.read().networks,
+                blob_params: self.blob_params(),
+                cheats: self.cheats().clone(),
+            };
+
+            let _ = executor.execute();
+
+            let target_tx = block.transactions[index].clone();
+            let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
+            let mut tx_env = target_tx.to_revm_tx_env();
+            if env.networks.is_optimism() {
+                tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
+            }
+
+            let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+
+            let result = evm
+                .transact(tx_env.clone())
+                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+            Ok(f(result, cache_db, inspector, tx_env.base, env))
         };
 
-        let executor = TransactionExecutor {
-            db: &mut cache_db,
-            validator: self,
-            pending: pool_txs.into_iter(),
-            block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env.clone(),
-            parent_hash: block.header.parent_hash,
-            gas_used: 0,
-            blob_gas_used: 0,
-            enable_steps_tracing: self.enable_steps_tracing,
-            print_logs: self.print_logs,
-            print_traces: self.print_traces,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-            precompile_factory: self.precompile_factory.clone(),
-            odyssey: self.odyssey,
-            optimism: self.is_optimism(),
-            celo: self.is_celo(),
-            blob_params: self.blob_params(),
-            cheats: self.cheats().clone(),
-        };
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
+    }
 
-        let _ = executor.execute();
-
-        let target_tx = block.transactions[index].clone();
-        let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-        let tx_env = target_tx.to_revm_tx_env();
-
+    /// Traces the transaction with the js tracer
+    #[cfg(feature = "js-tracer")]
+    pub async fn trace_tx_with_js_tracer(
+        &self,
+        hash: B256,
+        code: String,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { tracer_config, .. } = opts;
         let config = tracer_config.into_json();
-        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
+        let inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
             .map_err(|err| BlockchainError::Message(err.to_string()))?;
-        let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
-
-        let result = evm
-            .transact(tx_env.clone())
-            .map_err(|err| BlockchainError::Message(err.to_string()))?;
-
-        let trace = inspector
-            .json_result(
-                result,
-                &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                &env.evm_env.block_env,
-                &cache_db,
-            )
-            .map_err(|e| BlockchainError::Message(e.to_string()))?;
+        let trace = self.replay_tx_with_inspector(
+            hash,
+            inspector,
+            |result, cache_db, mut inspector, tx_env, env| {
+                inspector
+                    .json_result(
+                        result,
+                        &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
+                        &env.evm_env.block_env,
+                        &cache_db,
+                    )
+                    .map_err(|e| BlockchainError::Message(e.to_string()))
+            },
+        )??;
         Ok(GethTrace::JS(trace))
     }
 
@@ -2848,12 +2840,99 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_geth_trace_transaction(
+    fn geth_trace(
+        &self,
+        tx: &MinedTransaction,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        let res = self.replay_tx_with_inspector(
+                            tx.info.transaction_hash,
+                            inspector,
+                            |_, _, inspector, _, _| FourByteFrame::from(inspector).into(),
+                        )?;
+                        return Ok(res);
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        return match tracer_config.into_call_config() {
+                            Ok(call_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_call_config(&call_config),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |_, _, inspector, _, _| {
+                                        inspector
+                                            .geth_builder()
+                                            .geth_call_traces(
+                                                call_config,
+                                                tx.receipt.cumulative_gas_used(),
+                                            )
+                                            .into()
+                                    },
+                                )?;
+                                Ok(frame)
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer => {
+                        return match tracer_config.into_pre_state_config() {
+                            Ok(pre_state_config) => {
+                                let inspector = TracingInspector::new(
+                                    TracingInspectorConfig::from_geth_prestate_config(
+                                        &pre_state_config,
+                                    ),
+                                );
+                                let frame = self.replay_tx_with_inspector(
+                                    tx.info.transaction_hash,
+                                    inspector,
+                                    |state, db, inspector, _, _| {
+                                        inspector.geth_builder().geth_prestate_traces(
+                                            &state,
+                                            &pre_state_config,
+                                            db,
+                                        )
+                                    },
+                                )??;
+                                Ok(frame.into())
+                            }
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                },
+                GethDebugTracerType::JsTracer(_code) => {}
+            }
+
+            return Ok(NoopFrame::default().into());
+        }
+
+        // default structlog tracer
+        Ok(GethTraceBuilder::new(tx.info.traces.clone())
+            .geth_traces(
+                tx.receipt.cumulative_gas_used(),
+                tx.info.out.clone().unwrap_or_default(),
+                config,
+            )
+            .into())
+    }
+
+    async fn mined_geth_trace_transaction(
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Option<Result<GethTrace, BlockchainError>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
     }
 
     /// Returns the traces for the given block
@@ -3010,12 +3089,30 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
         let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
 
-        let receipt = tx_receipt.as_receipt_with_bloom().receipt.clone();
-        let receipt = Receipt {
-            status: receipt.status,
-            cumulative_gas_used: receipt.cumulative_gas_used,
-            logs: receipt
-                .logs
+        // Build a ReceiptWithBloom<rpc_types::Log> from the typed receipt, handling Deposit
+        // specially
+        let (status, cumulative_gas_used, logs_source, logs_bloom) = match &tx_receipt {
+            TypedReceipt::Deposit(r) => (
+                r.receipt.inner.status,
+                r.receipt.inner.cumulative_gas_used,
+                r.receipt.inner.logs.to_vec(),
+                r.logs_bloom,
+            ),
+            _ => {
+                let receipt_ref = tx_receipt.as_receipt_with_bloom();
+                (
+                    receipt_ref.receipt.status,
+                    receipt_ref.receipt.cumulative_gas_used,
+                    receipt_ref.receipt.logs.to_vec(),
+                    receipt_ref.logs_bloom,
+                )
+            }
+        };
+
+        let receipt: alloy_consensus::Receipt<alloy_rpc_types::Log> = Receipt {
+            status,
+            cumulative_gas_used,
+            logs: logs_source
                 .into_iter()
                 .enumerate()
                 .map(|(index, log)| alloy_rpc_types::Log {
@@ -3030,20 +3127,33 @@ impl Backend {
                 })
                 .collect(),
         };
-        let receipt_with_bloom =
-            ReceiptWithBloom { receipt, logs_bloom: tx_receipt.as_receipt_with_bloom().logs_bloom };
+        let receipt_with_bloom = ReceiptWithBloom { receipt, logs_bloom };
 
         let inner = match tx_receipt {
-            TypedReceipt::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            TypedReceipt::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            TypedReceipt::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            TypedReceipt::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            TypedReceipt::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: r.deposit_nonce,
-                deposit_receipt_version: r.deposit_receipt_version,
-            }),
+            TypedReceipt::EIP1559(_) => TypedReceiptRpc::EIP1559(receipt_with_bloom),
+            TypedReceipt::Legacy(_) => TypedReceiptRpc::Legacy(receipt_with_bloom),
+            TypedReceipt::EIP2930(_) => TypedReceiptRpc::EIP2930(receipt_with_bloom),
+            TypedReceipt::EIP4844(_) => TypedReceiptRpc::EIP4844(receipt_with_bloom),
+            TypedReceipt::EIP7702(_) => TypedReceiptRpc::EIP7702(receipt_with_bloom),
+            TypedReceipt::Deposit(r) => {
+                TypedReceiptRpc::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: Receipt {
+                            status: receipt_with_bloom.receipt.status,
+                            cumulative_gas_used: receipt_with_bloom.receipt.cumulative_gas_used,
+                            logs: receipt_with_bloom
+                                .receipt
+                                .logs
+                                .into_iter()
+                                .map(|l| l.inner)
+                                .collect(),
+                        },
+                        deposit_nonce: r.receipt.deposit_nonce,
+                        deposit_receipt_version: r.receipt.deposit_receipt_version,
+                    },
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                })
+            }
         };
 
         let inner = TransactionReceipt {
@@ -3199,6 +3309,29 @@ impl Backend {
         Ok(None)
     }
 
+    pub fn get_blob_sidecars_by_block_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlobTransactionSidecar>> {
+        if let Some(full_block) = self.get_full_block(block_id) {
+            let sidecar = full_block
+                .into_transactions_iter()
+                .map(TypedTransaction::try_from)
+                .filter_map(|typed_tx_result| {
+                    typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
+                })
+                .fold(BlobTransactionSidecar::default(), |mut acc, sidecar| {
+                    acc.blobs.extend(sidecar.blobs);
+                    acc.commitments.extend(sidecar.commitments);
+                    acc.proofs.extend(sidecar.proofs);
+                    acc
+                });
+            Ok(Some(sidecar))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
@@ -3344,12 +3477,22 @@ impl Backend {
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
-            let mut state = self.states.write();
-            let state_db = state
-                .get(&common_block.header.hash_slow())
-                .ok_or(BlockchainError::DataUnavailable)?;
-            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            db_full.clone()
+            let return_state_or_throw_err =
+                |db: Option<&StateDb>| -> Result<HashMap<Address, DbAccount>, BlockchainError> {
+                    let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
+                    let db_full =
+                        state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                    Ok(db_full.clone())
+                };
+
+            let hash = &common_block.header.hash_slow();
+            let read_guard = self.states.upgradable_read();
+            if let Some(db) = read_guard.get_state(hash) {
+                return_state_or_throw_err(Some(db))?
+            } else {
+                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                return_state_or_throw_err(write_guard.get_on_disk_state(hash))?
+            }
         };
 
         {
@@ -3382,6 +3525,23 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn get_block_env<F, T>(state: &StateDb, block_number: u64, block: AnyRpcBlock, f: F) -> T
+where
+    F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+{
+    let block = BlockEnv {
+        number: U256::from(block_number),
+        beneficiary: block.header.beneficiary,
+        timestamp: U256::from(block.header.timestamp),
+        difficulty: block.header.difficulty,
+        prevrandao: block.header.mix_hash,
+        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+        gas_limit: block.header.gas_limit,
+        ..Default::default()
+    };
+    f(Box::new(state), block)
 }
 
 /// Get max nonce from transaction pool by address.

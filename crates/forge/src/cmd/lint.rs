@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::BuildOpts,
     utils::{FoundryPathExt, LoadConfig},
 };
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
@@ -31,10 +31,6 @@ pub struct LintArgs {
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     pub(crate) lint: Option<Vec<String>>,
 
-    /// Activates the linter's JSON formatter (rustc-compatible).
-    #[arg(long)]
-    pub(crate) json: bool,
-
     #[command(flatten)]
     pub(crate) build: BuildOpts,
 }
@@ -45,7 +41,6 @@ impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         let project = config.solar_project()?;
-
         let path_config = config.project_paths();
 
         // Expand ignore globs and canonicalize from the get go
@@ -97,17 +92,14 @@ impl LintArgs {
         };
 
         // Override default severity config with user-defined severity
-        let severity = match self.severity {
-            Some(target) => target,
-            None => config.lint.severity.clone(),
-        };
+        let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
         if project.compiler.solc.is_none() {
             return Err(eyre!("Linting not supported for this language"));
         }
 
         let linter = SolidityLinter::new(path_config)
-            .with_json_emitter(self.json)
+            .with_json_emitter(shell::is_json())
             .with_description(true)
             .with_lints(include)
             .without_lints(exclude)
@@ -116,7 +108,7 @@ impl LintArgs {
 
         let mut output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();
-        linter.lint(&input, compiler)?;
+        linter.lint(&input, config.deny, compiler)?;
 
         Ok(())
     }

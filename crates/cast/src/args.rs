@@ -191,6 +191,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
+        CastSubcommand::AbiEncodeEvent { sig, args } => {
+            let log_data = SimpleCast::abi_encode_event(&sig, &args)?;
+            for (i, topic) in log_data.topics().iter().enumerate() {
+                sh_println!("[topic{}]: {}", i, topic)?;
+            }
+            if !log_data.data.is_empty() {
+                sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
+            }
+        }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
             let raw_hex = if let Some(file_path) = file {
                 let contents = fs::read_to_string(&file_path)?;
@@ -264,6 +273,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Artifact(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
+        CastSubcommand::B2EPayload(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             sh_println!("{}", pretty_calldata(&calldata, offline).await?)?;
@@ -720,12 +730,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
-        CastSubcommand::GenerateFigSpec => clap_complete::generate(
-            clap_complete_fig::Fig,
-            &mut CastArgs::command(),
-            "cast",
-            &mut std::io::stdout(),
-        ),
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
@@ -739,7 +743,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::RecoverAuthority { auth } => {
-            let auth: SignedAuthorization = serde_json::from_str(&auth).unwrap();
+            let auth: SignedAuthorization = serde_json::from_str(&auth)?;
             sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
@@ -757,7 +761,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens: Vec<serde_json::Value> = tokens
                 .iter()
                 .cloned()
-                .map(serialize_value_as_json)
+                .map(|t| serialize_value_as_json(t, None))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
             let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());

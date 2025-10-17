@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract SignTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract SignTest is Test {
     function testSignP256() public {
         bytes32 pk = hex"A8568B74282DCC66FF70F10B4CE5CC7B391282F5381BBB4F4D8DD96974B16E6B";
         bytes32 digest = hex"54705ba3baafdbdfba8c5f9a70f7a89bee98d906b53e31074da7baecdc0da9ad";

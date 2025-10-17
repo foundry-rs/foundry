@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 // https://github.com/foundry-rs/foundry/issues/2984
-contract Issue2984Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue2984Test is Test {
     uint256 fork;
     uint256 snapshot;
 

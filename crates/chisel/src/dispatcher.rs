@@ -10,6 +10,7 @@ use crate::{
 use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
+use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -20,18 +21,18 @@ use foundry_evm::{
     },
 };
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
     sema::ast::Base,
 };
 use std::{
     borrow::Cow,
+    io::Write,
     ops::ControlFlow,
     path::{Path, PathBuf},
     process::Command,
 };
-use tracing::debug;
+use tempfile::Builder;
 use yansi::Paint;
 
 /// Prompt arrow character.
@@ -52,32 +53,10 @@ pub struct ChiselDispatcher {
     pub helper: SolidityHelper,
 }
 
-/// A response from the Etherscan API's `getabi` action
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EtherscanABIResponse {
-    /// The status of the response
-    /// "1" = success | "0" = failure
-    pub status: String,
-    /// The message supplied by the API
-    pub message: String,
-    /// The result returned by the API. Will be `None` if the request failed.
-    pub result: Option<String>,
-}
-
 /// Helper function that formats solidity source with the given [FormatterConfig]
 pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
-    match forge_fmt::parse(source) {
-        Ok(parsed) => {
-            let mut formatted_source = String::default();
-
-            if forge_fmt::format_to(&mut formatted_source, parsed, config).is_err() {
-                eyre::bail!("Could not format source!");
-            }
-
-            Ok(formatted_source)
-        }
-        Err(_) => eyre::bail!("Formatter could not parse source!"),
-    }
+    let formatted = forge_fmt::format(source, config).into_result()?;
+    Ok(formatted)
 }
 
 impl ChiselDispatcher {
@@ -222,7 +201,7 @@ impl ChiselDispatcher {
     }
 
     async fn execute_and_replace(&mut self, mut new_source: SessionSource) -> Result<()> {
-        let (_, mut res) = new_source.execute().await?;
+        let mut res = new_source.execute().await?;
         let failed = !res.success;
         if new_source.config.traces || failed {
             if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await {
@@ -417,7 +396,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_mem_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((_, mem)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
@@ -432,7 +411,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) async fn show_stack_dump(&mut self) -> Result<()> {
-        let (_, res) = self.source_mut().execute().await?;
+        let res = self.source_mut().execute().await?;
         let Some((stack, _)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
@@ -464,17 +443,15 @@ impl ChiselDispatcher {
 
     /// Fetches an interface from Etherscan
     pub(crate) async fn fetch_interface(&mut self, address: Address, name: String) -> Result<()> {
-        let abis = foundry_common::abi::fetch_abi_from_etherscan(
-            address,
-            &self.source().config.foundry_config,
-        )
-        .await
-        .wrap_err("Failed to fetch ABI from Etherscan")?;
+        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config)
+            .await
+            .wrap_err("Failed to fetch ABI from Etherscan")?;
         let (abi, _) = abis
             .into_iter()
             .next()
             .ok_or_else(|| eyre::eyre!("No ABI found for address {address} on Etherscan"))?;
-        let code = foundry_cli::utils::abi_to_solidity(&abi, &name)?;
+        let code = forge_fmt::format(&abi.to_sol(&name, None), FormatterConfig::default())
+            .into_result()?;
         self.source_mut().add_global_code(&code);
         sh_println!("Added {address}'s interface to source as `{name}`")
     }
@@ -488,20 +465,25 @@ impl ChiselDispatcher {
 
     pub(crate) async fn edit_session(&mut self) -> Result<()> {
         // create a temp file with the content of the run code
-        let tmp = std::env::temp_dir().join("chisel-tmp.sol");
-        std::fs::write(&tmp, self.source().run_code.as_bytes())
+        let mut tmp = Builder::new()
+            .prefix("chisel-")
+            .suffix(".sol")
+            .tempfile()
+            .wrap_err("Could not create temporary file")?;
+        tmp.as_file_mut()
+            .write_all(self.source().run_code.as_bytes())
             .wrap_err("Could not write to temporary file")?;
 
         // open the temp file with the editor
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
         let mut cmd = Command::new(editor);
-        cmd.arg(&tmp);
+        cmd.arg(tmp.path());
         let st = cmd.status()?;
         if !st.success() {
             eyre::bail!("Editor exited with {st}");
         }
 
-        let edited_code = std::fs::read_to_string(tmp)?;
+        let edited_code = std::fs::read_to_string(tmp.path())?;
         let mut new_source = self.source().clone();
         new_source.clear_run();
         new_source.add_run_code(&edited_code);

@@ -7,10 +7,11 @@ use alloy_eips::{
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, U256, b256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use foundry_test_utils::rpc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction() {
@@ -46,6 +47,60 @@ async fn can_send_eip4844_transaction() {
 
     assert_eq!(receipt.blob_gas_used, Some(131072));
     assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip4844_transaction_fork() {
+    let node_config = NodeConfig::test()
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_fork_block_number(Some(23432306u64))
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build().unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(alice)
+        .with_to(bob)
+        .with_blob_sidecar(sidecar.clone());
+
+    let pending_tx = provider.send_transaction(tx.into()).await.unwrap();
+    let receipt = pending_tx.get_receipt().await.unwrap();
+    let tx_hash = receipt.transaction_hash;
+
+    let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip4844_transaction_eth_send_transaction() {
+    let node_config = NodeConfig::test()
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_fork_block_number(Some(23552208u64))
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = ProviderBuilder::new().connect(handle.http_endpoint().as_str()).await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build().unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(alice)
+        .with_to(bob)
+        .with_blob_sidecar(sidecar.clone());
+
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+    let receipt = pending_tx.get_receipt().await.unwrap();
+    let tx_hash = receipt.transaction_hash;
+
+    let _blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

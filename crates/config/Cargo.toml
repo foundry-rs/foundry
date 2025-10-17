@@ -20,6 +20,8 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
+foundry-evm-networks.workspace = true
+
 revm.workspace = true
 
 solar.workspace = true
@@ -53,6 +55,7 @@ clap = { version = "4", features = ["derive"] }
 path-slash = "0.2"
 
 [dev-dependencies]
+snapbox.workspace = true
 similar-asserts.workspace = true
 figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true

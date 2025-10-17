@@ -95,8 +95,6 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
 mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
-    #[allow(unused_imports)]
-    use alloy_rpc_types::BlockNumberOrTag;
 
     #[test]
     fn test_ethereum_spec_id_mapping() {

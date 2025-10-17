@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.6.12;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 import "./DssExecLib.sol";
-
-interface Vm {
-    function store(address account, bytes32 slot, bytes32 value) external;
-    function activeFork() external returns (uint256);
-}
 
 interface IWETH {
     function deposit() external payable;
@@ -23,14 +18,13 @@ contract DummyContract {
     }
 }
 
-contract ForkTest is DSTest {
+abstract contract ForkTest is Test {
     address constant DAI_TOKEN_ADDR = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     // checks that we can retrieve the fork we launched with
     function testActiveFork() public {
-        Vm cheatvm = Vm(HEVM_ADDRESS);
-        uint256 activeFork = cheatvm.activeFork();
+        uint256 activeFork = vm.activeFork();
         // launch fork has id `0`
         assertEq(activeFork, 0);
     }
@@ -52,13 +46,12 @@ contract ForkTest is DSTest {
     }
 
     function testCheatcode() public {
-        Vm cheatvm = Vm(HEVM_ADDRESS);
         IWETH WETH = IWETH(WETH_TOKEN_ADDR);
         bytes32 value = bytes32(uint256(1));
         // "0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff" is the slot storing the balance of zero address for the weth contract
         // `cast index address uint 0x0000000000000000000000000000000000000000 3`
         bytes32 zero_address_balance_slot = 0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff;
-        cheatvm.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
+        vm.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
         assertEq(
             WETH.balanceOf(0x0000000000000000000000000000000000000000),
             1,
@@ -75,5 +68,11 @@ contract ForkTest is DSTest {
         uint256 current = WETH.balanceOf(address(this));
         WETH.deposit{value: 1000}();
         assertEq(WETH.balanceOf(address(this)) - current, 1000, "WETH balance is not equal to deposited amount.");
+    }
+}
+
+contract ForkTestHttp is ForkTest {
+    function setUp() public {
+        vm.createSelectFork("mainnet");
     }
 }

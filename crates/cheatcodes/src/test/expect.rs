@@ -73,7 +73,7 @@ pub enum ExpectedRevertKind {
 #[derive(Clone, Debug)]
 pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any.
-    pub reason: Option<Vec<u8>>,
+    pub reason: Option<Bytes>,
     /// The depth at which the revert is expected.
     pub depth: usize,
     /// The type of expected revert.
@@ -668,7 +668,7 @@ impl RevertParameters for ExpectedRevert {
     }
 
     fn reason(&self) -> Option<&[u8]> {
-        self.reason.as_deref()
+        self.reason.as_ref().map(|b| &***b)
     }
 
     fn partial_match(&self) -> bool {
@@ -809,6 +809,26 @@ pub(crate) fn handle_expect_emit(
         return;
     }
 
+    // Check count=0 expectations against this log - fail immediately if violated
+    for (expected_emit, _) in &state.expected_emits {
+        if expected_emit.count == 0
+            && !expected_emit.found
+            && let Some(expected_log) = &expected_emit.log
+            && checks_topics_and_data(expected_emit.checks, expected_log, log)
+            // Check revert address 
+            && (expected_emit.address.is_none() || expected_emit.address == Some(log.address))
+        {
+            // This event was emitted but we expected it NOT to be (count=0)
+            // Fail immediately
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                Error::encode("log emitted 1 time, expected 0"),
+                interpreter.gas,
+            ));
+            return;
+        }
+    }
+
     let should_fill_logs = state.expected_emits.iter().any(|(expected, _)| expected.log.is_none());
     let index_to_fill_or_check = if should_fill_logs {
         // If there's anything to fill, we start with the last event to match in the queue
@@ -820,10 +840,18 @@ pub(crate) fn handle_expect_emit(
             .unwrap_or(state.expected_emits.len())
             .saturating_sub(1)
     } else {
-        // Otherwise, if all expected logs are filled, we start to check any unmatched event
+        // if all expected logs are filled, check any unmatched event
         // in the declared order, so we start from the front (like a queue).
-        0
+        // Skip count=0 expectations as they are handled separately above
+        state.expected_emits.iter().position(|(emit, _)| !emit.found && emit.count > 0).unwrap_or(0)
     };
+
+    // If there are only count=0 expectations left, we can return early
+    if !should_fill_logs
+        && state.expected_emits.iter().all(|(emit, _)| emit.found || emit.count == 0)
+    {
+        return;
+    }
 
     let (mut event_to_fill_or_check, mut count_map) = state
         .expected_emits
@@ -852,18 +880,13 @@ pub(crate) fn handle_expect_emit(
     // Increment/set `count` for `log.address` and `log.data`
     match count_map.entry(log.address) {
         Entry::Occupied(mut entry) => {
-            // Checks and inserts the log into the map.
-            // If the log doesn't pass the checks, it is ignored and `count` is not incremented.
             let log_count_map = entry.get_mut();
             log_count_map.insert(&log.data);
         }
         Entry::Vacant(entry) => {
             let mut log_count_map = LogCountMap::new(&event_to_fill_or_check);
-
             if log_count_map.satisfies_checks(&log.data) {
                 log_count_map.insert(&log.data);
-
-                // Entry is only inserted if it satisfies the checks.
                 entry.insert(log_count_map);
             }
         }
@@ -875,7 +898,7 @@ pub(crate) fn handle_expect_emit(
 
             // Try to decode the events if we have a signature identifier
             let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
-                &state.signatures_identifier
+                state.signatures_identifier()
                 && !event_to_fill_or_check.anonymous
             {
                 (
@@ -910,7 +933,6 @@ pub(crate) fn handle_expect_emit(
         }
 
         let expected_count = event_to_fill_or_check.count;
-
         match event_to_fill_or_check.address {
             Some(emitter) => count_map
                 .get(&emitter)
@@ -1022,7 +1044,7 @@ fn expect_revert(
         "you must call another function prior to expecting a second revert"
     );
     state.expected_revert = Some(ExpectedRevert {
-        reason: reason.map(<[_]>::to_vec),
+        reason: reason.map(Bytes::copy_from_slice),
         depth,
         kind: if cheatcode {
             ExpectedRevertKind::Cheatcode { pending_processing: true }

@@ -89,6 +89,17 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::Italic(text))
     }
 
+    /// Writes dev content to the buffer, handling markdown lists properly.
+    /// If the content contains markdown lists, it formats them correctly.
+    /// Otherwise, it writes the content in italics.
+    pub fn write_dev_content(&mut self, text: &str) -> fmt::Result {
+        for line in text.lines() {
+            writeln!(self.buf, "{line}")?;
+        }
+
+        Ok(())
+    }
+
     /// Writes bold text to the buffer formatted as [Markdown::Bold].
     pub fn write_bold(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Bold(text))

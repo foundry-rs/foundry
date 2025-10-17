@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Emitter {
     uint256 public thing;
@@ -115,8 +114,7 @@ contract LowLevelCaller {
     function g() public {}
 }
 
-contract ExpectEmitTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ExpectEmitTest is Test {
     Emitter emitter;
 
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
@@ -408,7 +406,7 @@ contract ExpectEmitTest is DSTest {
     //     vm.expectEmit(true, true, true, true);
     //     emitter.doesNothing();
     //     emit Something(1, 2, 3, 4);
-
+    //
     //     // This should fail since `SomethingElse` in the test
     //     // and in the `Emitter` contract have differing
     //     // amounts of indexed topics.
@@ -416,8 +414,7 @@ contract ExpectEmitTest is DSTest {
     // }
 }
 
-contract ExpectEmitCountTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ExpectEmitCountTest is Test {
     Emitter emitter;
 
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);

@@ -13,7 +13,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, Transac
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
+    AccountInfo, BlockId, BlockNumberOrTag,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -23,6 +23,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::EthApi, spawn};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use revm::precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult};
@@ -1619,6 +1620,43 @@ async fn test_fork_get_account() {
     assert_eq!(alice_acc_init, alice_acc_prev_block);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_get_account_info() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER - 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14353753764795095694u64),
+            nonce: 6689,
+            code: Default::default(),
+        }
+    );
+
+    // Check account info at block number, see https://github.com/foundry-rs/foundry/issues/12072
+    let info = provider
+        .get_account_info(address!("0x19e53a7397bE5AA7908fE9eA991B03710bdC74Fd"))
+        // predates fork
+        .number(BLOCK_NUMBER)
+        .await
+        .unwrap();
+    assert_eq!(
+        info,
+        AccountInfo {
+            balance: U256::from(14352720829244098514u64),
+            nonce: 6690,
+            code: Default::default(),
+        }
+    );
+}
+
 fn assert_hardfork_config(
     config: &EthConfig,
     expected_blob_params: &BlobParams,
@@ -1690,7 +1728,9 @@ async fn test_config_with_cancun_hardfork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_config_with_prague_hardfork_with_celo() {
     let (api, _handle) = spawn(
-        NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into())).with_celo(true),
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_networks(NetworkConfigs::with_celo()),
     )
     .await;
 

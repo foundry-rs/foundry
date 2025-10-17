@@ -283,10 +283,7 @@ impl FromStr for Numeric {
 }
 
 /// Returns the [SpecId] derived from [EvmVersion]
-pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
-    if odyssey {
-        return SpecId::OSAKA;
-    }
+pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
     match evm_version {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
         EvmVersion::TangerineWhistle => SpecId::TANGERINE,

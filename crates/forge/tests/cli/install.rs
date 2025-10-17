@@ -94,7 +94,7 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let install = |cmd: &mut TestCommand| {
         cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
             str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]],
@@ -108,10 +108,9 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
         cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
             r#"
-Removing 'forge-std' in [..], (url: [..], tag: None)
+Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag: None)
 
 "#
         ]]);
@@ -165,7 +164,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let install = |cmd: &mut TestCommand| {
         cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
             str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std tag=[..]"#]],
         );
 
@@ -389,14 +388,13 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse()
-            .args(["install", "evalir/forge-5980-test"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
+        cmd.forge_fuse().args(["install", "evalir/forge-5980-test"]).assert_success().stdout_eq(
+            str![[r#"
+Installing forge-5980-test in [..] (url: https://github.com/evalir/forge-5980-test, tag: None)
     Installed forge-5980-test
 
-"#]]);
+"#]],
+        );
 
         // assert paths exist
         assert!(package.exists());
@@ -450,7 +448,7 @@ Compiler run successful!
 async fn uni_v4_core_sync_foundry_lock() {
     let (prj, mut cmd) =
         ExtTester::new("Uniswap", "v4-core", "e50237c43811bd9b526eff40f26772152a42daba")
-            .setup_forge_prj();
+            .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -504,7 +502,7 @@ async fn oz_contracts_sync_foundry_lock() {
         "openzeppelin-contracts",
         "840c974028316f3c8172c1b8e5ed67ad95e255ca",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 
@@ -561,7 +559,7 @@ async fn correctly_sync_dep_with_multiple_version() {
         "sync-lockfile-multi-version-dep",
         "1ca47e73a168e54f8f7761862dbd0c603856c5c8",
     )
-    .setup_forge_prj();
+    .setup_forge_prj(true);
 
     assert!(!prj.root().join(FOUNDRY_LOCK).exists());
 

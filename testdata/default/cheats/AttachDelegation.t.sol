@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract AttachDelegationTest is DSTest {
+contract AttachDelegationTest is Test {
     event ExecutedBy(uint256 id);
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     uint256 alice_pk = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address payable alice = payable(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
     uint256 bob_pk = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
@@ -75,9 +73,7 @@ contract AttachDelegationTest is DSTest {
         calls[0] =
             SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, bob)), value: 0});
         calls[1] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: abi.encodeCall(ERC20.mint, (50, address(this))),
-            value: 0
+            to: address(token), data: abi.encodeCall(ERC20.mint, (50, address(this))), value: 0
         });
 
         SimpleDelegateContract(alice).execute(calls);
@@ -95,9 +91,7 @@ contract AttachDelegationTest is DSTest {
         calls[0] =
             SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, bob)), value: 0});
         calls[1] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: abi.encodeCall(ERC20.mint, (50, address(this))),
-            value: 0
+            to: address(token), data: abi.encodeCall(ERC20.mint, (50, address(this))), value: 0
         });
 
         SimpleDelegateContract(alice).execute(calls);
@@ -200,9 +194,7 @@ contract AttachDelegationTest is DSTest {
         vm.signAndAttachDelegation(address(implementation2), bob_pk);
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](2);
         calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: abi.encodeCall(ERC20.mint, (50, address(this))),
-            value: 0
+            to: address(token), data: abi.encodeCall(ERC20.mint, (50, address(this))), value: 0
         });
         calls[1] =
             SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, alice)), value: 0});

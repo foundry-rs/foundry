@@ -1,7 +1,10 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_provider::{Provider, network::AnyRpcBlock};
+use alloy_provider::{
+    Provider,
+    network::{AnyNetwork, AnyRpcBlock},
+};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -17,9 +20,10 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, executors::TracingExecutor,
+    opts::EvmOpts, traces::TraceMode, utils::apply_chain_and_block_specific_env_changes,
 };
+use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
 use semver::{BuildMetadata, Version};
@@ -229,7 +233,7 @@ fn find_mismatch_in_settings(
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.unwrap(),
+            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -312,7 +316,7 @@ pub async fn get_tracing_executor(
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (env, fork, _chain, is_odyssey) =
+    let (env, fork, _chain, networks) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
@@ -320,7 +324,7 @@ pub async fn get_tracing_executor(
         fork,
         Some(fork_config.evm_version),
         TraceMode::Call,
-        is_odyssey,
+        networks,
         create2_deployer,
         None,
     )?;
@@ -328,13 +332,14 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock, config: NetworkConfigs) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
+    apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block, config);
 }
 
 pub fn deploy_contract(

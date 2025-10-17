@@ -1,6 +1,7 @@
 //! Test outcomes.
 
 use crate::{
+    MultiContractRunner,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
@@ -9,8 +10,9 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
+    core::Breakpoints,
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
@@ -42,17 +44,23 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
+    /// The runner used to execute the tests.
+    pub runner: Option<MultiContractRunner>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
-    pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
+    pub fn new(
+        runner: Option<MultiContractRunner>,
+        results: BTreeMap<String, SuiteResult>,
+        allow_failure: bool,
+    ) -> Self {
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None, runner }
     }
 
     /// Creates a new empty test outcome.
-    pub fn empty(allow_failure: bool) -> Self {
-        Self::new(BTreeMap::new(), allow_failure)
+    pub fn empty(runner: Option<MultiContractRunner>, allow_failure: bool) -> Self {
+        Self::new(runner, BTreeMap::new(), allow_failure)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -182,6 +190,15 @@ impl TestOutcome {
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
+        )?;
+
+        // Show helpful hint for rerunning failed tests
+        let test_word = if failures == 1 { "test" } else { "tests" };
+        sh_println!(
+            "\nTip: Run {} to retry only the {} failed {}",
+            "`forge test --rerun`".cyan(),
+            failures,
+            test_word
         )?;
 
         // TODO: Avoid process::exit
@@ -399,6 +416,8 @@ pub struct TestResult {
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
+    ///
+    /// These are cleared after the gas report is analyzed.
     #[serde(skip)]
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 

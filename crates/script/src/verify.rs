@@ -146,6 +146,8 @@ impl VerifyBundle {
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
+                    no_auto_detect: false,
+                    use_solc: None,
                     num_of_optimizations: self.num_of_optimizations,
                     etherscan: self.etherscan.clone(),
                     rpc: Default::default(),
@@ -269,7 +271,9 @@ fn check_unverified(
 ) {
     if !unverifiable_contracts.is_empty() {
         let _ = sh_warn!(
-            "We haven't found any matching bytecode for the following contracts: {:?}.\n\nThis may occur when resuming a verification, but the underlying source code or compiler version has changed.",
+            "We haven't found any matching bytecode for the following contracts: {:?}.\n\n\
+            This may occur when resuming a verification, but the underlying source code or compiler version has changed.\n\
+            Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.",
             unverifiable_contracts
         );
 

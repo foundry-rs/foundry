@@ -12,6 +12,9 @@ use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_I
 mod imports;
 use imports::{UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT};
 
+mod named_struct_fields;
+use named_struct_fields::NAMED_STRUCT_FIELDS;
+
 mod unsafe_cheatcodes;
 use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 
@@ -21,5 +24,6 @@ register_lints!(
     (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
+    (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE))
 );

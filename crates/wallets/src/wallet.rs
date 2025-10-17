@@ -78,10 +78,17 @@ pub struct WalletOpts {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
+    ///
+    /// Ensure the AWS_KMS_KEY_ID environment variable is set.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 
     /// Use Google Cloud Key Management Service.
+    ///
+    /// Ensure the following environment variables are set: GCP_PROJECT_ID, GCP_LOCATION,
+    /// GCP_KEY_RING, GCP_KEY_NAME, GCP_KEY_VERSION.
+    ///
+    /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
     pub gcp: bool,
 }
@@ -107,8 +114,8 @@ impl WalletOpts {
         } else if self.gcp {
             let project_id = get_env("GCP_PROJECT_ID")?;
             let location = get_env("GCP_LOCATION")?;
-            let keyring = get_env("GCP_KEYRING")?;
-            let key_name = get_env("GCP_NAME")?;
+            let keyring = get_env("GCP_KEY_RING")?;
+            let key_name = get_env("GCP_KEY_NAME")?;
             let key_version = get_env("GCP_KEY_VERSION")?
                 .parse()
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;

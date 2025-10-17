@@ -3,21 +3,19 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
-import { colors } from '../src/const'
+
+import { colors } from '#const.ts'
 
 const PRESERVED_FILES = ['package.json', 'README.md']
 const PLATFORM_MAP = {
   linux: 'linux',
-  alpine: 'linux',
   darwin: 'darwin',
   win32: 'win32'
 } as const
 
 const TARGET_MAP = {
   'amd64-linux': 'x86_64-unknown-linux-gnu',
-  'amd64-alpine': 'x86_64-unknown-linux-musl',
   'arm64-linux': 'aarch64-unknown-linux-gnu',
-  'arm64-alpine': 'aarch64-unknown-linux-musl',
   'amd64-darwin': 'x86_64-apple-darwin',
   'arm64-darwin': 'aarch64-apple-darwin',
   'amd64-win32': 'x86_64-pc-windows-msvc'
@@ -32,6 +30,10 @@ async function main() {
   const { platform, arch, forgeBinPath } = getPlatformInfo()
   const distribution = `${platform}-${arch}`
   const packagePath = NodePath.join(process.cwd(), '@foundry-rs', `forge-${distribution}`)
+
+  // ensure the directory exists
+  await NodeFS.promises.mkdir(packagePath, { recursive: true, mode: 0o755 })
+  console.info(colors.green, `Ensured package directory at ${packagePath}`, colors.reset)
 
   await cleanPackageDirectory(packagePath)
   await buildScripts()
@@ -80,19 +82,18 @@ function findForgeBinary(arch: string, platform: string, profile: string) {
 }
 
 async function cleanPackageDirectory(packagePath: string) {
-  const items = await NodeFS.promises.readdir(packagePath, {
-    withFileTypes: true,
-    recursive: true
-  })
+  const items = await NodeFS.promises
+    .readdir(packagePath, { withFileTypes: true, recursive: true })
+    .catch(() => [])
 
   items
     .filter(item => !PRESERVED_FILES.includes(item.name))
-    .forEach(item =>
+    .forEach(item => {
       NodeFS.rmSync(NodePath.join(packagePath, item.name), {
         recursive: true,
         force: true
       })
-    )
+    })
 
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 }

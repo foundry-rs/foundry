@@ -38,10 +38,6 @@ pub enum RuntimeTransportError {
     #[error("Internal transport error: {0} with {1}")]
     TransportError(TransportError, String),
 
-    /// Failed to lock the transport
-    #[error("Failed to lock the transport")]
-    LockError,
-
     /// Invalid URL scheme
     #[error("URL scheme is not supported: {0}")]
     BadScheme(String),
@@ -70,7 +66,7 @@ pub enum RuntimeTransportError {
 /// either an HTTP WebSocket, or IPC transport depending on the URL used.
 /// Retries for rate-limiting and timeout-related errors are handled by an external
 /// client layer (e.g., `RetryBackoffLayer`) when configured.
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
     inner: Arc<RwLock<Option<InnerTransport>>>,

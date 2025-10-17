@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract AddrTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract AddrTest is Test {
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfPkZero() public {
         vm.expectRevert("vm.addr: private key cannot be 0");

@@ -19,12 +19,15 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
+forge-doc.workspace = true
 forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+
+tempfile.workspace = true
 
 solar.workspace = true
 
@@ -41,7 +44,6 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
-revm.workspace = true
 rustyline = "17"
 itertools.workspace = true
 semver.workspace = true
