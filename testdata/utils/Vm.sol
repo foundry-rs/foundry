@@ -27,6 +27,7 @@ interface Vm {
     struct SignedDelegation { uint8 v; bytes32 r; bytes32 s; uint64 nonce; address implementation; }
     struct PotentialRevert { address reverter; bool partialMatch; bytes revertData; }
     struct AccessListItem { address target; bytes32[] storageKeys; }
+    struct ProfileMetadata { string artifacts; string evm; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -317,8 +318,8 @@ interface Vm {
     function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
-    function getProfile() external returns (ProfileMetadata);
-    function getProfile(string calldata profile) external returns (ProfileMetadata);
+    function getProfile() external returns (ProfileMetadata memory);
+    function getProfile(string calldata profile) external returns (ProfileMetadata memory);
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);

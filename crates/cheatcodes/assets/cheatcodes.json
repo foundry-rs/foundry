@@ -677,6 +677,22 @@
           "description": "The storage keys to be added in access list."
         }
       ]
+    },
+    {
+      "name": "ProfileMetadata",
+      "description": "Represents metadata derived from `foundry.toml` for a given profile.",
+      "fields": [
+        {
+          "name": "artifacts",
+          "ty": "string",
+          "description": "The output path of the generated artifacts."
+        },
+        {
+          "name": "evm",
+          "ty": "string",
+          "description": "The EVM version."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -6488,7 +6504,7 @@
       "func": {
         "id": "getProfile_0",
         "description": "Derives the `ProfileMetadata` from the `foundry.toml` for the active profile.",
-        "declaration": "function getProfile() external returns (ProfileMetadata);",
+        "declaration": "function getProfile() external returns (ProfileMetadata memory);",
         "visibility": "external",
         "mutability": "",
         "signature": "getProfile()",
@@ -6508,7 +6524,7 @@
       "func": {
         "id": "getProfile_1",
         "description": "Derives the `ProfileMetadata` from the `foundry.toml` for the given profile.\nReverts if the profile does not exist or the path cannot be resolved.",
-        "declaration": "function getProfile(string calldata profile) external returns (ProfileMetadata);",
+        "declaration": "function getProfile(string calldata profile) external returns (ProfileMetadata memory);",
         "visibility": "external",
         "mutability": "",
         "signature": "getProfile(string)",

@@ -2827,12 +2827,12 @@ interface Vm {
 
     /// Derives the `ProfileMetadata` from the `foundry.toml` for the active profile.
     #[cheatcode(group = Utilities)]
-    function getProfile() external returns (ProfileMetadata);
+    function getProfile() external returns (ProfileMetadata memory);
 
     /// Derives the `ProfileMetadata` from the `foundry.toml` for the given profile.
     /// Reverts if the profile does not exist or the path cannot be resolved.
     #[cheatcode(group = Utilities)]
-    function getProfile(string calldata profile) external returns (ProfileMetadata);
+    function getProfile(string calldata profile) external returns (ProfileMetadata memory);
 
     /// Labels an address in call traces.
     #[cheatcode(group = Utilities)]
