@@ -70,27 +70,16 @@ impl EtherscanIdentifier {
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        // Collect contract info upfront so we can reference it in error messages
-        let contracts_info: Vec<_> = self
-            .contracts
-            .iter()
-            .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(addr, meta)| (*addr, meta.contract_name.clone()))
-            .collect();
-        
-        let total = contracts_info.len();
-        
         let outputs_fut = self
             .contracts
             .iter()
             .filter(|(_, metadata)| !metadata.is_vyper())
-            .enumerate()
-            .map(|(idx, (address, metadata))| {
+            .map(|(address, metadata)| {
                 let contract_name = metadata.contract_name.clone();
                 let addr = *address;
                 let metadata_clone = metadata.clone();
                 async move {
-                    sh_println!("Compiling [{}/{}]: {} {addr}", idx + 1, total, contract_name)?;
+                    sh_println!("Compiling: {} {addr}", contract_name)?;
                     let root = tempfile::tempdir()?;
                     let root_path = root.path();
                     let project = etherscan_project(&metadata_clone, root_path)?;
@@ -100,7 +89,7 @@ impl EtherscanIdentifier {
                         eyre::bail!("{output}")
                     }
 
-                    Ok((project, output, root))
+                    Ok((addr, contract_name, project, output, root))
                 }
             })
             .collect::<Vec<_>>();
@@ -111,13 +100,12 @@ impl EtherscanIdentifier {
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for (idx, res) in outputs.into_iter().enumerate() {
-            let (addr, name) = &contracts_info[idx];
-            let (project, output, _root) = res.wrap_err_with(|| {
-                format!("Failed to compile contract [{}/{}]: {} at {addr}", idx + 1, total, name)
+        for res in outputs {
+            let (addr, name, project, output, _root) = res.wrap_err_with(|| {
+                format!("Failed to compile {name} at {addr}")
             })?;
             sources.insert(&output, project.root(), None).wrap_err_with(|| {
-                format!("Failed to insert contract [{}/{}]: {} at {addr}", idx + 1, total, name)
+                format!("Failed to insert compiled contract {name} at {addr}")
             })?;
         }
 
