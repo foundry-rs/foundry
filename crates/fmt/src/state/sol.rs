@@ -1714,12 +1714,7 @@ impl<'ast> State<'_, 'ast> {
                 .break_cmnts()
                 .break_single(true)
                 .without_ind(self.call_stack.is_chain())
-                .with_delimiters(
-                    !(self.emit_or_revert
-                        && self
-                            .peek_comment_before(args.first().map_or(pos_hi, |a| a.value.span.lo()))
-                            .is_none()),
-                ),
+                .with_delimiters(!self.emit_or_revert),
         );
         self.word("}");
 
