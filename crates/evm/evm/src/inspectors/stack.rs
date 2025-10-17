@@ -8,6 +8,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
+use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -209,6 +210,7 @@ impl InspectorStackBuilder {
             let mut cheatcodes = Cheatcodes::new(config);
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
+                stack.set_analysis(analysis.clone());
                 cheatcodes.set_analysis(CheatcodeAnalysis::new(analysis));
             }
             // Set wallets if they are provided
@@ -308,11 +310,20 @@ pub struct InspectorStack {
     pub inner: InspectorStackInner,
 }
 
+impl InspectorStack {
+    pub fn paths_config(&self) -> Option<&ProjectPathsConfig> {
+        self.cheatcodes.as_ref().map(|c| &c.config.paths)
+    }
+}
+
 /// All used inpectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities.
+    pub analysis: Option<Arc<solar::sema::Compiler>>,
+
     // Inspectors.
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
@@ -386,6 +397,12 @@ impl InspectorStack {
             }
             format!("[{}]", enabled.join(", "))
         });
+    }
+
+    /// Set the solar compiler instance.
+    #[inline]
+    pub fn set_analysis(&mut self, analysis: Arc<solar::sema::Compiler>) {
+        self.analysis = Some(analysis);
     }
 
     /// Set variables from an environment for the relevant inspectors.

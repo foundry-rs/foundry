@@ -28,6 +28,7 @@ pub use error::FuzzError;
 
 pub mod invariant;
 pub mod strategies;
+pub use strategies::LiteralMaps;
 
 mod inspector;
 pub use inspector::Fuzzer;

@@ -22,6 +22,7 @@ contract Issue2851Test is DSTest {
         back = new Backdoor();
     }
 
+    /// forge-config: default.fuzz.dictionary.max_fuzz_dictionary_literals = 0
     /// forge-config: default.fuzz.seed = '111'
     function invariantNotZero() public {
         assertEq(back.number(), 1);
