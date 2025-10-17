@@ -425,14 +425,14 @@ impl MultiWalletOpts {
             let project_id = std::env::var("GCP_PROJECT_ID")?;
             let location = std::env::var("GCP_LOCATION")?;
             let key_ring = std::env::var("GCP_KEY_RING")?;
-            let key_names = std::env::var("GCP_KEY_NAME")?;
+            let key_name = std::env::var("GCP_KEY_NAME")?;
             let key_version = std::env::var("GCP_KEY_VERSION")?;
 
             let gcp_signer = WalletSigner::from_gcp(
                 project_id,
                 location,
                 key_ring,
-                key_names,
+                key_name,
                 key_version.parse()?,
             )
             .await?;

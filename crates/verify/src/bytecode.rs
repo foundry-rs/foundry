@@ -260,7 +260,7 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut env.as_env_mut(), block);
+                configure_env_block(&mut env.as_env_mut(), block, config.networks);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit);
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
@@ -484,7 +484,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut env.as_env_mut(), block);
+                configure_env_block(&mut env.as_env_mut(), block, config.networks);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"));
