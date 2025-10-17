@@ -1,4 +1,5 @@
 // config: call_compact_args = false
+// config: bracket_spacing = true
 contract RevertNamedArgsStatement {
     error EmptyError();
     error SimpleError(uint256 val);
@@ -8,11 +9,11 @@ contract RevertNamedArgsStatement {
     );
 
     function test() external {
-        revert({});
+        revert({ });
 
-        revert EmptyError({});
+        revert EmptyError({ });
 
-        revert SimpleError({val: 0});
+        revert SimpleError({ val: 0 });
 
         revert ComplexError({
             val: 0,
@@ -26,12 +27,12 @@ contract RevertNamedArgsStatement {
             message: "something unpredictable happened that caused execution to revert"
         });
 
-        revert({}); // comment1
+        revert({ }); // comment1
 
         revert /* comment2 */ SimpleError({ /* comment3 */ // comment4
             val: 0 // comment 5
         });
 
-        revert Errors.Unauthorized({caller: msg.sender, neededRole: role});
+        revert Errors.Unauthorized({ caller: msg.sender, neededRole: role });
     }
 }
