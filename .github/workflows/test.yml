@@ -17,6 +17,7 @@ env:
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
   SCCACHE_LOG: debug
+  SCCACHE_NO_DAEMON: 1
   SCCACHE_LOG_MILLIS: 1
 
 jobs:
