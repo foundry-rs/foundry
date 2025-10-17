@@ -1,6 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::Address;
+use eyre::WrapErr;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
@@ -72,20 +73,24 @@ impl EtherscanIdentifier {
         let outputs_fut = self
             .contracts
             .iter()
-            // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| async move {
-                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
-                let root = tempfile::tempdir()?;
-                let root_path = root.path();
-                let project = etherscan_project(metadata, root_path)?;
-                let output = project.compile()?;
+            .map(|(address, metadata)| {
+                let contract_name = metadata.contract_name.clone();
+                let addr = *address;
+                let metadata_clone = metadata.clone();
+                async move {
+                    sh_println!("Compiling: {} {addr}", contract_name)?;
+                    let root = tempfile::tempdir()?;
+                    let root_path = root.path();
+                    let project = etherscan_project(&metadata_clone, root_path)?;
+                    let output = project.compile()?;
 
-                if output.has_compiler_errors() {
-                    eyre::bail!("{output}")
+                    if output.has_compiler_errors() {
+                        eyre::bail!("{output}")
+                    }
+
+                    Ok((addr, contract_name, project, output, root))
                 }
-
-                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
@@ -96,8 +101,11 @@ impl EtherscanIdentifier {
 
         // construct the map
         for res in outputs {
-            let (project, output, _root) = res?;
-            sources.insert(&output, project.root(), None)?;
+            let (addr, name, project, output, _root) =
+                res.wrap_err("Failed to compile Etherscan contract")?;
+            sources
+                .insert(&output, project.root(), None)
+                .wrap_err_with(|| format!("Failed to insert contract {name} at {addr}"))?;
         }
 
         Ok(sources)
