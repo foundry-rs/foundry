@@ -62,8 +62,6 @@ alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
 
-revm.workspace = true
-
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 dunce.workspace = true
@@ -71,12 +69,16 @@ indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 regex = { workspace = true, default-features = false }
+reqwest = { workspace = true, features = ["json"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml_edit.workspace = true
@@ -85,6 +87,7 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
+num-bigint = "0.4"
 path-slash.workspace = true
 
 # doc server
@@ -95,6 +98,8 @@ opener = "0.8"
 # soldeer
 soldeer-commands.workspace = true
 quick-junit = "0.5.1"
+solar-parse = "0.1.8"
+solar-interface = "0.1.8"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
@@ -108,6 +113,8 @@ reqwest = { workspace = true, features = ["json"] }
 mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
+
+rstest = "0.25.0"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true
