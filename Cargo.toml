@@ -154,6 +154,11 @@ rand.opt-level = 3
 rand_chacha.opt-level = 3
 ppv-lite86.opt-level = 3
 
+# Backtraces.
+addr2line.opt-level = 3
+backtrace.opt-level = 3
+gimli.opt-level = 3
+
 # Forking.
 axum.opt-level = 3
 

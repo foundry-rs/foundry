@@ -2823,7 +2823,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; failed to get latest block number; [..]] test_fork_err_message() ([GAS])
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; [..]] test_fork_err_message() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 
