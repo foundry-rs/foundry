@@ -1142,6 +1142,8 @@ impl TestCommand {
         }
         let output = child.wait_with_output()?;
         test_debug!("exited with {}", output.status);
+        test_trace!("\n--- stdout ---\n{}\n--- /stdout ---", output.stdout_lossy());
+        test_trace!("\n--- stderr ---\n{}\n--- /stderr ---", output.stderr_lossy());
         Ok(output)
     }
 }
