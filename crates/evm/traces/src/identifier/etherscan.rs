@@ -1,6 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::Address;
+use eyre::WrapErr;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
@@ -69,23 +70,38 @@ impl EtherscanIdentifier {
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
+        // Collect contract info upfront so we can reference it in error messages
+        let contracts_info: Vec<_> = self
+            .contracts
+            .iter()
+            .filter(|(_, metadata)| !metadata.is_vyper())
+            .map(|(addr, meta)| (*addr, meta.contract_name.clone()))
+            .collect();
+        
+        let total = contracts_info.len();
+        
         let outputs_fut = self
             .contracts
             .iter()
-            // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| async move {
-                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
-                let root = tempfile::tempdir()?;
-                let root_path = root.path();
-                let project = etherscan_project(metadata, root_path)?;
-                let output = project.compile()?;
+            .enumerate()
+            .map(|(idx, (address, metadata))| {
+                let contract_name = metadata.contract_name.clone();
+                let addr = *address;
+                let metadata_clone = metadata.clone();
+                async move {
+                    sh_println!("Compiling [{}/{}]: {} {addr}", idx + 1, total, contract_name)?;
+                    let root = tempfile::tempdir()?;
+                    let root_path = root.path();
+                    let project = etherscan_project(&metadata_clone, root_path)?;
+                    let output = project.compile()?;
 
-                if output.has_compiler_errors() {
-                    eyre::bail!("{output}")
+                    if output.has_compiler_errors() {
+                        eyre::bail!("{output}")
+                    }
+
+                    Ok((project, output, root))
                 }
-
-                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
@@ -95,9 +111,14 @@ impl EtherscanIdentifier {
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for res in outputs {
-            let (project, output, _root) = res?;
-            sources.insert(&output, project.root(), None)?;
+        for (idx, res) in outputs.into_iter().enumerate() {
+            let (addr, name) = &contracts_info[idx];
+            let (project, output, _root) = res.wrap_err_with(|| {
+                format!("Failed to compile contract [{}/{}]: {} at {addr}", idx + 1, total, name)
+            })?;
+            sources.insert(&output, project.root(), None).wrap_err_with(|| {
+                format!("Failed to insert contract [{}/{}]: {} at {addr}", idx + 1, total, name)
+            })?;
         }
 
         Ok(sources)
