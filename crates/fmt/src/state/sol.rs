@@ -1228,23 +1228,29 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
             ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
-            ast::ExprKind::Call(call_expr, call_args) => self.print_member_or_call_chain(
-                call_expr,
-                MemberOrCallArgs::CallArgs(
-                    self.estimate_size(call_args.span),
-                    self.has_comments_between_elements(call_args.span, call_args.exprs()),
-                ),
-                |s| {
-                    s.print_call_args(
-                        call_args,
-                        ListFormat::compact()
-                            .break_cmnts()
-                            .break_single(true)
-                            .without_ind(s.return_bin_expr),
-                        get_callee_head_size(call_expr),
-                    );
-                },
-            ),
+            ast::ExprKind::Call(call_expr, call_args) => {
+                let cache = self.call_with_opts_and_args;
+                self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                self.print_member_or_call_chain(
+                    call_expr,
+                    MemberOrCallArgs::CallArgs(
+                        self.estimate_size(call_args.span),
+                        self.has_comments_between_elements(call_args.span, call_args.exprs()),
+                    ),
+                    |s| {
+                        s.print_call_args(
+                            call_args,
+                            ListFormat::compact()
+                                .break_cmnts()
+                                .break_single(true)
+                                .without_ind(s.return_bin_expr)
+                                .with_delimiters(!s.call_with_opts_and_args),
+                            get_callee_head_size(call_expr),
+                        );
+                    },
+                );
+                self.call_with_opts_and_args = cache;
+            }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
@@ -1606,6 +1612,11 @@ impl<'ast> State<'_, 'ast> {
             let no_mixed_comment =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
+            // If call with options, add an extra box to prioritize breaking the call args
+            if self.call_with_opts_and_args {
+                self.cbox(0);
+            }
+
             if !is_call_chain(&child_expr.kind, true)
                 && no_mixed_comment
                 && callee_fits_line
@@ -1613,7 +1624,7 @@ impl<'ast> State<'_, 'ast> {
                     // calls with cmnts between the args always break
                     || (total_fits_line && !member_or_args.has_comments()))
             {
-                self.s.ibox(0);
+                self.cbox(0);
             } else {
                 self.s.ibox(self.ind);
             }
@@ -1621,6 +1632,11 @@ impl<'ast> State<'_, 'ast> {
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
+
+        // If an extra box was opened, close it
+        if self.call_with_opts_and_args {
+            self.end();
+        }
 
         // Call the closure to print the suffix for the current link, with the calculated position.
         print_suffix(self);
@@ -1672,11 +1688,6 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let cache = self.named_call_expr;
-        if !cache {
-            self.named_call_expr = true;
-        };
-
         let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
@@ -1714,16 +1725,12 @@ impl<'ast> State<'_, 'ast> {
                     .break_cmnts()
                     .break_single(true)
                     .without_ind(self.call_stack.is_chain())
-                    .with_delimiters(!self.emit_or_revert),
+                    .with_delimiters(!(self.emit_or_revert || self.call_with_opts_and_args)),
             );
         } else if self.config.bracket_spacing {
             self.nbsp();
         }
         self.word("}");
-
-        if !cache {
-            self.named_call_expr = false;
-        }
     }
 
     /* --- Statements --- */
@@ -2788,6 +2795,14 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
         is_call_chain(&child.kind, false)
     } else {
         !must_have_child && is_call(expr_kind)
+    }
+}
+
+fn is_call_with_opts_and_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(call_expr, call_args) = expr_kind {
+        matches!(call_expr.kind, ast::ExprKind::CallOptions(..)) && !call_args.is_empty()
+    } else {
+        false
     }
 }
 
