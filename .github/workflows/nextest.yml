@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: Generate matrices
         id: gen
         env:
@@ -56,8 +56,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v5
         with:
@@ -78,14 +76,14 @@ jobs:
         with:
           node-version: 24
       - name: Install Bun
-        if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
+        if: contains(matrix.name, 'external')
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
         with:
           bun-version: latest
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: 3.11
+          python-version: "3.14"
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
@@ -99,10 +97,11 @@ jobs:
             testdata/cache
             testdata/out
           # Use a unique key for each run to always update the cache.
-          key: foundry-${{ matrix.name }}-${{ github.run_id }}
+          key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
-            foundry-${{ matrix.name }}-
+            ${{ runner.os }}-foundry-${{ matrix.name }}-
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - name: Setup Git config
         run: |
           git config --global user.name "GitHub Actions Bot"
