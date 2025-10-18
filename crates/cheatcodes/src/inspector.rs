@@ -1747,6 +1747,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             && curr_depth == broadcast.depth
         {
             ecx.tx.caller = broadcast.original_origin;
+            // reset gas limit sequence tracking
+            self.dynamic_gas_limit_sequence = None;
 
             // Clean single-call broadcast once we have returned to the original depth
             if broadcast.single_call {
