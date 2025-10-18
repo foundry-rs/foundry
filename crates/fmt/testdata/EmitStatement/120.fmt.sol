@@ -34,4 +34,21 @@ function emitEvent() {
     emit ISablierComptroller.DisableCustomFeeUSD({
         protocol: protocol, caller: caller, user: users.sender, previousMinFeeUSD: 0, newMinFeeUSD: feeUSD
     });
+
+    emit ISablierLockupLinear.CreateLockupLinearStream({
+        streamId: streamId,
+        commonParams: Lockup.CreateEventCommon({
+            funder: msg.sender,
+            sender: sender,
+            recipient: recipient,
+            depositAmount: depositAmount,
+            token: token,
+            cancelable: cancelable,
+            transferable: transferable,
+            timestamps: timestamps,
+            shape: shape
+        }),
+        cliffTime: cliffTime,
+        unlockAmounts: unlockAmounts
+    });
 }
