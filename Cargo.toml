@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.1"
+version = "1.4.2"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.89"
@@ -249,7 +249,7 @@ alloy-hardforks = { version = "0.3.2", default-features = false }
 alloy-op-hardforks = { version = "0.3.2", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "1.3.1"
+alloy-dyn-abi = "1.4.1"
 alloy-json-abi = "1.3.0"
 alloy-primitives = { version = "1.3.1", features = [
     "getrandom",
