@@ -57,8 +57,13 @@ impl CallSequenceShrinker {
             self.included_calls.clear(self.shrink.call_index);
             // Record current call as previous call.
             self.prev_shrink = Some(self.shrink);
-            // Remove next call index
-            self.shrink = Shrink { call_index: self.shrink.call_index + 1 };
+            // Remove next call index, wrapping around to the start if needed.
+            let idx = if self.shrink.call_index + 1 >= self.call_sequence_len {
+                0
+            } else {
+                self.shrink.call_index + 1
+            };
+            self.shrink = Shrink { call_index: idx };
             true
         }
     }
