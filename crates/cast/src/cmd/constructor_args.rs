@@ -41,7 +41,7 @@ impl ConstructorArgsArgs {
 
         let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
 
-        let args_arr = parse_constructor_args(bytecode, contract, &config, abi_path).await?;
+        let args_arr = parse_constructor_args_from_bytecode(bytecode, contract, &config, abi_path).await?;
         for arg in args_arr {
             let _ = sh_println!("{arg}");
         }
@@ -50,8 +50,11 @@ impl ConstructorArgsArgs {
     }
 }
 
-/// Fetches the constructor arguments values and types from the creation bytecode and ABI.
-async fn parse_constructor_args(
+/// Fetches constructor argument values and types from creation bytecode using the contract ABI.
+///
+/// This name clarifies that decoding is performed from bytecode (not CLI input),
+/// preventing confusion with `forge`'s `parse_constructor_args` which parses CLI-provided args.
+async fn parse_constructor_args_from_bytecode(
     bytecode: Bytes,
     contract: Address,
     config: &Config,
