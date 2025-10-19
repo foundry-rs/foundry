@@ -1596,6 +1596,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
+        let mut extra_box = false;
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
@@ -1615,6 +1616,7 @@ impl<'ast> State<'_, 'ast> {
             // If call with options, add an extra box to prioritize breaking the call args
             if self.call_with_opts_and_args {
                 self.cbox(0);
+                extra_box = true;
             }
 
             if !is_call_chain(&child_expr.kind, true)
@@ -1634,7 +1636,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_expr(child_expr);
 
         // If an extra box was opened, close it
-        if self.call_with_opts_and_args {
+        if extra_box {
             self.end();
         }
 
