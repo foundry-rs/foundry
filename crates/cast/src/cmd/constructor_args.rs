@@ -41,7 +41,8 @@ impl ConstructorArgsArgs {
 
         let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
 
-        let args_arr = parse_constructor_args_from_bytecode(bytecode, contract, &config, abi_path).await?;
+        let args_arr =
+            parse_constructor_args_from_bytecode(bytecode, contract, &config, abi_path).await?;
         for arg in args_arr {
             let _ = sh_println!("{arg}");
         }
