@@ -9,9 +9,9 @@ ignored_error_codes = [
     2018, # Function state mutability can be restricted
     2072, # Unused local variable
     3860, # Contract init code size exceeds limit
+    5159, # Selfdestruct has been deprecated
     5574, # Contract code size exceeds limit
     5667, # Unused function parameter
-    5159, # Selfdestruct has been deprecated
 ]
 extra_output = ["storageLayout"]
 
