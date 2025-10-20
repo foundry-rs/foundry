@@ -287,7 +287,7 @@ op-alloy-flz = "0.13.1"
 
 ## revm
 revm = { version = "30.2.0", default-features = false }
-revm-inspectors = { version = "0.31.1", features = ["serde"] }
+revm-inspectors = { version = "0.31.2", features = ["serde"] }
 op-revm = { version = "11.1.2", default-features = false }
 ## alloy-evm
 alloy-evm = "0.22.3"
