@@ -3314,30 +3314,22 @@ impl Backend {
         id: impl Into<BlockId>,
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
-        self.get_block(id)
-            .map(|block| {
-                let blobs = block
-                    .transactions
-                    .iter()
-                    .filter_map(|tx| tx.as_ref().sidecar())
-                    .flat_map(|sidecar| {
-                        sidecar.sidecar.blobs.iter().zip(&sidecar.sidecar.commitments).filter_map(
-                            |(blob, commitment)| {
-                                let versioned_hash = kzg_to_versioned_hash(commitment.as_slice());
-                                if versioned_hashes.is_empty()
-                                    || versioned_hashes.contains(&versioned_hash)
-                                {
-                                    Some(*blob)
-                                } else {
-                                    None
-                                }
-                            },
-                        )
-                    })
-                    .collect();
-                Ok(blobs)
-            })
-            .transpose()
+        Ok(self.get_block(id).map(|block| {
+            block
+                .transactions
+                .iter()
+                .filter_map(|tx| tx.as_ref().sidecar())
+                .flat_map(|sidecar| {
+                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                })
+                .filter(|(_, commitment)| {
+                    // Filter blobs by versioned_hashes if provided
+                    versioned_hashes.is_empty()
+                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
+                })
+                .map(|(blob, _)| *blob)
+                .collect()
+        }))
     }
 
     pub fn get_blob_sidecars_by_block_id(
