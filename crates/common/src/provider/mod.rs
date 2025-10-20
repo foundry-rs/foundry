@@ -98,8 +98,6 @@ pub struct ProviderBuilder {
     is_local: bool,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
-    /// Poll interval for the provider
-    poll_interval: Option<Duration>,
 }
 
 impl ProviderBuilder {
@@ -150,7 +148,6 @@ impl ProviderBuilder {
             headers: vec![],
             is_local,
             accept_invalid_certs: false,
-            poll_interval: None,
         }
     }
 
@@ -254,11 +251,6 @@ impl ProviderBuilder {
         self
     }
 
-    /// Sets the poll interval for the provider.
-    pub fn interval(mut self, interval: Duration) -> Self {
-        self.poll_interval = Some(interval);
-        self
-    }
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
@@ -273,7 +265,6 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
-            poll_interval,
         } = self;
         let url = url?;
 
@@ -289,15 +280,13 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         if !is_local {
-            let interval = poll_interval.unwrap_or_else(|| {
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR)
-            });
+            let interval = chain
+                .average_blocktime_hint()
+                // we cap the poll interval because if not provided, chain would default to
+                // mainnet
+                .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+                .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR);
             client.set_poll_interval(interval);
         }
 
@@ -320,7 +309,6 @@ impl ProviderBuilder {
             headers,
             is_local,
             accept_invalid_certs,
-            poll_interval,
         } = self;
         let url = url?;
 
@@ -337,15 +325,13 @@ impl ProviderBuilder {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         if !is_local {
-            let interval = poll_interval.unwrap_or_else(|| {
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR)
-            });
+            let interval = chain
+                .average_blocktime_hint()
+                // we cap the poll interval because if not provided, chain would default to
+                // mainnet
+                .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+                .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR);
             client.set_poll_interval(interval);
         }
 
