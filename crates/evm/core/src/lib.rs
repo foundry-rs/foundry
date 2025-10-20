@@ -5,15 +5,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use crate::constants::{
-    DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-    DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-};
+use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::{Address, B256, Bytes, map::HashMap};
+use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
-use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs, state::Bytecode};
+use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
@@ -74,16 +71,6 @@ pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>
     /// Returns the CREATE2 deployer address.
     fn create2_deployer(&self) -> Address {
         DEFAULT_CREATE2_DEPLOYER
-    }
-
-    /// Returns the CREATE2 deployer bytecode.
-    fn create2_deployer_bytecode(&self) -> Bytecode {
-        Bytecode::new_legacy(Bytes::from(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE))
-    }
-
-    /// Returns the CREATE2 deployer bytecode hash.
-    fn create2_deployer_bytecode_hash(&self) -> B256 {
-        DEFAULT_CREATE2_DEPLOYER_CODEHASH
     }
 }
 

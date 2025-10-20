@@ -8101,9 +8101,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "30.1.2"
+version = "30.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fad790fa1836288df2698203f996e04f942b0eec69fc7f614f0386b78d9f8a5"
+checksum = "76df793c6ef3bef8f88f05b3873ebebce1494385a3ce8f58ad2e2e111aa0de11"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -8192,9 +8192,9 @@ dependencies = [
 
 [[package]]
 name = "revm-handler"
-version = "11.1.2"
+version = "11.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54384bb0b081184c3ba3fc66e72781ff6ca5a8408067000f58255ab515b2fdb0"
+checksum = "b1d8049b2fbff6636150f4740c95369aa174e41b0383034e0e256cfdffcfcd23"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -8211,9 +8211,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspector"
-version = "11.1.2"
+version = "11.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c0ed01fe30ba5f5690115cbe531962bbbfc12603c695ceaddc28d457a646a05"
+checksum = "e2a21dd773b654ec7e080025eecef4ac84c711150d1bd36acadf0546f471329a"
 dependencies = [
  "auto_impl",
  "either",
@@ -8249,9 +8249,9 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
-version = "27.0.2"
+version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0834fc25c020061f0f801d8de8bb53c88a63631cca5884a6c65b90c85e241138"
+checksum = "f1de5c790122f8ded67992312af8acd41ccfcee629b25b819e10c5b1f69caf57"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
