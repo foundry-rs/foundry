@@ -546,20 +546,6 @@ Ran 1 test for test/ExcludeArtifacts.t.sol:ExcludeArtifacts
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/ExcludeContracts.t.sol:ExcludeContracts
-[PASS] invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/ExcludeSelectors.t.sol:ExcludeSelectors
-[PASS] invariantFalseWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
 Ran 1 test for test/ExcludeSenders.t.sol:ExcludeSenders
 [PASS] invariantTrueWorld() ([RUNS])
 
@@ -574,14 +560,12 @@ Ran 1 test for test/TargetArtifactSelectors.t.sol:TargetArtifactSelectors
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
-[FAIL: it's false]
-	[SEQUENCE]
- invariantShouldFail() ([RUNS])
+Ran 1 test for test/ExcludeSelectors.t.sol:ExcludeSelectors
+[PASS] invariantFalseWorld() ([RUNS])
 
 [STATS]
 
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 tests for test/TargetArtifacts.t.sol:TargetArtifacts
 [FAIL: false world]
@@ -603,10 +587,10 @@ Ran 1 test for test/TargetContracts.t.sol:TargetContracts
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/TargetInterfaces.t.sol:TargetWorldInterfaces
-[FAIL: false world]
+Ran 1 test for test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
+[FAIL: it's false]
 	[SEQUENCE]
- invariantTrueWorld() ([RUNS])
+ invariantShouldFail() ([RUNS])
 
 [STATS]
 
@@ -620,6 +604,15 @@ Ran 1 test for test/TargetSelectors.t.sol:TargetSelectors
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/TargetSenders.t.sol:TargetSenders
+[FAIL: false world]
+	[SEQUENCE]
+ invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/TargetInterfaces.t.sol:TargetWorldInterfaces
 [FAIL: false world]
 	[SEQUENCE]
  invariantTrueWorld() ([RUNS])
@@ -658,6 +651,7 @@ Tip: Run `forge test --rerun` to retry only the 4 failed tests
 "#]]);
 });
 
+// TODO(rusowsky): figure out why it is flaky
 // https://github.com/foundry-rs/foundry/issues/5625
 // https://github.com/foundry-rs/foundry/issues/6166
 // `Target.wrongSelector` is not called when handler added as `targetContract`
@@ -734,6 +728,13 @@ contract DynamicTargetContract is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
+Ran 1 test for test/FuzzedTargetContracts.t.sol:ExplicitTargetContract
+[PASS] invariant_explicit_target() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
 Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
 [FAIL: wrong target selector called]
 	[SEQUENCE]
@@ -742,13 +743,6 @@ Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
 [STATS]
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/FuzzedTargetContracts.t.sol:ExplicitTargetContract
-[PASS] invariant_explicit_target() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 

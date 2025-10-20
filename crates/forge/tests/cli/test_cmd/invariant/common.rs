@@ -965,19 +965,19 @@ contract InvariantRollForkStateTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
-[FAIL: too many blocks mined]
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_state() ([RUNS])
 
 [STATS]
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
-[FAIL: wrong supply]
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
+[FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_block() ([RUNS])
 
 [STATS]
 
