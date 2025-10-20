@@ -448,7 +448,7 @@ impl From<SourcifyMetadata> for Metadata {
     fn from(metadata: SourcifyMetadata) -> Self {
         let SourcifyMetadata { abi, compilation } = metadata;
         // Defaulted fields may be fetched from sourcify but we don't make use of them.
-        Metadata {
+        Self {
             source_code: foundry_block_explorers::contract::SourceCodeMetadata::Sources(
                 Default::default(),
             ),
