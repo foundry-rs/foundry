@@ -1082,8 +1082,8 @@ contract FindFromLogValueTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
-[FAIL: value from logs found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
+[FAIL: value from return found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 
@@ -1091,8 +1091,8 @@ Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
-[FAIL: value from return found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
+[FAIL: value from logs found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 

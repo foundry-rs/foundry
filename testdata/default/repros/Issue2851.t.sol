@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.1;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Backdoor {
     uint256 public number = 1;
@@ -15,7 +15,7 @@ contract Backdoor {
 }
 
 // https://github.com/foundry-rs/foundry/issues/2851
-contract Issue2851Test is DSTest {
+contract Issue2851Test is Test {
     Backdoor back;
 
     function setUp() public {
