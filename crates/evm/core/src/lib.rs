@@ -7,11 +7,14 @@
 
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
+
+/// Map keyed by breakpoints char to their location (contract address, pc)
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 #[macro_use]
 extern crate tracing;
@@ -27,6 +30,7 @@ use foundry_evm_networks::NetworkConfigs;
 
 pub mod backend;
 pub mod buffer;
+pub mod bytecode;
 pub mod constants;
 pub mod decode;
 pub mod either_evm;

@@ -175,6 +175,8 @@ Encountered 1 failing test in test/Structs.sol:DummyTest
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
 
@@ -394,6 +396,8 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 
     cmd.forge_fuse().args(["bind-json"]).assert_success();
@@ -437,6 +441,8 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 [FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byCustomPathAndTypeName() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 

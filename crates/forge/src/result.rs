@@ -10,8 +10,9 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{get_contract_name, get_file_name, shell};
 use foundry_evm::{
+    core::Breakpoints,
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
@@ -189,6 +190,15 @@ impl TestOutcome {
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
+        )?;
+
+        // Show helpful hint for rerunning failed tests
+        let test_word = if failures == 1 { "test" } else { "tests" };
+        sh_println!(
+            "\nTip: Run {} to retry only the {} failed {}",
+            "`forge test --rerun`".cyan(),
+            failures,
+            test_word
         )?;
 
         // TODO: Avoid process::exit

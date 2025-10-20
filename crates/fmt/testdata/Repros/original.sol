@@ -167,6 +167,7 @@ contract DbgFmtTest is Test {
     }
 }
 
+// https://github.com/foundry-rs/foundry/issues/8557
 // https://github.com/foundry-rs/foundry/issues/11249
 function argListRepro(address tokenIn, uint256 amountIn, bool data) {
     maverickV2SwapCallback(
@@ -176,6 +177,31 @@ function argListRepro(address tokenIn, uint256 amountIn, bool data) {
         0 /* we didn't bother loading `amountOut` because we don't use it */,
         data
     );
+}
+
+// https://github.com/foundry-rs/foundry/issues/11905
+function noBlanksLinesBeforeIdentifiers() public {
+            timelockController
+
+
+
+        .grantRole(keccak256("EXECUTOR_ROLE"), address(0));
+}
+
+// https://github.com/foundry-rs/foundry/issues/11913
+function rustfmtBlankLinesInStmtBlocks() public {
+        if (someCondition) {
+
+
+
+    bar = true;
+
+
+
+            emit Foo(bar);
+
+
+            }
 }
 
 contract NestedCallsTest is Test {

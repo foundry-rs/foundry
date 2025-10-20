@@ -1535,3 +1535,125 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11978>
+// Preprocess test contracts when active prank.
+forgetest_init!(preprocess_contract_with_active_prank, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    address public deployer;
+
+    constructor() {
+        deployer = msg.sender;
+    }
+}
+    "#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_deployer() public {
+        address deployer = makeAddr("deployer");
+        vm.startPrank(deployer);
+        Counter counter = new Counter{salt: 0}();
+        assertEq(counter.deployer(), deployer);
+    }
+}
+    "#,
+    );
+    // Test should pass.
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_deployer() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Preprocess test contracts with try constructor statements that bind return type.
+forgetest_init!(preprocess_contract_with_try_ctor_stmt_and_returns, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a > 0, "ctor failure");
+        number = a;
+    }
+}
+        "#,
+    );
+    prj.add_test(
+        "CounterReturns.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterReturnsTest is Test {
+    function test_try_counter_creation_returns_custom_type() public {
+        try new Counter(1) returns (Counter c) {
+            c;
+        } catch {
+            revert();
+        }
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 21 files with [..]
+...
+[PASS] test_try_counter_creation_returns_custom_type() (gas: [..])
+...
+
+"#]]);
+
+    // Change Counter to fail test in try statement, only Counter contract should be compiled.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a == 0, "ctor failure");
+        number = a;
+    }
+}
+        "#,
+    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[FAIL: ctor failure] test_try_counter_creation_returns_custom_type() (gas: [..])
+...
+
+"#]]);
+});

@@ -16,6 +16,7 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
+use serde_json::json;
 use std::{fs, path::Path, str::FromStr};
 
 #[macro_use]
@@ -56,7 +57,7 @@ Options:
 
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
-          
+...
           [aliases: --jobs]
 
   -V, --version
@@ -82,11 +83,11 @@ Display options:
 
   -v, --verbosity...
           Verbosity level of the log messages.
-          
+...
           Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
-          
+...
           Depending on the context the verbosity levels have different meanings.
-          
+...
           For example, the verbosity levels of the EVM are:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
@@ -1686,7 +1687,7 @@ casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
         "--chain",
         "1",
         "--gas-limit",
-        "21000", 
+        "21000",
         "--gas-price",
         "20000000000",
         "0x742d35Cc6634C0532925a3b8D6Ac6F67C9c2b7FD",
@@ -3586,12 +3587,12 @@ forgetest_async!(cast_send_create_with_constructor_args, |prj, cmd| {
 contract ConstructorContract {
     uint256 public value;
     string public name;
-    
+
     constructor(uint256 _value, string memory _name) {
         value = _value;
         name = _name;
     }
-    
+
     function getValue() public view returns (uint256) {
         return value;
     }
@@ -3665,7 +3666,7 @@ casttest!(cast_estimate_create_with_constructor_args, |prj, cmd| {
 contract EstimateContract {
     uint256 public value;
     string public name;
-    
+
     constructor(uint256 _value, string memory _name) {
         value = _value;
         name = _name;
@@ -3767,13 +3768,13 @@ contract ComplexContract {
     address public owner;
     uint256[] public values;
     bool public active;
-    
+
     constructor(address _owner, uint256[] memory _values, bool _active) {
         owner = _owner;
         values = _values;
         active = _active;
     }
-    
+
     function getValuesLength() public view returns (uint256) {
         return values.length;
     }
@@ -4078,6 +4079,43 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
   [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
 ...
 "#]]);
+});
+
+casttest!(correct_json_serialization, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    // cast calldata "decimals()"
+    let calldata = "0x313ce567";
+    let tokens = [
+        "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // WETH
+    ];
+    let calldata_args = format!(
+        "[{}]",
+        tokens
+            .iter()
+            .map(|token| format!("({token},false,{calldata})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let args = vec![
+        "call",
+        "--json",
+        "--rpc-url",
+        rpc.as_str(),
+        "0xcA11bde05977b3631167028862bE2a173976CA11",
+        "aggregate3((address,bool,bytes)[])((bool,bytes)[])",
+        &calldata_args,
+    ];
+    let expected_output = json!([[
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000006"],
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000012"],
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000012"]
+    ]]);
+    let decoded: serde_json::Value =
+        serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
+            .expect("not valid json");
+    assert_eq!(decoded, expected_output);
 });
 
 // Test cast abi-encode-event with indexed parameters

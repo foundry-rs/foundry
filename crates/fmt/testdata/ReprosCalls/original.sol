@@ -125,6 +125,10 @@ contract Orchestrator {
             self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
         feeGrowthInside0X128 = self.feeGrowthGlobal0X128
             - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+
+        // https://github.com/foundry-rs/foundry/issues/11875
+        lpTail =
+            LpPosition({ tickLower: posTickLower, tickUpper: posTickUpper, liquidity: lpTailLiquidity, id: uint16(id) });
     }
 
     // https://github.com/foundry-rs/foundry/issues/11834

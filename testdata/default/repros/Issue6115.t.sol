@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 contract Counter {
     uint256 public number;
@@ -16,7 +16,7 @@ contract Counter {
 }
 
 // https://github.com/foundry-rs/foundry/issues/6115
-contract Issue6115Test is DSTest {
+contract Issue6115Test is Test {
     Counter public counter;
 
     function setUp() public {

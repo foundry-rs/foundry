@@ -14,7 +14,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_evm::{backend::Backend, opts::EvmOpts};
+use foundry_evm::{backend::Backend, core::bytecode::InstIter, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -26,7 +26,7 @@ use walkdir::WalkDir;
 pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
+static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
@@ -190,18 +190,19 @@ impl IntermediateOutput {
         let final_pc = {
             let offset = source_loc.start() as u32;
             let length = (source_loc.end() - source_loc.start()) as u32;
+            trace!(%offset, %length, "find pc");
             contract
                 .get_source_map_deployed()
                 .unwrap()
                 .unwrap()
                 .into_iter()
-                .zip(InstructionIter::new(deployed_bytecode_bytes))
+                .zip(InstIter::new(deployed_bytecode_bytes).with_pc().map(|(pc, _)| pc))
                 .filter(|(s, _)| s.offset() == offset && s.length() == length)
-                .map(|(_, i)| i.pc)
+                .map(|(_, pc)| pc)
                 .max()
-                .unwrap_or_default()
         };
-        Ok(Some(final_pc))
+        trace!(?final_pc);
+        Ok(final_pc)
     }
 
     pub fn run_func_body(&self) -> Result<&Vec<pt::Statement>> {
@@ -382,6 +383,11 @@ pub struct SessionSourceConfig {
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
     pub calldata: Option<Vec<u8>>,
+    /// Enable viaIR with minimum optimization
+    ///
+    /// This can fix most of the "stack too deep" errors while resulting a
+    /// relatively accurate source map.
+    pub ir_minimum: bool,
 }
 
 impl SessionSourceConfig {
@@ -395,7 +401,7 @@ impl SessionSourceConfig {
             && let Some(version) = self.foundry_config.solc_version()
             && version < MIN_VM_VERSION
         {
-            tracing::info!(%version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+            info!(%version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
             self.no_vm = true;
         }
         Ok(())
@@ -508,7 +514,7 @@ impl SessionSource {
     fn parse_fragment(&self, buffer: &str) -> Option<(Self, ParseTreeFragment)> {
         #[track_caller]
         fn debug_errors(errors: &EmittedDiagnostics) {
-            tracing::debug!("{errors}");
+            debug!("{errors}");
         }
 
         let mut this = self.clone();
@@ -603,7 +609,8 @@ impl SessionSource {
     fn compile(&self) -> Result<ProjectCompileOutput> {
         let sources = self.get_sources();
 
-        let project = self.config.foundry_config.ephemeral_project()?;
+        let mut project = self.config.foundry_config.ephemeral_project()?;
+        self.config.foundry_config.disable_optimizations(&mut project, self.config.ir_minimum);
         let mut output = ProjectCompiler::with_sources(&project, sources)?.compile()?;
 
         if output.has_compiler_errors() {
@@ -898,43 +905,4 @@ enum ParseTreeFragment {
     Contract,
     /// Code for the "run()" function
     Function,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Instruction {
-    pub pc: usize,
-    pub opcode: u8,
-    pub data: [u8; 32],
-    pub data_len: u8,
-}
-
-struct InstructionIter<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> InstructionIter<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-}
-
-impl Iterator for InstructionIter<'_> {
-    type Item = Instruction;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pc = self.offset;
-        self.offset += 1;
-        let opcode = *self.bytes.get(pc)?;
-        let (data, data_len) = if matches!(opcode, 0x60..=0x7F) {
-            let mut data = [0; 32];
-            let data_len = (opcode - 0x60 + 1) as usize;
-            data[..data_len].copy_from_slice(&self.bytes[self.offset..self.offset + data_len]);
-            self.offset += data_len;
-            (data, data_len as u8)
-        } else {
-            ([0; 32], 0)
-        };
-        Some(Instruction { pc, opcode, data, data_len })
-    }
 }

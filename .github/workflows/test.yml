@@ -7,6 +7,7 @@ on:
     branches:
       - master
   pull_request:
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -39,15 +40,17 @@ jobs:
         with:
           toolchain: nightly
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Setup Pages
+        if: github.ref_name == 'master' && github.event_name == 'push'
         uses: actions/configure-pages@v5
       - name: Upload artifact
+        if: github.ref_name == 'master' && github.event_name == 'push'
         uses: actions/upload-pages-artifact@v4
         with:
           path: ./target/doc
@@ -81,8 +84,8 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - run: cargo test --workspace --doc
 
   typos:
@@ -94,7 +97,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@0c17dabcee8b8f1957fa917d17393a23e02e1583 # v1
+      - uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1 # v1
 
   clippy:
     runs-on: depot-ubuntu-latest
@@ -110,8 +113,8 @@ jobs:
           toolchain: nightly
           components: clippy
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - run: cargo clippy --workspace --all-targets --all-features
         env:
           RUSTFLAGS: -Dwarnings
@@ -144,8 +147,8 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - name: forge fmt
         shell: bash
         run: ./.github/scripts/format.sh --check
@@ -163,17 +166,45 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@d0f4f69b07c0804d1003ca9a5a5f853423872ed9 # v2
+      - uses: taiki-e/install-action@e7ef886cf8f69c25ecef6bbc2858a42e273496ec # v2
         with:
           tool: cargo-hack
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
       - run: cargo hack check
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@9c8d0dc20e7ad02455d3fdab2378a05f29907630 # main
     permissions:
       contents: read
+
+  codeql:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{matrix.language}}"
 
   ci-success:
     runs-on: ubuntu-latest
@@ -189,6 +220,7 @@ jobs:
       - forge-fmt
       - crate-checks
       - deny
+      - codeql
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed

@@ -1,4 +1,5 @@
 // config: line_length = 120
+// config: bracket_spacing = true
 function test() public {
     require(
         keccak256(abi.encodePacked("this is a long string")) == keccak256(abi.encodePacked("some other long string")),
@@ -25,7 +26,7 @@ function test() public {
     );
 
     oracleInfo =
-        abi.encode(LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()}));
+        abi.encode(LidoOracleInfo({ base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH() }));
 
     return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
 
@@ -119,6 +120,11 @@ contract Orchestrator {
         // https://github.com/foundry-rs/foundry/issues/11835
         feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
         feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+
+        // https://github.com/foundry-rs/foundry/issues/11875
+        lpTail = LpPosition({
+            tickLower: posTickLower, tickUpper: posTickUpper, liquidity: lpTailLiquidity, id: uint16(id)
+        });
     }
 
     // https://github.com/foundry-rs/foundry/issues/11834

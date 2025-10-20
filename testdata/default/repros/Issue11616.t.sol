@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.24;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Emit {
     event A();
@@ -13,8 +12,7 @@ contract Emit {
     }
 }
 
-contract Issue11616Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue11616Test is Test {
     Emit public e;
 
     function setUp() public {

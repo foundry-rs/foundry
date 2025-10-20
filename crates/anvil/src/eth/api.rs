@@ -172,6 +172,7 @@ impl EthApi {
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
+            EthRequest::EthProtocolVersion(()) => self.protocol_version().to_rpc_result(),
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
             EthRequest::EthGetAccount(addr, block) => {
@@ -195,6 +196,7 @@ impl EthApi {
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
+            EthRequest::EthHashrate(()) => self.hashrate().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
@@ -202,6 +204,7 @@ impl EthApi {
             EthRequest::EthBlobBaseFee(_) => self.blob_base_fee().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
+            EthRequest::EthCoinbase(()) => self.author().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
             }
@@ -772,18 +775,30 @@ impl EthApi {
         node_info!("eth_getAccountInfo");
 
         if let Some(fork) = self.get_fork() {
+            let block_request = self.block_request(block_number).await?;
             // check if the number predates the fork, if in fork mode
-            if let BlockRequest::Number(number) = self.block_request(block_number).await?
-                && fork.predates_fork(number)
-            {
-                // if this predates the fork we need to fetch balance, nonce, code individually
-                // because the provider might not support this endpoint
-                let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
-                let code = fork.get_code(address, number).map_err(BlockchainError::from);
-                let nonce = self.get_transaction_count(address, Some(number.into()));
-                let (balance, code, nonce) = try_join!(balance, code, nonce)?;
+            if let BlockRequest::Number(number) = block_request {
+                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
+                return if fork.predates_fork(number) {
+                    // if this predates the fork we need to fetch balance, nonce, code individually
+                    // because the provider might not support this endpoint
+                    let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
+                    let code = fork.get_code(address, number).map_err(BlockchainError::from);
+                    let nonce = self.get_transaction_count(address, Some(number.into()));
+                    let (balance, code, nonce) = try_join!(balance, code, nonce)?;
 
-                return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
+                    Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code })
+                } else {
+                    // Anvil node is at the same block or higher than the fork block,
+                    // return account info from backend to reflect current state.
+                    let account_info = self.backend.get_account(address).await?;
+                    let code = self.backend.get_code(address, Some(block_request)).await?;
+                    Ok(alloy_rpc_types::eth::AccountInfo {
+                        balance: account_info.balance,
+                        nonce: account_info.nonce,
+                        code,
+                    })
+                };
             }
         }
 

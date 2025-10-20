@@ -271,7 +271,9 @@ fn check_unverified(
 ) {
     if !unverifiable_contracts.is_empty() {
         let _ = sh_warn!(
-            "We haven't found any matching bytecode for the following contracts: {:?}.\n\nThis may occur when resuming a verification, but the underlying source code or compiler version has changed.",
+            "We haven't found any matching bytecode for the following contracts: {:?}.\n\n\
+            This may occur when resuming a verification, but the underlying source code or compiler version has changed.\n\
+            Run `forge clean` to make sure builds are in sync with project files, then try again. Alternatively, use `forge verify-contract` to verify contracts that are already deployed.",
             unverifiable_contracts
         );
 
