@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Storage {
     uint256 public slot0 = 10;
     uint256 public slot1 = 20;
 }
 
-contract StoreTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract StoreTest is Test {
     Storage store;
 
     function setUp() public {

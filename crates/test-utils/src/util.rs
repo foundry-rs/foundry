@@ -1,4 +1,4 @@
-use crate::init_tracing;
+use crate::{init_tracing, rpc::rpc_endpoints};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, Project, ProjectCompileOutput,
@@ -218,12 +218,6 @@ impl ExtTester {
 
     /// Runs the test.
     pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
         let (prj, mut test_cmd) = self.setup_forge_prj(true);
 
         // Run installation command.
@@ -648,6 +642,13 @@ impl TestProject {
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
+    /// Writes [`rpc_endpoints`] to the project's config.
+    pub fn add_rpc_endpoints(&self) {
+        self.update_config(|config| {
+            config.rpc_endpoints = rpc_endpoints();
+        });
+    }
+
     /// Adds a source file to the project.
     pub fn add_source(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_source(name, Self::add_source_prelude(contents)).unwrap()
@@ -746,19 +747,26 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.add_source("test.sol", s)
+        self.add_source("test.sol", include_str!("../../../testdata/utils/DSTest.sol"))
+    }
+
+    /// Adds custom test utils under the "test/utils" directory.
+    pub fn insert_utils(&self) {
+        self.add_test("utils/DSTest.sol", include_str!("../../../testdata/utils/DSTest.sol"));
+        self.add_test("utils/Test.sol", include_str!("../../../testdata/utils/Test.sol"));
+        self.add_test("utils/Vm.sol", include_str!("../../../testdata/utils/Vm.sol"));
+        self.add_test("utils/console.sol", include_str!("../../../testdata/utils/console.sol"));
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/default/logs/console.sol");
+        let s = include_str!("../../../testdata/utils/console.sol");
         self.add_source("console.sol", s)
     }
 
     /// Adds `Vm.sol` as a source under "Vm.sol"
     pub fn insert_vm(&self) -> PathBuf {
-        let s = include_str!("../../../testdata/cheats/Vm.sol");
+        let s = include_str!("../../../testdata/utils/Vm.sol");
         self.add_source("Vm.sol", s)
     }
 
@@ -1045,12 +1053,24 @@ impl TestCommand {
 
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
-    pub fn assert(&mut self) -> OutputAssert {
+    pub fn assert_with(&mut self, f: &[RegexRedaction]) -> OutputAssert {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
-            return assert.with_assert(test_assert());
+            let mut redactions = test_redactions();
+            insert_redactions(f, &mut redactions);
+            return assert.with_assert(
+                snapbox::Assert::new()
+                    .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
+                    .redact_with(redactions),
+            );
         }
         assert
+    }
+
+    /// Runs the command, returning a [`snapbox`] object to assert the command output.
+    #[track_caller]
+    pub fn assert(&mut self) -> OutputAssert {
+        self.assert_with(&[])
     }
 
     /// Runs the command and asserts that it resulted in success.
@@ -1140,20 +1160,17 @@ impl TestCommand {
         if let Some(bytes) = self.stdin.take() {
             child.stdin.take().unwrap().write_all(&bytes)?;
         }
-        child.wait_with_output()
+        let output = child.wait_with_output()?;
+        test_debug!("exited with {}", output.status);
+        test_trace!("\n--- stdout ---\n{}\n--- /stdout ---", output.stdout_lossy());
+        test_trace!("\n--- stderr ---\n{}\n--- /stderr ---", output.stderr_lossy());
+        Ok(output)
     }
-}
-
-fn test_assert() -> snapbox::Assert {
-    snapbox::Assert::new()
-        .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
-        .redact_with(test_redactions())
 }
 
 fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
-        let mut r = snapbox::Redactions::new();
-        let redactions = [
+        make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
@@ -1176,24 +1193,43 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
-        ];
-        for (placeholder, re) in redactions {
-            r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
-        }
-        r
+        ])
     });
     REDACTIONS.clone()
+}
+
+/// A tuple of a placeholder and a regex replacement string.
+type RegexRedaction = (&'static str, &'static str);
+
+/// Creates a [`snapbox`] redactions object from a list of regex redactions.
+fn make_redactions(redactions: &[RegexRedaction]) -> snapbox::Redactions {
+    let mut r = snapbox::Redactions::new();
+    insert_redactions(redactions, &mut r);
+    r
+}
+
+fn insert_redactions(redactions: &[RegexRedaction], r: &mut snapbox::Redactions) {
+    for &(placeholder, re) in redactions {
+        r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
+    }
 }
 
 /// Extension trait for [`Output`].
 pub trait OutputExt {
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
+
+    /// Returns the stderr as lossy string
+    fn stderr_lossy(&self) -> String;
 }
 
 impl OutputExt for Output {
     fn stdout_lossy(&self) -> String {
         lossy_string(&self.stdout)
+    }
+
+    fn stderr_lossy(&self) -> String {
+        lossy_string(&self.stderr)
     }
 }
 

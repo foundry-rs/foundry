@@ -26,7 +26,7 @@ use walkdir::WalkDir;
 pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
+static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {

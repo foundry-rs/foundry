@@ -350,7 +350,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         if !values.is_empty() && !format.with_delimiters {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
             self.s.offset(self.ind);
             return true;
         }
@@ -508,7 +508,7 @@ impl<'ast> State<'_, 'ast> {
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
         }
     }
 
@@ -867,9 +867,9 @@ impl ListFormat {
         self
     }
 
-    pub(crate) fn no_delimiters(mut self) -> Self {
+    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
-            self.with_delimiters = false;
+            self.with_delimiters = with;
         }
         self
     }

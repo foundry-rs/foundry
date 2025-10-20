@@ -52,5 +52,12 @@ contract FunctionCallArgsStatement {
         };
 
         vm.expectEmit({checkTopic1: false, checkTopic2: false});
+
+        lockup.withdraw{value: LOCKUP_MIN_FEE_WEI}({
+            streamId: streamId, to: users.recipient, amount: withdrawAmount
+        });
+        portal.xcall{value: msg.value}(
+            id, ConfLevel.Finalized, Predeploys.NominaBridgeNative, xcalldata
+        );
     }
 }

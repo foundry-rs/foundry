@@ -98,6 +98,7 @@ impl CallStack {
 }
 
 pub(super) struct State<'sess, 'ast> {
+    // CORE COMPONENTS
     pub(super) s: pp::Printer,
     ind: isize,
 
@@ -107,15 +108,28 @@ pub(super) struct State<'sess, 'ast> {
     inline_config: InlineConfig<()>,
     cursor: SourcePos,
 
+    // FORMATTING CONTEXT:
+    // Whether the source file uses CRLF (`\r\n`) line endings.
     has_crlf: bool,
+    // The current contract being formatted, if inside a contract definition.
     contract: Option<&'ast ast::ItemContract<'ast>>,
-    single_line_stmt: Option<bool>,
-    named_call_expr: bool,
-    binary_expr: Option<BinOpGroup>,
-    return_bin_expr: bool,
-    var_init: bool,
+    // Current block nesting depth (incremented for each `{...}` block entered).
     block_depth: usize,
+    // Stack tracking nested and chained function calls.
     call_stack: CallStack,
+
+    // Whether the current statement should be formatted as a single line, or not.
+    single_line_stmt: Option<bool>,
+    // The current binary expression chain context, if inside one.
+    binary_expr: Option<BinOpGroup>,
+    // Whether inside a `return` statement that contains a binary expression, or not.
+    return_bin_expr: bool,
+    // Whether inside a call with call options and at least one argument.
+    call_with_opts_and_args: bool,
+    // Whether inside an `emit` or `revert` call with a qualified path, or not.
+    emit_or_revert: bool,
+    // Whether inside a variable initialization expression, or not.
+    var_init: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -204,9 +218,10 @@ impl<'sess> State<'sess, '_> {
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
-            named_call_expr: false,
+            call_with_opts_and_args: false,
             binary_expr: None,
             return_bin_expr: false,
+            emit_or_revert: false,
             var_init: false,
             block_depth: 0,
             call_stack: CallStack::default(),
