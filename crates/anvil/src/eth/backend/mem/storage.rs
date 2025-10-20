@@ -338,18 +338,14 @@ impl BlockchainStorage {
         let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
             if let Some(hash) = self.hashes.get(&i).copied() {
+                // First remove the block's transactions while the mappings still exist
+                self.remove_block_transactions_by_number(i);
+
+                // Now remove the block from storage (may already be empty of txs) and drop mapping
                 if let Some(block) = self.blocks.remove(&hash) {
-                    // Remove mined transactions for this block before dropping mappings
-                    for tx in &block.transactions {
-                        self.transactions.remove(&tx.hash());
-                    }
-                    // Now drop the number -> hash mapping
-                    self.hashes.remove(&i);
                     removed.push(block);
-                } else {
-                    // Ensure we still drop the number -> hash mapping if the block is gone
-                    self.hashes.remove(&i);
                 }
+                self.hashes.remove(&i);
             }
         }
         self.best_hash = block_hash;
