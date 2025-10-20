@@ -7,8 +7,6 @@ interface ImportMetaEnv {
 
   readonly PROVENANCE: 'true' | 'false'
 
-  readonly REGISTRY_URL: string
-
   readonly TARGET_TOOL: 'forge' | 'cast' | 'anvil' | 'chisel'
 
   // release.yml#jobs:release:strategy:matrix:include:-|target
@@ -32,7 +30,6 @@ interface ImportMetaEnv {
 
   // Used for local testing/development only
   readonly REGISTRY_URL: string
-  readonly PACKAGE_PATH: string
   readonly ALLOW_NO_INTEGRITY: 'true' | 'false'
 }
 
