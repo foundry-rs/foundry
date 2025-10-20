@@ -1,8 +1,8 @@
 //! Contains various tests related to `forge soldeer`.
 
-use std::{fs, path::Path};
+use std::{fs, ops::Deref, path::Path, process::Command};
 
-use foundry_test_utils::forgesoldeer;
+use foundry_test_utils::{forgesoldeer, TestCommand};
 forgesoldeer!(install_dependency, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
@@ -355,7 +355,71 @@ forgesoldeer!(login, |prj, cmd| {
     let _ = cmd.arg("soldeer").arg(command).assert_failure();
 });
 
+forgesoldeer!(clean, |prj, cmd| {
+    let dependency = "forge-std~1.8.1";
+    let foundry_contents = r#"[profile.default]
+src = "src"
+out = "out"
+libs = ["lib", "dependencies"]
+
+[dependencies]
+"#;
+    let foundry_file = prj.root().join("foundry.toml");
+    fs::write(&foundry_file, foundry_contents).unwrap();
+
+    let mut install_cmd = clone_command(&mut cmd);
+    install_cmd.args(["soldeer", "install", dependency]).output().unwrap();
+
+    // Making sure the path was created to the dependency and that foundry.toml exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
+    assert!(path_dep_forge.exists());
+
+    let command = "clean";
+    cmd.arg("soldeer").args([command]).assert_success();
+    // Dependencies should have been removed from disk
+    assert!(!prj.root().join("dependencies").exists());
+});
+
+forgesoldeer!(detect_project_root, |prj, cmd| {
+    let command = "update";
+
+    let foundry_updates = r#"[profile.default]
+src = "src"
+out = "out"
+libs = ["lib", "dependencies"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[dependencies]
+forge-std = "1.8.1" 
+"#;
+    let foundry_file = prj.root().join("foundry.toml");
+
+    fs::write(&foundry_file, foundry_updates).unwrap();
+
+    // run command from sub-directory
+    cmd.set_current_dir(prj.root().join("src"));
+    cmd.arg("soldeer").arg(command).assert_success();
+    // Making sure the path was created to the dependency and that foundry.toml exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
+    assert!(path_dep_forge.exists());
+});
+
 fn read_file_to_string(path: &Path) -> String {
     let contents: String = fs::read_to_string(path).unwrap_or_default();
     contents
+}
+
+fn clone_command(cmd: &mut TestCommand) -> Command {
+    let orig_cmd = cmd.cmd();
+    let orig_cmd = orig_cmd.deref();
+    let mut cloned_cmd = Command::new(orig_cmd.get_program());
+    let current_dir = orig_cmd.get_current_dir().unwrap();
+    let envs = orig_cmd.get_envs().filter_map(|(k, maybe_v)| maybe_v.map(|v| (k, v)));
+    cloned_cmd.args(orig_cmd.get_args()).current_dir(current_dir).envs(envs);
+    cloned_cmd
 }
