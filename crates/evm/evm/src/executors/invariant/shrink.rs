@@ -9,7 +9,6 @@ use foundry_evm_core::constants::MAGIC_ASSUME;
 use foundry_evm_fuzz::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::cmp::min;
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
@@ -49,7 +48,7 @@ pub(crate) fn shrink_sequence(
 
     // Reset run count and display shrinking message.
     if let Some(progress) = progress {
-        progress.set_length(min(calls.len(), failed_case.shrink_run_limit as usize) as u64);
+        progress.set_length(failed_case.shrink_run_limit as usize as u64);
         progress.reset();
         progress.set_message(" Shrink");
     }
