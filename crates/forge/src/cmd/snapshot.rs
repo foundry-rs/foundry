@@ -543,7 +543,7 @@ fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
         Ordering::Less => format!("{change}").green().to_string(),
         Ordering::Equal => {
-            format!("{change}")
+            change.to_string()
         }
         Ordering::Greater => format!("{change}").red().to_string(),
     }
