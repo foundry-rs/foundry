@@ -10,14 +10,11 @@ pub use fd_lock::*;
 
 /// Creates a new lock file at the given path.
 pub fn new_lock(lock_path: impl AsRef<Path>) -> RwLock<File> {
-    fn new_lock(lock_path: &Path) -> RwLock<File> {
-        let lock_file = pretty_err(
-            lock_path,
-            OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock_path),
-        );
-        RwLock::new(lock_file)
-    }
-    new_lock(lock_path.as_ref())
+    let lock_file = pretty_err(
+        lock_path.as_ref(),
+        OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock_path.as_ref()),
+    );
+    RwLock::new(lock_file)
 }
 
 pub(crate) const LOCK_TOKEN: &[u8] = b"1";
