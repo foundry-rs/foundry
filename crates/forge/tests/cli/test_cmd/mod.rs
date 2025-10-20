@@ -4209,7 +4209,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(should_fuzz_literals, |prj, cmd| {
-    prj.clear_cache_dir();
     prj.wipe_contracts();
 
     // Add a source with magic (literal) values
@@ -4282,8 +4281,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
                             type_sig: &'static str,
                             expected_value: &'static str,
                             expected_runs: u32| {
-        prj.clear_cache_dir();
-
         // the fuzzer is UNABLE to find a breaking input (fast) when NOT seeding from the AST
         prj.update_config(|config| {
             config.fuzz.runs = 100;
