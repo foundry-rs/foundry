@@ -279,10 +279,6 @@ impl CallTraceDecoder {
         functions: &'a [Function],
         trace: &CallTrace,
     ) -> &'a [Function] {
-        if functions.len() <= 1 {
-            return functions;
-        }
-
         // When there are selector collisions, try to decode the calldata with each function
         // to determine which one is actually being called. The correct function should
         // decode successfully while the wrong ones will fail due to parameter type mismatches.
