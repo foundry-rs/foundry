@@ -120,13 +120,41 @@ impl TestNode {
         transaction: TransactionRequest,
         timeout: Option<BlockWaitTimeout>,
     ) -> Result<H256, RpcError> {
-        let tx_hash = unwrap_response::<H256>(
-            self.eth_rpc(EthRequest::EthSendTransaction(Box::new(WithOtherFields::new(
-                transaction,
-            ))))
-            .await
-            .unwrap(),
-        )?;
+        self.send_transaction_inner(transaction, timeout, false).await
+    }
+
+    /// Execute an impersonated ethereum transaction.
+    pub async fn send_unsigned_transaction(
+        &mut self,
+        transaction: TransactionRequest,
+        timeout: Option<BlockWaitTimeout>,
+    ) -> Result<H256, RpcError> {
+        self.send_transaction_inner(transaction, timeout, true).await
+    }
+
+    async fn send_transaction_inner(
+        &mut self,
+        transaction: TransactionRequest,
+        timeout: Option<BlockWaitTimeout>,
+        unsigned: bool,
+    ) -> Result<H256, RpcError> {
+        let tx_hash = if unsigned {
+            unwrap_response::<H256>(
+                self.eth_rpc(EthRequest::EthSendUnsignedTransaction(Box::new(
+                    WithOtherFields::new(transaction),
+                )))
+                .await
+                .unwrap(),
+            )?
+        } else {
+            unwrap_response::<H256>(
+                self.eth_rpc(EthRequest::EthSendTransaction(Box::new(WithOtherFields::new(
+                    transaction,
+                ))))
+                .await
+                .unwrap(),
+            )?
+        };
 
         if let Some(BlockWaitTimeout { block_number, timeout }) = timeout {
             self.wait_for_block_with_timeout(block_number, timeout).await.unwrap();
