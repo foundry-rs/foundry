@@ -1,8 +1,9 @@
 //! Contains various tests related to `forge soldeer`.
 
-use std::{fs, ops::Deref, path::Path, process::Command};
+use std::{fs, path::Path};
 
-use foundry_test_utils::{forgesoldeer, TestCommand};
+use foundry_test_utils::forgesoldeer;
+
 forgesoldeer!(install_dependency, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
@@ -367,8 +368,8 @@ libs = ["lib", "dependencies"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    let mut install_cmd = clone_command(&mut cmd);
-    install_cmd.args(["soldeer", "install", dependency]).output().unwrap();
+    cmd.args(["soldeer", "install", dependency]).assert_success();
+    cmd.forge_fuse(); // reset command
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -412,14 +413,4 @@ forge-std = "1.8.1"
 fn read_file_to_string(path: &Path) -> String {
     let contents: String = fs::read_to_string(path).unwrap_or_default();
     contents
-}
-
-fn clone_command(cmd: &mut TestCommand) -> Command {
-    let orig_cmd = cmd.cmd();
-    let orig_cmd = orig_cmd.deref();
-    let mut cloned_cmd = Command::new(orig_cmd.get_program());
-    let current_dir = orig_cmd.get_current_dir().unwrap();
-    let envs = orig_cmd.get_envs().filter_map(|(k, maybe_v)| maybe_v.map(|v| (k, v)));
-    cloned_cmd.args(orig_cmd.get_args()).current_dir(current_dir).envs(envs);
-    cloned_cmd
 }
