@@ -2678,21 +2678,16 @@ impl EthApi {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
-            // Get the current mining interval from the miner
-            let interval = self.miner.get_interval().map(Duration::from_secs);
-            let mut builder = ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000);
-            
-            // Set the interval if it exists
-            if let Some(interval) = interval {
-                builder = builder.interval(interval);
-            }
-            
             let new_provider = Arc::new(
-                builder.build().map_err(|_| {
-                    TransportErrorKind::custom_str(
-                        format!("Failed to parse invalid url {url}").as_str(),
-                    )
-                })?,
+                ProviderBuilder::new(&url)
+                    .max_retry(10)
+                    .initial_backoff(1000)
+                    .build()
+                    .map_err(|_| {
+                        TransportErrorKind::custom_str(
+                            format!("Failed to parse invalid url {url}").as_str(),
+                        )
+                    })?,
             );
             config.provider = new_provider;
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
