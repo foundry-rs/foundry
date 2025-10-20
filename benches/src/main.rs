@@ -82,8 +82,11 @@ fn main() -> Result<()> {
     };
 
     // Get repo configurations
-    let repos = if let Some(repo_specs) = cli.repos.clone() {
-        repo_specs.iter().map(|spec| spec.parse::<RepoConfig>()).collect::<Result<Vec<_>>>()?
+    let repos = if let Some(repo_specs) = &cli.repos {
+        repo_specs
+            .iter()
+            .map(|spec| spec.parse::<RepoConfig>())
+            .collect::<Result<Vec<_>>>()?
     } else {
         BENCHMARK_REPOS.clone()
     };
