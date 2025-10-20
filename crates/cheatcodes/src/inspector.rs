@@ -507,8 +507,8 @@ pub struct Cheatcodes {
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has non-fixed gas limit.
     /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
-    /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
-    /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
+    /// If GAS opcode is followed by CALL or STATICCALL opcode then both flags are marked true and
+    /// call has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
     pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecId>,
@@ -2378,9 +2378,10 @@ impl Cheatcodes {
             return;
         }
 
-        // Record CALL opcode if GAS opcode was seen.
+        // Record CALL / STATICCALL opcode if GAS opcode was seen.
         if matches!(self.dynamic_gas_limit_sequence, Some((true, false)))
-            && interpreter.bytecode.opcode() == op::CALL
+            && (interpreter.bytecode.opcode() == op::CALL
+                || interpreter.bytecode.opcode() == op::STATICCALL)
         {
             self.dynamic_gas_limit_sequence = Some((true, true));
             return;
