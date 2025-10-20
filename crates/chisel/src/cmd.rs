@@ -130,6 +130,10 @@ impl ChiselCommand {
                 cat = Some(cat_);
                 categories.push((cat_, vec![]));
             }
+            // Ensure we have at least one category before accessing last_mut()
+            if categories.is_empty() {
+                categories.push(("General", vec![]));
+            }
             categories.last_mut().unwrap().1.push(sub);
         }
         format!(
