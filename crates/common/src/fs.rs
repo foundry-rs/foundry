@@ -5,7 +5,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -62,25 +62,29 @@ pub fn read_json_gzip_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
 /// Reads the entire contents of a locked shared file into a string.
 pub fn locked_read_to_string(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
-    let file =
+    let mut file =
         fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
     file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
-    let mut contents = String::new();
-    (&file).read_to_string(&mut contents).map_err(|err| FsPathError::read(err, path))?;
+    let contents = read_inner(path, &mut file)?;
     file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
-    Ok(contents)
+    String::from_utf8(contents).map_err(|err| FsPathError::read(std::io::Error::other(err), path))
 }
 
 /// Reads the entire contents of a locked shared file into a bytes vector.
 pub fn locked_read(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     let path = path.as_ref();
-    let file =
+    let mut file =
         fs::OpenOptions::new().read(true).open(path).map_err(|err| FsPathError::open(err, path))?;
     file.lock_shared().map_err(|err| FsPathError::lock(err, path))?;
+    let contents = read_inner(path, &mut file)?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
+    Ok(contents)
+}
+
+fn read_inner(path: &Path, file: &mut File) -> Result<Vec<u8>> {
     let file_len = file.metadata().map_err(|err| FsPathError::open(err, path))?.len() as usize;
     let mut buffer = Vec::with_capacity(file_len);
-    (&file).read_to_end(&mut buffer).map_err(|err| FsPathError::read(err, path))?;
-    file.unlock().map_err(|err| FsPathError::unlock(err, path))?;
+    file.read_to_end(&mut buffer).map_err(|err| FsPathError::read(err, path))?;
     Ok(buffer)
 }
 
@@ -136,15 +140,36 @@ pub fn locked_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
 }
 
 /// Writes a line in an exclusive locked file.
-pub fn locked_write_line(path: impl AsRef<Path>, line: &String) -> Result<()> {
+pub fn locked_write_line(path: impl AsRef<Path>, line: &str) -> Result<()> {
     let path = path.as_ref();
+    if cfg!(windows) {
+        return locked_write_line_windows(path, line);
+    }
+
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
+
     file.lock().map_err(|err| FsPathError::lock(err, path))?;
     writeln!(file, "{line}").map_err(|err| FsPathError::write(err, path))?;
+    file.unlock().map_err(|err| FsPathError::unlock(err, path))
+}
+
+// Locking fails on Windows if the file is opened in append mode.
+fn locked_write_line_windows(path: &Path, line: &str) -> Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(false)
+        .create(true)
+        .open(path)
+        .map_err(|err| FsPathError::open(err, path))?;
+    file.lock().map_err(|err| FsPathError::lock(err, path))?;
+
+    file.seek(SeekFrom::End(0)).map_err(|err| FsPathError::write(err, path))?;
+    writeln!(file, "{line}").map_err(|err| FsPathError::write(err, path))?;
+
     file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
 

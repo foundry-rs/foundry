@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract RandomCheatcodesTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract RandomCheatcodesTest is Test {
     int128 constant min = -170141183460469231731687303715884105728;
     int128 constant max = 170141183460469231731687303715884105727;
 
@@ -57,9 +54,7 @@ contract RandomCheatcodesTest is DSTest {
     }
 }
 
-contract RandomBytesTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
-
+contract RandomBytesTest is Test {
     bytes1 local_byte;
     bytes local_bytes;
 

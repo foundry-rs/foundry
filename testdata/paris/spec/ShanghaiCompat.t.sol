@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract ShanghaiCompat is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ShanghaiCompat is Test {
     function testPush0() public {
         address target = address(uint160(uint256(0xc4f3)));
 

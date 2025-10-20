@@ -235,9 +235,9 @@ impl<'ast> CommentGatherer<'ast> {
                 let line_begin_pos = (line_begin_in_file - self.start_bpos).to_usize();
                 let mut col = CharPos(self.text[line_begin_pos..self.pos].chars().count());
 
-                // To preserve alignment in non-doc comments, normalize the block based on its
-                // least-indented line.
-                if !is_doc {
+                // To preserve alignment in multi-line non-doc comments, normalize the block based
+                // on its least-indented line.
+                if !is_doc && token_text.contains('\n') {
                     col = token_text.lines().skip(1).fold(col, |min, line| {
                         if line.is_empty() {
                             return min;

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Contract {
     function numberA() public pure returns (uint256) {
@@ -60,9 +59,7 @@ contract ProxyWithDelegateCall {
     }
 }
 
-contract ExpectCallTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectCallTest is Test {
     function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
         for (uint256 i = 0; i < times; i++) {
             target.add(a, b);
@@ -206,9 +203,7 @@ contract ExpectCallTest is DSTest {
     }
 }
 
-contract ExpectCallCountTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectCallCountTest is Test {
     function testExpectCallCountWithData() public {
         Contract target = new Contract();
         vm.expectCall(address(target), abi.encodeWithSelector(Contract.add.selector, 1, 2), 3);
@@ -332,9 +327,7 @@ contract ExpectCallCountTest is DSTest {
     }
 }
 
-contract ExpectCallMixedTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ExpectCallMixedTest is Test {
     function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
         for (uint256 i = 0; i < times; i++) {
             target.add(1, 2);
