@@ -79,11 +79,11 @@ impl BenchmarkResults {
         // Summary
         output.push_str("## Summary\n\n");
         // Count actual repos that have results
-        let mut repos_with_results = std::collections::HashSet::new();
+        let mut repos_with_results: std::collections::HashSet<&String> = Default::default();
         for version_data in self.data.values() {
             for repo_data in version_data.values() {
                 for repo_name in repo_data.keys() {
-                    repos_with_results.insert(repo_name.clone());
+                    repos_with_results.insert(repo_name);
                 }
             }
         }
