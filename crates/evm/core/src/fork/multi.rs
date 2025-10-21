@@ -352,8 +352,9 @@ impl MultiForkHandler {
                     opts.evm_opts.fork_block_number = Some(block);
                     self.create_fork(opts, sender)
                 } else {
-                    let _ = sender.send(Err(eyre::eyre!("No matching fork exits for {}", fork_id)));
-                }
+                    let _ =
++                        sender.send(Err(eyre::eyre!("No matching fork exists for {}", fork_id)));
+                 }
             }
             Request::GetEnv(fork_id, sender) => {
                 let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.opts.env.clone()));
