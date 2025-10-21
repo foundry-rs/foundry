@@ -47,7 +47,7 @@ fn recursive_flatten_call_trace<'a>(
     }
 
     let node = &arena.nodes()[node_idx];
-    let depth = node.trace.depth as u64;
+    let depth = node.trace.depth as u64 + 1;
     let contract_addr = node.execution_address();
 
     for order in &node.ordering {
