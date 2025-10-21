@@ -245,8 +245,8 @@ checksum = "dbb19405755c6f94c9bb856f2b1449767074b7e2002e1ab2be0a79b9b28db322"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-hardforks 0.4.0",
- "alloy-op-hardforks 0.4.0",
+ "alloy-hardforks",
+ "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -271,19 +271,6 @@ dependencies = [
  "alloy-serde",
  "alloy-trie",
  "serde",
-]
-
-[[package]]
-name = "alloy-hardforks"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "889eb3949b58368a09d4f16931c660275ef5fb08e5fbd4a96573b19c7085c41f"
-dependencies = [
- "alloy-chains",
- "alloy-eip2124",
- "alloy-primitives",
- "auto_impl",
- "dyn-clone",
 ]
 
 [[package]]
@@ -374,7 +361,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-evm",
- "alloy-op-hardforks 0.4.0",
+ "alloy-op-hardforks",
  "alloy-primitives",
  "auto_impl",
  "op-alloy-consensus 0.21.0",
@@ -385,24 +372,12 @@ dependencies = [
 
 [[package]]
 name = "alloy-op-hardforks"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "599c1d7dfbccb66603cb93fde00980d12848d32fe5e814f50562104a92df6487"
-dependencies = [
- "alloy-chains",
- "alloy-hardforks 0.3.5",
- "alloy-primitives",
- "auto_impl",
-]
-
-[[package]]
-name = "alloy-op-hardforks"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af8bb236fc008fd3b83b2792e30ae79617a99ffc4c3f584f0c9b4ce0a2da52de"
 dependencies = [
  "alloy-chains",
- "alloy-hardforks 0.4.0",
+ "alloy-hardforks",
  "alloy-primitives",
  "auto_impl",
 ]
@@ -1114,10 +1089,10 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks 0.3.5",
+ "alloy-hardforks",
  "alloy-network",
  "alloy-op-evm",
- "alloy-op-hardforks 0.3.5",
+ "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-provider",
  "alloy-pubsub",
@@ -2570,7 +2545,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-ens",
- "alloy-hardforks 0.3.5",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -2764,9 +2739,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.49"
+version = "4.5.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4512b90fa68d3a9932cea5184017c5d200f5921df706d45e853537dea51508f"
+checksum = "0c2cfd7bf8a6017ddaa4e32ffe7403d547790db06bd171c1c53926faab501623"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2784,9 +2759,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.49"
+version = "4.5.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0025e98baa12e766c67ba13ff4695a887a1eba19569aad00a472546795bd6730"
+checksum = "0a4c05b9e80c5ccd3a7ef080ad7b6ba7d6fc00a985b8b157197075677c82c7a0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4103,7 +4078,7 @@ version = "1.4.2"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
- "alloy-hardforks 0.3.5",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
@@ -4368,7 +4343,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -4790,7 +4764,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-evm",
  "alloy-genesis",
- "alloy-hardforks 0.3.5",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
  "alloy-op-evm",
@@ -4881,6 +4855,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
+ "async-trait",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
@@ -4892,6 +4867,7 @@ dependencies = [
  "itertools 0.14.0",
  "memchr",
  "rayon",
+ "reqwest",
  "revm",
  "revm-inspectors",
  "serde",
@@ -4911,7 +4887,7 @@ checksum = "120ed2b8250a069feb0dcd2b31eff7b9115b8e514a3929b90dd459e57dc4c471"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
- "alloy-hardforks 0.4.0",
+ "alloy-hardforks",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
@@ -9358,9 +9334,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d527da513cac057f59fe34ea0d3309ed0f000a6f57225b0790da02b11ba70004"
+checksum = "10a1bc149a9ed3d12d652161f3391135858f3205add0dcc59d00966fa0368810"
 dependencies = [
  "bon",
  "clap",
@@ -9377,9 +9353,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c6956940ce1436c00d50847e78c703375922d25130041a97f57508dee5f3952"
+checksum = "8d3cc77f4a8e3c18148e5907b1fbd5de20c05669a3f0497fe37e1ef72b887fd2"
 dependencies = [
  "bon",
  "chrono",
@@ -10512,9 +10488,9 @@ checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.19"
+version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f63a545481291138910575129486daeaf8ac54aee4387fe7906919f7830c7d9d"
+checksum = "462eeb75aeb73aea900253ce739c8e18a67423fadf006037cd3ff27e82748a06"
 
 [[package]]
 name = "unicode-joining-type"

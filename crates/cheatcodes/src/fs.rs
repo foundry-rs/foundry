@@ -401,7 +401,7 @@ fn deploy_code(
     Ok(address.abi_encode())
 }
 
-/// Returns the path to the json artifact depending on the input
+/// Returns the bytecode from a JSON artifact file.
 ///
 /// Can parse following input formats:
 /// - `path/to/artifact.json`
@@ -411,6 +411,10 @@ fn deploy_code(
 /// - `path/to/contract.sol:0.8.23`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
+///
+/// This function is safe to use with contracts that have library dependencies.
+/// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
+/// reject artifacts with unlinked library placeholders.
 fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
@@ -941,5 +945,18 @@ mod tests {
 
         let artifact: ContractObject = serde_json::from_str(s).unwrap();
         assert!(artifact.deployed_bytecode.is_some());
+    }
+
+    #[test]
+    fn test_alloy_json_abi_rejects_unlinked_bytecode() {
+        let artifact_json = r#"{
+            "abi": [],
+            "bytecode": "0x73__$987e73aeca5e61ce83e4cb0814d87beda9$__63baf2f868"
+        }"#;
+
+        let result: Result<ContractObject, _> = serde_json::from_str(artifact_json);
+        assert!(result.is_err(), "should reject unlinked bytecode with placeholders");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expected bytecode, found unlinked bytecode with placeholder"));
     }
 }
