@@ -3,21 +3,18 @@ use alloy_primitives::{
     B256, Bytes, I256, U256, keccak256,
     map::{B256IndexSet, HashMap, IndexSet},
 };
+use foundry_common::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use solar::{
     ast::{self, Visit},
     interface::source_map::FileName,
-    sema::Compiler,
 };
-use std::{
-    ops::ControlFlow,
-    sync::{Arc, OnceLock},
-};
+use std::{ops::ControlFlow, sync::OnceLock};
 
 #[derive(Debug, Default)]
 pub struct LiteralsDictionary {
     /// Data required for initialization, captured from `EvmFuzzState::new`.
-    compiler: Option<Arc<Compiler>>,
+    analysis: Option<Analysis>,
     paths_config: Option<ProjectPathsConfig>,
     max_values: usize,
 
@@ -27,19 +24,19 @@ pub struct LiteralsDictionary {
 
 impl LiteralsDictionary {
     pub fn new(
-        compiler: Option<Arc<Compiler>>,
+        analysis: Option<Analysis>,
         paths_config: Option<ProjectPathsConfig>,
         max_values: usize,
     ) -> Self {
-        Self { compiler, paths_config, max_values, maps: OnceLock::default() }
+        Self { analysis, paths_config, max_values, maps: OnceLock::default() }
     }
 
     /// Returns a reference to the `LiteralMaps`, initializing them on the first call.
     pub fn get(&self) -> &LiteralMaps {
         self.maps.get_or_init(|| {
-            if let Some(compiler) = &self.compiler {
+            if let Some(analysis) = &self.analysis {
                 let literals = LiteralsCollector::process(
-                    compiler,
+                    analysis,
                     self.paths_config.as_ref(),
                     self.max_values,
                 );
@@ -90,11 +87,11 @@ impl LiteralsCollector {
     }
 
     pub fn process(
-        compiler: &Arc<Compiler>,
+        analysis: &Analysis,
         paths_config: Option<&ProjectPathsConfig>,
         max_values: usize,
     ) -> LiteralMaps {
-        compiler.enter(|compiler| {
+        analysis.enter(|compiler| {
             let mut literals_collector = Self::new(max_values);
             for source in compiler.sources().iter() {
                 // Ignore scripts, and libs
@@ -330,7 +327,8 @@ mod tests {
     // -- TEST HELPERS ---------------------------------------------------------
 
     fn process_source_literals(source: &str) -> LiteralMaps {
-        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+        let mut compiler =
+            solar::sema::Compiler::new(Session::builder().with_stderr_emitter().build());
         compiler
             .enter_mut(|c| -> std::io::Result<()> {
                 let mut pcx = c.parse();
@@ -345,7 +343,7 @@ mod tests {
             })
             .expect("Failed to compile test source");
 
-        LiteralsCollector::process(&Arc::new(compiler), None, usize::MAX)
+        LiteralsCollector::process(&std::sync::Arc::new(compiler), None, usize::MAX)
     }
 
     fn assert_word(literals: &LiteralMaps, ty: DynSolType, value: B256, msg: &str) {
