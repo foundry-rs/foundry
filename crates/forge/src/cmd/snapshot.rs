@@ -542,9 +542,7 @@ fn fmt_pct_change(change: f64) -> String {
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
         Ordering::Less => format!("{change}").green().to_string(),
-        Ordering::Equal => {
-            format!("{change}")
-        }
+        Ordering::Equal => change.to_string(),
         Ordering::Greater => format!("{change}").red().to_string(),
     }
 }

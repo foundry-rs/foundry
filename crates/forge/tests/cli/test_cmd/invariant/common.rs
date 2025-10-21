@@ -912,6 +912,7 @@ forgetest_init!(invariant_roll_fork, |prj, cmd| {
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.shrink_run_limit = 0;
     });
 
     prj.add_test(
