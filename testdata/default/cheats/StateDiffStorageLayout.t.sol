@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract SimpleStorage {
     uint256 public value; // Slot 0
@@ -97,8 +96,7 @@ contract TwoDArrayStorage {
     }
 }
 
-contract StateDiffStorageLayoutTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract StateDiffStorageLayoutTest is Test {
     SimpleStorage simpleStorage;
     VariousArrays variousArrays;
     TwoDArrayStorage twoDArrayStorage;

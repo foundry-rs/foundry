@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
+import "utils/Test.sol";
 
 library ExternalLibrary {
     function doWork(uint256 a) public returns (uint256) {
@@ -20,7 +20,7 @@ contract Counter {
 }
 
 // https://github.com/foundry-rs/foundry/issues/8639
-contract Issue8639Test is DSTest {
+contract Issue8639Test is Test {
     Counter counter;
 
     function setUp() public {
@@ -28,15 +28,15 @@ contract Issue8639Test is DSTest {
     }
 
     /// forge-config: default.fuzz.runs = 1000
-    /// forge-config: default.fuzz.seed = '100'
+    /// forge-config: default.fuzz.seed = "100"
     function test_external_library_address(address test) public {
         require(test != address(ExternalLibrary));
     }
 }
 
-contract Issue8639AnotherTest is DSTest {
+contract Issue8639AnotherTest is Test {
     /// forge-config: default.fuzz.runs = 1000
-    /// forge-config: default.fuzz.seed = '100'
+    /// forge-config: default.fuzz.seed = "100"
     function test_another_external_library_address(address test) public {
         require(test != address(ExternalLibrary));
     }
