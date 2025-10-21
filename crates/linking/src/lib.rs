@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
     Artifact, ArtifactId,
-    artifacts::{CompactContractBytecodeCow, Libraries},
+    artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
 };
 use rayon::prelude::*;
@@ -105,34 +105,28 @@ impl<'a> Linker<'a> {
     ) -> Result<(), LinkerError> {
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
-        // Deep merge: collect union of library names per file from creation and deployed bytecode
         let mut references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        if let Some(bytecode) = &contract.bytecode {
+        let mut extend = |bytecode: &CompactBytecode| {
             for (file, libs) in &bytecode.link_references {
-                let set = references.entry(file.clone()).or_default();
-                for name in libs.keys() {
-                    set.insert(name.clone());
-                }
+                references.entry(file.clone()).or_default().extend(libs.keys().cloned());
             }
+        };
+        if let Some(bytecode) = &contract.bytecode {
+            extend(bytecode);
         }
         if let Some(deployed_bytecode) = &contract.deployed_bytecode
             && let Some(bytecode) = &deployed_bytecode.bytecode
         {
-            for (file, libs) in &bytecode.link_references {
-                let set = references.entry(file.clone()).or_default();
-                for name in libs.keys() {
-                    set.insert(name.clone());
-                }
-            }
+            extend(bytecode);
         }
 
-        for (file, libs) in &references {
-            for contract in libs {
+        for (file, libs) in references {
+            for name in libs {
                 let id = self
-                    .find_artifact_id_by_library_path(file, contract, Some(&target.version))
+                    .find_artifact_id_by_library_path(&file, &name, Some(&target.version))
                     .ok_or_else(|| LinkerError::MissingLibraryArtifact {
-                        file: file.to_string(),
-                        name: contract.to_string(),
+                        file: file.clone(),
+                        name,
                     })?;
                 if deps.insert(id) {
                     self.collect_dependencies(id, deps)?;
@@ -757,57 +751,13 @@ mod tests {
 
     #[test]
     fn link_samefile_union() {
-        link_test("../../testdata/default/linking/samefile_union", |linker| {
-            // Ensure the target artifact is compiled
-            let artifact_exists = linker.output.artifact_ids().any(|(id, _)| {
-                let source = id.source.strip_prefix(linker.project.root()).unwrap_or(&id.source);
-                id.name == "UsesBoth"
-                    && source
-                        == std::path::Path::new(
-                            "default/linking/samefile_union/SameFileUnion.t.sol",
-                        )
-            });
-            assert!(artifact_exists, "Expected UsesBoth artifact to be compiled");
-
-            // Skip the test unless BOTH LInit (creation) and LRun (runtime) link refs are present.
-            let both_refs_present = linker.output.artifact_ids().any(|(id, artifact)| {
-                let source = id.source.strip_prefix(linker.project.root()).unwrap_or(&id.source);
-                if id.name != "UsesBoth"
-                    || source
-                        != std::path::Path::new(
-                            "default/linking/samefile_union/SameFileUnion.t.sol",
-                        )
-                {
-                    return false;
-                }
-
-                use std::collections::BTreeSet as Set;
-                let mut names: Set<String> = Set::new();
-                if let Some(b) = &artifact.bytecode {
-                    for libs in b.link_references.values() {
-                        names.extend(libs.keys().cloned());
-                    }
-                }
-                if let Some(db) = &artifact.deployed_bytecode
-                    && let Some(bc) = &db.bytecode
-                {
-                    for libs in bc.link_references.values() {
-                        names.extend(libs.keys().cloned());
-                    }
-                }
-                names.contains("LInit") && names.contains("LRun")
-            });
-            if !both_refs_present {
-                return;
-            }
-
+        link_test(testdata().join("default/linking/samefile_union"), |linker| {
             linker
-                // seed empty expectations for libraries to avoid unexpected artifact panics
-                .assert_dependencies("default/linking/samefile_union/Libs.sol:LInit", vec![])
-                .assert_dependencies("default/linking/samefile_union/Libs.sol:LRun", vec![])
+                .assert_dependencies("default/linking/samefile_union/Libs.sol:LInit", &[])
+                .assert_dependencies("default/linking/samefile_union/Libs.sol:LRun", &[])
                 .assert_dependencies(
                     "default/linking/samefile_union/SameFileUnion.t.sol:UsesBoth",
-                    vec![
+                    &[
                         (
                             "default/linking/samefile_union/Libs.sol:LInit",
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
