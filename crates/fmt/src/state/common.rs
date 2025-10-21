@@ -123,11 +123,14 @@ impl<'ast> State<'_, 'ast> {
         }
         if source.contains('.') {
             out.push('.');
-            if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, is_dec, is_yul, true);
-            } else {
-                out.push('0');
-            }
+            match (fract.is_empty(), exp.is_empty()) {
+                // `X.YeZ`: keep as is
+                (false, false) => out.push_str(fract),
+                // `X.Y`
+                (false, true) => add_underscores(&mut out, config, fract, is_dec, is_yul, true),
+                // `X.` -> `X.0`
+                (true, _) => out.push('0'),
+            };
         }
         if !exp.is_empty() {
             out.push('e');
