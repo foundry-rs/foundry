@@ -7,6 +7,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 extern crate alloc;
 
+use crate::sp_runtime::ConsensusEngineId;
 use alloc::{vec, vec::Vec};
 use currency::*;
 use frame_support::weights::{
@@ -21,6 +22,7 @@ use polkadot_sdk::{
     polkadot_sdk_frame::{
         deps::sp_genesis_builder,
         runtime::{apis, prelude::*},
+        traits::FindAuthor,
     },
     *,
 };
@@ -302,6 +304,16 @@ impl pallet_transaction_payment::Config for Runtime {
 parameter_types! {
     pub CodeHashLockupDepositPercent: Perbill = Perbill::from_percent(30);
     pub storage ChainId: u64 = 420_420_420;
+    pub storage Author: [u8; 32] = [0xEE;32];
+}
+
+impl FindAuthor<AccountId> for Author {
+    fn find_author<'a, I>(_digests: I) -> Option<AccountId>
+    where
+        I: 'a + IntoIterator<Item = (ConsensusEngineId, &'a [u8])>,
+    {
+        Some(Author::get().into())
+    }
 }
 
 #[derive_impl(pallet_revive::config_preludes::TestDefaultConfig)]
@@ -310,6 +322,7 @@ impl pallet_revive::Config for Runtime {
     type ChainId = ChainId;
     type CodeHashLockupDepositPercent = CodeHashLockupDepositPercent;
     type Currency = Balances;
+    type FindAuthor = Author;
     type NativeToEthRatio = ConstU32<1_000_000>;
     type UploadOrigin = EnsureSigned<Self::AccountId>;
     type InstantiateOrigin = EnsureSigned<Self::AccountId>;

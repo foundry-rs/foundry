@@ -150,6 +150,16 @@ impl ApiServer {
             EthRequest::EvmMine(mine) => self.evm_mine(mine).await.to_rpc_result(),
             EthRequest::EvmMineDetailed(mine) => self.evm_mine_detailed(mine).await.to_rpc_result(),
 
+            // ---- Coinbase ----
+            EthRequest::SetCoinbase(address) => {
+                node_info!("anvil_setCoinbase");
+                let latest_block = self.latest_block();
+                self.backend.inject_coinbase(latest_block, address);
+                // TODO: this returns `null`, check whether corresponding rpc in anvil does the
+                // same
+                Ok(()).to_rpc_result()
+            }
+
             //------- TimeMachine---------
             EthRequest::EvmSetBlockTimeStampInterval(time) => {
                 self.set_block_timestamp_interval(time).to_rpc_result()
@@ -279,10 +289,7 @@ impl ApiServer {
                 node_info!("eth_accounts");
                 self.accounts().to_rpc_result()
             }
-            EthRequest::EthGetLogs(filter) => {
-                node_info!("eth_getLogs");
-                self.get_logs(filter).await.to_rpc_result()
-            }
+            EthRequest::EthGetLogs(filter) => self.get_logs(filter).await.to_rpc_result(),
             _ => Err::<(), _>(Error::RpcUnimplemented).to_rpc_result(),
         };
 

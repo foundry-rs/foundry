@@ -86,6 +86,10 @@ pub mod well_known_keys {
         154u8, 202u8, 73u8, 131u8, 172u8,
     ];
 
+    //twox_128(b":" + "Author" + b":")
+    pub const COINBASE: [u8; 16] =
+        [162, 28, 226, 158, 28, 96, 22, 22, 230, 53, 131, 31, 254, 248, 204, 175];
+
     pub fn system_account_info(account_id: AccountId) -> Vec<u8> {
         let mut key = Vec::new();
         key.extend_from_slice(&twox_128("System".as_bytes()));

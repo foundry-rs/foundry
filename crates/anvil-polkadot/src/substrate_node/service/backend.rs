@@ -75,6 +75,13 @@ impl BackendWithOverlay {
         u64::decode(&mut &value[..]).map_err(BackendError::DecodeChainId)
     }
 
+    pub fn read_coinbase(&self, hash: Hash) -> Result<[u8; 32]> {
+        let key = well_known_keys::COINBASE;
+
+        let value = self.read_top_state(hash, key.to_vec())?.ok_or(BackendError::MissingChainId)?;
+        <[u8; 32]>::decode(&mut &value[..]).map_err(BackendError::DecodeChainId)
+    }
+
     pub fn read_total_issuance(&self, hash: Hash) -> Result<Balance> {
         let key = well_known_keys::TOTAL_ISSUANCE;
 
@@ -134,6 +141,11 @@ impl BackendWithOverlay {
     pub fn inject_chain_id(&self, at: Hash, chain_id: u64) {
         let mut overrides = self.overrides.lock();
         overrides.set_chain_id(at, chain_id);
+    }
+
+    pub fn inject_coinbase(&self, at: Hash, coinbase: Address) {
+        let mut overrides = self.overrides.lock();
+        overrides.set_coinbase(at, coinbase);
     }
 
     pub fn inject_total_issuance(&self, at: Hash, value: Balance) {
@@ -214,6 +226,15 @@ impl StorageOverrides {
     fn set_chain_id(&mut self, latest_block: Hash, id: u64) {
         let mut changeset = BlockOverrides::default();
         changeset.top.insert(well_known_keys::CHAIN_ID.to_vec(), Some(id.encode()));
+
+        self.add(latest_block, changeset);
+    }
+
+    fn set_coinbase(&mut self, latest_block: Hash, coinbase: Address) {
+        let mut changeset = BlockOverrides::default();
+        let mut account_id = [0xEE; 32];
+        account_id[..20].copy_from_slice(coinbase.0.as_slice());
+        changeset.top.insert(well_known_keys::COINBASE.to_vec(), Some(account_id.encode()));
 
         self.add(latest_block, changeset);
     }
