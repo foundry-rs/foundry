@@ -223,7 +223,7 @@ impl ForgeTestData {
     /// Builds a tracing runner
     pub fn tracing_runner(&self) -> MultiContractRunner {
         let mut opts = config_evm_opts(&self.config);
-        opts.verbosity = 5;
+        opts.verbosity = 3;
         self.base_runner()
             .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
             .unwrap()

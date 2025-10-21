@@ -4131,14 +4131,17 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 });
 
 // Test cast run Celo transfer with precompiles.
-casttest!(run_celo_with_precompiles, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Celo);
-    cmd.args([
-        "run",
-        "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
-        "--quick",
-        "--rpc-url",
-        rpc.as_str(),
+casttest!(
+    #[ignore = "flaky celo rpc url"]
+    run_celo_with_precompiles,
+    |_prj, cmd| {
+        let rpc = next_rpc_endpoint(NamedChain::Celo);
+        cmd.args([
+            "run",
+            "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
+            "--quick",
+            "--rpc-url",
+            rpc.as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -4156,4 +4159,5 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
