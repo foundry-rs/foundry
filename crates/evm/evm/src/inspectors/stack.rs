@@ -8,6 +8,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, Wallets};
+use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
@@ -39,8 +40,8 @@ use std::{
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder {
-    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
-    pub analysis: Option<Arc<solar::sema::Compiler>>,
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities.
+    pub analysis: Option<Analysis>,
     /// The block environment.
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -86,7 +87,7 @@ impl InspectorStackBuilder {
 
     /// Set the solar compiler instance that grants syntactic and semantic analysis capabilities
     #[inline]
-    pub fn set_analysis(mut self, analysis: Arc<solar::sema::Compiler>) -> Self {
+    pub fn set_analysis(mut self, analysis: Analysis) -> Self {
         self.analysis = Some(analysis);
         self
     }
@@ -322,7 +323,7 @@ impl InspectorStack {
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities.
-    pub analysis: Option<Arc<solar::sema::Compiler>>,
+    pub analysis: Option<Analysis>,
 
     // Inspectors.
     // These are boxed to reduce the size of the struct and slightly improve performance of the
@@ -401,7 +402,7 @@ impl InspectorStack {
 
     /// Set the solar compiler instance.
     #[inline]
-    pub fn set_analysis(&mut self, analysis: Arc<solar::sema::Compiler>) {
+    pub fn set_analysis(&mut self, analysis: Analysis) {
         self.analysis = Some(analysis);
     }
 

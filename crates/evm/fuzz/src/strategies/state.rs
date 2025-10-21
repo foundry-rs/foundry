@@ -8,7 +8,8 @@ use alloy_primitives::{
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::{
-    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
+    compile::Analysis, ignore_metadata_hash, mapping_slots::MappingSlots,
+    slot_identifier::SlotIdentifier,
 };
 use foundry_compilers::{ProjectPathsConfig, artifacts::StorageLayout};
 use foundry_config::FuzzDictionaryConfig;
@@ -18,7 +19,6 @@ use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
-use solar::sema::Compiler;
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
@@ -47,7 +47,7 @@ impl EvmFuzzState {
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
         deployed_libs: &[Address],
-        analysis: Option<&Arc<Compiler>>,
+        analysis: Option<&Analysis>,
         paths_config: Option<&ProjectPathsConfig>,
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
