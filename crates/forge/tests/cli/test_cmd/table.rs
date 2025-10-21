@@ -62,7 +62,7 @@ contract CounterTableTest is Test {
     "#,
     );
 
-    cmd.args(["test", "--mc", "CounterTable", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "CounterTable", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -82,6 +82,8 @@ Backtrace:
 Traces:
   [..] CounterTableTest::tableMultipleParamsPass(10, true)
     ├─ [..] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -97,6 +99,8 @@ Backtrace:
 Traces:
   [..] CounterTableTest::tableSingleParamPass(10)
     ├─ [..] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     └─ ← [Stop]
 

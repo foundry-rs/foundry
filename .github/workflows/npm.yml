@@ -93,7 +93,7 @@ jobs:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -225,7 +225,7 @@ jobs:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
