@@ -1,17 +1,18 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Bytes, U256};
 
 use foundry_evm_traces::CallTraceArena;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory, TraceMemberOrder};
+use revm_inspectors::tracing::types::{
+    CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
+};
 use spec::Vm::DebugStep;
 
 // Context for a CallTraceStep, includes depth and contract address.
-pub(crate) struct CallTraceStepCtx<'a> {
+pub(crate) struct CallTraceCtx<'a> {
+    pub node: &'a CallTraceNode,
     pub step: &'a CallTraceStep,
-    pub depth: u64,
-    pub contract_addr: Address,
 }
 
 // Do a depth first traverse of the nodes and steps and return steps
@@ -20,7 +21,7 @@ pub(crate) fn flatten_call_trace<'a>(
     root: usize,
     arena: &'a CallTraceArena,
     node_start_idx: usize,
-) -> Vec<CallTraceStepCtx<'a>> {
+) -> Vec<CallTraceCtx<'a>> {
     let mut steps = Vec::new();
     let mut record_started = false;
 
@@ -38,7 +39,7 @@ fn recursive_flatten_call_trace<'a>(
     arena: &'a CallTraceArena,
     node_start_idx: usize,
     record_started: &mut bool,
-    flatten_steps: &mut Vec<CallTraceStepCtx<'a>>,
+    flatten_steps: &mut Vec<CallTraceCtx<'a>>,
 ) {
     // Once node_idx exceeds node_start_idx, start recording steps
     // for all the recursive processing.
@@ -47,15 +48,13 @@ fn recursive_flatten_call_trace<'a>(
     }
 
     let node = &arena.nodes()[node_idx];
-    let depth = node.trace.depth as u64 + 1;
-    let contract_addr = node.execution_address();
 
     for order in &node.ordering {
         match order {
             TraceMemberOrder::Step(step_idx) => {
                 if *record_started {
                     let step = &node.trace.steps[*step_idx];
-                    flatten_steps.push(CallTraceStepCtx { step, depth, contract_addr });
+                    flatten_steps.push(CallTraceCtx { node, step });
                 }
             }
             TraceMemberOrder::Call(call_idx) => {
@@ -74,7 +73,7 @@ fn recursive_flatten_call_trace<'a>(
 }
 
 // Function to convert CallTraceStep to DebugStep
-pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceStepCtx) -> DebugStep {
+pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceCtx) -> DebugStep {
     let opcode = ctx.step.op.get();
     let stack = get_stack_inputs_for_opcode(opcode, ctx.step.stack.as_deref());
 
@@ -92,13 +91,16 @@ pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceStepCtx) -> De
         )
     );
 
+    let depth = ctx.node.trace.depth as u64 + 1;
+    let contract_addr = ctx.node.execution_address();
+
     DebugStep {
         stack,
         memoryInput: memory,
         opcode: ctx.step.op.get(),
-        depth: ctx.depth,
+        depth,
         isOutOfGas: is_out_of_gas,
-        contractAddr: ctx.contract_addr,
+        contractAddr: contract_addr,
     }
 }
 
