@@ -9374,9 +9374,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d527da513cac057f59fe34ea0d3309ed0f000a6f57225b0790da02b11ba70004"
+checksum = "10a1bc149a9ed3d12d652161f3391135858f3205add0dcc59d00966fa0368810"
 dependencies = [
  "bon",
  "clap",
@@ -9393,9 +9393,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c6956940ce1436c00d50847e78c703375922d25130041a97f57508dee5f3952"
+checksum = "8d3cc77f4a8e3c18148e5907b1fbd5de20c05669a3f0497fe37e1ef72b887fd2"
 dependencies = [
  "bon",
  "chrono",
