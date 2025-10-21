@@ -11,7 +11,7 @@ contract MyContract {
     uint256 forkId;
     bytes32 blockHash;
 
-    constructor(uint256 _forkId) public {
+    constructor(uint256 _forkId) {
         forkId = _forkId;
         blockHash = blockhash(block.number - 1);
     }
@@ -94,14 +94,14 @@ contract ForkTest is Test {
     // test that we can "roll" blocks until a transaction
     function testCanRollForkUntilTransaction() public {
         // block to run transactions from
-        uint256 block = 16261704;
+        uint256 blockNumber = 16261704;
 
         // fork until previous block
-        uint256 fork = vm.createSelectFork("mainnet", block - 1);
+        uint256 fork = vm.createSelectFork("mainnet", blockNumber - 1);
 
         // block transactions in order: https://beaconcha.in/block/16261704#transactions
         // run transactions from current block until tx
-        bytes32 tx = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
+        bytes32 transaction = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
 
         // account that sends ether in 2 transaction before tx
         address account = 0xAe45a8240147E6179ec7c9f92c5A18F9a97B3fCA;
@@ -115,7 +115,7 @@ contract ForkTest is Test {
         uint256 newBalance = account.balance - transferAmount;
 
         // execute transactions in block until tx
-        vm.rollFork(tx);
+        vm.rollFork(transaction);
 
         // balance must be less than newBalance due to gas spent
         assert(account.balance < newBalance);
@@ -152,7 +152,7 @@ contract ForkTest is Test {
         DummyContract dummy = new DummyContract();
 
         // this will succeed since `dummy` is deployed on the currently active fork
-        string memory msg = dummy.hello();
+        string memory message = dummy.hello();
 
         address dummyAddress = address(dummy);
 
