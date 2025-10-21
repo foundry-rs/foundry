@@ -17,12 +17,12 @@ contract Issue12075Test is Test {
         vm.startPrank(ALICE);
     }
 
-    function testTransfer() public {
+    function test_NativeTransfer() public {
         BOB.transfer(1 ether);
         assertEq(BOB.balance, 1 ether);
     }
 
-    function testPayableFunction() public {
+    function test_PayableFunction() public {
         target.hit{value: 1 wei}();
     }
 }
