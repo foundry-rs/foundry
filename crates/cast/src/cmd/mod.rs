@@ -25,3 +25,4 @@ pub mod send;
 pub mod storage;
 pub mod txpool;
 pub mod wallet;
+pub mod erc20;

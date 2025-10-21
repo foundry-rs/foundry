@@ -747,6 +747,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
+        CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }
