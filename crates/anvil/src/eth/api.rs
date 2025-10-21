@@ -1371,6 +1371,16 @@ impl EthApi {
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 
+    /// Handler for RPC call: `anvil_getBlobsByBlockId`
+    pub fn anvil_get_blobs_by_block_id(
+        &self,
+        block_id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByBlockId");
+        Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
+    }
+
     /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
     pub fn anvil_get_blob_sidecars_by_block_id(
         &self,
