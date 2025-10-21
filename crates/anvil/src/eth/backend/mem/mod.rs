@@ -751,7 +751,7 @@ impl Backend {
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code.0.into())
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
