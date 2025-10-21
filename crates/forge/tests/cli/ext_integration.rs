@@ -44,7 +44,7 @@ fn sablier_v2_core() {
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
-            .args(["--gas-limit", u64::MAX.to_string().as_str()])
+            .args(["--gas-limit", &u64::MAX.to_string()])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])
