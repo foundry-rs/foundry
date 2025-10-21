@@ -4136,11 +4136,11 @@ libs = ["lib"]
 
 [profile.test1]
 out = "out/test1"
-evm_version = "London"
+evm_version = "london"
 
 [profile.test2]
 out = "out/test2"
-evm_version = "Cancun"
+evm_version = "cancun"
 "#;
     prj.create_file("foundry.toml", config_content);
 
@@ -4190,7 +4190,7 @@ contract GetProfileTest is Test {
         "#,
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!

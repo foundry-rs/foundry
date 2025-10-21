@@ -1831,7 +1831,7 @@ impl Config {
         }
 
         let out = figment.extract_inner("out")?;
-        let evm_version = resolve_evm_version(&figment, EvmVersion::default()).unwrap_or_default();
+        let evm_version = resolve_evm_version(&figment, EvmVersion::default())?.unwrap_or_default();
         Ok((out, evm_version))
     }
 
@@ -2317,7 +2317,7 @@ impl Config {
         }
 
         // Normalizes the default `evm_version` if a `solc` was provided in the config.
-        if let Some(version) = resolve_evm_version(&figment, self.evm_version) {
+        if let Some(version) = resolve_evm_version(&figment, self.evm_version).ok().flatten() {
             figment = figment.merge(("evm_version", version));
         }
 
@@ -2328,14 +2328,21 @@ impl Config {
 /// Resolves the EVM version from a figment, normalizing against a base version.
 ///
 /// See also <https://github.com/foundry-rs/foundry/issues/7014>
-fn resolve_evm_version(figment: &Figment, base_evm_version: EvmVersion) -> Option<EvmVersion> {
+fn resolve_evm_version(
+    figment: &Figment,
+    ref_version: EvmVersion,
+) -> Result<Option<EvmVersion>, figment::Error> {
     if let Ok(evm) = figment.extract_inner::<EvmVersion>("evm_version") {
-        return Some(evm);
+        return Ok(Some(evm));
     }
+    if let Ok(evm) = figment.extract_inner::<String>("evm_version") {
+        return evm.to_lowercase().parse::<EvmVersion>().map(Some).map_err(figment::Error::from);
+    }
+    // Fallback to solc-based detection
     if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
-        return solc.try_version().ok().and_then(|v| base_evm_version.normalize_version_solc(&v));
+        return Ok(solc.try_version().ok().and_then(|v| ref_version.normalize_version_solc(&v)));
     }
-    None
+    Ok(None)
 }
 
 impl From<Config> for Figment {

@@ -596,6 +596,10 @@ evm_version = "London"
 [profile.chain3]
 extends = "base.toml"
 evm_version = "Cancun"
+
+[profile.wrong_version]
+out = "out"
+evm_version = "wrong_version"
         "#;
         std::fs::write(temp_dir.path().join("foundry.toml"), config_content).unwrap();
 
@@ -614,8 +618,15 @@ evm_version = "Cancun"
             assert_eq!(metadata.evm, evm);
         }
 
-        // non-existent profile returns error
-        let result = getProfile_1Call { profile: "non_existent".to_string() }.apply(&mut cheats);
-        assert!(result.is_err() && result.unwrap_err().to_string().contains("non_existent"));
+        let error_cases = [
+            // non-existent profile
+            ("non_existent", "non_existent"),
+            // profile with wrong evm version
+            ("wrong_version", "Unknown evm version:"),
+        ];
+        for (profile, err) in error_cases {
+            let result = getProfile_1Call { profile: profile.to_string() }.apply(&mut cheats);
+            assert!(result.is_err() && result.unwrap_err().to_string().contains(err));
+        }
     }
 }
