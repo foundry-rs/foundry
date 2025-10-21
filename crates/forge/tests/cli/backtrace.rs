@@ -12,7 +12,7 @@ forgetest!(test_backtraces, |prj, cmd| {
 
     prj.add_test("Backtrace.t.sol", include_str!("../fixtures/backtraces/Backtrace.t.sol"));
 
-    let output = cmd.args(["test", "-vvv"]).assert_failure();
+    let output = cmd.args(["test", "-vvvvv"]).assert_failure();
 
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -165,7 +165,7 @@ contract BacktraceTest is DSTest {
 "#,
     );
 
-    let output = cmd.args(["test", "-vvv"]).assert_failure();
+    let output = cmd.args(["test", "-vvvvv"]).assert_failure();
 
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -239,7 +239,7 @@ contract BacktraceTest is DSTest {
 
     // Second run - mixed compilation (SimpleRevert fresh, BacktraceTest fresh, HelperContract
     // cached)
-    let output = cmd.forge_fuse().args(["test", "-vvv"]).assert_failure();
+    let output = cmd.forge_fuse().args(["test", "-vvvvv"]).assert_failure();
 
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -306,65 +306,65 @@ Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
-  at LibraryConsumer.externalDivide (src/LibraryConsumer.sol:43:95)
-  at LibraryBacktraceTest.testExternalDivisionByZero (test/LibraryBacktrace.t.sol:49:60)
+  at ExternalMathLib.div
+  at LibraryConsumer.externalDivide
+  at LibraryBacktraceTest.testExternalDivisionByZero
 
 [FAIL: panic: arithmetic underflow or overflow (0x11)] testExternalOverflow() ([GAS])
 ...
 Backtrace:
   at ExternalMathLib.mul
-  at LibraryConsumer.externalMultiply (src/LibraryConsumer.sol:49:97)
-  at LibraryBacktraceTest.testExternalOverflow (test/LibraryBacktrace.t.sol:59:54)
+  at LibraryConsumer.externalMultiply
+  at LibraryBacktraceTest.testExternalOverflow
 
 [FAIL: ExternalMathLib: value must be positive] testExternalRequire() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.requirePositive (src/libraries/ExternalMathLib.sol:32:87)
-  at LibraryConsumer.externalCheckPositive (src/LibraryConsumer.sol:61:95)
-  at LibraryBacktraceTest.testExternalRequire (test/LibraryBacktrace.t.sol:64:53)
+  at ExternalMathLib.requirePositive
+  at LibraryConsumer.externalCheckPositive
+  at LibraryBacktraceTest.testExternalRequire
 
 [FAIL: Underflow()] testExternalUnderflow() ([GAS])
 ...
 Backtrace:
-  at ExternalMathLib.sub (src/libraries/ExternalMathLib.sol:25:63)
-  at LibraryConsumer.externalSubtract (src/LibraryConsumer.sol:55:97)
-  at LibraryBacktraceTest.testExternalUnderflow (test/LibraryBacktrace.t.sol:54:55)
+  at ExternalMathLib.sub
+  at LibraryConsumer.externalSubtract
+  at LibraryBacktraceTest.testExternalUnderflow
 
 [FAIL: DivisionByZero()] testInternalDivisionByZero() ([GAS])
 ...
 Backtrace:
-  at LibraryConsumer.internalDivide (src/libraries/InternalMathLib.sol:11:48)
-  at LibraryBacktraceTest.testInternalDivisionByZero (test/LibraryBacktrace.t.sol:27:60)
+  at LibraryConsumer.internalDivide
+  at LibraryBacktraceTest.testInternalDivisionByZero
 
 [FAIL: panic: arithmetic underflow or overflow (0x11)] testInternalOverflow() ([GAS])
 Traces:
 ...
 Backtrace:
   at LibraryConsumer.internalMultiply
-  at LibraryBacktraceTest.testInternalOverflow (test/LibraryBacktrace.t.sol:37:54)
+  at LibraryBacktraceTest.testInternalOverflow
 
 [FAIL: InternalMathLib: value must be positive] testInternalRequire() ([GAS])
 Traces:
 ...
 Backtrace:
-  at LibraryConsumer.internalCheckPositive (src/libraries/InternalMathLib.sol:32:87)
-  at LibraryBacktraceTest.testInternalRequire (test/LibraryBacktrace.t.sol:42:53)
+  at LibraryConsumer.internalCheckPositive
+  at LibraryBacktraceTest.testInternalRequire
 
 [FAIL: Underflow()] testInternalUnderflow() ([GAS])
 Traces:
 ...
 Backtrace:
-  at LibraryConsumer.internalSubtract (src/libraries/InternalMathLib.sol:25:63)
-  at LibraryBacktraceTest.testInternalUnderflow (test/LibraryBacktrace.t.sol:32:55)
+  at LibraryConsumer.internalSubtract
+  at LibraryBacktraceTest.testInternalUnderflow
 
 [FAIL: DivisionByZero()] testMixedLibraryFailure() ([GAS])
 Traces:
 ...
 Backtrace:
-  at ExternalMathLib.div (src/libraries/ExternalMathLib.sol:11:48)
-  at LibraryConsumer.mixedCalculation (src/LibraryConsumer.sol:72:62)
-  at LibraryBacktraceTest.testMixedLibraryFailure (test/LibraryBacktrace.t.sol:72:105)
+  at ExternalMathLib.div
+  at LibraryConsumer.mixedCalculation
+  at LibraryBacktraceTest.testMixedLibraryFailure
 
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
@@ -389,7 +389,7 @@ forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     );
 
     let output = cmd
-        .args(["test", "-vvv", "--ast", "--mc", "MultipleLibraryBacktraceTest"])
+        .args(["test", "-vvvvv", "--ast", "--mc", "MultipleLibraryBacktraceTest"])
         .assert_failure();
 
     output.stdout_eq(str![[r#"
@@ -401,28 +401,28 @@ Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
 [FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:8:6)
+  at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:10:42)
   at MultipleLibraryBacktraceTest.testAllLibrariesFirstFails (test/MultipleLibraryBacktrace.t.sol:31:60)
 
 [FAIL: FirstLibError()] testFirstLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useFirstLib (src/libraries/MultipleLibraries.sol:8:6)
+  at MultipleLibraryConsumer.useFirstLib (src/libraries/MultipleLibraries.sol:10:42)
   at MultipleLibraryBacktraceTest.testFirstLibraryError (test/MultipleLibraryBacktrace.t.sol:16:55)
 
 [FAIL: SecondLibError()] testSecondLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useSecondLib (src/libraries/MultipleLibraries.sol:24:6)
+  at MultipleLibraryConsumer.useSecondLib (src/libraries/MultipleLibraries.sol:26:41)
   at MultipleLibraryBacktraceTest.testSecondLibraryError (test/MultipleLibraryBacktrace.t.sol:21:56)
 
 [FAIL: ThirdLibError()] testThirdLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useThirdLib (src/libraries/MultipleLibraries.sol:40:6)
+  at MultipleLibraryConsumer.useThirdLib (src/libraries/MultipleLibraries.sol:42:42)
   at MultipleLibraryBacktraceTest.testThirdLibraryError (test/MultipleLibraryBacktrace.t.sol:26:55)
 
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
@@ -446,7 +446,7 @@ forgetest!(test_fork_backtrace, |prj, cmd| {
     prj.add_test("ForkBacktrace.t.sol", include_str!("../fixtures/backtraces/ForkBacktrace.t.sol"));
 
     let output = cmd
-        .args(["test", "-vvv", "--fork-url", &fork_url, "--match-contract", "ForkBacktraceTest"])
+        .args(["test", "-vvvvv", "--fork-url", &fork_url, "--match-contract", "ForkBacktraceTest"])
         .assert_failure();
 
     output.stdout_eq(str![[r#"
@@ -500,7 +500,7 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
             "test",
             "--mt",
             "testTransferFromWithoutApproval",
-            "-vvv",
+            "-vvvvv",
             "--fork-url",
             &fork_url,
             "--etherscan-api-key",
@@ -534,7 +534,7 @@ forgetest!(test_backtrace_via_ir_disables_source_lines, |prj, cmd| {
 
     prj.update_config(|c| c.via_ir = true);
 
-    let output = cmd.args(["test", "-vvv"]).assert_failure();
+    let output = cmd.args(["test", "-vvvvv"]).assert_failure();
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
