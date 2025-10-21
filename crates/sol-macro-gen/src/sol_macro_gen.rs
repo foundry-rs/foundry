@@ -126,7 +126,7 @@ impl MultiSolMacroGen {
         self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
-        let _ = fs::create_dir_all(&src);
+        fs::create_dir_all(&src)?;
 
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
@@ -226,7 +226,7 @@ edition = "2021"
     ) -> Result<()> {
         self.generate_bindings(all_derives)?;
 
-        let _ = fs::create_dir_all(bindings_path);
+        fs::create_dir_all(bindings_path)?;
 
         let mut mod_contents =
             r#"#![allow(unused_imports, unused_attributes, clippy::all, rustdoc::all)]

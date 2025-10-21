@@ -456,7 +456,7 @@ impl SourceAnalysis {
     /// Analyzes contracts in the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
-    /// - Walking the AST of each contract (except interfaces)
+    /// - Walking the AST of each contract (except interfaces and abstract contracts)
     /// - Recording the items of each contract
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
@@ -483,8 +483,9 @@ impl SourceAnalysis {
                         // Visit only top-level contracts.
                         let ItemKind::Contract(contract) = &item.kind else { continue };
 
-                        // Skip interfaces which have no function implementations.
-                        if contract.kind.is_interface() {
+                        // Skip interfaces and abstract contracts which have no function
+                        // implementations.
+                        if contract.kind.is_interface() || contract.kind.is_abstract_contract() {
                             continue;
                         }
 
