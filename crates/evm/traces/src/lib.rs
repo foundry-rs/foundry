@@ -358,9 +358,13 @@ impl TraceMode {
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        // Enable step recording for backtraces when verbosity >= 3
-        // We need to ensure we're recording JUMP AND JUMPDEST steps:
-        if verbosity >= 3 { std::cmp::max(self, Self::Steps) } else { self }
+        match verbosity {
+            0..3 => self,
+            3..=4 => std::cmp::max(self, Self::Call),
+            // Enable step recording for backtraces when verbosity is 5 or higher.
+            // We need to ensure we're recording JUMP AND JUMPDEST steps.
+            _ => std::cmp::min(self, Self::Steps),
+        }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
