@@ -1019,7 +1019,7 @@ impl DatabaseExt for Backend {
         let mut env = self
             .forks
             .get_env(fork_id)?
-            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // we still need to roll to the transaction, but we only need an empty dummy state since we
         // don't need to update the active journaled state yet
@@ -1062,7 +1062,7 @@ impl DatabaseExt for Backend {
         let fork_env = self
             .forks
             .get_env(fork_id)?
-            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exist", id))?;
 
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
@@ -1343,7 +1343,7 @@ impl DatabaseExt for Backend {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id);
             }
-            eyre::bail!("Requested fork `{}` does not exit", id)
+            eyre::bail!("Requested fork `{}` does not exist", id)
         }
         if let Some(id) = self.active_fork_id() { Ok(id) } else { eyre::bail!("No fork active") }
     }
