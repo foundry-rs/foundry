@@ -21,7 +21,7 @@ contract Test is ForgeTest {
         return b;
     }
 
-    function inc() public returns (uint256) {
+    function inc() public {
         changed += 1;
     }
 
@@ -539,7 +539,7 @@ contract SignatureTester {
         owner = msg.sender;
     }
 
-    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view returns (bool) {
+    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
         require(ecrecover(digest, v, r, s) == owner, "Invalid signature");
     }
 }
