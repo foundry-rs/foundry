@@ -1701,10 +1701,8 @@ impl SimpleCast {
             return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
         };
 
-        let lowercase_address_string = format!("0x{s}");
-        let lowercase_address = Address::from_str(&lowercase_address_string)?;
-
-        Ok(lowercase_address.to_checksum(None))
+        let address = Address::from_str(&format!("0x{s}"))?;
+        Ok(address.to_checksum(None))
     }
 
     /// Decodes abi-encoded hex input or output
