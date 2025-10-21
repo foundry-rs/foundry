@@ -78,35 +78,31 @@ impl ExternalIdentifier {
         let contracts_info: Vec<_> = self
             .contracts
             .iter()
-            .filter(|(_, (_, metadata))| {
-                metadata.as_ref().is_some_and(|metadata| !metadata.is_vyper())
+            // filter out vyper files and contracts without metadata
+            .filter_map(|(addr, (_, metadata))| {
+                if let Some(metadata) = metadata.as_ref()
+                    && !metadata.is_vyper()
+                {
+                    Some((*addr, metadata))
+                } else {
+                    None
+                }
             })
-            .map(|(addr, (_, metadata))| (*addr, metadata.as_ref().unwrap().contract_name.clone()))
             .collect();
 
-        let outputs_fut = self
-            .contracts
+        let outputs_fut = contracts_info
             .iter()
-            // filter out vyper files
-            .filter(|(_, (_, metadata))| {
-                metadata.as_ref().is_some_and(|metadata| !metadata.is_vyper())
-            })
-            .map(|(address, (_, metadata))| {
-                let addr = *address;
-                let metadata = metadata.as_ref().unwrap().clone();
-                async move {
-                    sh_println!("Compiling: {} {addr}", metadata.contract_name)?;
-                    let root = tempfile::tempdir()?;
-                    let root_path = root.path();
-                    let project = etherscan_project(&metadata, root_path)?;
-                    let output = project.compile()?;
-
-                    if output.has_compiler_errors() {
-                        eyre::bail!("{output}")
-                    }
-
-                    Ok((project, output, root))
+            .map(|(addr, metadata)| async move {
+                sh_println!("Compiling: {} {addr}", metadata.contract_name)?;
+                let root = tempfile::tempdir()?;
+                let root_path = root.path();
+                let project = etherscan_project(metadata, root_path)?;
+                let output = project.compile()?;
+                if output.has_compiler_errors() {
+                    eyre::bail!("{output}")
                 }
+
+                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
@@ -117,8 +113,9 @@ impl ExternalIdentifier {
 
         // construct the map
         for (idx, res) in outputs.into_iter().enumerate() {
-            let (addr, name) = &contracts_info[idx];
-            let (project, output, _root) =
+            let (addr, metadata) = &contracts_info[idx];
+            let name = &metadata.contract_name;
+            let (project, output, _) =
                 res.wrap_err_with(|| format!("Failed to compile contract {name} at {addr}"))?;
             sources
                 .insert(&output, project.root(), None)
