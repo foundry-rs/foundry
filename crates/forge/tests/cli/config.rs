@@ -106,6 +106,7 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 celo = false
+bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -1355,6 +1356,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "assertions_revert": true,
   "legacy_assertions": false,
   "celo": false,
+  "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],

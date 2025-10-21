@@ -85,4 +85,10 @@ contract TryStatement {
             revert();
         }
     }
+
+    function try_reallyLongCall() {
+        try AggregatorV3Interface(oracle).latestRoundData() returns (uint80, int256 _price, uint256, uint256 _updatedAt, uint80) {
+            return true;
+        } catch {}
+    }
 }

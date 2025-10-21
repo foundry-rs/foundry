@@ -92,7 +92,9 @@ Display options:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-          - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
+          - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes
+          and
+            backtraces with line numbers.
 
 Find more information in the book: https://getfoundry.sh/cast/overview
 
@@ -4167,9 +4169,12 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 });
 
 // Test cast run Celo transfer with precompiles.
-casttest!(run_celo_with_precompiles, |_prj, cmd| {
-    let rpc = next_rpc_endpoint(NamedChain::Celo);
-    cmd.args([
+casttest!(
+    #[ignore = "flaky celo rpc url"]
+    run_celo_with_precompiles,
+    |_prj, cmd| {
+        let rpc = next_rpc_endpoint(NamedChain::Celo);
+        cmd.args([
         "run",
         "0xa652b9f41bb1a617ea6b2835b3316e79f0f21b8264e7bcd20e57c4092a70a0f6",
         "--quick",
@@ -4192,4 +4197,5 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);

@@ -2134,3 +2134,70 @@ end_of_record
 "#]],
     );
 });
+
+// Test that functions of abstract contracts and interfaces should not count in coverage report.
+forgetest!(abstract_contract_and_interface, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+interface ContractIf {
+    function setNumber(uint256 newNumber) external;
+}
+
+abstract contract AbstractCounter {
+    function _setNumber(uint256 newNumber) internal virtual;
+
+    function _incrementNumber(uint256 newNumber) internal virtual returns (uint256 inc) {
+        inc = newNumber + 1;
+    }
+}
+
+contract Counter is AbstractCounter, ContractIf {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        _setNumber(newNumber);
+    }
+
+    function _setNumber(uint256 newNumber) internal override {
+        number = _incrementNumber(newNumber);
+    }
+
+    function _incrementNumber(uint256 newNumber) internal override returns (uint256 inc) {
+        inc = super._incrementNumber(newNumber);
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "CounterTest.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function testCounter() public {
+        Counter counter = new Counter();
+        counter.setNumber(0);
+    }
+}
+    "#,
+    );
+
+    // Test there are 4 functions reported:
+    // - `setNumber`, `_setNumber` and `_incrementNumber` from `Counter` contract
+    // - `_incrementNumber` from `AbstractCounter` (virtual with implementation). `_setNumber` is
+    // excluded as it is not implemented.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-----------------+---------------+---------------+---------------+---------------╮
+| File            | % Lines       | % Statements  | % Branches    | % Funcs       |
++=================================================================================+
+| src/Counter.sol | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+|-----------------+---------------+---------------+---------------+---------------|
+| Total           | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+╰-----------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});

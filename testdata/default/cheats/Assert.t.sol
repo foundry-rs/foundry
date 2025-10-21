@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract AssertionsTest is DSTest {
+contract AssertionsTest is Test {
     string constant errorMessage = "User provided message";
     uint256 constant maxDecimals = 77;
-
-    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function _abs(int256 a) internal pure returns (uint256) {
         // Required or it will fail when `a = type(int256).min`

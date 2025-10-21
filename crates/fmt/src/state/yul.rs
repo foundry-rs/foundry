@@ -14,6 +14,10 @@ macro_rules! get_span {
 
 /// Language-specific pretty printing: Yul.
 impl<'ast> State<'_, 'ast> {
+    fn print_lit_yul(&mut self, lit: &'ast ast::Lit<'ast>) {
+        self.print_lit_inner(lit, true);
+    }
+
     pub(crate) fn print_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) {
         let yul::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
@@ -85,7 +89,7 @@ impl<'ast> State<'_, 'ast> {
                             CommentConfig::default().mixed_prev_space(),
                         );
                         self.word("case ");
-                        self.print_lit(constant);
+                        self.print_lit_yul(constant);
                         self.nbsp();
                     } else {
                         self.print_comments(
@@ -186,7 +190,7 @@ impl<'ast> State<'_, 'ast> {
                 if matches!(&lit.kind, ast::LitKind::Address(_)) {
                     self.print_span_cold(lit.span);
                 } else {
-                    self.print_lit(lit);
+                    self.print_lit_yul(lit);
                 }
             }
         }
