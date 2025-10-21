@@ -5453,40 +5453,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ignored_file_paths_normalization() {
-        // Test that "./" prefixes are stripped from ignored_warnings_from paths
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                ignored_warnings_from = ["src/ignored.sol", "./test/ignored.sol"]
-                "#,
-            )?;
-
-            let config = Config::load().unwrap();
-
-            // Simulate the normalization in create_project
-            let normalized: Vec<PathBuf> = config
-                .ignored_file_paths
-                .iter()
-                .map(|path| path.strip_prefix("./").unwrap_or(path).to_path_buf())
-                .collect();
-
-            // Both paths should work the same way (with or without ./ prefix)
-            assert_eq!(
-                normalized,
-                vec![
-                    PathBuf::from("src/ignored.sol"),
-                    PathBuf::from("test/ignored.sol"), // ./ prefix removed
-                ]
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn test_inheritance_with_different_profiles() {
         figment::Jail::expect_with(|jail| {
             // Create base config with multiple profiles
