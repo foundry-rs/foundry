@@ -118,7 +118,7 @@ impl SignaturesCache {
                 Some((SelectorKind::Error(e.selector()), e.signature()))
             }
             alloy_json_abi::AbiItem::Event(e) => {
-                Some((SelectorKind::Event(e.selector()), e.full_signature()))
+                Some((SelectorKind::Event(e.selector()), e.signature()))
             }
             _ => None,
         }));
