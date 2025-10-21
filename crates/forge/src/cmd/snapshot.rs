@@ -334,7 +334,7 @@ fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
         let mut row = Row::new();
         row.add_cell(Cell::new(test.contract_name()));
         row.add_cell(Cell::new(&test.signature));
-        row.add_cell(Cell::new(test.result.kind.report().to_string()));
+        row.add_cell(Cell::new(test.result.kind.report()));
         table.add_row(row);
     }
 

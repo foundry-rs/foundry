@@ -198,7 +198,8 @@ contract PrankTest is Test {
         vm.expectRevert("vm.prank: cannot `prank` delegate call from an EOA");
         vm.prank(alice, true);
         // Should fail when EOA pranked with delegatecall.
-        address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+        (bool success,) = address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+        require(success, "delegate call failed");
     }
 
     function testPrankSender(address sender) public {
