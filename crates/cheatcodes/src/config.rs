@@ -259,7 +259,7 @@ impl CheatsConfig {
     }
 
     /// Get chain data by alias
-    pub fn get_chain_data_by_alias_non_mut(&self, alias: &str) -> Result<ChainData> {
+    pub fn get_chain_data_by_alias(&self, alias: &str) -> Result<ChainData> {
         // Initialize chains if not already done
         if self.chains.is_empty() {
             // Create a temporary copy with initialized chains
@@ -281,13 +281,13 @@ impl CheatsConfig {
     }
 
     /// Get RPC URL for an alias
-    pub fn get_rpc_url_non_mut(&self, alias: &str) -> Result<String> {
+    pub fn get_rpc_url(&self, alias: &str) -> Result<String> {
         // Try to get from config first
         match self.rpc_endpoint(alias) {
             Ok(endpoint) => Ok(endpoint.url()?),
             Err(_) => {
                 // If not in config, try to get default URL
-                let chain_data = self.get_chain_data_by_alias_non_mut(alias)?;
+                let chain_data = self.get_chain_data_by_alias(alias)?;
                 Ok(chain_data.default_rpc_url)
             }
         }
