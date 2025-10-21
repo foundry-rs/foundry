@@ -17,6 +17,7 @@ mod invariant;
 mod logs;
 mod repros;
 mod spec;
+mod table;
 mod trace;
 
 // Run `forge test` on `/testdata`.
