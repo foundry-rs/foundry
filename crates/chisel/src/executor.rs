@@ -335,8 +335,8 @@ fn format_token(token: DynSolValue) -> String {
             out.push_str(&')'.red().to_string());
             out
         }
-        _ => {
-            unimplemented!()
+        t @ (DynSolValue::Function(_) | DynSolValue::CustomStruct { .. }) => {
+            foundry_common::fmt::format_token(&t)
         }
     }
 }
