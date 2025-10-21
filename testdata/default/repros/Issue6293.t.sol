@@ -7,7 +7,8 @@ import "utils/Test.sol";
 contract Issue6293Test is Test {
     constructor() {
         require(address(this).balance > 0);
-        payable(address(1)).call{value: 1}("");
+        (bool success,) = payable(address(1)).call{value: 1}("");
+        require(success, "call failed");
     }
 
     function test() public {

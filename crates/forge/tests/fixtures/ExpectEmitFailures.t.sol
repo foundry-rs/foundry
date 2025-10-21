@@ -109,7 +109,8 @@ contract Emitter {
 /// Emulates `Emitter` in #760
 contract LowLevelCaller {
     function f() external {
-        address(this).call(abi.encodeWithSignature("g()"));
+        (bool success,) = address(this).call(abi.encodeWithSignature("g()"));
+        require(success, "call failed");
     }
 
     function g() public {}
