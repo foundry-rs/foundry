@@ -934,9 +934,6 @@ impl Config {
 
         self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
-        self.ignored_file_paths =
-            self.ignored_file_paths.into_iter().map(|path| p(&root, &path)).collect();
-
         self.fs_permissions.join_all(&root);
 
         if let Some(model_checker) = &mut self.model_checker {
@@ -1161,11 +1158,13 @@ impl Config {
                 self.ignored_file_paths
                     .iter()
                     .map(|path| {
-                        // Convert to relative path for path matching in foundry-compilers
-                        if let Ok(relative) = path.strip_prefix(&self.root) {
-                            relative.to_path_buf()
+                        // Normalize paths for compiler matching
+                        if path.is_absolute() {
+                            // Convert absolute paths to relative
+                            path.strip_prefix(&self.root).unwrap_or(path).to_path_buf()
                         } else {
-                            path.clone()
+                            // Clean up relative paths (remove "./" prefix if present)
+                            path.strip_prefix("./").unwrap_or(path).to_path_buf()
                         }
                     })
                     .collect::<Vec<_>>(),
