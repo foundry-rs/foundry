@@ -706,6 +706,24 @@ fn create_default_chains() -> HashMap<String, ChainData> {
         },
     );
 
+    chains.insert(
+        "sei".to_string(),
+        ChainData {
+            name: "Sei".to_string(),
+            chain_id: 1329,
+            default_rpc_url: "https://evm-rpc.sei-apis.com".to_string(),
+        },
+    );
+
+    chains.insert(
+        "sei_testnet".to_string(),
+        ChainData {
+            name: "Sei Testnet".to_string(),
+            chain_id: 1328,
+            default_rpc_url: "https://evm-rpc-testnet.sei-apis.com".to_string(),
+        },
+    );
+
     chains
 }
 
