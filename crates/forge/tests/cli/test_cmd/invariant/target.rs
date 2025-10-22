@@ -537,7 +537,146 @@ contract TargetArtifacts is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
+    // Test ExcludeContracts
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "ExcludeContracts"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ExcludeContracts.t.sol:ExcludeContracts
+[PASS] invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test ExcludeSelectors
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "ExcludeSelectors"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ExcludeSelectors.t.sol:ExcludeSelectors
+[PASS] invariantFalseWorld() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test ExcludeSenders
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "ExcludeSenders"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ExcludeSenders.t.sol:ExcludeSenders
+[PASS] invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test TargetContracts
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "TargetContracts"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TargetContracts.t.sol:TargetContracts
+[PASS] invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test TargetInterfaces (should fail)
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "TargetWorldInterfaces"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TargetInterfaces.t.sol:TargetWorldInterfaces
+[FAIL: false world]
+	[SEQUENCE]
+ invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TargetInterfaces.t.sol:TargetWorldInterfaces
+[FAIL: false world]
+	[SEQUENCE]
+ invariantTrueWorld() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+
+    // Test TargetSelectors
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "TargetSelectors"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TargetSelectors.t.sol:TargetSelectors
+[PASS] invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test TargetSenders (should fail)
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "TargetSenders"])).failure().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/TargetSenders.t.sol:TargetSenders
+[FAIL: false world]
+	[SEQUENCE]
+ invariantTrueWorld() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TargetSenders.t.sol:TargetSenders
+[FAIL: false world]
+	[SEQUENCE]
+ invariantTrueWorld() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]],
+    );
+
+    // Test ExcludeArtifacts
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "ExcludeArtifacts"]))
+        .success()
+        .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ExcludeArtifacts.t.sol:ExcludeArtifacts
 [PASS] invariantShouldPass() ([RUNS])
@@ -546,34 +685,15 @@ Ran 1 test for test/ExcludeArtifacts.t.sol:ExcludeArtifacts
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/ExcludeContracts.t.sol:ExcludeContracts
-[PASS] invariantTrueWorld() ([RUNS])
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-[STATS]
+"#]]);
 
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/ExcludeSelectors.t.sol:ExcludeSelectors
-[PASS] invariantFalseWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/ExcludeSenders.t.sol:ExcludeSenders
-[PASS] invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/TargetArtifactSelectors.t.sol:TargetArtifactSelectors
-[PASS] invariantShouldPass() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
+    // Test TargetArtifactSelectors2 (should fail)
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "TargetArtifactSelectors2"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
 Ran 1 test for test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
 [FAIL: it's false]
 	[SEQUENCE]
@@ -583,6 +703,41 @@ Ran 1 test for test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
+[FAIL: it's false]
+	[SEQUENCE]
+ invariantShouldFail() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+
+    // Test TargetArtifactSelectors
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "^TargetArtifactSelectors$"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TargetArtifactSelectors.t.sol:TargetArtifactSelectors
+[PASS] invariantShouldPass() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Test TargetArtifacts
+    assert_invariant(cmd.forge_fuse().args(["test", "--mc", "^TargetArtifacts$"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
 Ran 2 tests for test/TargetArtifacts.t.sol:TargetArtifacts
 [FAIL: false world]
 	[SEQUENCE]
@@ -596,64 +751,17 @@ Ran 2 tests for test/TargetArtifacts.t.sol:TargetArtifacts
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/TargetContracts.t.sol:TargetContracts
-[PASS] invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/TargetInterfaces.t.sol:TargetWorldInterfaces
-[FAIL: false world]
-	[SEQUENCE]
- invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/TargetSelectors.t.sol:TargetSelectors
-[PASS] invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/TargetSenders.t.sol:TargetSenders
-[FAIL: false world]
-	[SEQUENCE]
- invariantTrueWorld() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 11 test suites [ELAPSED]: 8 tests passed, 4 failed, 0 skipped (12 total tests)
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2
-[FAIL: it's false]
-	[SEQUENCE]
- invariantShouldFail() ([RUNS])
-
 Encountered 1 failing test in test/TargetArtifacts.t.sol:TargetArtifacts
 [FAIL: false world]
 	[SEQUENCE]
  invariantShouldFail() ([RUNS])
 
-Encountered 1 failing test in test/TargetInterfaces.t.sol:TargetWorldInterfaces
-[FAIL: false world]
-	[SEQUENCE]
- invariantTrueWorld() ([RUNS])
+Encountered a total of 1 failing tests, 1 tests succeeded
 
-Encountered 1 failing test in test/TargetSenders.t.sol:TargetSenders
-[FAIL: false world]
-	[SEQUENCE]
- invariantTrueWorld() ([RUNS])
-
-Encountered a total of 4 failing tests, 8 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 4 failed tests
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -734,6 +842,13 @@ contract DynamicTargetContract is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
+Ran 1 test for test/FuzzedTargetContracts.t.sol:ExplicitTargetContract
+[PASS] invariant_explicit_target() ([RUNS])
+
+[STATS]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
 Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
 [FAIL: wrong target selector called]
 	[SEQUENCE]
@@ -742,13 +857,6 @@ Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
 [STATS]
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/FuzzedTargetContracts.t.sol:ExplicitTargetContract
-[PASS] invariant_explicit_target() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 
