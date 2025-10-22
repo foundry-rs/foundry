@@ -16,12 +16,12 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
     network::eip2718::{Decodable2718, Encodable2718},
 };
-use alloy_signer::Signer;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
@@ -1151,7 +1151,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         signer: Option<foundry_wallets::WalletSigner>,
     ) -> Result<TxHash> {
         let contract = IERC20::new(token, &self.provider);
-        
+
         if let Some(signer) = signer {
             let tx = contract.transfer(to, amount).from(signer.address()).send().await?;
             Ok(*tx.tx_hash())
@@ -1169,7 +1169,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         signer: Option<foundry_wallets::WalletSigner>,
     ) -> Result<TxHash> {
         let contract = IERC20::new(token, &self.provider);
-        
+
         if let Some(signer) = signer {
             let tx = contract.approve(spender, amount).from(signer.address()).send().await?;
             Ok(*tx.tx_hash())
