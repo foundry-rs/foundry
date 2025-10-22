@@ -2184,7 +2184,9 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_word("{");
                 self.end();
-                self.print_trailing_comment_no_break(catch_span.lo(), None);
+                if !block.is_empty() {
+                    self.print_trailing_comment_no_break(catch_span.lo(), None);
+                }
                 self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
                 if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                     self.print_word("}");
