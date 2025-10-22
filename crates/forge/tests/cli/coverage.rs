@@ -11,6 +11,7 @@ fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
 }
 
 fn basic_base(prj: TestProject, mut cmd: TestCommand) {
+    prj.initialize_default_contracts();
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
