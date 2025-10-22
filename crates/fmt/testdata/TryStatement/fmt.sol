@@ -99,6 +99,6 @@ contract TryStatement {
             uint80, int256 _price, uint256, uint256 _updatedAt, uint80
         ) {
             return true;
-        } catch {}
+        } catch {} // trailing cmnt
     }
 }
