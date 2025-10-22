@@ -2199,14 +2199,14 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
 
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
-    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    let dai = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
 
-    let usdt_result = cmd
+    let dai_result = cmd
         .args([
             "balance",
             "0x0000000000000000000000000000000000000000",
             "--erc20",
-            usdt,
+            dai,
             "--rpc-url",
             &rpc,
         ])
@@ -2222,7 +2222,7 @@ casttest!(balance, |_prj, cmd| {
             "balance",
             "0x0000000000000000000000000000000000000000",
             "--erc721",
-            usdt,
+            dai,
             "--rpc-url",
             &rpc,
         ])
@@ -2232,8 +2232,8 @@ casttest!(balance, |_prj, cmd| {
         .trim()
         .to_string();
 
-    assert_ne!(usdt_result, "0");
-    assert_eq!(alias_result, usdt_result);
+    assert_ne!(dai_result, "0");
+    assert_eq!(alias_result, dai_result);
 });
 
 // tests that `cast interface` excludes the constructor
