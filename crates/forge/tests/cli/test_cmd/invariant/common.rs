@@ -1098,6 +1098,7 @@ forgetest_init!(invariant_scrape_values, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
     });
 
     prj.add_test(
