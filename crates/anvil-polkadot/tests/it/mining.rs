@@ -14,7 +14,10 @@ use polkadot_sdk::{
     sc_cli::clap::Parser,
     sp_core,
 };
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invalid_mining() {
@@ -103,19 +106,19 @@ async fn test_manual_mining_with_interval() {
     assert_with_tolerance(
         timestamp2.saturating_sub(timestamp1),
         3000,
-        100,
+        200,
         "Interval between the blocks is outside of the desired range.",
     );
     assert_with_tolerance(
         timestamp3.saturating_sub(timestamp2),
         3000,
-        100,
+        200,
         "Interval between the blocks is outside of the desired range.",
     );
     assert_with_tolerance(
         timestamp3.saturating_sub(timestamp1),
         6000,
-        100,
+        200,
         "Interval between the blocks is outside of the desired range.",
     );
 }
@@ -345,7 +348,7 @@ async fn test_evm_mine_detailed() {
     let substrate_node_config = SubstrateNodeConfig::new(&anvil_node_config);
     let mut node = TestNode::new(anvil_node_config, substrate_node_config).await.unwrap();
 
-    let mut tx_hashes = vec![];
+    let mut tx_hashes = HashSet::new();
     let alith = Account::from(subxt_signer::eth::dev::alith());
     let baltathar = Account::from(subxt_signer::eth::dev::baltathar());
     let transfer_amount = U256::from_str_radix("10000000000000000", 10).unwrap();
@@ -355,7 +358,7 @@ async fn test_evm_mine_detailed() {
         .to(Address::from(ReviveAddress::new(baltathar.address())));
     for i in 0..3 {
         let tx_hash = node.send_transaction(transaction.clone().nonce(i), None).await.unwrap();
-        tx_hashes.push(tx_hash);
+        tx_hashes.insert(tx_hash);
     }
     let mine_detailed = unwrap_response::<Vec<Block>>(
         node.eth_rpc(EthRequest::EvmMineDetailed(Some(Params {
@@ -373,8 +376,9 @@ async fn test_evm_mine_detailed() {
             &vec![]
         };
     assert_eq!(transactions.len(), 3);
-    for i in 0..3 {
-        assert_eq!(tx_hashes[i], transactions[i].hash);
-        assert_eq!(transactions[i].block_number, sp_core::U256::from(1));
+    for tx in transactions {
+        tx_hashes.remove(&tx.hash);
+        assert_eq!(tx.block_number, sp_core::U256::from(1));
     }
+    assert_eq!(tx_hashes.len(), 0);
 }

@@ -10,7 +10,8 @@ use eyre::{Context, Result};
 use foundry_common::{duration_since_unix_epoch, sh_println};
 use polkadot_sdk::{
     sc_cli::{
-        self, CliConfiguration as SubstrateCliConfiguration, Cors, RPC_DEFAULT_MAX_CONNECTIONS,
+        self, CliConfiguration as SubstrateCliConfiguration, Cors, DEFAULT_WASM_EXECUTION_METHOD,
+        DEFAULT_WASMTIME_INSTANTIATION_STRATEGY, RPC_DEFAULT_MAX_CONNECTIONS,
         RPC_DEFAULT_MAX_REQUEST_SIZE_MB, RPC_DEFAULT_MAX_RESPONSE_SIZE_MB,
         RPC_DEFAULT_MAX_SUBS_PER_CONN, RPC_DEFAULT_MESSAGE_CAPACITY_PER_CONN,
     },
@@ -63,6 +64,7 @@ const BANNER: &str = r"
 pub struct SubstrateNodeConfig {
     shared_params: sc_cli::SharedParams,
     rpc_params: sc_cli::RpcParams,
+    import_params: sc_cli::ImportParams,
 }
 
 impl SubstrateNodeConfig {
@@ -98,7 +100,32 @@ impl SubstrateNodeConfig {
             rpc_cors: None,
         };
 
-        Self { shared_params, rpc_params }
+        // Anvil node requires these cli params configured by default except the state_pruning and
+        // block_pruning params. They must be set to `DatabasePruningMode::Archive` because
+        // chain reversion RPCs must revert the state db for finalized blocks, which is a no
+        // operation when pruning is not configured as an archive for both blocks & state.
+        let import_params = sc_cli::ImportParams {
+            pruning_params: sc_cli::PruningParams {
+                state_pruning: Some(sc_cli::DatabasePruningMode::Archive),
+                blocks_pruning: sc_cli::DatabasePruningMode::Archive,
+            },
+            database_params: sc_cli::DatabaseParams { database: None, database_cache_size: None },
+            wasm_method: DEFAULT_WASM_EXECUTION_METHOD,
+            wasmtime_instantiation_strategy: DEFAULT_WASMTIME_INSTANTIATION_STRATEGY,
+            wasm_runtime_overrides: None,
+            execution_strategies: sc_cli::ExecutionStrategiesParams {
+                execution_syncing: None,
+                execution_import_block: None,
+                execution_block_construction: None,
+                execution_offchain_worker: None,
+                execution_other: None,
+                execution: None,
+            },
+            trie_cache_size: 1024 * 1024 * 1024,
+            warm_up_trie_cache: None,
+        };
+
+        Self { shared_params, rpc_params, import_params }
     }
 
     pub fn set_base_path(&mut self, base_path: Option<PathBuf>) {
@@ -112,7 +139,7 @@ impl SubstrateCliConfiguration for SubstrateNodeConfig {
     }
 
     fn import_params(&self) -> Option<&sc_cli::ImportParams> {
-        None
+        Some(&self.import_params)
     }
 
     fn network_params(&self) -> Option<&sc_cli::NetworkParams> {

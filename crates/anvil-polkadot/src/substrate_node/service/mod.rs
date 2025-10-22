@@ -90,6 +90,7 @@ pub fn new(
         )
         .into(),
     ));
+
     let mining_engine = Arc::new(MiningEngine::new(
         mining_mode,
         transaction_pool.clone(),

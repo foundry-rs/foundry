@@ -26,6 +26,8 @@ pub enum BackendError {
     MissingTotalIssuance,
     #[error("Could not find chain id in the state")]
     MissingChainId,
+    #[error("Could not find timestamp in the state")]
+    MissingTimestamp,
     #[error("Unable to decode total issuance {0}")]
     DecodeTotalIssuance(codec::Error),
     #[error("Unable to decode chain id {0}")]
@@ -38,6 +40,8 @@ pub enum BackendError {
     DecodeSystemAccountInfo(codec::Error),
     #[error("Unable to decode revive code info {0}")]
     DecodeCodeInfo(codec::Error),
+    #[error("Unable to decode timestamp: {0}")]
+    DecodeTimestamp(codec::Error),
 }
 
 type Result<T> = std::result::Result<T, BackendError>;
@@ -54,6 +58,14 @@ impl BackendWithOverlay {
 
     pub fn blockchain(&self) -> &BlockchainDb<Block> {
         self.backend.blockchain()
+    }
+
+    pub fn read_timestamp(&self, hash: Hash) -> Result<u64> {
+        let key = well_known_keys::TIMESTAMP;
+
+        let value =
+            self.read_top_state(hash, key.to_vec())?.ok_or(BackendError::MissingTimestamp)?;
+        u64::decode(&mut &value[..]).map_err(BackendError::DecodeTimestamp)
     }
 
     pub fn read_chain_id(&self, hash: Hash) -> Result<u64> {

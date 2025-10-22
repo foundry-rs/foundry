@@ -16,7 +16,7 @@ pub struct ParseItem {
     /// Item comments.
     pub comments: Comments,
     /// Children items.
-    pub children: Vec<ParseItem>,
+    pub children: Vec<Self>,
     /// Formatted code string.
     pub code: String,
 }

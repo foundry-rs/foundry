@@ -4,7 +4,10 @@ use alloy_rpc_types::{TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil_core::eth::EthRequest;
 use anvil_polkadot::{
-    api_server::{self, ApiHandle, revive_conversions::ReviveAddress},
+    api_server::{
+        self, ApiHandle,
+        revive_conversions::{AlloyU256, ReviveAddress},
+    },
     config::{AnvilNodeConfig, SubstrateNodeConfig},
     init_tracing,
     logging::LoggingManager,
@@ -234,6 +237,59 @@ impl TestNode {
                 .unwrap(),
         )
         .unwrap()
+    }
+
+    // Initialize with some balance a random account and return its address.
+    //
+    // Returns the initialized random account address and transaction hash.
+    // When a block wait time is provided, it is assumed that automine was
+    // previously enabled on the node.
+    pub async fn eth_transfer_to_unitialized_random_account(
+        &mut self,
+        from: Address,
+        transfer_amount: U256,
+        block_wait_timeout: Option<BlockWaitTimeout>,
+    ) -> (Address, H256) {
+        let dest_addr = Address::random();
+        let dest_h160 = H160::from_slice(dest_addr.as_slice());
+        let from_h160 = H160::from_slice(from.as_slice());
+
+        // Create a random account with some balance.
+        let from_initial_balance = self.get_balance(from_h160, None).await;
+        let dest_initial_balance = self.get_balance(dest_h160, None).await;
+        assert_eq!(dest_initial_balance, U256::ZERO);
+
+        let transaction =
+            TransactionRequest::default().value(transfer_amount).from(from).to(dest_addr);
+        let tx_hash = self.send_transaction(transaction, block_wait_timeout).await.unwrap();
+
+        let is_automine =
+            unwrap_response::<bool>(self.eth_rpc(EthRequest::GetAutoMine(())).await.unwrap())
+                .unwrap();
+        if is_automine {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let receipt_info = self.get_transaction_receipt(tx_hash).await;
+
+            // Assert on balances after first transfer.
+            let from_balance = self.get_balance(from_h160, None).await;
+            let dest_balance = self.get_balance(dest_h160, None).await;
+            assert_eq!(
+                from_balance,
+                from_initial_balance
+                    - AlloyU256::from(receipt_info.effective_gas_price * receipt_info.gas_used)
+                        .inner()
+                    - transfer_amount
+                    - U256::from(EXISTENTIAL_DEPOSIT),
+                "signer's balance should have changed"
+            );
+            assert_eq!(
+                dest_balance,
+                dest_initial_balance + transfer_amount,
+                "dest's balance should have changed"
+            );
+        }
+
+        (dest_addr, tx_hash)
     }
 
     pub async fn deploy_contract(

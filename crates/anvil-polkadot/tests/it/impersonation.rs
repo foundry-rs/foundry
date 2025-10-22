@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::utils::{BlockWaitTimeout, EXISTENTIAL_DEPOSIT, TestNode, unwrap_response};
+use crate::utils::{BlockWaitTimeout, TestNode, unwrap_response};
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::TransactionRequest;
 use anvil_core::eth::EthRequest;
@@ -12,52 +12,6 @@ use anvil_rpc::error::ErrorCode;
 use polkadot_sdk::pallet_revive::evm::Account;
 use rstest::rstest;
 use subxt::utils::H160;
-
-// Initialize with some balance a random account and return its address.
-//
-// Requires automine to be set before.
-async fn transfer_to_unitialized_random_account(
-    node: &mut TestNode,
-    from: Address,
-    transfer_amount: U256,
-) -> Address {
-    let dest_addr = Address::random();
-    let dest_h160 = H160::from_slice(dest_addr.as_slice());
-    let from_h160 = H160::from_slice(from.as_slice());
-
-    // Create a random account with some balance.
-    let from_initial_balance = node.get_balance(from_h160, None).await;
-    let dest_initial_balance = node.get_balance(dest_h160, None).await;
-    assert_eq!(dest_initial_balance, U256::ZERO);
-
-    let transaction = TransactionRequest::default().value(transfer_amount).from(from).to(dest_addr);
-    let tx_hash = node
-        .send_transaction(transaction, Some(BlockWaitTimeout::new(1, Duration::from_secs(1))))
-        .await
-        .unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let receipt_info = node.get_transaction_receipt(tx_hash).await;
-
-    // Assert on balances after first transfer.
-    let from_balance = node.get_balance(from_h160, None).await;
-    let dest_balance = node.get_balance(dest_h160, None).await;
-    assert_eq!(
-        from_balance,
-        from_initial_balance
-            - AlloyU256::from(receipt_info.effective_gas_price * receipt_info.gas_used).inner()
-            - transfer_amount
-            - U256::from(EXISTENTIAL_DEPOSIT),
-        "signer's balance should have changed"
-    );
-    assert_eq!(
-        dest_balance,
-        dest_initial_balance + transfer_amount,
-        "dest's balance should have changed"
-    );
-
-    dest_addr
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_impersonate_account() {
@@ -72,8 +26,13 @@ async fn test_impersonate_account() {
     let alith_account = Account::from(subxt_signer::eth::dev::alith());
     let alith_addr = Address::from(ReviveAddress::new(alith_account.address()));
     let transfer_amount = U256::from(16e17);
-    let dest_addr =
-        transfer_to_unitialized_random_account(&mut node, alith_addr, transfer_amount).await;
+    let (dest_addr, _) = node
+        .eth_transfer_to_unitialized_random_account(
+            alith_addr,
+            transfer_amount,
+            Some(BlockWaitTimeout::new(1, Duration::from_secs(1))),
+        )
+        .await;
     let dest_h160 = H160::from_slice(dest_addr.as_slice());
 
     // Impersonate destination
@@ -136,8 +95,13 @@ async fn test_auto_impersonate(#[case] rpc_driven: bool) {
     let alith_account = Account::from(subxt_signer::eth::dev::alith());
     let alith_addr = Address::from(ReviveAddress::new(alith_account.address()));
     let transfer_amount = U256::from(16e17);
-    let dest_addr =
-        transfer_to_unitialized_random_account(&mut node, alith_addr, transfer_amount).await;
+    let (dest_addr, _) = node
+        .eth_transfer_to_unitialized_random_account(
+            alith_addr,
+            transfer_amount,
+            Some(BlockWaitTimeout::new(1, Duration::from_secs(1))),
+        )
+        .await;
 
     // Start impersonating any address now
     if rpc_driven {
@@ -197,8 +161,13 @@ async fn test_send_unsigned_tx() {
     let alith_account = Account::from(subxt_signer::eth::dev::alith());
     let alith_addr = Address::from(ReviveAddress::new(alith_account.address()));
     let transfer_amount = U256::from(16e17);
-    let dest_addr =
-        transfer_to_unitialized_random_account(&mut node, alith_addr, transfer_amount).await;
+    let (dest_addr, _) = node
+        .eth_transfer_to_unitialized_random_account(
+            alith_addr,
+            transfer_amount,
+            Some(BlockWaitTimeout::new(1, Duration::from_secs(1))),
+        )
+        .await;
     let dest_h160 = H160::from_slice(dest_addr.as_slice());
 
     // Impersonate destination

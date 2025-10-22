@@ -21,6 +21,7 @@ path = "bin/main.rs"
 # foundry internal
 codec = { version = "3.7.5", default-features = true, package = "parity-scale-codec" }
 substrate-runtime = { path = "substrate-runtime" }
+pallet-revive-eth-rpc = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master" }
 secp256k1 = { version = "0.28.0", default-features = false }
 libsecp256k1 = { version = "0.7.0", default-features = false }
 sp-runtime-interface = { git = "https://github.com/paritytech/polkadot-sdk.git", branch = "master", default-features = false }
@@ -64,7 +65,6 @@ polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk.git", branch 
 	"substrate-frame-rpc-system",
 	"substrate-rpc-client",
 	"substrate-wasm-builder",
-	"pallet-revive-eth-rpc"
 ] }
 anvil.workspace = true
 anvil-core.workspace = true

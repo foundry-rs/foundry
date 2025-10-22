@@ -6,7 +6,7 @@ use crate::{
         BlockWaitTimeout, TestNode, get_contract_code, is_transaction_in_block, unwrap_response,
     },
 };
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, map::HashSet};
 use alloy_rpc_types::{Index, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolEvent};
@@ -208,7 +208,7 @@ async fn test_estimate_gas() {
     .unwrap();
     let tx_hash = node.send_transaction(transaction, None).await.unwrap();
     unwrap_response::<()>(node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap()).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
     let receipt = node.get_transaction_receipt(tx_hash).await;
     // https://github.com/paritytech/polkadot-sdk/blob/b21cbb58ab50d5d10371393967537f6f221bb92f/substrate/frame/revive/src/primitives.rs#L76
     // eth_gas that is returned by estimate_gas holds both the storage deposit and
@@ -444,7 +444,7 @@ async fn test_get_code_at() {
     let alith = Account::from(subxt_signer::eth::dev::alith());
     let contract_code = get_contract_code("SimpleStorage");
     let tx_hash = node.deploy_contract(&contract_code.init, alith.address(), Some(1)).await;
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
     let receipt = node.get_transaction_receipt(tx_hash).await;
     assert_eq!(receipt.status, Some(pallet_revive::U256::from(1)));
     let contract_address = receipt.contract_address.unwrap();
@@ -502,7 +502,7 @@ async fn test_get_transaction_by_hash_and_index() {
         .await
         .unwrap();
     unwrap_response::<()>(node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap()).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
         unwrap_response::<Option<TransactionInfo>>(
             node.eth_rpc(EthRequest::EthGetTransactionByBlockHashAndIndex(
@@ -571,7 +571,7 @@ async fn test_get_transaction_by_number_and_index() {
         .await
         .unwrap();
     unwrap_response::<()>(node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap()).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let transaction_info_1 = unwrap_response::<Option<TransactionInfo>>(
         node.eth_rpc(EthRequest::EthGetTransactionByBlockNumberAndIndex(
@@ -619,7 +619,7 @@ async fn test_get_transaction_by_hash() {
         .to(Address::from(ReviveAddress::new(baltathar.address())));
     let tx_hash0 = node.send_transaction(transaction.clone(), None).await.unwrap();
     unwrap_response::<()>(node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap()).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let transaction_info = unwrap_response::<Option<TransactionInfo>>(
         node.eth_rpc(EthRequest::EthGetTransactionByHash(B256::from_slice(tx_hash0.as_ref())))
@@ -645,7 +645,7 @@ async fn test_get_storage() {
 
     let contract_code = get_contract_code("SimpleStorage");
     let tx_hash = node.deploy_contract(&contract_code.init, alith.address(), Some(1)).await;
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
     let receipt = node.get_transaction_receipt(tx_hash).await;
     let contract_address = receipt.contract_address.unwrap();
 
@@ -663,14 +663,11 @@ async fn test_get_storage() {
     let _call_tx_hash = node
         .send_transaction(
             call_tx,
-            Some(BlockWaitTimeout {
-                block_number: 2,
-                timeout: std::time::Duration::from_millis(1000),
-            }),
+            Some(BlockWaitTimeout { block_number: 2, timeout: Duration::from_millis(1000) }),
         )
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
     // Check that the value was updated
     let stored_value = node.get_storage_at(U256::from(0), contract_address).await;
@@ -712,11 +709,14 @@ async fn test_fee_history() {
         let _hash = node
             .send_transaction(
                 transaction.clone().nonce(i),
-                Some(BlockWaitTimeout::new((i + 1) as u32, std::time::Duration::from_secs(1))),
+                Some(BlockWaitTimeout::new((i + 1) as u32, Duration::from_secs(1))),
             )
             .await
             .unwrap();
     }
+
+    // Wait a bit for block provider to catch up with all minted blocks.
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let fee_history = unwrap_response::<FeeHistoryResult>(
         node.eth_rpc(EthRequest::EthFeeHistory(
             U256::from(10),
@@ -796,7 +796,7 @@ async fn test_get_logs() {
         let _call_tx_hash = node.send_transaction(call_tx, None).await.unwrap();
     }
     unwrap_response::<()>(node.eth_rpc(EthRequest::Mine(None, None)).await.unwrap()).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let filter = alloy_rpc_types::Filter::new()
         .address(Address::from(ReviveAddress::new(contract_address)))
@@ -811,11 +811,14 @@ async fn test_get_logs() {
         _ => panic!("This should be a vec of logs."),
     };
 
+    let mut tx_indices = HashSet::from([1, 2]);
+    tx_indices.remove(&(logs[1].transaction_index.try_into().unwrap()));
+    tx_indices.remove(&(logs[2].transaction_index.try_into().unwrap()));
     assert_eq!(logs.len(), 3);
     assert_eq!(logs[1].block_number, pallet_revive::U256::from(2));
     assert_eq!(logs[2].block_number, pallet_revive::U256::from(2));
     assert_eq!(logs[0].transaction_hash, tx_hash);
-    assert_eq!(logs[2].transaction_index, pallet_revive::U256::from(2));
+    assert_eq!(tx_indices.len(), 0);
     // Check that our topic is the ValueChanged event.
     let event_hash = keccak_256(b"ValueChanged(address,uint256,uint256)");
     assert_eq!(logs[2].topics[0], H256::from(event_hash));
@@ -858,14 +861,11 @@ async fn test_call() {
     let _call_tx_hash = node
         .send_transaction(
             call_tx,
-            Some(BlockWaitTimeout {
-                block_number: 2,
-                timeout: std::time::Duration::from_millis(1000),
-            }),
+            Some(BlockWaitTimeout { block_number: 2, timeout: Duration::from_millis(1000) }),
         )
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let get_value_data = SimpleStorage::getValueCall::new(()).abi_encode();
     let call_tx = TransactionRequest::default()
