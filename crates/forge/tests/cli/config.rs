@@ -1976,3 +1976,58 @@ Warning: Found unknown `foo` config for profile `default` defined in foundry.tom
 
 "#]]);
 });
+
+forgetest_init!(test_ignored_file_paths_normalization, |prj, cmd| {
+    fn gen_contract(name: &str) -> String {
+        let fn_name = name.chars().next().unwrap().to_lowercase().to_string() + &name[1..];
+        format!(
+            r#"
+contract {name} {{
+    function {fn_name}() public returns (bool) {{ return true; }}
+}}
+"#
+        )
+    }
+
+    // Update config to ignore warnings from specific files with various path formats
+    prj.update_config(|config| {
+        config.ignored_file_paths = vec![
+            PathBuf::from("./test/IgnoredWithPrefix.sol"), // With "./" prefix
+            PathBuf::from("src/IgnoredNoPrefix.sol"),      // Without "./" prefix
+            PathBuf::from("./src/nested/IgnoredNested.sol"), // Nested path with prefix
+        ];
+    });
+
+    // Create contracts that will generate warnings
+    prj.add_source("IgnoredNoPrefix.sol", &gen_contract("IgnoredNoPrefix"));
+    prj.add_test("IgnoredWithPrefix.sol", &gen_contract("IgnoredWithPrefix"));
+
+    fs::create_dir_all(prj.root().join("src/nested")).unwrap();
+    fs::write(prj.root().join("src/nested/IgnoredNested.sol"), gen_contract("IgnoredNested"))
+        .unwrap();
+
+    prj.add_source("NotIgnored.sol", &gen_contract("NotIgnored"));
+
+    // Verify the config loads paths as specified (before normalization)
+    let config = cmd.config();
+    let raw_paths = vec![
+        PathBuf::from("./test/IgnoredWithPrefix.sol"),
+        PathBuf::from("src/IgnoredNoPrefix.sol"),
+        PathBuf::from("./src/nested/IgnoredNested.sol"),
+    ];
+    assert_eq!(config.ignored_file_paths, raw_paths);
+
+    // Build and verify compilation succeeds with just 1 warning:
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function notIgnored() public returns (bool) { return true; }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#,
+    );
+});

@@ -223,7 +223,8 @@ contract RecordAccountAccessesTest is Test {
         Proxy proxy = new Proxy(address(one));
 
         vm.startStateDiffRecording();
-        address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
+        (bool success,) = address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
+        require(success, "call failed");
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
 
         assertEq(called.length, 2, "incorrect length");

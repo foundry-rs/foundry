@@ -218,7 +218,15 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     }
                 });
 
-                self.push_item_kind(CoverageItemKind::Function { name: name.into() }, item.span);
+                // Exclude function from coverage report if it is virtual without implementation.
+                let exclude_func = func.header.virtual_() && !func.is_implemented();
+                if !exclude_func {
+                    self.push_item_kind(
+                        CoverageItemKind::Function { name: name.into() },
+                        item.span,
+                    );
+                }
+
                 self.walk_item(item)?;
             }
             _ => {}
@@ -456,7 +464,7 @@ impl SourceAnalysis {
     /// Analyzes contracts in the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
-    /// - Walking the AST of each contract (except interfaces and abstract contracts)
+    /// - Walking the AST of each contract (except interfaces)
     /// - Recording the items of each contract
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
@@ -483,9 +491,8 @@ impl SourceAnalysis {
                         // Visit only top-level contracts.
                         let ItemKind::Contract(contract) = &item.kind else { continue };
 
-                        // Skip interfaces and abstract contracts which have no function
-                        // implementations.
-                        if contract.kind.is_interface() || contract.kind.is_abstract_contract() {
+                        // Skip interfaces which have no function implementations.
+                        if contract.kind.is_interface() {
                             continue;
                         }
 

@@ -367,7 +367,7 @@ impl Executor {
         // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
 
-        debug!(%address, "deployed contract");
+        trace!(%address, "deployed contract");
 
         Ok(DeployResult { raw: result, address })
     }

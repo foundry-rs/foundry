@@ -2147,6 +2147,10 @@ interface ContractIf {
 
 abstract contract AbstractCounter {
     function _setNumber(uint256 newNumber) internal virtual;
+
+    function _incrementNumber(uint256 newNumber) internal virtual returns (uint256 inc) {
+        inc = newNumber + 1;
+    }
 }
 
 contract Counter is AbstractCounter, ContractIf {
@@ -2157,7 +2161,11 @@ contract Counter is AbstractCounter, ContractIf {
     }
 
     function _setNumber(uint256 newNumber) internal override {
-        number = newNumber;
+        number = _incrementNumber(newNumber);
+    }
+
+    function _incrementNumber(uint256 newNumber) internal override returns (uint256 inc) {
+        inc = super._incrementNumber(newNumber);
     }
 }
     "#,
@@ -2177,14 +2185,18 @@ contract CounterTest is DSTest {
     "#,
     );
 
+    // Test there are 4 functions reported:
+    // - `setNumber`, `_setNumber` and `_incrementNumber` from `Counter` contract
+    // - `_incrementNumber` from `AbstractCounter` (virtual with implementation). `_setNumber` is
+    // excluded as it is not implemented.
     cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 ╭-----------------+---------------+---------------+---------------+---------------╮
 | File            | % Lines       | % Statements  | % Branches    | % Funcs       |
 +=================================================================================+
-| src/Counter.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter.sol | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
 |-----------------+---------------+---------------+---------------+---------------|
-| Total           | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total           | 100.00% (8/8) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
 ╰-----------------+---------------+---------------+---------------+---------------╯
 ...
 "#]]);

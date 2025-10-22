@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address,
     map::{Entry, HashMap},
 };
+use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
 use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
@@ -73,21 +74,30 @@ impl ExternalIdentifier {
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
-        let outputs_fut = self
+        // Collect contract info upfront so we can reference it in error messages
+        let contracts_info: Vec<_> = self
             .contracts
             .iter()
-            // filter out vyper files
-            .filter(|(_, (_, metadata))| {
-                metadata.as_ref().is_some_and(|metadata| !metadata.is_vyper())
+            // filter out vyper files and contracts without metadata
+            .filter_map(|(addr, (_, metadata))| {
+                if let Some(metadata) = metadata.as_ref()
+                    && !metadata.is_vyper()
+                {
+                    Some((*addr, metadata))
+                } else {
+                    None
+                }
             })
-            .map(|(address, (_, metadata))| async move {
-                let metadata = metadata.as_ref().unwrap();
-                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
+            .collect();
+
+        let outputs_fut = contracts_info
+            .iter()
+            .map(|(addr, metadata)| async move {
+                sh_println!("Compiling: {} {addr}", metadata.contract_name)?;
                 let root = tempfile::tempdir()?;
                 let root_path = root.path();
                 let project = etherscan_project(metadata, root_path)?;
                 let output = project.compile()?;
-
                 if output.has_compiler_errors() {
                     eyre::bail!("{output}")
                 }
@@ -102,9 +112,14 @@ impl ExternalIdentifier {
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for res in outputs {
-            let (project, output, _root) = res?;
-            sources.insert(&output, project.root(), None)?;
+        for (idx, res) in outputs.into_iter().enumerate() {
+            let (addr, metadata) = &contracts_info[idx];
+            let name = &metadata.contract_name;
+            let (project, output, _) =
+                res.wrap_err_with(|| format!("Failed to compile contract {name} at {addr}"))?;
+            sources
+                .insert(&output, project.root(), None)
+                .wrap_err_with(|| format!("Failed to insert contract {name} at {addr}"))?;
         }
 
         Ok(sources)

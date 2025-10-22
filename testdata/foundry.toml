@@ -8,9 +8,9 @@ ignored_error_codes = [
     1878, # SPDX license identifier not provided
     2018, # Function state mutability can be restricted
     2072, # Unused local variable
-    2319, # This declaration shadows a builtin symbol
     2519, # This declaration shadows an existing declaration
     3860, # Contract init code size exceeds limit
+    5159, # Selfdestruct has been deprecated
     5574, # Contract code size exceeds limit
     5667, # Unused function parameter
 ]
