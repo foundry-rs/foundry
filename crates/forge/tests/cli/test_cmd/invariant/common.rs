@@ -444,6 +444,7 @@ forgetest_init!(invariant_fixtures, |prj, cmd| {
         config.invariant.depth = 100;
         // disable literals to test fixtures
         config.invariant.dictionary.max_fuzz_dictionary_literals = 0;
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
     });
 
     prj.add_test(
@@ -555,6 +556,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 forgetest_init!(invariant_breaks_without_fixtures, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
         config.invariant.runs = 1;
         config.invariant.depth = 100;
     });
