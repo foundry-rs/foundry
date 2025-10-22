@@ -105,6 +105,7 @@ fn get_create2_factory_call_inputs(
     CallInputs {
         caller: inputs.caller,
         bytecode_address: deployer,
+        known_bytecode: None,
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
@@ -160,6 +161,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type Tx = TxEnv;
+    type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
         &self.inner.block

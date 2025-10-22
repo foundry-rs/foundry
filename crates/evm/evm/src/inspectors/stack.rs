@@ -962,6 +962,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                     call.input.bytes(ecx).get(..4).and_then(|selector| mocks.get(selector))
                 }) {
                     call.bytecode_address = *target;
+                    call.known_bytecode = None;
                 }
             }
 
