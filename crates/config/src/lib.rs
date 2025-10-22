@@ -1154,7 +1154,15 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(self.ignored_file_paths.clone())
+            .ignore_paths(
+                self.ignored_file_paths
+                    .iter()
+                    .map(|path| {
+                        // Strip "./" prefix for consistent path matching
+                        path.strip_prefix("./").unwrap_or(path).to_path_buf()
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {

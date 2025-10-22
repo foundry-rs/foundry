@@ -17,6 +17,7 @@ mod invariant;
 mod logs;
 mod repros;
 mod spec;
+mod table;
 mod trace;
 
 // Run `forge test` on `/testdata`.
@@ -2449,6 +2450,7 @@ contract Dummy {
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(111));
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
     });
 
     prj.add_source(

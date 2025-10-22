@@ -38,6 +38,7 @@ pub mod transactions;
 mod utils;
 pub mod version;
 
+pub use compile::Analysis;
 pub use constants::*;
 pub use contracts::*;
 pub use io::{Shell, shell, stdin};

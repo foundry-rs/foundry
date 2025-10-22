@@ -118,7 +118,7 @@ fn get_create2_factory_call_inputs(
 
 pub struct FoundryEvm<'db, I: InspectorExt> {
     #[allow(clippy::type_complexity)]
-    pub inner: RevmEvm<
+    inner: RevmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
@@ -126,7 +126,12 @@ pub struct FoundryEvm<'db, I: InspectorExt> {
         EthFrame<EthInterpreter>,
     >,
 }
-impl<I: InspectorExt> FoundryEvm<'_, I> {
+impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
+    /// Consumes the EVM and returns the inner context.
+    pub fn into_context(self) -> EthEvmContext<&'db mut dyn DatabaseExt> {
+        self.inner.ctx
+    }
+
     pub fn run_execution(
         &mut self,
         frame: FrameInput,
