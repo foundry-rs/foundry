@@ -24,6 +24,9 @@ use polkadot_sdk::{
         runtime::{apis, prelude::*},
         traits::FindAuthor,
     },
+    sp_consensus_aura::{
+        self, SlotDuration, ed25519::AuthorityId as AuraId, runtime_decl_for_aura_api::AuraApiV1,
+    },
     *,
 };
 
@@ -224,6 +227,20 @@ mod runtime {
     /// Provides the ability to execute Smart Contracts.
     #[runtime::pallet_index(5)]
     pub type Revive = pallet_revive::Pallet<Runtime>;
+
+    /// Provides the ability to determine AURA authorities for block building.
+    #[runtime::pallet_index(6)]
+    pub type Aura = pallet_aura::Pallet<Runtime>;
+}
+
+impl pallet_aura::Config for Runtime {
+    type AuthorityId = AuraId;
+    type DisabledValidators = ();
+    type MaxAuthorities = ConstU32<1>;
+    type AllowMultipleBlocksPerSlot = ConstBool<true>;
+    // Not relevant in general since the node digest
+    // will refer to slot 0 always.
+    type SlotDuration = ConstU64<6000>;
 }
 
 /// We assume that ~10% of the block weight is consumed by `on_initialize` handlers.
@@ -312,7 +329,9 @@ impl FindAuthor<AccountId> for Author {
     where
         I: 'a + IntoIterator<Item = (ConsensusEngineId, &'a [u8])>,
     {
-        Some(Author::get().into())
+        let authorities = Runtime::authorities();
+        let key = authorities[0].clone().into_inner();
+        Some(key.into())
     }
 }
 
@@ -448,4 +467,19 @@ pallet_revive::impl_runtime_apis_plus_revive!(
             self::genesis_config_presets::preset_names()
         }
     }
+
+    impl sp_consensus_aura::AuraApi<Block, AuraId> for Runtime {
+        fn slot_duration() -> SlotDuration {
+            // This is not relevant when considering a manual-seal
+            // driven node. The slot duration is used by Aura to determine
+            // the authority, but anvil-polkadot will provide same slot and
+            // not use this API to determine the correct slot.
+            SlotDuration::from_millis(6000)
+        }
+
+        fn authorities() -> Vec<AuraId> {
+            pallet_aura::Authorities::<Runtime>::get().into_inner()
+        }
+    }
+
 );

@@ -75,12 +75,12 @@ impl BackendWithOverlay {
         u64::decode(&mut &value[..]).map_err(BackendError::DecodeChainId)
     }
 
-    pub fn read_coinbase(&self, hash: Hash) -> Result<[u8; 32]> {
-        let key = well_known_keys::COINBASE;
-
-        let value = self.read_top_state(hash, key.to_vec())?.ok_or(BackendError::MissingChainId)?;
-        <[u8; 32]>::decode(&mut &value[..]).map_err(BackendError::DecodeChainId)
-    }
+    // pub fn read_coinbase(&self, hash: Hash) -> Result<[u8; 32]> {
+    //     let key = well_known_keys::COINBASE;
+    //
+    //     let value = self.read_top_state(hash,
+    // key.to_vec())?.ok_or(BackendError::MissingChainId)?;     <[u8; 32]>::decode(&mut
+    // &value[..]).map_err(BackendError::DecodeChainId) }
 
     pub fn read_total_issuance(&self, hash: Hash) -> Result<Balance> {
         let key = well_known_keys::TOTAL_ISSUANCE;
@@ -234,7 +234,9 @@ impl StorageOverrides {
         let mut changeset = BlockOverrides::default();
         let mut account_id = [0xEE; 32];
         account_id[..20].copy_from_slice(coinbase.0.as_slice());
-        changeset.top.insert(well_known_keys::COINBASE.to_vec(), Some(account_id.encode()));
+        changeset
+            .top
+            .insert(well_known_keys::AURA_AUTHORITIES.to_vec(), Some(vec![account_id].encode()));
 
         self.add(latest_block, changeset);
     }

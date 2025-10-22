@@ -86,9 +86,15 @@ pub mod well_known_keys {
         154u8, 202u8, 73u8, 131u8, 172u8,
     ];
 
-    //twox_128(b":" + "Author" + b":")
-    pub const COINBASE: [u8; 16] =
-        [162, 28, 226, 158, 28, 96, 22, 22, 230, 53, 131, 31, 254, 248, 204, 175];
+    //twox_128(b":" + b"Author" + b":")
+    // pub const COINBASE: [u8; 16] =
+    //     [162, 28, 226, 158, 28, 96, 22, 22, 230, 53, 131, 31, 254, 248, 204, 175];
+
+    //twox_128(b"Aura" + b"Authorities")
+    pub const AURA_AUTHORITIES: [u8; 32] = [
+        87, 248, 220, 47, 90, 176, 148, 103, 137, 111, 71, 48, 15, 4, 36, 56, 94, 6, 33, 196, 134,
+        154, 166, 12, 2, 190, 154, 220, 201, 138, 13, 29,
+    ];
 
     pub fn system_account_info(account_id: AccountId) -> Vec<u8> {
         let mut key = Vec::new();

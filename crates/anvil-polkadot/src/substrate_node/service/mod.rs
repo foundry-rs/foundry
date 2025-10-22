@@ -3,13 +3,15 @@ use crate::{
     substrate_node::{
         mining_engine::{MiningEngine, MiningMode, run_mining_engine},
         rpc::spawn_rpc_server,
+        service::consensus::SameSlotConsensusDataProvider,
     },
 };
 use anvil::eth::backend::time::TimeManager;
 use parking_lot::Mutex;
 use polkadot_sdk::{
     parachains_common::opaque::Block,
-    sc_basic_authorship, sc_consensus, sc_consensus_manual_seal,
+    sc_basic_authorship, sc_consensus,
+    sc_consensus_manual_seal::{self},
     sc_service::{
         self, Configuration, RpcHandlers, SpawnTaskHandle, TaskManager,
         error::Error as ServiceError,
@@ -24,6 +26,7 @@ pub use client::Client;
 
 mod backend;
 mod client;
+mod consensus;
 mod executor;
 pub mod storage;
 
@@ -136,7 +139,7 @@ pub fn new(
         pool: transaction_pool.clone(),
         select_chain: SelectChain::new(backend.clone()),
         commands_stream: Box::pin(commands_stream),
-        consensus_data_provider: None,
+        consensus_data_provider: Some(Box::new(SameSlotConsensusDataProvider::new())),
         create_inherent_data_providers,
     };
     let authorship_future = sc_consensus_manual_seal::run_manual_seal(params);

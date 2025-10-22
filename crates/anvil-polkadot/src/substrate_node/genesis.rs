@@ -32,6 +32,8 @@ pub struct GenesisConfig {
     pub base_fee_per_gas: u64,
     /// The genesis header gas limit.
     pub gas_limit: Option<u128>,
+    /// Coinbase address
+    pub coinbase: Option<Address>,
 }
 
 impl<'a> From<&'a AnvilNodeConfig> for GenesisConfig {
@@ -50,16 +52,22 @@ impl<'a> From<&'a AnvilNodeConfig> for GenesisConfig {
                 .expect("Genesis block number overflow"),
             base_fee_per_gas: anvil_config.get_base_fee(),
             gas_limit: anvil_config.gas_limit,
+            coinbase: anvil_config.genesis.as_ref().map(|g| g.coinbase),
         }
     }
 }
 
 impl GenesisConfig {
     pub fn as_storage_key_value(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let mut aura_authority_id = [0xEE; 32];
+        aura_authority_id[..20].copy_from_slice(
+            self.coinbase.as_ref().map(|addr| addr.0.as_slice()).unwrap_or(&[0; 20]),
+        );
         let storage = vec![
             (well_known_keys::CHAIN_ID.to_vec(), self.chain_id.encode()),
             (well_known_keys::TIMESTAMP.to_vec(), self.timestamp.encode()),
             (well_known_keys::BLOCK_NUMBER_KEY.to_vec(), self.number.encode()),
+            (well_known_keys::AURA_AUTHORITIES.to_vec(), vec![aura_authority_id].encode()),
         ];
         // TODO: add other fields
         storage
@@ -171,8 +179,14 @@ mod tests {
         let block_number: u32 = 5;
         let timestamp: u64 = 10;
         let chain_id: u64 = 42;
-        let genesis_config =
-            GenesisConfig { number: block_number, timestamp, chain_id, ..Default::default() };
+        let authority_id: [u8; 32] = [0xEE; 32];
+        let genesis_config = GenesisConfig {
+            number: block_number,
+            timestamp,
+            chain_id,
+            coinbase: Some(Address::from([0xEE; 20])),
+            ..Default::default()
+        };
         let genesis_storage = genesis_config.as_storage_key_value();
         assert!(
             genesis_storage
@@ -186,6 +200,14 @@ mod tests {
         assert!(
             genesis_storage.contains(&(well_known_keys::CHAIN_ID.to_vec(), chain_id.encode())),
             "Chain id not found in genesis key-value storage"
+        );
+
+        assert!(
+            genesis_storage.contains(&(
+                well_known_keys::AURA_AUTHORITIES.to_vec(),
+                vec![authority_id].encode()
+            )),
+            "Authorities not found in genesis key-value storage"
         );
     }
 }
