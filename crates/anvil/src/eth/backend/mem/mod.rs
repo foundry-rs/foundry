@@ -36,7 +36,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope,
+    TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -88,9 +88,9 @@ use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceipt, TypedReceiptRpc, TypedTransaction, has_optimism_fields,
-        transaction_request_to_typed,
+        BlobTransactionSidecarVariantExt, MaybeImpersonatedTransaction, PendingTransaction,
+        ReceiptResponse, TransactionInfo, TypedReceipt, TypedReceiptRpc, TypedTransaction,
+        has_optimism_fields, transaction_request_to_typed,
     },
     wallet::WalletCapabilities,
 };
@@ -3304,11 +3304,8 @@ impl Backend {
             && let Ok(typed_tx) = TypedTransaction::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
-            let blobs = match &sidecar.sidecar {
-                BlobTransactionSidecarVariant::Eip4844(sidecar) => &sidecar.blobs,
-                BlobTransactionSidecarVariant::Eip7594(sidecar) => &sidecar.blobs,
-            };
-            return Ok(Some(blobs.clone()));
+            let blobs = sidecar.sidecar.blobs();
+            return Ok(Some(blobs.to_vec()));
         }
 
         Ok(None)
@@ -3842,18 +3839,19 @@ pub fn transaction_build(
         }
     }
 
-    let mut transaction: Transaction = eth_transaction.clone().into();
+    let mut transaction: alloy_rpc_types::Transaction<TypedTransaction> =
+        eth_transaction.clone().into();
 
     let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
-        transaction.effective_gas_price(base_fee)
+        transaction.effective_gas_price.unwrap_or_default()
     } else if block.is_none() && info.is_none() {
         // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-        transaction.max_fee_per_gas()
+        eth_transaction.gas_price()
     } else {
         // if transaction is already mined, gas price is considered base fee + priority
         // fee: the effective gas price.
         let base_fee = base_fee.map_or(0u128, |g| g as u128);
-        let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
+        let max_priority_fee_per_gas = 0u128;
 
         base_fee.saturating_add(max_priority_fee_per_gas)
     };
@@ -3867,33 +3865,84 @@ pub fn transaction_build(
     // `BYPASS_SIGNATURE` which would result in different hashes
     // Note: for impersonated transactions this only concerns pending transactions because
     // there's // no `info` yet.
-    let hash = tx_hash.unwrap_or(*envelope.tx_hash());
+    let hash = tx_hash.unwrap_or(envelope.hash());
 
     let envelope = match envelope.into_inner() {
-        TxEnvelope::Legacy(signed_tx) => {
+        TypedTransaction::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
         }
-        TxEnvelope::Eip1559(signed_tx) => {
+        TypedTransaction::EIP1559(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
         }
-        TxEnvelope::Eip2930(signed_tx) => {
+        TypedTransaction::EIP2930(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
         }
-        TxEnvelope::Eip4844(signed_tx) => {
+        TypedTransaction::EIP4844(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
+            // Convert from TxEip4844Variant<BlobTransactionSidecarVariant> to
+            // TxEip4844Variant<BlobTransactionSidecar>
+            let converted_variant = match t {
+                TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                    let sidecar = match tx_with_sidecar.sidecar {
+                        BlobTransactionSidecarVariant::Eip4844(sidecar) => sidecar,
+                        BlobTransactionSidecarVariant::Eip7594(sidecar) => {
+                            // Convert EIP-7594 sidecar to EIP-4844 format
+                            BlobTransactionSidecar {
+                                blobs: sidecar.blobs,
+                                commitments: sidecar.commitments,
+                                proofs: sidecar.cell_proofs,
+                            }
+                        }
+                    };
+                    TxEip4844Variant::TxEip4844WithSidecar(
+                        TxEip4844WithSidecar::from_tx_and_sidecar(tx_with_sidecar.tx, sidecar),
+                    )
+                }
+            };
+            let new_signed = Signed::new_unchecked(converted_variant, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
         }
-        TxEnvelope::Eip7702(signed_tx) => {
+        TypedTransaction::EIP7702(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
+        }
+        TypedTransaction::Deposit(deposit_tx) => {
+            // Deposit transactions are handled differently as Unknown type
+            let ser = serde_json::to_value(&deposit_tx).expect("could not serialize TxDeposit");
+            let maybe_deposit_fields = OtherFields::try_from(ser);
+            match maybe_deposit_fields {
+                Ok(mut fields) => {
+                    fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
+                    fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+                    fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
+                    fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
+
+                    let inner = UnknownTypedTransaction {
+                        ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
+                        fields,
+                        memo: Default::default(),
+                    };
+
+                    AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash, inner })
+                }
+                Err(_) => {
+                    // Fallback to a basic unknown envelope if serialization fails
+                    let inner = UnknownTypedTransaction {
+                        ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
+                        fields: OtherFields::default(),
+                        memo: Default::default(),
+                    };
+                    AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash, inner })
+                }
+            }
         }
     };
 
