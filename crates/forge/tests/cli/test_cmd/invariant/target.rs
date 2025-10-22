@@ -651,7 +651,6 @@ Tip: Run `forge test --rerun` to retry only the 4 failed tests
 "#]]);
 });
 
-// TODO(rusowsky): figure out why it is flaky
 // https://github.com/foundry-rs/foundry/issues/5625
 // https://github.com/foundry-rs/foundry/issues/6166
 // `Target.wrongSelector` is not called when handler added as `targetContract`
