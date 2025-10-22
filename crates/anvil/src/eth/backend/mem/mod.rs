@@ -45,6 +45,7 @@ use alloy_eips::{
     Encodable2718,
     eip1559::BaseFeeParams,
     eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
+    eip7594::BlobTransactionSidecarVariant,
     eip7840::BlobParams,
     eip7910::SystemContract,
 };
@@ -3303,7 +3304,11 @@ impl Backend {
             && let Ok(typed_tx) = TypedTransaction::try_from(tx)
             && let Some(sidecar) = typed_tx.sidecar()
         {
-            return Ok(Some(sidecar.sidecar.blobs.clone()));
+            let blobs = match &sidecar.sidecar {
+                BlobTransactionSidecarVariant::Eip4844(sidecar) => &sidecar.blobs,
+                BlobTransactionSidecarVariant::Eip7594(sidecar) => &sidecar.blobs,
+            };
+            return Ok(Some(blobs.clone()));
         }
 
         Ok(None)
@@ -3319,8 +3324,13 @@ impl Backend {
                 .transactions
                 .iter()
                 .filter_map(|tx| tx.as_ref().sidecar())
-                .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                .flat_map(|sidecar| match &sidecar.sidecar {
+                    BlobTransactionSidecarVariant::Eip4844(sc) => {
+                        sc.blobs.iter().zip(sc.commitments.iter())
+                    }
+                    BlobTransactionSidecarVariant::Eip7594(sc) => {
+                        sc.blobs.iter().zip(sc.commitments.iter())
+                    }
                 })
                 .filter(|(_, commitment)| {
                     // Filter blobs by versioned_hashes if provided
@@ -3344,9 +3354,18 @@ impl Backend {
                     typed_tx_result.ok()?.sidecar().map(|sidecar| sidecar.sidecar().clone())
                 })
                 .fold(BlobTransactionSidecar::default(), |mut acc, sidecar| {
-                    acc.blobs.extend(sidecar.blobs);
-                    acc.commitments.extend(sidecar.commitments);
-                    acc.proofs.extend(sidecar.proofs);
+                    match sidecar {
+                        BlobTransactionSidecarVariant::Eip4844(sc) => {
+                            acc.blobs.extend(sc.blobs);
+                            acc.commitments.extend(sc.commitments);
+                            acc.proofs.extend(sc.proofs);
+                        }
+                        BlobTransactionSidecarVariant::Eip7594(sc) => {
+                            acc.blobs.extend(sc.blobs);
+                            acc.commitments.extend(sc.commitments);
+                            acc.proofs.extend(sc.cell_proofs);
+                        }
+                    }
                     acc
                 });
             Ok(Some(sidecar))
@@ -3363,11 +3382,22 @@ impl Backend {
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
                         if versioned_hash == hash
-                            && let Some(index) =
-                                sidecar.sidecar.commitments.iter().position(|commitment| {
-                                    kzg_to_versioned_hash(commitment.as_slice()) == *hash
-                                })
-                            && let Some(blob) = sidecar.sidecar.blobs.get(index)
+                            && let Some(index) = match &sidecar.sidecar {
+                                BlobTransactionSidecarVariant::Eip4844(sc) => {
+                                    sc.commitments.iter().position(|commitment| {
+                                        kzg_to_versioned_hash(commitment.as_slice()) == *hash
+                                    })
+                                }
+                                BlobTransactionSidecarVariant::Eip7594(sc) => {
+                                    sc.commitments.iter().position(|commitment| {
+                                        kzg_to_versioned_hash(commitment.as_slice()) == *hash
+                                    })
+                                }
+                            }
+                            && let Some(blob) = match &sidecar.sidecar {
+                                BlobTransactionSidecarVariant::Eip4844(sc) => sc.blobs.get(index),
+                                BlobTransactionSidecarVariant::Eip7594(sc) => sc.blobs.get(index),
+                            }
                         {
                             return Ok(Some(*blob));
                         }
