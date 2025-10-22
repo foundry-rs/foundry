@@ -442,6 +442,9 @@ forgetest_init!(invariant_fixtures, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
+        // disable literals to test fixtures
+        config.invariant.dictionary.max_fuzz_dictionary_literals = 0;
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
     });
 
     prj.add_test(
@@ -539,6 +542,93 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantFixtures.t.sol:InvariantFixtures
+[FAIL: assertion failed: true != false]
+	[SEQUENCE]
+ invariant_target_not_compromised() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+forgetest_init!(invariant_breaks_without_fixtures, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
+        config.invariant.runs = 1;
+        config.invariant.depth = 100;
+    });
+
+    prj.add_test(
+        "InvariantLiterals.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    bool ownerFound;
+    bool amountFound;
+    bool magicFound;
+    bool keyFound;
+    bool backupFound;
+    bool extraStringFound;
+
+    function fuzzWithoutFixtures(
+        address owner_,
+        uint256 _amount,
+        int32 magic,
+        bytes32 key,
+        bytes memory backup,
+        string memory extra
+    ) external {
+        if (owner_ == address(0x6B175474E89094C44Da98b954EedeAC495271d0F)) {
+            ownerFound = true;
+        }
+        if (_amount == 1122334455) amountFound = true;
+        if (magic == -777) magicFound = true;
+        if (key == "abcd1234") keyFound = true;
+        if (keccak256(backup) == keccak256("qwerty1234")) backupFound = true;
+        if (keccak256(abi.encodePacked(extra)) == keccak256(abi.encodePacked("112233aabbccdd"))) {
+            extraStringFound = true;
+        }
+    }
+
+    function isCompromised() public view returns (bool) {
+        return ownerFound && amountFound && magicFound && keyFound && backupFound && extraStringFound;
+    }
+}
+
+/// Try to compromise target contract by finding all accepted values without using fixtures.
+contract InvariantLiterals is Test {
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    function invariant_target_not_compromised() public {
+        assertEq(target.isCompromised(), false);
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantLiterals.t.sol:InvariantLiterals
+[FAIL: assertion failed: true != false]
+	[SEQUENCE]
+ invariant_target_not_compromised() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantLiterals.t.sol:InvariantLiterals
 [FAIL: assertion failed: true != false]
 	[SEQUENCE]
  invariant_target_not_compromised() ([RUNS])
@@ -966,19 +1056,19 @@ contract InvariantRollForkStateTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
-[FAIL: too many blocks mined]
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
+[FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_state() ([RUNS])
 
 [STATS]
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
-[FAIL: wrong supply]
+Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
+[FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_block() ([RUNS])
 
 [STATS]
 
@@ -1083,8 +1173,8 @@ contract FindFromLogValueTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
-[FAIL: value from logs found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
+[FAIL: value from return found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 
@@ -1092,8 +1182,8 @@ Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
-[FAIL: value from return found]
+Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
+[FAIL: value from logs found]
 	[SEQUENCE]
  invariant_value_not_found() ([RUNS])
 
