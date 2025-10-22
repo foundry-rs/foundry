@@ -142,8 +142,10 @@ impl FuzzedExecutor {
 
         'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let input = if let Some(failure) = self.persisted_failure.take() {
-                failure.calldata
+            let input = if let Some(failure) = self.persisted_failure.take()
+                && func.selector() == failure.calldata[..4]
+            {
+                failure.calldata.clone()
             } else {
                 // If running with progress, then increment current run.
                 if let Some(progress) = progress {
@@ -223,14 +225,22 @@ impl FuzzedExecutor {
                             break 'stop;
                         }
                         TestCaseError::Reject(_) => {
-                            // Discard run and apply max rejects if configured.
-                            test_data.runs -= 1;
-                            if self.config.max_test_rejects > 0 {
-                                test_data.rejects += 1;
-                                if test_data.rejects >= self.config.max_test_rejects {
-                                    test_data.failure = Some(err);
-                                    break 'stop;
-                                }
+                            // Discard run and apply max rejects if configured. Saturate to handle
+                            // the case of replayed failure, which doesn't count as a run.
+                            test_data.runs = test_data.runs.saturating_sub(1);
+                            test_data.rejects += 1;
+
+                            // Update progress bar to reflect rejected runs.
+                            if let Some(progress) = progress {
+                                progress.set_message(format!("([{}] rejected)", test_data.rejects));
+                                progress.dec(1);
+                            }
+
+                            if self.config.max_test_rejects > 0
+                                && test_data.rejects >= self.config.max_test_rejects
+                            {
+                                test_data.failure = Some(err);
+                                break 'stop;
                             }
                         }
                     }
@@ -360,13 +370,23 @@ impl FuzzedExecutor {
 
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
+        let inspector = self.executor.inspector();
+
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
+            EvmFuzzState::new(
+                fork_db,
+                self.config.dictionary,
+                deployed_libs,
+                inspector.analysis.as_ref(),
+                inspector.paths_config(),
+            )
         } else {
             EvmFuzzState::new(
                 self.executor.backend().mem_db(),
                 self.config.dictionary,
                 deployed_libs,
+                inspector.analysis.as_ref(),
+                inspector.paths_config(),
             )
         }
     }

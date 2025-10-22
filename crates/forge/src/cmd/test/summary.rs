@@ -114,7 +114,7 @@ impl TestSummaryReport {
 
             if self.is_detailed {
                 row.add_cell(Cell::new(suite_path));
-                row.add_cell(Cell::new(format!("{:.2?}", suite.duration).to_string()));
+                row.add_cell(Cell::new(format!("{:.2?}", suite.duration)));
             }
 
             table.add_row(row);

@@ -20,5 +20,34 @@ function emitEvent() {
       _vestingBeneficiaries.length - 1, // index
    uint64(block.timestamp), // timestamp
      endTimestamp // end timestamp
-    ); 
+    );
+
+    // https://github.com/foundry-rs/foundry/issues/12029
+    emit OperatorSharesDecreased(
+        defaultOperator,
+        address(0),
+        strategyMock,
+        depositAmount / 6 // 1 withdrawal not queued so decreased
+    );
+
+    // https://github.com/foundry-rs/foundry/issues/12146
+    emit ISablierComptroller.DisableCustomFeeUSD(protocol, caller, users.sender, 0, feeUSD);
+    emit ISablierComptroller.DisableCustomFeeUSD({ protocol: protocol, caller: caller, user: users.sender, previousMinFeeUSD: 0, newMinFeeUSD: feeUSD });
+
+    emit ISablierLockupLinear.CreateLockupLinearStream({
+        streamId: streamId,
+        commonParams: Lockup.CreateEventCommon({
+            funder: msg.sender,
+            sender: sender,
+            recipient: recipient,
+            depositAmount: depositAmount,
+            token: token,
+            cancelable: cancelable,
+            transferable: transferable,
+            timestamps: timestamps,
+            shape: shape
+        }),
+        cliffTime: cliffTime,
+        unlockAmounts: unlockAmounts
+    });
 }

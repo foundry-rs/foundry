@@ -4,7 +4,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -61,6 +61,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
+    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
 };
 use serde_json::Value;
@@ -75,6 +76,9 @@ use std::{
 };
 
 mod utils;
+
+pub mod analysis;
+pub use analysis::CheatcodeAnalysis;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EthEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 
@@ -95,7 +99,7 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.inner.ctx.journaled_state.depth += 1;
+            evm.journaled_state.depth += 1;
 
             let frame = FrameInput::Create(Box::new(inputs));
 
@@ -104,7 +108,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) => create,
             };
 
-            evm.inner.ctx.journaled_state.depth -= 1;
+            evm.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -152,11 +156,12 @@ where
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
-    ccx.ecx.block = evm.inner.ctx.block;
-    ccx.ecx.tx = evm.inner.ctx.tx;
-    ccx.ecx.cfg = evm.inner.ctx.cfg;
-    ccx.ecx.error = evm.inner.ctx.error;
+    let ctx = evm.into_context();
+    ccx.ecx.journaled_state.inner = ctx.journaled_state.inner;
+    ccx.ecx.block = ctx.block;
+    ccx.ecx.tx = ctx.tx;
+    ccx.ecx.cfg = ctx.cfg;
+    ccx.ecx.error = ctx.error;
 
     Ok(res)
 }
@@ -366,6 +371,9 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
 pub struct Cheatcodes {
+    /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
+    pub analysis: Option<CheatcodeAnalysis>,
+
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -503,6 +511,8 @@ pub struct Cheatcodes {
     /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
     /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
     pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
+    // Custom execution evm version.
+    pub execution_evm_version: Option<SpecId>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -518,6 +528,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
+            analysis: None,
             fs_commit: true,
             labels: config.labels.clone(),
             config,
@@ -559,7 +570,13 @@ impl Cheatcodes {
             wallets: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit_sequence: Default::default(),
+            execution_evm_version: None,
         }
+    }
+
+    /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
+    pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
+        self.analysis = Some(analysis);
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -683,6 +700,11 @@ impl Cheatcodes {
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Option<CallOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journaled_state.depth();
 
@@ -813,6 +835,8 @@ impl Cheatcodes {
 
                 // At the target depth we set `msg.sender`
                 if curr_depth == prank.depth {
+                    // Ensure new caller is loaded and touched
+                    let _ = journaled_account(ecx, prank.new_caller);
                     call.caller = prank.new_caller;
                     prank_applied = true;
                 }
@@ -872,8 +896,6 @@ impl Cheatcodes {
                         is_fixed_gas_limit = false;
                     }
                     let input = TransactionInput::new(call.input.bytes(ecx));
-                    // Ensure account is touched.
-                    ecx.journaled_state.touch(broadcast.new_origin);
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
@@ -1066,6 +1088,11 @@ impl Cheatcodes {
             Some(storage) => storage.copies.contains_key(address),
             None => false,
         }
+    }
+
+    /// Returns struct definitions from the analysis, if available.
+    pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
+        self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
     }
 }
 
@@ -1295,7 +1322,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         Ok((_, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
-                                self.expected_revert = Some(expected_revert.clone());
+                                self.expected_revert = Some(expected_revert);
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1335,7 +1362,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if ecx.journaled_state.depth() > 0
-                && let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop()
+                && let Some(mut last_recorded_depth) = recorded_account_diffs_stack.pop()
             {
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
@@ -1367,9 +1394,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     // vector if higher depths were not recorded. This
                     // preserves ordering of accesses.
                     if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.append(last_recorded_depth);
+                        last.extend(last_recorded_depth);
                     } else {
-                        recorded_account_diffs_stack.push(last_recorded_depth.clone());
+                        recorded_account_diffs_stack.push(last_recorded_depth);
                     }
                 }
             }
@@ -1579,6 +1606,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+        // Apply custom execution evm version.
+        if let Some(spec_id) = self.execution_evm_version {
+            ecx.cfg.spec = spec_id;
+        }
+
         let gas = Gas::new(input.gas_limit());
         // Check if we should intercept this create
         if self.intercept_next_create_call {
@@ -1606,6 +1638,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // At the target depth we set `msg.sender`
             if curr_depth == prank.depth {
+                // Ensure new caller is loaded and touched
+                let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
                 prank_applied = true;
             }
@@ -1648,9 +1682,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                // Ensure account is touched.
-                ecx.journaled_state.touch(broadcast.new_origin);
 
                 let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {

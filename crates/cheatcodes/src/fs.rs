@@ -12,7 +12,10 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::{context::CreateScheme, interpreter::CreateInputs};
+use revm::{
+    context::{CreateScheme, JournalTr},
+    interpreter::CreateInputs,
+};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -372,9 +375,15 @@ fn deploy_code(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
+    // If prank active at current depth, then use it as caller for create input.
+    let caller = ccx
+        .state
+        .get_prank(ccx.ecx.journaled_state.depth())
+        .map_or(ccx.caller, |prank| prank.new_caller);
+
     let outcome = executor.exec_create(
         CreateInputs {
-            caller: ccx.caller,
+            caller,
             scheme,
             value: value.unwrap_or(U256::ZERO),
             init_code: bytecode.into(),
@@ -392,7 +401,7 @@ fn deploy_code(
     Ok(address.abi_encode())
 }
 
-/// Returns the path to the json artifact depending on the input
+/// Returns the bytecode from a JSON artifact file.
 ///
 /// Can parse following input formats:
 /// - `path/to/artifact.json`
@@ -402,6 +411,10 @@ fn deploy_code(
 /// - `path/to/contract.sol:0.8.23`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
+///
+/// This function is safe to use with contracts that have library dependencies.
+/// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
+/// reject artifacts with unlinked library placeholders.
 fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
@@ -932,5 +945,18 @@ mod tests {
 
         let artifact: ContractObject = serde_json::from_str(s).unwrap();
         assert!(artifact.deployed_bytecode.is_some());
+    }
+
+    #[test]
+    fn test_alloy_json_abi_rejects_unlinked_bytecode() {
+        let artifact_json = r#"{
+            "abi": [],
+            "bytecode": "0x73__$987e73aeca5e61ce83e4cb0814d87beda9$__63baf2f868"
+        }"#;
+
+        let result: Result<ContractObject, _> = serde_json::from_str(artifact_json);
+        assert!(result.is_err(), "should reject unlinked bytecode with placeholders");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expected bytecode, found unlinked bytecode with placeholder"));
     }
 }

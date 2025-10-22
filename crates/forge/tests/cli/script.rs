@@ -1094,7 +1094,7 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1222,7 +1222,7 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1392,7 +1392,7 @@ forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1478,7 +1478,7 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -1707,7 +1707,7 @@ forgetest_async!(can_decode_custom_errors, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
     Initialized forge project
 
@@ -3233,6 +3233,89 @@ Simulated On-chain Traces:
     └─ ← [Return] 481 bytes of code
 
   [..] Counter::increment()
+    └─ ← [Stop]
+
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});
+
+forgetest_async!(can_deploy_with_broadcast_in_setup, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+contract DeployScript is Script {
+    function setUp() public {
+        vm.startBroadcast();
+    }
+
+    function run() public {
+        payable(address(0)).transfer(1 ether);
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/Deploy.s.sol:DeployScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "-vvvv",
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [9882] DeployScript::run()
+    ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
     └─ ← [Stop]
 
 

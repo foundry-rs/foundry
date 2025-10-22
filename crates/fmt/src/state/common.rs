@@ -23,7 +23,7 @@ impl<'ast> LitExt<'ast> for ast::Lit<'ast> {
 
 /// Language-specific pretty printing. Common for both: Solidity + Yul.
 impl<'ast> State<'_, 'ast> {
-    pub(super) fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
+    pub(super) fn print_lit_inner(&mut self, lit: &'ast ast::Lit<'ast>, is_yul: bool) {
         let ast::Lit { span, symbol, ref kind } = *lit;
         if self.handle_span(span, false) {
             return;
@@ -48,7 +48,7 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
-                self.print_num_literal(symbol.as_str());
+                self.print_num_literal(symbol.as_str(), is_yul);
             }
             ast::LitKind::Address(value) => self.word(value.to_string()),
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
@@ -56,7 +56,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_num_literal(&mut self, source: &str) {
+    fn print_num_literal(&mut self, source: &str, is_yul: bool) {
         fn strip_underscores_if(b: bool, s: &str) -> Cow<'_, str> {
             if b && s.contains('_') { Cow::Owned(s.replace('_', "")) } else { Cow::Borrowed(s) }
         }
@@ -66,9 +66,13 @@ impl<'ast> State<'_, 'ast> {
             config: config::NumberUnderscore,
             string: &str,
             is_dec: bool,
+            is_yul: bool,
             reversed: bool,
         ) {
-            if !config.is_thousands() || !is_dec || string.len() < 5 {
+            // The underscore thousand separator is only valid in Solidity decimal numbers.
+            // It is not supported by hex numbers, nor Yul literals.
+            // https://github.com/foundry-rs/foundry/issues/12111
+            if !config.is_thousands() || !is_dec || is_yul || string.len() < 5 {
                 out.push_str(string);
                 return;
             }
@@ -96,7 +100,7 @@ impl<'ast> State<'_, 'ast> {
         };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
-        let strip_underscores = !config.is_preserve();
+        let strip_underscores = !config.is_preserve() || is_yul;
         let mut val = &strip_underscores_if(strip_underscores, val)[..];
         let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
         let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
@@ -115,20 +119,23 @@ impl<'ast> State<'_, 'ast> {
         if val.is_empty() {
             out.push('0');
         } else {
-            add_underscores(&mut out, config, val, is_dec, false);
+            add_underscores(&mut out, config, val, is_dec, is_yul, false);
         }
         if source.contains('.') {
             out.push('.');
-            if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, is_dec, true);
-            } else {
-                out.push('0');
-            }
+            match (fract.is_empty(), exp.is_empty()) {
+                // `X.YeZ`: keep as is
+                (false, false) => out.push_str(fract),
+                // `X.Y`
+                (false, true) => add_underscores(&mut out, config, fract, is_dec, is_yul, true),
+                // `X.` -> `X.0`
+                (true, _) => out.push('0'),
+            };
         }
         if !exp.is_empty() {
             out.push('e');
             out.push_str(exp_sign);
-            add_underscores(&mut out, config, exp, is_dec, false);
+            add_underscores(&mut out, config, exp, is_dec, is_yul, false);
         }
 
         self.word(out);
@@ -285,6 +292,15 @@ impl<'ast> State<'_, 'ast> {
             return false;
         };
 
+        // If first item is uninformed (just a comma), and it has its own comment, skip it.
+        // It will be dealt with when printing the item in the main loop of `commasep`.
+        if span.is_dummy()
+            && let Some(next_pos) = values.get(1).map(|v| get_span(v).lo())
+            && self.peek_comment_before(next_pos).is_some()
+        {
+            return true;
+        }
+
         // Check for comments before the first item.
         if let Some((cmnt_span, cmnt_style)) =
             self.peek_comment_before(span.lo()).map(|c| (c.span, c.style))
@@ -337,7 +353,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         if !values.is_empty() && !format.with_delimiters {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
             self.s.offset(self.ind);
             return true;
         }
@@ -393,6 +409,7 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(0);
         }
 
+        let mut last_delimiter_break = !format.with_delimiters;
         let mut skip_last_break =
             is_single_without_cmnts || !format.with_delimiters || format.is_inline();
         for (i, value) in values.iter().enumerate() {
@@ -405,20 +422,37 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
 
-            print(self, value);
-
-            if !is_last {
-                self.print_word(",");
+            // Avoid printing the last uninformed item, so that we can handle line breaks.
+            if !(is_last && get_span(value).is_dummy()) {
+                print(self, value);
             }
 
             let next_span = if is_last { None } else { Some(get_span(&values[i + 1])) };
             let next_pos = next_span.map(Span::lo).unwrap_or(pos_hi);
+            let cmnt_before_next =
+                self.peek_comment_before(next_pos).map(|cmnt| (cmnt.span, cmnt.style));
+
+            if !is_last {
+                // Handle disabled lines with comments after the value, but before the comma.
+                if cmnt_before_next.is_some_and(|(cmnt_span, _)| {
+                    let span = self.cursor.span(cmnt_span.lo());
+                    self.inline_config.is_disabled(span)
+                        // NOTE: necessary workaround to patch this edgecase due to lack of spans for the commas.
+                        && self.sm.span_to_snippet(span).is_ok_and(|snip| !snip.contains(','))
+                }) {
+                    self.print_comments(
+                        next_pos,
+                        CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                    );
+                }
+                self.print_word(",");
+            }
 
             if !is_last
                 && format.breaks_cmnts
-                && self.peek_comment_before(next_pos).is_some_and(|cmnt| {
-                    let disabled = self.inline_config.is_disabled(cmnt.span);
-                    (cmnt.style.is_mixed() && !disabled) || (cmnt.style.is_isolated() && disabled)
+                && cmnt_before_next.is_some_and(|(cmnt_span, cmnt_style)| {
+                    let disabled = self.inline_config.is_disabled(cmnt_span);
+                    (cmnt_style.is_mixed() && !disabled) || (cmnt_style.is_isolated() && disabled)
                 })
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
@@ -430,26 +464,27 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 CommentConfig::skip_ws().no_breaks().mixed_prev_space()
             };
-            self.print_comments(next_pos, comment_config);
+            let with_trailing = self.print_comments(next_pos, comment_config).is_some();
 
-            if is_last && self.is_bol_or_only_ind() {
-                // if a trailing comment is printed at the very end, we have to manually adjust
-                // the offset to avoid having a double break.
-                self.break_offset_if_not_bol(0, -self.ind, false);
+            if is_last && with_trailing {
+                if self.is_bol_or_only_ind() {
+                    // if a trailing comment is printed at the very end, we have to manually adjust
+                    // the offset to avoid having a double break.
+                    self.break_offset_if_not_bol(0, -self.ind, false);
+                } else {
+                    self.s.break_offset(SIZE_INFINITY as usize, -self.ind);
+                }
                 skip_last_break = true;
+                last_delimiter_break = false;
             }
 
             // Final break if needed before the next value.
             if let Some(next_span) = next_span
                 && !self.is_bol_or_only_ind()
                 && !self.inline_config.is_disabled(next_span)
+                && !next_span.is_dummy()
             {
-                if next_span.is_dummy() && !matches!(format.kind, ListFormatKind::AlwaysBreak) {
-                    // Don't add spaces between uninformed items (commas)
-                    self.zerobreak();
-                } else {
-                    format.print_break(false, values.len(), &mut self.s);
-                }
+                format.print_break(false, values.len(), &mut self.s);
             }
         }
 
@@ -475,8 +510,8 @@ impl<'ast> State<'_, 'ast> {
         self.end();
         self.cursor.advance_to(pos_hi, true);
 
-        if !format.with_delimiters {
-            self.zerobreak();
+        if last_delimiter_break {
+            format.print_break(true, values.len(), &mut self.s);
         }
     }
 
@@ -835,9 +870,9 @@ impl ListFormat {
         self
     }
 
-    pub(crate) fn no_delimiters(mut self) -> Self {
+    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
-            self.with_delimiters = false;
+            self.with_delimiters = with;
         }
         self
     }

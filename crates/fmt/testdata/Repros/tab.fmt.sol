@@ -167,13 +167,14 @@ contract DbgFmtTest is Test {
 	}
 }
 
+// https://github.com/foundry-rs/foundry/issues/8557
 // https://github.com/foundry-rs/foundry/issues/11249
 function argListRepro(address tokenIn, uint256 amountIn, bool data) {
 	maverickV2SwapCallback(
 		tokenIn,
 		amountIn, // forgefmt: disable-line
 		// forgefmt: disable-next-line
-		0,/* we didn't bother loading `amountOut` because we don't use it */
+		0 /* we didn't bother loading `amountOut` because we don't use it */,
 		data
 	);
 }

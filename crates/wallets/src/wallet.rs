@@ -114,8 +114,8 @@ impl WalletOpts {
         } else if self.gcp {
             let project_id = get_env("GCP_PROJECT_ID")?;
             let location = get_env("GCP_LOCATION")?;
-            let keyring = get_env("GCP_KEYRING")?;
-            let key_name = get_env("GCP_NAME")?;
+            let keyring = get_env("GCP_KEY_RING")?;
+            let key_name = get_env("GCP_KEY_NAME")?;
             let key_version = get_env("GCP_KEY_VERSION")?
                 .parse()
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;

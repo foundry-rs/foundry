@@ -258,7 +258,8 @@ impl TestArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
@@ -338,7 +339,7 @@ impl TestArgs {
             .networks(evm_opts.networks)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
-            .build::<MultiCompiler>(project_root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
@@ -525,10 +526,10 @@ impl TestArgs {
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
-        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive.
         if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+            identifier = identifier.with_external(&config, remote_chain_id)?;
         }
 
         // Build the trace decoder.
