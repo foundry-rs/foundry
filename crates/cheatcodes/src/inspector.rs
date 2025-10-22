@@ -4,7 +4,7 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
     evm::{
-        DealRecord, GasRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
@@ -99,7 +99,7 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.inner.ctx.journaled_state.depth += 1;
+            evm.journaled_state.depth += 1;
 
             let frame = FrameInput::Create(Box::new(inputs));
 
@@ -108,7 +108,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) => create,
             };
 
-            evm.inner.ctx.journaled_state.depth -= 1;
+            evm.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -156,11 +156,12 @@ where
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
-    ccx.ecx.block = evm.inner.ctx.block;
-    ccx.ecx.tx = evm.inner.ctx.tx;
-    ccx.ecx.cfg = evm.inner.ctx.cfg;
-    ccx.ecx.error = evm.inner.ctx.error;
+    let ctx = evm.into_context();
+    ccx.ecx.journaled_state.inner = ctx.journaled_state.inner;
+    ccx.ecx.block = ctx.block;
+    ccx.ecx.tx = ctx.tx;
+    ccx.ecx.cfg = ctx.cfg;
+    ccx.ecx.error = ctx.error;
 
     Ok(res)
 }
@@ -834,6 +835,8 @@ impl Cheatcodes {
 
                 // At the target depth we set `msg.sender`
                 if curr_depth == prank.depth {
+                    // Ensure new caller is loaded and touched
+                    let _ = journaled_account(ecx, prank.new_caller);
                     call.caller = prank.new_caller;
                     prank_applied = true;
                 }
@@ -1635,6 +1638,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // At the target depth we set `msg.sender`
             if curr_depth == prank.depth {
+                // Ensure new caller is loaded and touched
+                let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
                 prank_applied = true;
             }
