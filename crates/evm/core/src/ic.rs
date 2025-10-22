@@ -8,7 +8,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]
 pub struct PcIcMap {
-    pub inner: FxHashMap<u32, u32>,
+    inner: FxHashMap<u32, u32>,
 }
 
 impl PcIcMap {
@@ -37,7 +37,7 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: FxHashMap<u32, u32>,
+    inner: FxHashMap<u32, u32>,
 }
 
 impl IcPcMap {
@@ -59,6 +59,11 @@ impl IcPcMap {
     /// Returns the program counter for the given instruction counter.
     pub fn get(&self, ic: u32) -> Option<u32> {
         self.inner.get(&ic).copied()
+    }
+
+    /// Iterate over the IC-PC pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&u32, &u32)> {
+        self.inner.iter()
     }
 }
 
