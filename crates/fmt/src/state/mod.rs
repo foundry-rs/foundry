@@ -1190,3 +1190,47 @@ fn style_doc_comment(style: DocCommentStyle, mut cmnt: Comment) -> Comment {
         _ => cmnt,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solar::parse::interface::source_map::FileName;
+
+    // Repro: when there is a comment before `pos_lo`, the buggy take_while-based
+    // implementation of `peek_comment_between` fails to find a later comment
+    // that is actually within (pos_lo, pos_hi).
+    #[test]
+    fn peek_comment_between_finds_comment_after_prior_comment() {
+        // Source with two block comments; we will search between the end of the first
+        // comment and near the end of the second comment.
+        let src = "x /*c1*/ y /*c2*/ z";
+
+        let sess =
+            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build();
+        let sm = sess.source_map();
+        let file = sm
+            .new_source_file(FileName::Custom("peek_between_test".to_string()), src.to_string())
+            .expect("source file");
+
+        // Gather comments from the source.
+        let comments = Comments::new(&file, sm, true, /* group */ true, None);
+
+        // Sanity: ensure we actually have at least two comments in order.
+        let mut it = comments.iter();
+        let first_span = it.next().expect("first comment").span;
+        let second_span = it.next().expect("second comment").span;
+        drop(it);
+        assert!(first_span.lo() < second_span.lo(), "comments should be ordered by position");
+
+        let pos_lo = first_span.hi();
+        let pos_hi = second_span.hi();
+
+        let config = Arc::new(FormatterConfig::default());
+        let inline = InlineConfig::default();
+        let state = State::new(sm, config, inline, comments);
+
+        // Expected: we should detect `second` as a comment strictly between boundaries.
+        // Buggy (take_while-only) implementation returns None here.
+        assert!(state.peek_comment_between(pos_lo, pos_hi).is_some());
+    }
+}
