@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::wallet_browser::types::BrowserTransaction;
 
 #[derive(Debug)]
-pub struct RequestQueue<Req, Res> {
+pub(crate) struct RequestQueue<Req, Res> {
     /// Pending requests from CLI to browser
     requests: VecDeque<Req>,
     /// Responses from browser indexed by request ID
@@ -49,7 +49,7 @@ impl<Req, Res> RequestQueue<Req, Res> {
     }
 }
 
-pub trait HasId {
+pub(crate) trait HasId {
     fn id(&self) -> &str;
 }
 

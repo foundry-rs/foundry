@@ -20,7 +20,7 @@ use crate::wallet_browser::{
 
 /// Browser wallet HTTP server
 #[derive(Debug, Clone)]
-pub struct BrowserWalletServer {
+pub(crate) struct BrowserWalletServer {
     port: u16,
     state: Arc<BrowserWalletState>,
     shutdown_tx: Option<Arc<Mutex<Option<oneshot::Sender<()>>>>>,
@@ -74,11 +74,6 @@ impl BrowserWalletServer {
             let _ = tx.send(());
         }
         Ok(())
-    }
-
-    /// Get the server port
-    pub fn port(&self) -> u16 {
-        self.port
     }
 
     /// Check if a wallet is connected

@@ -9,13 +9,13 @@ use crate::wallet_browser::{
 
 /// Current connection information
 #[derive(Debug, Clone, Default)]
-pub struct ConnectionInfo {
+pub(crate) struct ConnectionInfo {
     pub address: Option<String>,
     pub chain_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
-pub struct BrowserWalletState {
+pub(crate) struct BrowserWalletState {
     /// Current information about the wallet connection
     pub connection: Arc<Mutex<ConnectionInfo>>,
     /// Request/response queue for transactions
