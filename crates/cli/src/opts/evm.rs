@@ -190,7 +190,7 @@ impl Provider for EvmArgs {
 #[command(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
-    /// default, it is 0x6000 (~25kb).
+    /// default, it is 0x6000 (24kb).
     #[arg(long, value_name = "CODE_SIZE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
