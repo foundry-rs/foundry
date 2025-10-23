@@ -28,6 +28,50 @@ use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
+// Macro to reduce duplication in transaction type encoding
+macro_rules! impl_encode_for_transaction_types {
+    ($self:ident, $method:ident, $envelope_type:ty) => {
+        match $self {
+            Self::Legacy(tx) => <$envelope_type>::from(tx.clone()).$method(),
+            Self::EIP2930(tx) => <$envelope_type>::from(tx.clone()).$method(),
+            Self::EIP1559(tx) => <$envelope_type>::from(tx.clone()).$method(),
+            Self::EIP4844(tx) => <$envelope_type>::from(tx.clone()).$method(),
+            Self::EIP7702(tx) => <$envelope_type>::from(tx.clone()).$method(),
+            Self::Deposit(tx) => 1 + tx.length(),
+        }
+    };
+}
+
+// Macro for transaction encoding with special Deposit handling
+macro_rules! impl_encode_2718_for_transaction_types {
+    ($self:ident, $out:ident, $envelope_type:ty) => {
+        match $self {
+            Self::Legacy(tx) => <$envelope_type>::from(tx.clone()).encode_2718($out),
+            Self::EIP2930(tx) => <$envelope_type>::from(tx.clone()).encode_2718($out),
+            Self::EIP1559(tx) => <$envelope_type>::from(tx.clone()).encode_2718($out),
+            Self::EIP4844(tx) => <$envelope_type>::from(tx.clone()).encode_2718($out),
+            Self::EIP7702(tx) => <$envelope_type>::from(tx.clone()).encode_2718($out),
+            Self::Deposit(tx) => {
+                tx.encode_2718($out);
+            }
+        }
+    };
+}
+
+// Macro to reduce duplication in receipt type encoding
+macro_rules! impl_encode_for_receipt_types {
+    ($self:ident, $method:ident, $envelope_type:ty) => {
+        match $self {
+            Self::Legacy(r) => <$envelope_type>::Legacy(r.clone()).$method(),
+            Self::EIP2930(r) => <$envelope_type>::Eip2930(r.clone()).$method(),
+            Self::EIP1559(r) => <$envelope_type>::Eip1559(r.clone()).$method(),
+            Self::EIP4844(r) => <$envelope_type>::Eip4844(r.clone()).$method(),
+            Self::EIP7702(r) => 1 + r.length(),
+            Self::Deposit(r) => 1 + r.length(),
+        }
+    };
+}
+
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
 pub fn transaction_request_to_typed(
@@ -1009,27 +1053,11 @@ impl Typed2718 for TypedTransaction {
 
 impl Encodable2718 for TypedTransaction {
     fn encode_2718_len(&self) -> usize {
-        match self {
-            Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::Deposit(tx) => 1 + tx.length(),
-        }
+        impl_encode_for_transaction_types!(self, encode_2718_len, TxEnvelope)
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
-        match self {
-            Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::Deposit(tx) => {
-                tx.encode_2718(out);
-            }
-        }
+        impl_encode_2718_for_transaction_types!(self, out, TxEnvelope)
     }
 }
 
@@ -1435,14 +1463,7 @@ impl Typed2718 for TypedReceipt {
 
 impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
-        match self {
-            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
-            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718_len(),
-            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718_len(),
-            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718_len(),
-            Self::EIP7702(r) => 1 + r.length(),
-            Self::Deposit(r) => 1 + r.length(),
-        }
+        impl_encode_for_receipt_types!(self, encode_2718_len, ReceiptEnvelope)
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
