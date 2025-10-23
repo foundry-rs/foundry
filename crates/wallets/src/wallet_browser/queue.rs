@@ -1,0 +1,60 @@
+use std::collections::{HashMap, VecDeque};
+
+use crate::wallet_browser::types::BrowserTransaction;
+
+#[derive(Debug)]
+pub struct RequestQueue<Req, Res> {
+    /// Pending requests from CLI to browser
+    requests: VecDeque<Req>,
+    /// Responses from browser indexed by request ID
+    responses: HashMap<String, Res>,
+}
+
+impl<Req, Res> Default for RequestQueue<Req, Res> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Req, Res> RequestQueue<Req, Res> {
+    pub fn new() -> Self {
+        Self { requests: VecDeque::new(), responses: HashMap::new() }
+    }
+
+    pub fn add_request(&mut self, request: Req) {
+        self.requests.push_back(request);
+    }
+
+    pub fn remove_request(&mut self, id: &str) -> Option<Req>
+    where
+        Req: HasId,
+    {
+        if let Some(pos) = self.requests.iter().position(|r| r.id() == id) {
+            self.requests.remove(pos)
+        } else {
+            None
+        }
+    }
+
+    pub fn add_response(&mut self, id: String, response: Res) {
+        self.responses.insert(id, response);
+    }
+
+    pub fn get_response(&mut self, id: &str) -> Option<Res> {
+        self.responses.remove(id)
+    }
+
+    pub fn get_pending(&self) -> Option<&Req> {
+        self.requests.front()
+    }
+}
+
+pub trait HasId {
+    fn id(&self) -> &str;
+}
+
+impl HasId for BrowserTransaction {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}

@@ -9,8 +9,9 @@ use serde::Serialize;
 /// 2. Ledger
 /// 3. Trezor
 /// 4. Keystore (via file path)
-/// 5. AWS KMS
-/// 6. Google Cloud KMS
+/// 5. Browser wallet
+/// 6. AWS KMS
+/// 7. Google Cloud KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
@@ -105,6 +106,15 @@ pub struct WalletOpts {
         requires = "browser"
     )]
     pub browser_port: u16,
+
+    /// Whether to open the browser for wallet connection.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        default_value_t = true,
+        requires = "browser"
+    )]
+    pub browser_open: bool,
 }
 
 impl WalletOpts {
@@ -134,6 +144,8 @@ impl WalletOpts {
                 .parse()
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
+        } else if self.browser {
+            WalletSigner::from_browser(self.browser_port, self.browser_open).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -239,6 +251,7 @@ mod tests {
             gcp: false,
             browser: false,
             browser_port: 9545,
+            browser_open: true,
         };
         match wallet.signer().await {
             Ok(_) => {
