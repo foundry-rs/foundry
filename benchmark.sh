@@ -1,28 +1,28 @@
-export VERSIONS="v1.3.6,v1.4.0-rc1" \
+export VERSIONS="v1.3.6,v1.4.0-rc1"
 
 # Repositories
 
-export ITHACA_ACCOUNT="ithacaxyz/account:v0.3.2" \
+export ITHACA_ACCOUNT="ithacaxyz/account:v0.3.2"
 
-export SOLADY_REPO="Vectorized/solady:v0.1.22" \
+export SOLADY_REPO="Vectorized/solady:v0.1.22"
 
-export UNISWAP_V4_CORE="Uniswap/v4-core:59d3ecf" \
+export UNISWAP_V4_CORE="Uniswap/v4-core:59d3ecf"
 
-export SPARK_PSM="sparkdotfi/spark-psm:v1.0.0" \
+export SPARK_PSM="sparkdotfi/spark-psm:v1.0.0"
 
 # Benches 
 
-export TEST="forge_test" \
+export TEST="forge_test"
 
-export FUZZ_TEST="forge_fuzz_test" \
+export FUZZ_TEST="forge_fuzz_test"
 
-export BUILD="forge_build_no_cache" \
+export BUILD="forge_build_no_cache"
 
-export BUILD_CACHE="forge_build_with_cache" \
+export BUILD_CACHE="forge_build_with_cache"
 
-export COVERAGE="forge_coverage" \
+export COVERAGE="forge_coverage"
 
-export TEST_ISOLATE="forge_isolate_test" \
+export TEST_ISOLATE="forge_isolate_test"
 
 
 echo "===========FORGE TEST AND BUILD BENCHMARKS===========" && \
