@@ -7,9 +7,12 @@ use foundry_config::{
     RpcEndpointUrl, RpcEndpoints,
 };
 use rand::seq::SliceRandom;
-use std::sync::{
-    LazyLock,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    env,
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 macro_rules! shuffled_list {
@@ -153,7 +156,10 @@ fn next_archive_url(is_ws: bool) -> String {
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
-    let key = ETHERSCAN_KEYS.next().to_string();
+    let mut key = env::var("ETHERSCAN_KEY").unwrap_or_default();
+    if key.is_empty() {
+        key = ETHERSCAN_KEYS.next().to_string();
+    }
     test_debug!("next_etherscan_api_key() = {}...", &key[..6]);
     key
 }
