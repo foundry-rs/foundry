@@ -78,9 +78,8 @@ shuffled_list!(
 );
 
 // List of etherscan keys.
-shuffled_list!(
-    ETHERSCAN_KEYS,
-    vec![
+shuffled_list!(ETHERSCAN_KEYS, {
+    let mut list = vec![
         "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
         "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
         "ZSMDY6BI2H55MBE3G9CUUQT4XYUDBB6ZSK",
@@ -90,8 +89,15 @@ shuffled_list!(
         "C7I2G4JTA5EPYS42Z8IZFEIMQNI5GXIJEV",
         "A15KZUMZXXCK1P25Y1VP1WGIVBBHIZDS74",
         "3IA6ASNQXN8WKN7PNFX7T72S9YG56X9FPG",
-    ],
-);
+    ];
+    if let Ok(val) = std::env::var("ETHERSCAN_API_KEY") {
+        list.push(val.leak());
+    }
+    if let Ok(val) = std::env::var("ETHERSCAN_API_KEYS") {
+        list.extend(val.split(',').map(|s| &*s.trim().to_string().leak()));
+    }
+    list
+});
 
 /// the RPC endpoints used during tests
 pub fn rpc_endpoints() -> RpcEndpoints {
