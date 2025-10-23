@@ -4055,7 +4055,7 @@ contract ContractWithCustomError {
    "#,
     );
     // Build and cache project selectors.
-    cmd.forge_fuse().args(["build"]).assert_success();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
     cmd.cast_fuse()

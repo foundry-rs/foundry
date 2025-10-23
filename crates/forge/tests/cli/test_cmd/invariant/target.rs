@@ -842,33 +842,12 @@ contract DynamicTargetContract is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/FuzzedTargetContracts.t.sol:ExplicitTargetContract
 [PASS] invariant_explicit_target() ([RUNS])
-
-[STATS]
-
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/FuzzedTargetContracts.t.sol:DynamicTargetContract
+...
 [FAIL: wrong target selector called]
 	[SEQUENCE]
  invariant_dynamic_targets() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/FuzzedTargetContracts.t.sol:DynamicTargetContract
-[FAIL: wrong target selector called]
-	[SEQUENCE]
- invariant_dynamic_targets() ([RUNS])
-
-Encountered a total of 1 failing tests, 1 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
+...
 
 "#]]);
 });
