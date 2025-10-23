@@ -1,4 +1,4 @@
-use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
+use crate::{signer::WalletSigner, utils, wallet_raw::RawWalletOpts};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::Result;
@@ -91,6 +91,20 @@ pub struct WalletOpts {
     /// See: <https://cloud.google.com/kms/docs>
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
     pub gcp: bool,
+
+    /// Use a browser wallet.
+    #[arg(long, help_heading = "Wallet options - browser")]
+    pub browser: bool,
+
+    /// Port for the browser wallet server.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        value_name = "PORT",
+        default_value = "9545",
+        requires = "browser"
+    )]
+    pub browser_port: u16,
 }
 
 impl WalletOpts {
@@ -154,6 +168,7 @@ flag to set your key via:
 --gcp
 --trezor
 --ledger
+--browser
 
 Alternatively, when using the `cast send` or `cast mktx` commands with a local node
 or RPC that has unlocked accounts, the --unlocked or --ethsign flags can be used,
@@ -222,6 +237,8 @@ mod tests {
             trezor: false,
             aws: false,
             gcp: false,
+            browser: false,
+            browser_port: 9545,
         };
         match wallet.signer().await {
             Ok(_) => {

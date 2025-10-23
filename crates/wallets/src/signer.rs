@@ -1,4 +1,4 @@
-use crate::error::WalletSignerError;
+use crate::{error::WalletSignerError, wallet_browser::signer::BrowserSigner};
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
@@ -35,6 +35,8 @@ pub enum WalletSigner {
     Ledger(LedgerSigner),
     /// Wrapper around Trezor signer.
     Trezor(TrezorSigner),
+    /// Wrapper around browser wallet.
+    Browser(BrowserSigner),
     /// Wrapper around AWS KMS signer.
     #[cfg(feature = "aws-kms")]
     Aws(AwsSigner),
@@ -52,6 +54,12 @@ impl WalletSigner {
     pub async fn from_trezor_path(path: TrezorHDPath) -> Result<Self> {
         let trezor = TrezorSigner::new(path, None).await?;
         Ok(Self::Trezor(trezor))
+    }
+
+    pub async fn from_browser(port: u16) -> Result<Self> {
+        let browser_signer =
+            BrowserSigner::new(port).await.map_err(|e| WalletSignerError::Browser(e.into()))?;
+        Ok(Self::Browser(browser_signer))
     }
 
     pub async fn from_aws(key_id: String) -> Result<Self> {
@@ -175,6 +183,9 @@ impl WalletSigner {
                     }
                 }
             }
+            Self::Browser(browser) => {
+                senders.insert(alloy_signer::Signer::address(browser));
+            }
             #[cfg(feature = "aws-kms")]
             Self::Aws(aws) => {
                 senders.insert(alloy_signer::Signer::address(aws));
@@ -215,6 +226,7 @@ macro_rules! delegate {
             Self::Local($inner) => $e,
             Self::Ledger($inner) => $e,
             Self::Trezor($inner) => $e,
+            Self::Browser($inner) => $e,
             #[cfg(feature = "aws-kms")]
             Self::Aws($inner) => $e,
             #[cfg(feature = "gcp-kms")]
