@@ -42,7 +42,6 @@ aws-config = { version = "1", default-features = true, optional = true }
 # gcp-kms
 alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
 
-
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20"
@@ -55,6 +54,7 @@ eth-keystore = "0.5.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [features]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config"]

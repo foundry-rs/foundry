@@ -47,7 +47,6 @@ impl BrowserWalletState {
         let mut connection = self.connection.lock();
         connection.address = address;
 
-        // If disconnecting, clear chain ID as well
         if connection.address.is_none() {
             connection.chain_id = None;
         }
