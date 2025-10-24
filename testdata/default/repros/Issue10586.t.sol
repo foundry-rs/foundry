@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract Target is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Target is Test {
     function setChainId() public {
         vm.chainId(123);
     }
 }
 
-contract Issue10586Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Issue10586Test is Test {
     Target public target;
 
     function setUp() public {

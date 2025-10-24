@@ -44,7 +44,7 @@ pub struct SlotInfo {
     ///
     /// This is populated when a struct's members / fields are packed in a single slot.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub members: Option<Vec<SlotInfo>>,
+    pub members: Option<Vec<Self>>,
     /// Decoded values (if available) - used for struct members
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decoded: Option<DecodedSlotValues>,

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Victim {
     function assertCallerAndOrigin(
@@ -107,9 +106,7 @@ contract ProxyTest {
     address public sender;
 }
 
-contract PrankTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract PrankTest is Test {
     function testPrankDelegateCallPrank2() public {
         ProxyTest proxy = new ProxyTest();
         ImplementationTest impl = new ImplementationTest();
@@ -201,7 +198,8 @@ contract PrankTest is DSTest {
         vm.expectRevert("vm.prank: cannot `prank` delegate call from an EOA");
         vm.prank(alice, true);
         // Should fail when EOA pranked with delegatecall.
-        address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+        (bool success,) = address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+        require(success, "delegate call failed");
     }
 
     function testPrankSender(address sender) public {
@@ -551,9 +549,7 @@ contract PrankTest is DSTest {
     }
 }
 
-contract Issue9990 is DSTest {
-    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
-
+contract Issue9990 is Test {
     function testDelegatePrank() external {
         A a = new A();
         vm.etch(address(0x11111), hex"11");
@@ -600,9 +596,7 @@ contract Counter {
     }
 }
 
-contract Issue10528 is DSTest {
-    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
-
+contract Issue10528 is Test {
     function testStartPrankOnContractCreation() external {
         vm.startPrank(address(0x22222));
         Counter counter = new Counter();

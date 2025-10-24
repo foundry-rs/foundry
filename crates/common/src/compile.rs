@@ -26,8 +26,12 @@ use std::{
     io::IsTerminal,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
     time::Instant,
 };
+
+/// A Solar compiler instance, to grant syntactic and semantic analysis capabilities.
+pub type Analysis = Arc<solar::sema::Compiler>;
 
 /// Builder type to configure how to compile a project.
 ///

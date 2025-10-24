@@ -92,7 +92,7 @@ impl<'a> PcSourceMapper<'a> {
         let mut best_ic = None;
         let mut best_pc = 0;
 
-        for (ic, mapped_pc) in &self.ic_pc_map.inner {
+        for (ic, mapped_pc) in self.ic_pc_map.iter() {
             let mapped_pc = *mapped_pc as usize;
             if mapped_pc <= pc && mapped_pc >= best_pc {
                 best_pc = mapped_pc;
