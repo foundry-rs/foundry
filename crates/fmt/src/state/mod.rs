@@ -126,6 +126,8 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
+    // Whether to skip the index soft breaks because the calle fits inline.
+    skip_index_break: bool,
     // Whether inside an `emit` or `revert` call with a qualified path, or not.
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
@@ -219,6 +221,7 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
+            skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
             emit_or_revert: false,
