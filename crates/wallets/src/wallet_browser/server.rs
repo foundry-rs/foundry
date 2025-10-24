@@ -5,7 +5,10 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, oneshot},
@@ -18,7 +21,7 @@ use crate::wallet_browser::{
     types::{BrowserTransaction, WalletConnection},
 };
 
-/// Browser wallet HTTP server
+/// Browser wallet server.
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserWalletServer {
     port: u16,
@@ -28,15 +31,20 @@ pub(crate) struct BrowserWalletServer {
 }
 
 impl BrowserWalletServer {
-    /// Create a new browser wallet server
+    /// Create a new browser wallet server.
     pub fn new(port: u16, open_browser: bool) -> Self {
         Self { port, state: Arc::new(BrowserWalletState::new()), shutdown_tx: None, open_browser }
     }
 
-    /// Start the server and open browser
+    /// Start the server and open browser.
     pub async fn start(&mut self) -> Result<(), BrowserWalletError> {
         let router = Router::new()
+            // Serve browser wallet application
             .route("/", get(handlers::serve_index))
+            // API endpoints
+            .route("/api/transaction/pending", get(handlers::get_pending_transaction))
+            .route("/api/transaction/response", post(handlers::post_transaction_response))
+            .route("/api/account", post(handlers::post_account_update))
             .with_state(Arc::clone(&self.state));
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
@@ -66,7 +74,7 @@ impl BrowserWalletServer {
         Ok(())
     }
 
-    /// Stop the server
+    /// Stop the server.
     pub async fn stop(&mut self) -> Result<(), BrowserWalletError> {
         if let Some(shutdown_arc) = self.shutdown_tx.take()
             && let Some(tx) = shutdown_arc.lock().await.take()
@@ -76,21 +84,17 @@ impl BrowserWalletServer {
         Ok(())
     }
 
-    /// Check if a wallet is connected
+    /// Check if a wallet is connected.
     pub fn is_connected(&self) -> bool {
         self.state.get_connected_address().is_some()
     }
 
-    /// Get current wallet connection
+    /// Get current wallet connection.
     pub fn get_connection(&self) -> Option<WalletConnection> {
         self.state.get_connected_address().map(|address| {
             let chain_id = self.state.get_connected_chain_id().unwrap_or(31337);
 
-            WalletConnection {
-                address: address.parse().unwrap_or_default(),
-                chain_id,
-                wallet_name: None,
-            }
+            WalletConnection { address, chain_id }
         })
     }
 
@@ -104,6 +108,8 @@ impl BrowserWalletServer {
         }
 
         let tx_id = request.id.clone();
+
+        self.state.add_transaction_request(request);
 
         let timeout = Duration::from_secs(300);
         let start = Instant::now();
@@ -125,7 +131,6 @@ impl BrowserWalletServer {
             }
 
             if start.elapsed() > timeout {
-                // Remove from queue
                 self.state.remove_transaction_request(&tx_id);
                 return Err(BrowserWalletError::Timeout { operation: "Transaction" });
             }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_primitives::{Address, ChainId};
 use parking_lot::Mutex;
 
 use crate::wallet_browser::{
@@ -10,8 +11,8 @@ use crate::wallet_browser::{
 /// Current connection information
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ConnectionInfo {
-    pub address: Option<String>,
-    pub chain_id: Option<u64>,
+    pub address: Option<Address>,
+    pub chain_id: Option<ChainId>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ impl BrowserWalletState {
     }
 
     /// Set connected address.
-    pub fn set_connected_address(&self, address: Option<String>) {
+    pub fn set_connected_address(&self, address: Option<Address>) {
         let mut connection = self.connection.lock();
         connection.address = address;
 
@@ -53,17 +54,17 @@ impl BrowserWalletState {
     }
 
     /// Set connected chain ID.
-    pub fn set_connected_chain_id(&self, chain_id: Option<u64>) {
+    pub fn set_connected_chain_id(&self, chain_id: Option<ChainId>) {
         self.connection.lock().chain_id = chain_id;
     }
 
     /// Get connected address.
-    pub fn get_connected_address(&self) -> Option<String> {
+    pub fn get_connected_address(&self) -> Option<Address> {
         self.connection.lock().address.clone()
     }
 
     /// Get connected chain ID.
-    pub fn get_connected_chain_id(&self) -> Option<u64> {
+    pub fn get_connected_chain_id(&self) -> Option<ChainId> {
         self.connection.lock().chain_id
     }
 
