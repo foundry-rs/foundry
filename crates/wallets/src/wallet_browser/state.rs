@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, ChainId};
 use parking_lot::Mutex;
+use uuid::Uuid;
 
 use crate::wallet_browser::{
     queue::RequestQueue,
@@ -78,19 +79,19 @@ impl BrowserWalletState {
     }
 
     /// Remove transaction request.
-    pub fn remove_transaction_request(&self, id: &str) {
+    pub fn remove_transaction_request(&self, id: &Uuid) {
         self.transactions.lock().remove_request(id);
     }
 
     /// Add transaction response.
     pub fn add_transaction_response(&self, response: TransactionResponse) {
-        let id = response.id.clone();
-        self.transactions.lock().add_response(id.clone(), response);
+        let id = response.id;
+        self.transactions.lock().add_response(id, response);
         self.remove_transaction_request(&id);
     }
 
     /// Get transaction response.
-    pub fn get_transaction_response(&self, id: &str) -> Option<TransactionResponse> {
+    pub fn get_transaction_response(&self, id: &Uuid) -> Option<TransactionResponse> {
         self.transactions.lock().get_response(id)
     }
 }

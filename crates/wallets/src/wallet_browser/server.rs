@@ -28,12 +28,19 @@ pub(crate) struct BrowserWalletServer {
     state: Arc<BrowserWalletState>,
     shutdown_tx: Option<Arc<Mutex<Option<oneshot::Sender<()>>>>>,
     open_browser: bool,
+    timeout: Duration,
 }
 
 impl BrowserWalletServer {
     /// Create a new browser wallet server.
-    pub fn new(port: u16, open_browser: bool) -> Self {
-        Self { port, state: Arc::new(BrowserWalletState::new()), shutdown_tx: None, open_browser }
+    pub fn new(port: u16, open_browser: bool, timeout: Duration) -> Self {
+        Self {
+            port,
+            state: Arc::new(BrowserWalletState::new()),
+            shutdown_tx: None,
+            open_browser,
+            timeout,
+        }
     }
 
     /// Start the server and open browser.
@@ -112,11 +119,10 @@ impl BrowserWalletServer {
             return Err(BrowserWalletError::NotConnected);
         }
 
-        let tx_id = request.id.clone();
+        let tx_id = request.id;
 
         self.state.add_transaction_request(request);
 
-        let timeout = Duration::from_secs(300);
         let start = Instant::now();
 
         loop {
@@ -135,7 +141,7 @@ impl BrowserWalletServer {
                 }
             }
 
-            if start.elapsed() > timeout {
+            if start.elapsed() > self.timeout {
                 self.state.remove_transaction_request(&tx_id);
                 return Err(BrowserWalletError::Timeout { operation: "Transaction" });
             }
@@ -151,71 +157,124 @@ mod tests {
 
     use super::*;
 
-    use alloy_primitives::{Address, address};
+    use alloy_primitives::{Address, TxKind, U256, address};
+    use alloy_rpc_types::TransactionRequest;
+    use uuid::Uuid;
 
     const ALICE: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
     #[tokio::test]
     async fn test_connect_disconnect_wallet() {
-        let mut server = BrowserWalletServer::new(0, false);
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
 
-        // check initial disconnected state
+        // Check initial disconnected state
         assert!(!server.is_connected());
 
-        // start server
+        // Start server
         server.start().await.unwrap();
 
-        // check pending transaction (should be none)
-        let pending_tx_url = format!("http://localhost:{}/api/transaction/pending", server.port());
-        let resp = reqwest::get(&pending_tx_url).await;
+        // Check pending transaction
+        let resp =
+            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
+                .await;
         assert!(resp.is_ok());
         let resp_json: Option<BrowserTransaction> = resp.unwrap().json().await.unwrap();
         assert!(resp_json.is_none());
 
-        // connect Alice's wallet by posting account update
-        let account_update_url = format!("http://localhost:{}/api/account", server.port());
+        // Connect Alice's wallet
         let resp = reqwest::Client::new()
-            .post(&account_update_url)
+            .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: Some(ALICE), chain_id: Some(1) })
             .send()
             .await;
         assert!(resp.is_ok());
 
-        // check connection state
+        // Check connection state
         let connection = server.get_connection();
         assert!(connection.is_some());
         let connection = connection.unwrap();
         assert_eq!(connection.address, ALICE);
         assert_eq!(connection.chain_id, 1);
 
-        // disconnect wallet
+        // Disconnect wallet
         let resp = reqwest::Client::new()
-            .post(&account_update_url)
+            .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: None, chain_id: None })
             .send()
             .await;
         assert!(resp.is_ok());
 
-        // check disconnected state
+        // Check disconnected state
         assert!(!server.is_connected());
 
-        // connect Bob's wallet by posting account update
+        // Connect Bob's wallet
         let resp = reqwest::Client::new()
-            .post(&account_update_url)
+            .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: Some(BOB), chain_id: Some(42) })
             .send()
             .await;
         assert!(resp.is_ok());
 
-        // check connection state
+        // Check connection state
         let connection = server.get_connection();
         assert!(connection.is_some());
         let connection = connection.unwrap();
         assert_eq!(connection.address, BOB);
         assert_eq!(connection.chain_id, 42);
 
-        // stop server
+        // Stop server
         server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_transaction() {
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
+        server.start().await.unwrap();
+
+        // Connect Alice's wallet
+        let resp = reqwest::Client::new()
+            .post(format!("http://localhost:{}/api/account", server.port()))
+            .json(&AccountUpdate { address: Some(ALICE), chain_id: Some(1) })
+            .send()
+            .await;
+        assert!(resp.is_ok());
+
+        // Create a browser transaction request
+        let tx_request_id = Uuid::new_v4();
+        let tx_request = BrowserTransaction {
+            id: tx_request_id,
+            request: TransactionRequest {
+                from: Some(ALICE),
+                to: Some(TxKind::Call(BOB)),
+                value: Some(U256::from(1000)),
+                ..Default::default()
+            },
+        };
+
+        // Request transaction to be signed
+        let browser_server = server.clone();
+        let handle =
+            tokio::spawn(
+                async move { browser_server.request_transaction(tx_request.clone()).await },
+            );
+
+        // Simulate posting a transaction response with rejection
+        let resp = reqwest::Client::new()
+            .post(format!("http://localhost:{}/api/transaction/response", server.port()))
+            .json(&serde_json::json!({
+                "id": tx_request_id,
+                "hash": null,
+                "error": "User rejected the transaction",
+            }))
+            .send()
+            .await;
+        assert!(resp.is_ok());
+
+        // Wait for the transaction request to be processed
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+
+        println!("{:?}", result.err().unwrap());
     }
 }

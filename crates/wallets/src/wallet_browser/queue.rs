@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
+use uuid::Uuid;
+
 use crate::wallet_browser::types::BrowserTransaction;
 
 #[derive(Debug)]
@@ -7,7 +9,7 @@ pub(crate) struct RequestQueue<Req, Res> {
     /// Pending requests from CLI to browser
     requests: VecDeque<Req>,
     /// Responses from browser indexed by request ID
-    responses: HashMap<String, Res>,
+    responses: HashMap<Uuid, Res>,
 }
 
 impl<Req, Res> Default for RequestQueue<Req, Res> {
@@ -25,7 +27,7 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.requests.push_back(request);
     }
 
-    pub fn remove_request(&mut self, id: &str) -> Option<Req>
+    pub fn remove_request(&mut self, id: &Uuid) -> Option<Req>
     where
         Req: HasId,
     {
@@ -36,11 +38,11 @@ impl<Req, Res> RequestQueue<Req, Res> {
         }
     }
 
-    pub fn add_response(&mut self, id: String, response: Res) {
+    pub fn add_response(&mut self, id: Uuid, response: Res) {
         self.responses.insert(id, response);
     }
 
-    pub fn get_response(&mut self, id: &str) -> Option<Res> {
+    pub fn get_response(&mut self, id: &Uuid) -> Option<Res> {
         self.responses.remove(id)
     }
 
@@ -50,11 +52,11 @@ impl<Req, Res> RequestQueue<Req, Res> {
 }
 
 pub(crate) trait HasId {
-    fn id(&self) -> &str;
+    fn id(&self) -> &Uuid;
 }
 
 impl HasId for BrowserTransaction {
-    fn id(&self) -> &str {
+    fn id(&self) -> &Uuid {
         &self.id
     }
 }

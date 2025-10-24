@@ -9,7 +9,7 @@ use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 use tracing::warn;
 
 #[cfg(feature = "aws-kms")]
@@ -57,7 +57,7 @@ impl WalletSigner {
     }
 
     pub async fn from_browser(port: u16, open_browser: bool) -> Result<Self> {
-        let browser_signer = BrowserSigner::new(port, open_browser)
+        let browser_signer = BrowserSigner::new(port, open_browser, Duration::from_secs(300))
             .await
             .map_err(|e| WalletSignerError::Browser(e.into()))?;
         Ok(Self::Browser(browser_signer))

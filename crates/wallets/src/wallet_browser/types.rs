@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, ChainId, TxHash};
 use alloy_rpc_types::TransactionRequest;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalletConnection {
@@ -10,14 +11,14 @@ pub(crate) struct WalletConnection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BrowserTransaction {
-    pub id: String,
+    pub id: Uuid,
     #[serde(flatten)]
     pub request: TransactionRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TransactionResponse {
-    pub id: String,
+    pub id: Uuid,
     pub hash: Option<TxHash>,
     pub error: Option<String>,
 }

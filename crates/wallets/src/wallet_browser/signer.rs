@@ -22,8 +22,8 @@ pub struct BrowserSigner {
 }
 
 impl BrowserSigner {
-    pub async fn new(port: u16, open_browser: bool) -> Result<Self> {
-        let mut server = BrowserWalletServer::new(port, open_browser);
+    pub async fn new(port: u16, open_browser: bool, timeout: Duration) -> Result<Self> {
+        let mut server = BrowserWalletServer::new(port, open_browser, timeout);
 
         server.start().await.map_err(alloy_signer::Error::other)?;
 
@@ -31,7 +31,6 @@ impl BrowserSigner {
         let _ = sh_println!("Waiting for wallet connection...");
 
         let start = Instant::now();
-        let timeout = Duration::from_secs(300);
 
         loop {
             if let Some(connection) = server.get_connection() {
@@ -58,13 +57,13 @@ impl BrowserSigner {
         &self,
         tx_request: TransactionRequest,
     ) -> Result<B256> {
-        let request = BrowserTransaction { id: Uuid::new_v4().to_string(), request: tx_request };
+        let request = BrowserTransaction { id: Uuid::new_v4(), request: tx_request };
 
         let server = self.server.lock().await;
         let tx_hash =
             server.request_transaction(request).await.map_err(alloy_signer::Error::other)?;
 
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         Ok(tx_hash)
     }
