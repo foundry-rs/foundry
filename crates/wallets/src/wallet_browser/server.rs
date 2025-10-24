@@ -166,8 +166,7 @@ mod tests {
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
     #[tokio::test]
-    async fn test_connect_disconnect_wallet() {
-        let client = reqwest::Client::new();
+    async fn test_setup_server() {
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
 
         // Check initial state
@@ -176,6 +175,19 @@ mod tests {
         assert!(server.timeout == Duration::from_secs(5));
 
         // Start server
+        server.start().await.unwrap();
+
+        // Check that the pending transaction queue is empty
+        check_pending_transaction_queue_empty(&server).await;
+
+        // Stop server
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connect_disconnect_wallet() {
+        let client = reqwest::Client::new();
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
         server.start().await.unwrap();
 
         // Check that the pending transaction queue is empty
