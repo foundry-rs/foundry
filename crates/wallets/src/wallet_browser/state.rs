@@ -60,7 +60,7 @@ impl BrowserWalletState {
 
     /// Get connected address.
     pub fn get_connected_address(&self) -> Option<Address> {
-        self.connection.lock().address.clone()
+        self.connection.lock().address
     }
 
     /// Get connected chain ID.

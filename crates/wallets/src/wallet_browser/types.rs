@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalletConnection {
+pub struct WalletConnection {
     pub address: Address,
     pub chain_id: ChainId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct BrowserTransaction {
+pub struct BrowserTransaction {
     pub id: Uuid,
     #[serde(flatten)]
     pub request: TransactionRequest,
