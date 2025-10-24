@@ -167,8 +167,7 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            // TODO: Avoid process::exit
-            std::process::exit(1);
+            return Err(eyre::eyre!("Test failures detected: {} tests failed", failures));
         }
 
         sh_println!("\nFailing tests:")?;
@@ -201,8 +200,7 @@ impl TestOutcome {
             test_word
         )?;
 
-        // TODO: Avoid process::exit
-        std::process::exit(1);
+        Err(eyre::eyre!("Test failures detected: {} tests failed", failures))
     }
 
     /// Removes first test result, if any.
