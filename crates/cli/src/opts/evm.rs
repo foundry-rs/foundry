@@ -14,6 +14,7 @@ use foundry_config::{
 use serde::Serialize;
 
 use foundry_common::shell;
+
 use crate::opts::RpcCommonOpts;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
@@ -49,21 +50,21 @@ pub struct EvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[arg(long, requires = "rpc.url", value_name = "BLOCK")]
+    #[arg(long, requires = "url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Number of retries.
     ///
     /// See --fork-url.
-    #[arg(long, requires = "rpc.url", value_name = "RETRIES")]
+    #[arg(long, requires = "url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[arg(long, requires = "rpc.url", value_name = "BACKOFF")]
+    #[arg(long, requires = "url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -273,9 +274,12 @@ mod tests {
 
     #[test]
     fn rpc_url_present_when_some() {
-        let args = EvmArgs { 
-            rpc: RpcCommonOpts { url: Some("http://localhost:8545".to_string()), ..Default::default() },
-            ..Default::default() 
+        let args = EvmArgs {
+            rpc: RpcCommonOpts {
+                url: Some("http://localhost:8545".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         let data = args.data().expect("provider data");
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
