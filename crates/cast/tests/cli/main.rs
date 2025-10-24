@@ -4193,3 +4193,144 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// tests that `cast erc20 balance` command works correctly
+casttest!(erc20_balance_success, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
+    let account = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
+
+    cmd.args(["erc20", "balance", usdt, account, "--rpc-url", &rpc]).assert_success().stdout_eq(
+        str![[r#"
+0
+
+"#]],
+    );
+});
+
+// tests that `cast erc20 allowance` command works correctly
+casttest!(erc20_allowance_success, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
+    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
+    let spender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil second address
+
+    cmd.args(["erc20", "allowance", usdt, owner, spender, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+});
+
+// tests that `cast erc20 transfer` command works correctly
+casttest!(erc20_transfer_success, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    // Deploy TestToken contract using forge
+    let deploy_cmd = std::process::Command::new("forge")
+        .args([
+            "create",
+            "crates/cast/tests/fixtures/TestToken.sol:TestToken",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+        ])
+        .output()
+        .expect("Failed to deploy contract");
+
+    assert!(
+        deploy_cmd.status.success(),
+        "Contract deployment failed: {}",
+        String::from_utf8_lossy(&deploy_cmd.stderr)
+    );
+
+    // Extract contract address from deployment output
+    let output = String::from_utf8_lossy(&deploy_cmd.stdout);
+    let token_address = output
+        .lines()
+        .find(|line| line.contains("Deployed to:"))
+        .and_then(|line| line.split_whitespace().last())
+        .expect("Could not find contract address");
+
+    let to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Anvil second address
+    let amount = "100000000000000000000"; // 100 tokens (18 decimals)
+
+    cmd.args([
+        "erc20",
+        "transfer",
+        token_address,
+        to,
+        amount,
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    // Verify the output is a transaction hash (starts with 0x and is 66 characters)
+    let output = cmd.assert_success().get_output().stdout_lossy();
+    let output = output.trim();
+    assert!(output.starts_with("0x"));
+    assert_eq!(output.len(), 66);
+});
+
+// tests that `cast erc20 approve` command works correctly
+casttest!(erc20_approve_success, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    // Deploy TestToken contract using forge
+    let deploy_cmd = std::process::Command::new("forge")
+        .args([
+            "create",
+            "crates/cast/tests/fixtures/TestToken.sol:TestToken",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+        ])
+        .output()
+        .expect("Failed to deploy contract");
+
+    assert!(
+        deploy_cmd.status.success(),
+        "Contract deployment failed: {}",
+        String::from_utf8_lossy(&deploy_cmd.stderr)
+    );
+
+    // Extract contract address from deployment output
+    let output = String::from_utf8_lossy(&deploy_cmd.stdout);
+    let token_address = output
+        .lines()
+        .find(|line| line.contains("Deployed to:"))
+        .and_then(|line| line.split_whitespace().last())
+        .expect("Could not find contract address");
+
+    let spender = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Anvil's second account
+    let amount = "100000000000000000000"; // 100 tokens (18 decimals)
+
+    cmd.args([
+        "erc20",
+        "approve",
+        token_address,
+        spender,
+        amount,
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    // Verify the output is a transaction hash (starts with 0x and is 66 characters)
+    let output = cmd.assert_success().get_output().stdout_lossy();
+    let output = output.trim();
+    assert!(output.starts_with("0x"));
+    assert_eq!(output.len(), 66);
+});
