@@ -2,11 +2,11 @@
 
 use clap::Parser;
 use foundry_config::{
+    Config,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
     },
-    Config,
 };
 use serde::Serialize;
 
@@ -27,7 +27,6 @@ pub struct RpcCommonOpts {
     pub rpc_timeout: Option<u64>,
 }
 
-
 impl figment::Provider for RpcCommonOpts {
     fn metadata(&self) -> Metadata {
         Metadata::named("RpcCommonOpts")
@@ -38,10 +37,12 @@ impl figment::Provider for RpcCommonOpts {
     }
 }
 
-
 impl RpcCommonOpts {
     /// Returns the RPC endpoint.
-    pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<std::borrow::Cow<'a, str>>, eyre::Error> {
+    pub fn url<'a>(
+        &'a self,
+        config: Option<&'a Config>,
+    ) -> Result<Option<std::borrow::Cow<'a, str>>, eyre::Error> {
         let url = match (self.url.as_deref(), config) {
             (Some(url), _) => Some(std::borrow::Cow::Borrowed(url)),
             (None, Some(config)) => config.get_rpc_url().transpose()?,
@@ -64,4 +65,3 @@ impl RpcCommonOpts {
         dict
     }
 }
-
