@@ -153,13 +153,13 @@ impl BrowserWalletServer {
 
 #[cfg(test)]
 mod tests {
-    use crate::wallet_browser::types::AccountUpdate;
-
     use super::*;
 
     use alloy_primitives::{Address, TxKind, U256, address};
     use alloy_rpc_types::TransactionRequest;
     use uuid::Uuid;
+
+    use crate::wallet_browser::types::{AccountUpdate, TransactionResponse};
 
     const ALICE: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
@@ -169,8 +169,10 @@ mod tests {
         let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
 
-        // Check initial disconnected state
+        // Check initial state
         assert!(!server.is_connected());
+        assert!(!server.open_browser);
+        assert!(server.timeout == Duration::from_secs(5));
 
         // Start server
         server.start().await.unwrap();
@@ -229,7 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_transaction() {
+    async fn test_send_transaction_accept() {
         let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
         server.start().await.unwrap();
@@ -243,51 +245,81 @@ mod tests {
         assert!(resp.is_ok());
 
         // Create a browser transaction request
-        let tx_request_id = Uuid::new_v4();
-        let tx_request = BrowserTransaction {
-            id: tx_request_id,
-            request: TransactionRequest {
-                from: Some(ALICE),
-                to: Some(TxKind::Call(BOB)),
-                value: Some(U256::from(1000)),
-                ..Default::default()
-            },
-        };
+        let (tx_request_id, tx_request) = create_browser_transaction();
 
         // Spawn the signing flow in the background
         let browser_server = server.clone();
         let join_handle =
             tokio::spawn(async move { browser_server.request_transaction(tx_request).await });
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        defer_task().await;
 
         // Check pending transaction
-        let resp =
-            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
-                .await
-                .unwrap();
-        let resp_json: Option<BrowserTransaction> = resp.json().await.unwrap();
-        assert!(resp_json.is_some());
-        let pending_tx = resp_json.unwrap();
-        assert_eq!(pending_tx.id, tx_request_id);
-        assert_eq!(pending_tx.request.from, Some(ALICE));
-        assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
-        assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+        check_pending_transaction(&server, tx_request_id).await;
 
-        // Simulate the wallet rejecting the tx
+        // Simulate the wallet accepting and signing the tx
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&serde_json::json!({
-                "id": tx_request_id,
-                "hash": null,
-                "error": "User rejected the transaction",
-            }))
+            .json(&TransactionResponse {
+                id: tx_request_id,
+                hash: Some(TxHash::random()),
+                error: None,
+            })
             .send()
             .await
             .unwrap()
             .error_for_status()
             .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
+        // The join handle should now return the tx hash
+        let res = join_handle.await.expect("task panicked");
+        match res {
+            Ok(hash) => {
+                assert!(hash != TxHash::new([0; 32]));
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_transaction_reject() {
+        let client = reqwest::Client::new();
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
+        server.start().await.unwrap();
+
+        // Connect Alice's wallet
+        let resp = client
+            .post(format!("http://localhost:{}/api/account", server.port()))
+            .json(&AccountUpdate { address: Some(ALICE), chain_id: Some(1) })
+            .send()
+            .await;
+        assert!(resp.is_ok());
+
+        // Create a browser transaction request
+        let (tx_request_id, tx_request) = create_browser_transaction();
+
+        // Spawn the signing flow in the background
+        let browser_server = server.clone();
+        let join_handle =
+            tokio::spawn(async move { browser_server.request_transaction(tx_request).await });
+        defer_task().await;
+
+        // Check pending transaction
+        check_pending_transaction(&server, tx_request_id).await;
+
+        // Simulate the wallet rejecting the tx
+        let resp = client
+            .post(format!("http://localhost:{}/api/transaction/response", server.port()))
+            .json(&TransactionResponse {
+                id: tx_request_id,
+                hash: None,
+                error: Some("User rejected the transaction".into()),
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
         // The join handle should now return a rejection error
@@ -299,5 +331,38 @@ mod tests {
             }
             other => panic!("expected rejection, got {other:?}"),
         }
+    }
+
+    fn create_browser_transaction() -> (Uuid, BrowserTransaction) {
+        let id = Uuid::new_v4();
+        let tx = BrowserTransaction {
+            id,
+            request: TransactionRequest {
+                from: Some(ALICE),
+                to: Some(TxKind::Call(BOB)),
+                value: Some(U256::from(1000)),
+                ..Default::default()
+            },
+        };
+        (id, tx)
+    }
+
+    async fn check_pending_transaction(server: &BrowserWalletServer, tx_request_id: Uuid) {
+        let resp =
+            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
+                .await
+                .unwrap();
+        let resp_json: Option<BrowserTransaction> = resp.json().await.unwrap();
+        assert!(resp_json.is_some());
+        let pending_tx = resp_json.unwrap();
+        assert_eq!(pending_tx.id, tx_request_id);
+        assert_eq!(pending_tx.request.from, Some(ALICE));
+        assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
+        assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+    }
+
+    async fn defer_task() {
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
