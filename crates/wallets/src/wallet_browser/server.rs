@@ -166,6 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_disconnect_wallet() {
+        let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
 
         // Check initial disconnected state
@@ -183,7 +184,7 @@ mod tests {
         assert!(resp_json.is_none());
 
         // Connect Alice's wallet
-        let resp = reqwest::Client::new()
+        let resp = client
             .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: Some(ALICE), chain_id: Some(1) })
             .send()
@@ -198,7 +199,7 @@ mod tests {
         assert_eq!(connection.chain_id, 1);
 
         // Disconnect wallet
-        let resp = reqwest::Client::new()
+        let resp = client
             .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: None, chain_id: None })
             .send()
@@ -209,7 +210,7 @@ mod tests {
         assert!(!server.is_connected());
 
         // Connect Bob's wallet
-        let resp = reqwest::Client::new()
+        let resp = client
             .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: Some(BOB), chain_id: Some(42) })
             .send()
@@ -229,11 +230,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction() {
-        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
+        let client = reqwest::Client::new();
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        let resp = reqwest::Client::new()
+        let resp = client
             .post(format!("http://localhost:{}/api/account", server.port()))
             .json(&AccountUpdate { address: Some(ALICE), chain_id: Some(1) })
             .send()
@@ -252,15 +254,28 @@ mod tests {
             },
         };
 
-        // Request transaction to be signed
+        // Spawn the signing flow in the background
         let browser_server = server.clone();
-        let handle =
-            tokio::spawn(
-                async move { browser_server.request_transaction(tx_request.clone()).await },
-            );
+        let join_handle =
+            tokio::spawn(async move { browser_server.request_transaction(tx_request).await });
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Simulate posting a transaction response with rejection
-        let resp = reqwest::Client::new()
+        // Check pending transaction
+        let resp =
+            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
+                .await
+                .unwrap();
+        let resp_json: Option<BrowserTransaction> = resp.json().await.unwrap();
+        assert!(resp_json.is_some());
+        let pending_tx = resp_json.unwrap();
+        assert_eq!(pending_tx.id, tx_request_id);
+        assert_eq!(pending_tx.request.from, Some(ALICE));
+        assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
+        assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+
+        // Simulate the wallet rejecting the tx
+        let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
             .json(&serde_json::json!({
                 "id": tx_request_id,
@@ -268,13 +283,21 @@ mod tests {
                 "error": "User rejected the transaction",
             }))
             .send()
-            .await;
-        assert!(resp.is_ok());
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
 
-        // Wait for the transaction request to be processed
-        let result = handle.await.unwrap();
-        assert!(result.is_err());
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-        println!("{:?}", result.err().unwrap());
+        // The join handle should now return a rejection error
+        let res = join_handle.await.expect("task panicked");
+        match res {
+            Err(BrowserWalletError::Rejected { operation, reason }) => {
+                assert_eq!(operation, "Transaction");
+                assert_eq!(reason, "User rejected the transaction");
+            }
+            other => panic!("expected rejection, got {other:?}"),
+        }
     }
 }

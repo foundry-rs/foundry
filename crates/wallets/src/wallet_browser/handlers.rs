@@ -28,6 +28,8 @@ pub(crate) async fn post_transaction_response(
     State(state): State<Arc<BrowserWalletState>>,
     Json(body): Json<TransactionResponse>,
 ) -> Json<Value> {
+    state.add_transaction_response(body);
+
     Json(json!({ "status": "ok" }))
 }
 
