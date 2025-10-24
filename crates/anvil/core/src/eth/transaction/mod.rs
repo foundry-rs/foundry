@@ -8,13 +8,16 @@ use alloy_consensus::{
     },
 };
 
-use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
+use alloy_eips::{
+    eip2718::{Decodable2718, Eip2718Error, Encodable2718},
+    eip7594::BlobTransactionSidecarVariant,
+};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
 use alloy_primitives::{Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
-    request::TransactionRequest, trace::otterscan::OtsReceipt,
+    AccessList, ConversionError, TransactionReceipt, request::TransactionRequest,
+    trace::otterscan::OtsReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
@@ -27,6 +30,31 @@ use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
+
+/// Extension trait for `BlobTransactionSidecarVariant` to provide convenient blob access
+pub trait BlobTransactionSidecarVariantExt {
+    /// Get a reference to the blobs
+    fn blobs(&self) -> &[alloy_consensus::Blob];
+
+    /// Consume self and return the blobs
+    fn into_blobs(self) -> Vec<alloy_consensus::Blob>;
+}
+
+impl BlobTransactionSidecarVariantExt for BlobTransactionSidecarVariant {
+    fn blobs(&self) -> &[alloy_consensus::Blob] {
+        match self {
+            Self::Eip4844(sidecar) => &sidecar.blobs,
+            Self::Eip7594(sidecar) => &sidecar.blobs,
+        }
+    }
+
+    fn into_blobs(self) -> Vec<alloy_consensus::Blob> {
+        match self {
+            Self::Eip4844(sidecar) => sidecar.blobs,
+            Self::Eip7594(sidecar) => sidecar.blobs,
+        }
+    }
+}
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -166,7 +194,10 @@ pub fn transaction_request_to_typed(
 
             if let Some(sidecar) = sidecar {
                 Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                    TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
+                    TxEip4844WithSidecar::from_tx_and_sidecar(
+                        tx,
+                        BlobTransactionSidecarVariant::Eip4844(sidecar),
+                    ),
                 )))
             } else {
                 Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844(tx)))
@@ -188,7 +219,7 @@ pub enum TypedTransactionRequest {
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
     EIP7702(TxEip7702),
-    EIP4844(TxEip4844Variant),
+    EIP4844(TxEip4844Variant<BlobTransactionSidecarVariant>),
     Deposit(TxDeposit),
 }
 
@@ -273,7 +304,7 @@ impl Deref for MaybeImpersonatedTransaction {
     }
 }
 
-impl From<MaybeImpersonatedTransaction> for RpcTransaction {
+impl From<MaybeImpersonatedTransaction> for alloy_rpc_types::Transaction<TypedTransaction> {
     fn from(value: MaybeImpersonatedTransaction) -> Self {
         let hash = value.hash();
         let sender = value.recover().unwrap_or_default();
@@ -285,69 +316,63 @@ pub fn to_alloy_transaction_with_hash_and_sender(
     transaction: TypedTransaction,
     hash: B256,
     from: Address,
-) -> RpcTransaction {
+) -> alloy_rpc_types::Transaction<TypedTransaction> {
     match transaction {
         TypedTransaction::Legacy(t) => {
             let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
+            alloy_rpc_types::Transaction {
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
                 effective_gas_price: None,
                 inner: Recovered::new_unchecked(
-                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                    TypedTransaction::Legacy(Signed::new_unchecked(tx, sig, hash)),
                     from,
                 ),
             }
         }
         TypedTransaction::EIP2930(t) => {
             let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
+            alloy_rpc_types::Transaction {
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
                 effective_gas_price: None,
                 inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                    TypedTransaction::EIP2930(Signed::new_unchecked(tx, sig, hash)),
                     from,
                 ),
             }
         }
         TypedTransaction::EIP1559(t) => {
             let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
+            alloy_rpc_types::Transaction {
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
                 effective_gas_price: None,
                 inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                    TypedTransaction::EIP1559(Signed::new_unchecked(tx, sig, hash)),
                     from,
                 ),
             }
         }
-        TypedTransaction::EIP4844(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
+        TypedTransaction::EIP4844(t) => alloy_rpc_types::Transaction {
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            inner: Recovered::new_unchecked(TypedTransaction::EIP4844(t), from),
+        },
         TypedTransaction::EIP7702(t) => {
             let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
+            alloy_rpc_types::Transaction {
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
                 effective_gas_price: None,
                 inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                    TypedTransaction::EIP7702(Signed::new_unchecked(tx, sig, hash)),
                     from,
                 ),
             }
@@ -609,7 +634,7 @@ pub enum TypedTransaction {
     /// EIP-1559 transaction
     EIP1559(Signed<TxEip1559>),
     /// EIP-4844 transaction
-    EIP4844(Signed<TxEip4844Variant>),
+    EIP4844(Signed<TxEip4844Variant<BlobTransactionSidecarVariant>>),
     /// EIP-7702 transaction
     EIP7702(Signed<TxEip7702>),
     /// op-stack deposit transaction
@@ -627,7 +652,23 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
                 TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
-                TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+                TxEnvelope::Eip4844(tx) => {
+                    // Convert from TxEip4844Variant to
+                    // TxEip4844Variant<BlobTransactionSidecarVariant>
+                    let (variant, sig, hash) = tx.into_parts();
+                    let blob_variant = match variant {
+                        TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                        TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                            TxEip4844Variant::TxEip4844WithSidecar(
+                                TxEip4844WithSidecar::from_tx_and_sidecar(
+                                    tx_with_sidecar.tx,
+                                    BlobTransactionSidecarVariant::Eip4844(tx_with_sidecar.sidecar),
+                                ),
+                            )
+                        }
+                    };
+                    Ok(Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash)))
+                }
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
@@ -738,7 +779,7 @@ impl TypedTransaction {
         }
     }
 
-    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar<BlobTransactionSidecarVariant>> {
         match self {
             Self::EIP4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
@@ -1013,7 +1054,7 @@ impl Encodable2718 for TypedTransaction {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            Self::EIP4844(tx) => tx.encode_2718_len(),
             Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::Deposit(tx) => 1 + tx.length(),
         }
@@ -1024,7 +1065,7 @@ impl Encodable2718 for TypedTransaction {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            Self::EIP4844(tx) => tx.encode_2718(out),
             Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::Deposit(tx) => {
                 tx.encode_2718(out);
@@ -1041,7 +1082,22 @@ impl Decodable2718 for TypedTransaction {
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
             TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
-            TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            TxEnvelope::Eip4844(tx) => {
+                // Convert from TxEip4844Variant to TxEip4844Variant<BlobTransactionSidecarVariant>
+                let (variant, sig, hash) = tx.into_parts();
+                let blob_variant = match variant {
+                    TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                        TxEip4844Variant::TxEip4844WithSidecar(
+                            TxEip4844WithSidecar::from_tx_and_sidecar(
+                                tx_with_sidecar.tx,
+                                BlobTransactionSidecarVariant::Eip4844(tx_with_sidecar.sidecar),
+                            ),
+                        )
+                    }
+                };
+                Ok(Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash)))
+            }
             TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
             _ => Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom("unexpected tx type"))),
         }
@@ -1061,7 +1117,22 @@ impl From<TxEnvelope> for TypedTransaction {
             TxEnvelope::Legacy(tx) => Self::Legacy(tx),
             TxEnvelope::Eip2930(tx) => Self::EIP2930(tx),
             TxEnvelope::Eip1559(tx) => Self::EIP1559(tx),
-            TxEnvelope::Eip4844(tx) => Self::EIP4844(tx),
+            TxEnvelope::Eip4844(tx) => {
+                // Convert from TxEip4844Variant to TxEip4844Variant<BlobTransactionSidecarVariant>
+                let (variant, sig, hash) = tx.into_parts();
+                let blob_variant = match variant {
+                    TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                        TxEip4844Variant::TxEip4844WithSidecar(
+                            TxEip4844WithSidecar::from_tx_and_sidecar(
+                                tx_with_sidecar.tx,
+                                BlobTransactionSidecarVariant::Eip4844(tx_with_sidecar.sidecar),
+                            ),
+                        )
+                    }
+                };
+                Self::EIP4844(Signed::new_unchecked(blob_variant, sig, hash))
+            }
             TxEnvelope::Eip7702(tx) => Self::EIP7702(tx),
         }
     }
