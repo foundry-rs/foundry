@@ -5,7 +5,7 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::BuildOpts,
+    opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
@@ -69,7 +69,7 @@ impl LintArgs {
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {
-                        warn!("Cannot process path {}", path.display());
+                        warn!("cannot process path {}", path.display());
                     }
                 }
                 inputs
@@ -77,7 +77,7 @@ impl LintArgs {
         };
 
         if input.is_empty() {
-            sh_println!("Nothing to lint")?;
+            sh_println!("nothing to lint")?;
             return Ok(());
         }
 
@@ -95,7 +95,7 @@ impl LintArgs {
         let severity = self.severity.unwrap_or(config.lint.severity.clone());
 
         if project.compiler.solc.is_none() {
-            return Err(eyre!("Linting not supported for this language"));
+            return Err(eyre!("linting not supported for this language"));
         }
 
         let linter = SolidityLinter::new(path_config)
@@ -106,9 +106,28 @@ impl LintArgs {
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
             .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
 
-        let mut output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
-        let compiler = output.parser_mut().solc_mut().compiler_mut();
-        linter.lint(&input, config.deny, compiler)?;
+        let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
+        let solar_sources = get_solar_sources_from_compile_output(&config, &output, Some(&input))?;
+        if solar_sources.input.sources.is_empty() {
+            return Err(eyre!(
+                "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
+            ));
+        }
+
+        // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
+        // compiler, we should reuse the parser from the project output.
+        let mut compiler = solar::sema::Compiler::new(
+            solar::interface::Session::builder().with_stderr_emitter().build(),
+        );
+
+        // Load the solar-compatible sources to the pcx before linting
+        compiler.enter_mut(|compiler| {
+            let mut pcx = compiler.parse();
+            pcx.set_resolve_imports(true);
+            configure_pcx_from_solc(&mut pcx, &config.project_paths(), &solar_sources, true);
+            pcx.parse();
+        });
+        linter.lint(&input, config.deny, &mut compiler)?;
 
         Ok(())
     }
