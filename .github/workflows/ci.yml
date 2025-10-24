@@ -3,9 +3,6 @@ name: CI
 permissions: {}
 
 on:
-  push:
-    branches:
-      - master
   pull_request:
   merge_group:
 
@@ -28,48 +25,12 @@ jobs:
     secrets: inherit
 
   docs:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
+    uses: ./.github/workflows/docs.yml
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: nightly
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - name: Build documentation
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
-      - name: Setup Pages
-        if: github.ref_name == 'master' && github.event_name == 'push'
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        if: github.ref_name == 'master' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./target/doc
-
-  deploy-docs:
-    if: github.ref_name == 'master' && github.event_name == 'push'
-    needs: [docs]
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+    secrets: inherit
 
   doctest:
     runs-on: depot-ubuntu-latest
@@ -179,7 +140,7 @@ jobs:
       contents: read
 
   codeql:
-    name: Analyze (${{ matrix.language }})
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write
