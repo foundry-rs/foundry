@@ -2786,6 +2786,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         }
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
+        ast::ExprKind::Tuple(..) => false,
         _ => true,
     }
 }
