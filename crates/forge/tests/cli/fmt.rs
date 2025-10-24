@@ -24,6 +24,19 @@ contract Test {
 }
 "#;
 
+forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| config.fmt.ignore = vec!["src/ignore/".to_string()]);
+
+    prj.add_lib("SomeLib.sol", UNFORMATTED);
+    prj.add_raw_source("ignore/IgnoredContract.sol", UNFORMATTED);
+    cmd.args(["fmt", ".", "--check"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["fmt", "lib/SomeLib.sol", "--check"]);
+    cmd.assert_failure();
+});
+
 // Test that fmt can format a simple contract file
 forgetest_init!(fmt_file, |prj, cmd| {
     prj.add_raw_source("FmtTest.sol", UNFORMATTED);
@@ -125,4 +138,28 @@ Diff in src/FmtTest.sol:
 ...
 
 "#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/12000
+forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
+    // Only line breaks
+    prj.add_raw_source("FmtTest.sol", "\n\n");
+
+    cmd.forge_fuse().args(["fmt", "src/FmtTest.sol"]);
+    cmd.assert_success();
+    assert_data_eq!(std::fs::read_to_string(prj.root().join("src/FmtTest.sol")).unwrap(), "",);
+    cmd.forge_fuse().args(["fmt", "--check", "src/FmtTest.sol"]);
+    cmd.assert_success();
+
+    // Only cmnts
+    prj.add_raw_source("FmtTest.sol", "\n\n// this is a cmnt");
+
+    cmd.forge_fuse().args(["fmt", "src/FmtTest.sol"]);
+    cmd.assert_success();
+    assert_data_eq!(
+        std::fs::read_to_string(prj.root().join("src/FmtTest.sol")).unwrap(),
+        "// this is a cmnt\n",
+    );
+    cmd.forge_fuse().args(["fmt", "--check", "src/FmtTest.sol"]);
+    cmd.assert_success();
 });

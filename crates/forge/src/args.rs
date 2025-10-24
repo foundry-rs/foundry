@@ -73,7 +73,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             if cmd.is_watch() {
                 global.block_on(watch::watch_build(cmd))
             } else {
-                cmd.run().map(drop)
+                global.block_on(cmd.run()).map(drop)
             }
         }
         ForgeSubcommand::VerifyContract(args) => global.block_on(args.run()),
@@ -86,10 +86,10 @@ pub fn run_command(args: Forge) -> Result<()> {
         },
         ForgeSubcommand::Create(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Update(cmd) => cmd.run(),
-        ForgeSubcommand::Install(cmd) => cmd.run(),
+        ForgeSubcommand::Install(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
         ForgeSubcommand::Remappings(cmd) => cmd.run(),
-        ForgeSubcommand::Init(cmd) => cmd.run(),
+        ForgeSubcommand::Init(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Completions { shell } => {
             generate(shell, &mut Forge::command(), "forge", &mut std::io::stdout());
             Ok(())

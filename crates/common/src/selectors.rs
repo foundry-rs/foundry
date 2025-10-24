@@ -17,9 +17,9 @@ use std::{
     time::Duration,
 };
 
-const BASE_URL: &str = "https://api.openchain.xyz";
-const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
-const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
+const BASE_URL: &str = "https://api.4byte.sourcify.dev";
+const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
+const SELECTOR_IMPORT_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/import";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);

@@ -106,6 +106,7 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 celo = false
+bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -164,7 +165,8 @@ dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 9830400
+max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
@@ -182,7 +184,8 @@ dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 9830400
+max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
@@ -349,7 +352,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        celo: false,
+        networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -459,7 +462,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
 
     let install = |cmd: &mut TestCommand, dep: &str| {
         cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
-Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
+Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag: None)
     Installed solmate[..]
 
 "#]]);
@@ -900,7 +903,7 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -912,7 +915,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
 
     // additional install don't edit `libs`
     cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
-Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
+Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
     Installed ds-test
 
 "#]]);
@@ -927,7 +930,7 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -1222,7 +1225,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 9830400,
+    "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
     "corpus_gzip": true,
@@ -1242,7 +1246,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 9830400,
+    "max_fuzz_dictionary_literals": 6553600,
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
@@ -1356,6 +1361,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "assertions_revert": true,
   "legacy_assertions": false,
   "celo": false,
+  "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
@@ -1970,4 +1976,59 @@ Warning: Found unknown `bar` config for profile `another` defined in foundry.tom
 Warning: Found unknown `foo` config for profile `default` defined in foundry.toml.
 
 "#]]);
+});
+
+forgetest_init!(test_ignored_file_paths_normalization, |prj, cmd| {
+    fn gen_contract(name: &str) -> String {
+        let fn_name = name.chars().next().unwrap().to_lowercase().to_string() + &name[1..];
+        format!(
+            r#"
+contract {name} {{
+    function {fn_name}() public returns (bool) {{ return true; }}
+}}
+"#
+        )
+    }
+
+    // Update config to ignore warnings from specific files with various path formats
+    prj.update_config(|config| {
+        config.ignored_file_paths = vec![
+            PathBuf::from("./test/IgnoredWithPrefix.sol"), // With "./" prefix
+            PathBuf::from("src/IgnoredNoPrefix.sol"),      // Without "./" prefix
+            PathBuf::from("./src/nested/IgnoredNested.sol"), // Nested path with prefix
+        ];
+    });
+
+    // Create contracts that will generate warnings
+    prj.add_source("IgnoredNoPrefix.sol", &gen_contract("IgnoredNoPrefix"));
+    prj.add_test("IgnoredWithPrefix.sol", &gen_contract("IgnoredWithPrefix"));
+
+    fs::create_dir_all(prj.root().join("src/nested")).unwrap();
+    fs::write(prj.root().join("src/nested/IgnoredNested.sol"), gen_contract("IgnoredNested"))
+        .unwrap();
+
+    prj.add_source("NotIgnored.sol", &gen_contract("NotIgnored"));
+
+    // Verify the config loads paths as specified (before normalization)
+    let config = cmd.config();
+    let raw_paths = vec![
+        PathBuf::from("./test/IgnoredWithPrefix.sol"),
+        PathBuf::from("src/IgnoredNoPrefix.sol"),
+        PathBuf::from("./src/nested/IgnoredNested.sol"),
+    ];
+    assert_eq!(config.ignored_file_paths, raw_paths);
+
+    // Build and verify compilation succeeds with just 1 warning:
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function notIgnored() public returns (bool) { return true; }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#,
+    );
 });

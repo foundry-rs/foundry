@@ -69,16 +69,13 @@ indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
-rand.workspace = true
 regex = { workspace = true, default-features = false }
-reqwest = { workspace = true, features = ["json"] }
 revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
-tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml_edit.workspace = true
@@ -87,7 +84,6 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
-num-bigint = "0.4"
 path-slash.workspace = true
 
 # doc server
@@ -99,7 +95,6 @@ opener = "0.8"
 soldeer-commands.workspace = true
 quick-junit = "0.5.1"
 solar-parse = "0.1.8"
-solar-interface = "0.1.8"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
@@ -107,7 +102,6 @@ anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 foundry-wallets.workspace = true
-futures.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.13"

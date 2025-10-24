@@ -1,14 +1,17 @@
-use crate::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
+use crate::{
+    BasicTxDetails, invariant::FuzzRunIdentifiedContracts, strategies::literals::LiteralsDictionary,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap},
+    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::{
-    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
+    compile::Analysis, ignore_metadata_hash, mapping_slots::MappingSlots,
+    slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_compilers::{ProjectPathsConfig, artifacts::StorageLayout};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
@@ -44,6 +47,8 @@ impl EvmFuzzState {
         db: &CacheDB<DB>,
         config: FuzzDictionaryConfig,
         deployed_libs: &[Address],
+        analysis: Option<&Analysis>,
+        paths_config: Option<&ProjectPathsConfig>,
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
@@ -52,6 +57,12 @@ impl EvmFuzzState {
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
         dictionary.insert_db_values(accs);
+        dictionary.literal_values = LiteralsDictionary::new(
+            analysis.cloned(),
+            paths_config.cloned(),
+            config.max_fuzz_dictionary_literals,
+        );
+
         Self {
             inner: Arc::new(RwLock::new(dictionary)),
             deployed_libs: deployed_libs.to_vec(),
@@ -114,6 +125,12 @@ impl EvmFuzzState {
     pub fn log_stats(&self) {
         self.inner.read().log_stats();
     }
+
+    #[cfg(test)]
+    /// Test-only helper to seed the dictionary with literal values.
+    pub(crate) fn seed_literals(&self, map: super::LiteralMaps) {
+        self.inner.write().seed_literals(map);
+    }
 }
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
@@ -132,8 +149,16 @@ pub struct FuzzDictionary {
     /// Number of address values initially collected from db.
     /// Used to revert new collected addresses at the end of each run.
     db_addresses: usize,
-    /// Sample typed values that are collected from call result and used across invariant runs.
+    /// Typed runtime sample values persisted across invariant runs.
+    /// Initially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
+    /// Lazily initialized dictionary of literal values collected from the source code.
+    literal_values: LiteralsDictionary,
+    /// Tracks whether literals from `literal_values` have been merged into `sample_values`.
+    ///
+    /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
+    /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
+    samples_seeded: bool,
 
     misses: usize,
     hits: usize,
@@ -150,7 +175,7 @@ impl fmt::Debug for FuzzDictionary {
 
 impl FuzzDictionary {
     pub fn new(config: FuzzDictionaryConfig) -> Self {
-        let mut dictionary = Self { config, ..Default::default() };
+        let mut dictionary = Self { config, samples_seeded: false, ..Default::default() };
         dictionary.prefill();
         dictionary
     }
@@ -158,6 +183,15 @@ impl FuzzDictionary {
     /// Insert common values into the dictionary at initialization.
     fn prefill(&mut self) {
         self.insert_value(B256::ZERO);
+    }
+
+    /// Seeds `sample_values` with all words from the [`LiteralsDictionary`].
+    /// Should only be called once per dictionary lifetime.
+    #[cold]
+    fn seed_samples(&mut self) {
+        trace!("seeding `sample_values` from literal dictionary");
+        self.sample_values.extend(self.literal_values.take_words());
+        self.samples_seeded = true;
     }
 
     /// Insert values from initial db state into fuzz dictionary.
@@ -330,6 +364,9 @@ impl FuzzDictionary {
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
+            if !self.samples_seeded {
+                self.seed_samples();
+            }
             self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
             self.insert_value_u256(value.into());
@@ -379,6 +416,9 @@ impl FuzzDictionary {
         sample_values: impl IntoIterator<Item = DynSolValue>,
         limit: u32,
     ) {
+        if !self.samples_seeded {
+            self.seed_samples();
+        }
         for sample in sample_values {
             if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
                 if let Some(values) = self.sample_values.get_mut(&sample_type) {
@@ -407,9 +447,30 @@ impl FuzzDictionary {
         self.state_values.is_empty()
     }
 
+    /// Returns sample values for a given type, checking both runtime samples and literals.
+    ///
+    /// Before `seed_samples()` is called, checks both `literal_values` and `sample_values`
+    /// separately. After seeding, all literal values are merged into `sample_values`.
     #[inline]
     pub fn samples(&self, param_type: &DynSolType) -> Option<&B256IndexSet> {
+        // If not seeded yet, return literals
+        if !self.samples_seeded {
+            return self.literal_values.get().words.get(param_type);
+        }
+
         self.sample_values.get(param_type)
+    }
+
+    /// Returns the collected literal strings, triggering initialization if needed.
+    #[inline]
+    pub fn ast_strings(&self) -> &IndexSet<String> {
+        &self.literal_values.get().strings
+    }
+
+    /// Returns the collected literal bytes (hex strings), triggering initialization if needed.
+    #[inline]
+    pub fn ast_bytes(&self) -> &IndexSet<Bytes> {
+        &self.literal_values.get().bytes
     }
 
     #[inline]
@@ -432,5 +493,11 @@ impl FuzzDictionary {
             state.hits = self.hits,
             "FuzzDictionary stats",
         );
+    }
+
+    #[cfg(test)]
+    /// Test-only helper to seed the dictionary with literal values.
+    pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
+        self.literal_values.set(map);
     }
 }

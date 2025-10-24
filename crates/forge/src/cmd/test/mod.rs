@@ -281,7 +281,8 @@ impl TestArgs {
         }
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
@@ -555,17 +556,24 @@ impl TestArgs {
                     .filter(|(_, count)| **count > 1)
                     .map(|(_, count)| *count)
                     .sum();
-                eprintln!("\n[Adaptive Debug] Mutation distribution:");
-                eprintln!("  Total mutations: {}", mutants.len());
-                eprintln!("  Unique spans: {}", span_counts.len());
-                eprintln!(
+                let mut output = String::new();
+                writeln!(output, "\n[Adaptive Debug] Mutation distribution:")?;
+                writeln!(output, "  Total mutations: {}", mutants.len())?;
+                writeln!(output, "  Unique spans: {}", span_counts.len())?;
+                writeln!(
+                    output,
                     "  Spans with >1 mutation: {spans_with_multiple} (these are candidates for skipping)"
-                );
-                eprintln!("  Mutations at multi-mutation spans: {total_mutations_at_multi_spans}");
-                eprintln!(
+                )?;
+                writeln!(
+                    output,
+                    "  Mutations at multi-mutation spans: {total_mutations_at_multi_spans}"
+                )?;
+                writeln!(
+                    output,
                     "  Max mutations at any span: {}",
                     span_counts.values().max().unwrap_or(&0)
-                );
+                )?;
+                let _ = sh_println!("{}", output);
 
                 // Accumulate per-mutant results for persistence
                 let mut results_vec: Vec<(
@@ -576,7 +584,11 @@ impl TestArgs {
                 for (i, mutant) in mutants.iter().enumerate() {
                     // Adaptive mutation: Skip if this span already has a surviving mutation
                     if handler.should_skip_span(mutant.span) {
-                        sh_println!("Skipping mutant {} of {} (adaptive: span already has surviving mutation)", i + 1, mutants.len()).unwrap();
+                        sh_println!(
+                            "Skipping mutant {} of {} (adaptive: span already has surviving mutation)",
+                            i + 1,
+                            mutants.len()
+                        )?;
                         handler.add_skipped_mutant(mutant.clone());
                         results_vec.push((
                             mutant.clone(),
@@ -585,67 +597,69 @@ impl TestArgs {
                         continue;
                     }
 
-                    sh_println!("Testing mutant {} of {}", i + 1, mutants.len()).unwrap();
+                    sh_println!("Testing mutant {} of {}", i + 1, mutants.len())?;
 
                     handler.generate_mutated_solidity(mutant);
-                    let new_filter = self.filter(&config).unwrap();
+                    let new_filter = self.filter(&config)?;
                     let compiler = ProjectCompiler::new()
                         .dynamic_test_linking(config.dynamic_test_linking)
                         .quiet(true);
 
-                    let compile_output = compiler.compile(&config.project().unwrap());
+                    match compiler.compile(&config.project()?) {
+                        Ok(compile_output) => {
+                            let mut runner = MultiContractRunnerBuilder::new(config.clone())
+                                .set_debug(false)
+                                .initial_balance(evm_opts.initial_balance)
+                                .evm_spec(config.evm_spec_id())
+                                .sender(evm_opts.sender)
+                                .with_fork(evm_opts.clone().get_fork(&config, env.clone()))
+                                .build::<MultiCompiler>(
+                                    &compile_output,
+                                    env.clone(),
+                                    evm_opts.clone(),
+                                )?;
 
-                    if compile_output.is_err() {
-                        handler.add_invalid_mutant(mutant.clone());
-                        results_vec.push((
-                            mutant.clone(),
-                            crate::mutation::mutant::MutationResult::Invalid,
-                        ));
-                    } else {
-                        let mut runner = MultiContractRunnerBuilder::new(config.clone())
-                            .set_debug(false)
-                            .initial_balance(evm_opts.initial_balance)
-                            .evm_spec(config.evm_spec_id())
-                            .sender(evm_opts.sender)
-                            .with_fork(evm_opts.clone().get_fork(&config, env.clone()))
-                            .build::<MultiCompiler>(
-                                &compile_output.unwrap(),
-                                env.clone(),
-                                evm_opts.clone(),
-                            )?;
+                            let results: BTreeMap<String, SuiteResult> =
+                                runner.test_collect(&new_filter)?;
 
-                        let results: BTreeMap<String, SuiteResult> =
-                            runner.test_collect(&new_filter)?;
-
-                        let outcome = TestOutcome::new(Some(runner), results, self.allow_failure);
-                        if outcome.failures().count() > 0 {
-                            handler.add_dead_mutant(mutant.clone());
+                            let outcome =
+                                TestOutcome::new(Some(runner), results, self.allow_failure);
+                            if outcome.failures().count() > 0 {
+                                handler.add_dead_mutant(mutant.clone());
+                                results_vec.push((
+                                    mutant.clone(),
+                                    crate::mutation::mutant::MutationResult::Dead,
+                                ));
+                            } else {
+                                // Mutation survived! Mark this span to skip similar mutations
+                                let span_key = (mutant.span.lo().0, mutant.span.hi().0);
+                                let remaining_at_span = mutants
+                                    .iter()
+                                    .skip(i + 1)
+                                    .filter(|m| {
+                                        (m.span.lo().0, m.span.hi().0) == span_key
+                                            || handler.should_skip_span(m.span)
+                                    })
+                                    .count();
+                                sh_println!(
+                                    "[Adaptive] Mutation {} SURVIVED at span {:?} - will skip {} remaining mutations",
+                                    i + 1,
+                                    span_key,
+                                    remaining_at_span
+                                )?;
+                                handler.mark_span_survived(mutant.span);
+                                handler.add_survived_mutant(mutant.clone());
+                                results_vec.push((
+                                    mutant.clone(),
+                                    crate::mutation::mutant::MutationResult::Alive,
+                                ));
+                            }
+                        }
+                        Err(_) => {
+                            handler.add_invalid_mutant(mutant.clone());
                             results_vec.push((
                                 mutant.clone(),
-                                crate::mutation::mutant::MutationResult::Dead,
-                            ));
-                        } else {
-                            // Mutation survived! Mark this span to skip similar mutations
-                            let span_key = (mutant.span.lo().0, mutant.span.hi().0);
-                            let remaining_at_span = mutants
-                                .iter()
-                                .skip(i + 1)
-                                .filter(|m| {
-                                    (m.span.lo().0, m.span.hi().0) == span_key
-                                        || handler.should_skip_span(m.span)
-                                })
-                                .count();
-                            eprintln!(
-                                "[Adaptive] Mutation {} SURVIVED at span {:?} - will skip {} remaining mutations",
-                                i + 1,
-                                span_key,
-                                remaining_at_span
-                            );
-                            handler.mark_span_survived(mutant.span);
-                            handler.add_survived_mutant(mutant.clone());
-                            results_vec.push((
-                                mutant.clone(),
-                                crate::mutation::mutant::MutationResult::Alive,
+                                crate::mutation::mutant::MutationResult::Invalid,
                             ));
                         }
                     }
@@ -783,10 +797,10 @@ impl TestArgs {
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
-        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive.
         if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+            identifier = identifier.with_external(&config, remote_chain_id)?;
         }
 
         // Build the trace decoder.

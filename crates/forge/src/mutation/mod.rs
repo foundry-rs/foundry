@@ -297,7 +297,7 @@ impl MutationHandler {
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
             // Log skipped mutations for debugging
             if mutant_visitor.skipped_count > 0 {
-                eprintln!(
+                let _ = sh_println!(
                     "Adaptive mutation: Skipped {} mutation points (already have surviving mutations)",
                     mutant_visitor.skipped_count
                 );

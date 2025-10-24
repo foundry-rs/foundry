@@ -24,8 +24,6 @@ foundry-evm-fuzz.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
-solar.workspace = true
-
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-evm.workspace = true
 alloy-json-abi.workspace = true
