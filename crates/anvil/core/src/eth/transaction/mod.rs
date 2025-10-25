@@ -438,7 +438,7 @@ impl PendingTransaction {
                     gas_priority_fee: None, // Legacy transactions don't have priority fees
                     gas_limit: *gas_limit,
                     access_list: vec![].into(), // Legacy transactions don't support access lists
-                    tx_type: 0, // Legacy transaction type
+                    tx_type: 0,                 // Legacy transaction type
                     ..Default::default()
                 })
             }
@@ -466,7 +466,7 @@ impl PendingTransaction {
                     gas_priority_fee: None, // EIP-2930 still uses single gas price
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(), // EIP-2930 introduces access lists
-                    tx_type: 1, // EIP-2930 transaction type
+                    tx_type: 1,                       // EIP-2930 transaction type
                     ..Default::default()
                 })
             }
@@ -492,7 +492,8 @@ impl PendingTransaction {
                     nonce: *nonce,
                     value: *value,
                     gas_price: *max_fee_per_gas, // Use max_fee_per_gas as the gas price
-                    gas_priority_fee: Some(*max_priority_fee_per_gas), // EIP-1559 introduces priority fees
+                    gas_priority_fee: Some(*max_priority_fee_per_gas), /* EIP-1559 introduces
+                                                                        * priority fees */
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
                     tx_type: 2, // EIP-1559 transaction type
@@ -524,8 +525,10 @@ impl PendingTransaction {
                     value: *value,
                     gas_price: *max_fee_per_gas,
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    max_fee_per_blob_gas: *max_fee_per_blob_gas, // EIP-4844 specific blob gas pricing
-                    blob_hashes: blob_versioned_hashes.clone(), // Blob versioned hashes for data availability
+                    max_fee_per_blob_gas: *max_fee_per_blob_gas, /* EIP-4844 specific blob gas
+                                                                  * pricing */
+                    blob_hashes: blob_versioned_hashes.clone(), /* Blob versioned hashes for data
+                                                                 * availability */
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
                     tx_type: 3, // EIP-4844 transaction type
@@ -587,7 +590,7 @@ impl PendingTransaction {
                     chain_id,
                     nonce: 0, // Deposit transactions always have nonce 0
                     value: *value,
-                    gas_price: 0, // Deposit transactions have no gas cost
+                    gas_price: 0,           // Deposit transactions have no gas cost
                     gas_priority_fee: None, // No priority fees for deposits
                     gas_limit: { *gas_limit },
                     access_list: vec![].into(), // Deposits don't use access lists
@@ -597,8 +600,8 @@ impl PendingTransaction {
 
                 // Deposit-specific transaction parts for Optimism
                 let deposit = DepositTransactionParts {
-                    source_hash: *source_hash, // L1 transaction hash
-                    mint: Some(*mint), // ETH minted on L2
+                    source_hash: *source_hash,                     // L1 transaction hash
+                    mint: Some(*mint),                             // ETH minted on L2
                     is_system_transaction: *is_system_transaction, // System vs user transaction
                 };
 
