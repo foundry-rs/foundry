@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.3"
+version = "1.4.4"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.89"

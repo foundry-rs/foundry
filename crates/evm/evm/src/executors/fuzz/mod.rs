@@ -227,12 +227,19 @@ impl FuzzedExecutor {
                             // Discard run and apply max rejects if configured. Saturate to handle
                             // the case of replayed failure, which doesn't count as a run.
                             test_data.runs = test_data.runs.saturating_sub(1);
-                            if self.config.max_test_rejects > 0 {
-                                test_data.rejects += 1;
-                                if test_data.rejects >= self.config.max_test_rejects {
-                                    test_data.failure = Some(err);
-                                    break 'stop;
-                                }
+                            test_data.rejects += 1;
+
+                            // Update progress bar to reflect rejected runs.
+                            if let Some(progress) = progress {
+                                progress.set_message(format!("([{}] rejected)", test_data.rejects));
+                                progress.dec(1);
+                            }
+
+                            if self.config.max_test_rejects > 0
+                                && test_data.rejects >= self.config.max_test_rejects
+                            {
+                                test_data.failure = Some(err);
+                                break 'stop;
                             }
                         }
                     }
