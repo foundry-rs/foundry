@@ -1,7 +1,5 @@
 // config: line_length = 40
 // config: wrap_comments = true
-// config: prefer_compact =
-// "events_errors"
 pragma solidity ^0.8.13;
 
 /// @title A Hello world example
@@ -25,8 +23,7 @@ contract HelloWorld {
     /// @param age The dude's age
     constructor(uint256 age) {
         theDude = Person({
-            age: age,
-            wallet: msg.sender
+            age: age, wallet: msg.sender
         });
     }
 
