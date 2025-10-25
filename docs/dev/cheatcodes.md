@@ -53,7 +53,9 @@ Rust bindings for the cheatcode interface are generated via the [Alloy](https://
 
 If a call was successfully decoded into the `VmCalls` enum that the `sol!` macro generates, the
 last step is a large `match` over the decoded function call structs, which serves as the
-implementation handler for the cheatcode. This is also automatically generated, in part, by the
+implementation handler for the cheatcode. This match statement dispatches each decoded cheatcode
+call to its corresponding implementation method, routing the call to the appropriate handler based
+on the function signature. This is also automatically generated, in part, by the
 `sol!` macro, through the use of a custom internal derive procedural macro.
 
 ## Cheatcodes implementation
