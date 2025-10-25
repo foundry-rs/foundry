@@ -709,7 +709,7 @@ mod tests {
             "0x4e59b44847b379578588920ca78fbf26c0b4956c",
             "--unlocked",
             "--private-key",
-            key.to_string().as_str(),
+            &key.to_string(),
         ]);
         assert!(args.is_err());
     }
