@@ -192,17 +192,17 @@ impl MultilineFuncHeaderStyle {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreferCompact {
-    /// All elements are prefered consistent.
+    /// All elements are preferred consistent.
     None,
-    /// Calls are prefered compact. Events and errors break consistently.
+    /// Calls are preferred compact. Events and errors break consistently.
     Calls,
-    /// Events are prefered compact. Calls and errors break consistently.
+    /// Events are preferred compact. Calls and errors break consistently.
     Events,
-    /// Errors are prefered compact. Calls and events break consistently.
+    /// Errors are preferred compact. Calls and events break consistently.
     Errors,
-    /// Events and errors are prefered compact. Calls break consistently.
+    /// Events and errors are preferred compact. Calls break consistently.
     EventsErrors,
-    /// All elements are prefered compact.
+    /// All elements are preferred compact.
     #[default]
     All,
 }
