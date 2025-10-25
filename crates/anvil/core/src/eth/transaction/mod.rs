@@ -413,6 +413,7 @@ impl PendingTransaction {
     ///
     /// Base [`TxEnv`] is encapsulated in the [`op_revm::OpTransaction`]
     pub fn to_revm_tx_env(&self) -> OpTransaction<TxEnv> {
+        /// Helper function to convert TxKind while preserving the original type
         fn transact_to(kind: &TxKind) -> TxKind {
             match kind {
                 TxKind::Call(c) => TxKind::Call(*c),
@@ -422,6 +423,7 @@ impl PendingTransaction {
 
         let caller = *self.sender();
         match &self.transaction.transaction {
+            // Legacy transactions (pre-EIP-155): Simple gas pricing with no access lists
             TypedTransaction::Legacy(tx) => {
                 let chain_id = tx.tx().chain_id;
                 let TxLegacy { nonce, gas_price, gas_limit, value, to, input, .. } = tx.tx();
@@ -433,13 +435,14 @@ impl PendingTransaction {
                     nonce: *nonce,
                     value: (*value),
                     gas_price: *gas_price,
-                    gas_priority_fee: None,
+                    gas_priority_fee: None, // Legacy transactions don't have priority fees
                     gas_limit: *gas_limit,
-                    access_list: vec![].into(),
-                    tx_type: 0,
+                    access_list: vec![].into(), // Legacy transactions don't support access lists
+                    tx_type: 0, // Legacy transaction type
                     ..Default::default()
                 })
             }
+            // EIP-2930 transactions: Access lists support, same gas pricing as legacy
             TypedTransaction::EIP2930(tx) => {
                 let TxEip2930 {
                     chain_id,
@@ -456,17 +459,18 @@ impl PendingTransaction {
                     caller,
                     kind: transact_to(to),
                     data: input.clone(),
-                    chain_id: Some(*chain_id),
+                    chain_id: Some(*chain_id), // EIP-2930 requires chain_id
                     nonce: *nonce,
                     value: *value,
                     gas_price: *gas_price,
-                    gas_priority_fee: None,
+                    gas_priority_fee: None, // EIP-2930 still uses single gas price
                     gas_limit: *gas_limit,
-                    access_list: access_list.clone(),
-                    tx_type: 1,
+                    access_list: access_list.clone(), // EIP-2930 introduces access lists
+                    tx_type: 1, // EIP-2930 transaction type
                     ..Default::default()
                 })
             }
+            // EIP-1559 transactions: Dynamic fee market with base fee + priority fee
             TypedTransaction::EIP1559(tx) => {
                 let TxEip1559 {
                     chain_id,
@@ -487,14 +491,15 @@ impl PendingTransaction {
                     chain_id: Some(*chain_id),
                     nonce: *nonce,
                     value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
+                    gas_price: *max_fee_per_gas, // Use max_fee_per_gas as the gas price
+                    gas_priority_fee: Some(*max_priority_fee_per_gas), // EIP-1559 introduces priority fees
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 2,
+                    tx_type: 2, // EIP-1559 transaction type
                     ..Default::default()
                 })
             }
+            // EIP-4844 transactions: Blob transactions with separate blob gas pricing
             TypedTransaction::EIP4844(tx) => {
                 let TxEip4844 {
                     chain_id,
@@ -512,21 +517,22 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 OpTransaction::new(TxEnv {
                     caller,
-                    kind: TxKind::Call(*to),
+                    kind: TxKind::Call(*to), // EIP-4844 transactions are always calls
                     data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: *nonce,
                     value: *value,
                     gas_price: *max_fee_per_gas,
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
-                    max_fee_per_blob_gas: *max_fee_per_blob_gas,
-                    blob_hashes: blob_versioned_hashes.clone(),
+                    max_fee_per_blob_gas: *max_fee_per_blob_gas, // EIP-4844 specific blob gas pricing
+                    blob_hashes: blob_versioned_hashes.clone(), // Blob versioned hashes for data availability
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 3,
+                    tx_type: 3, // EIP-4844 transaction type
                     ..Default::default()
                 })
             }
+            // EIP-7702 transactions: Account abstraction with authorization lists
             TypedTransaction::EIP7702(tx) => {
                 let TxEip7702 {
                     chain_id,
@@ -543,7 +549,7 @@ impl PendingTransaction {
 
                 let mut tx = TxEnv {
                     caller,
-                    kind: TxKind::Call(*to),
+                    kind: TxKind::Call(*to), // EIP-7702 transactions are always calls
                     data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: *nonce,
@@ -552,13 +558,15 @@ impl PendingTransaction {
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 4,
+                    tx_type: 4, // EIP-7702 transaction type
                     ..Default::default()
                 };
+                // EIP-7702 introduces authorization lists for account abstraction
                 tx.set_signed_authorization(authorization_list.clone());
 
                 OpTransaction::new(tx)
             }
+            // Optimism Deposit transactions: L1 to L2 message deposits
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();
                 let TxDeposit {
@@ -577,20 +585,21 @@ impl PendingTransaction {
                     kind: transact_to(to),
                     data: input.clone(),
                     chain_id,
-                    nonce: 0,
+                    nonce: 0, // Deposit transactions always have nonce 0
                     value: *value,
-                    gas_price: 0,
-                    gas_priority_fee: None,
+                    gas_price: 0, // Deposit transactions have no gas cost
+                    gas_priority_fee: None, // No priority fees for deposits
                     gas_limit: { *gas_limit },
-                    access_list: vec![].into(),
-                    tx_type: DEPOSIT_TX_TYPE_ID,
+                    access_list: vec![].into(), // Deposits don't use access lists
+                    tx_type: DEPOSIT_TX_TYPE_ID, // Special deposit transaction type
                     ..Default::default()
                 };
 
+                // Deposit-specific transaction parts for Optimism
                 let deposit = DepositTransactionParts {
-                    source_hash: *source_hash,
-                    mint: Some(*mint),
-                    is_system_transaction: *is_system_transaction,
+                    source_hash: *source_hash, // L1 transaction hash
+                    mint: Some(*mint), // ETH minted on L2
+                    is_system_transaction: *is_system_transaction, // System vs user transaction
                 };
 
                 OpTransaction { base, deposit, enveloped_tx: None }
