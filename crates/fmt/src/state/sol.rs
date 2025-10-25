@@ -1290,11 +1290,10 @@ impl<'ast> State<'_, 'ast> {
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
                         s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        if !matches!(
-                            member_expr.kind,
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)
-                        ) {
-                            s.zerobreak();
+                        match member_expr.kind {
+                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
+                            ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            _ => s.zerobreak(),
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1458,10 +1457,16 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
 
         let mut skip_break = false;
-
+        let mut zerobreak = |this: &mut Self| {
+            if this.skip_index_break {
+                skip_break = true;
+            } else {
+                this.zerobreak();
+            }
+        };
         match kind {
             ast::IndexKind::Index(Some(inner_expr)) => {
-                self.zerobreak();
+                zerobreak(self);
                 self.print_expr(inner_expr);
             }
             ast::IndexKind::Index(None) => {}
@@ -1471,11 +1476,11 @@ impl<'ast> State<'_, 'ast> {
                         .print_comments(start_expr.span.lo(), CommentConfig::skip_ws())
                         .is_none_or(|s| s.is_mixed())
                     {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_expr(start_expr);
                 } else {
-                    self.zerobreak();
+                    zerobreak(self);
                 }
 
                 self.word(":");
@@ -1483,7 +1488,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(end_expr) = end {
                     self.s.ibox(self.ind);
                     if start.is_some() {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_comments(
                         end_expr.span.lo(),
@@ -1612,7 +1617,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        let mut extra_box = false;
+        let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
@@ -1642,6 +1647,7 @@ impl<'ast> State<'_, 'ast> {
                     // calls with cmnts between the args always break
                     || (total_fits_line && !member_or_args.has_comments()))
             {
+                self.skip_index_break = true;
                 self.cbox(0);
             } else {
                 self.s.ibox(self.ind);
@@ -1665,6 +1671,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.pop();
             }
             self.end();
+        }
+
+        // Restore cache
+        if self.skip_index_break {
+            self.skip_index_break = skip_cache;
         }
     }
 
@@ -2875,6 +2886,16 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Ident(id) => id.as_str().len(),
         ast::ExprKind::Type(ast::Type { kind: ast::TypeKind::Elementary(ty), .. }) => {
             ty.to_abi_str().len()
+        }
+        ast::ExprKind::Index(base, idx) => {
+            let idx_len = match idx {
+                ast::IndexKind::Index(expr) => expr.as_ref().map_or(0, |e| get_callee_head_size(e)),
+                ast::IndexKind::Range(e1, e2) => {
+                    1 + e1.as_ref().map_or(0, |e| get_callee_head_size(e))
+                        + e2.as_ref().map_or(0, |e| get_callee_head_size(e))
+                }
+            };
+            get_callee_head_size(base) + 2 + idx_len
         }
         ast::ExprKind::Member(base, member_ident) => {
             match &base.kind {
