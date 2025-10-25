@@ -725,7 +725,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.errors() {
+                ListFormat::compact()
+            } else {
+                ListFormat::consistent()
+            },
+        );
         self.word(";");
     }
 
@@ -733,7 +741,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact().break_cmnts());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.events() {
+                ListFormat::compact().break_cmnts()
+            } else {
+                ListFormat::consistent().break_cmnts()
+            },
+        );
         if *anonymous {
             self.word(" anonymous");
         }
@@ -1690,7 +1706,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
+        let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
             (true, true) => ListFormat::compact().with_space(),
@@ -2257,7 +2273,7 @@ impl<'ast> State<'_, 'ast> {
         self.emit_or_revert = path.segments().len() > 1;
         self.print_call_args(
             args,
-            if self.config.call_compact_args {
+            if self.config.prefer_compact.calls() {
                 ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
             } else {
                 ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
