@@ -565,7 +565,6 @@ impl<'ast> State<'_, 'ast> {
         if !skip_returns
             && let Some(ret) = returns
             && !ret.is_empty()
-            && let Some(ret) = returns
         {
             if !self.handle_span(self.cursor.span(ret.span.lo()), false) {
                 if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
