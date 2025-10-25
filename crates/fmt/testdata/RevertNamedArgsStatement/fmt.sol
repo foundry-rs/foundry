@@ -1,4 +1,4 @@
-// config: call_compact_args = false
+// config: prefer_compact = "events_errors"
 contract RevertNamedArgsStatement {
     error EmptyError();
     error SimpleError(uint256 val);

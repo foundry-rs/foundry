@@ -98,5 +98,8 @@ contract Repro {
             || chainId == POLYGON || chainId == SCROLL || chainId == SEI
             || chainId == SOPHON || chainId == SUPERSEED || chainId == SONIC
             || chainId == UNICHAIN || chainId == XDC || chainId == ZKSYNC;
+
+        callsGas += (3 * FixedPointMathLib.divUp(paramsLength, 32))
+            + FixedPointMathLib.mulDivUp(paramsLength, paramsLength, 524_288);
     }
 }
