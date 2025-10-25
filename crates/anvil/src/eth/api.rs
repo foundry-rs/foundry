@@ -3427,7 +3427,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
     let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
-        return_revert!() => Err(InvalidTransactionError::Revert(Some(out.0.into())).into()),
+        return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
         reason => Err(BlockchainError::EvmError(reason)),
     }
 }
