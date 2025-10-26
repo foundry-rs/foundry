@@ -156,7 +156,7 @@ impl InMemoryBlockStates {
         }
 
         // enforce on disk limit and purge the oldest state cached on disk
-        while !self.is_memory_only() && self.oldest_on_disk.len() >= self.max_on_disk_limit {
+        while !self.is_memory_only() && self.oldest_on_disk.len() > self.max_on_disk_limit {
             // evict the oldest block
             if let Some(hash) = self.oldest_on_disk.pop_front() {
                 self.on_disk_states.remove(&hash);
