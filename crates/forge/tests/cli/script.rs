@@ -3197,7 +3197,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: forge script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 
