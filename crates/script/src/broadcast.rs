@@ -350,15 +350,27 @@ impl BundledState {
                 let estimate_via_rpc =
                     has_different_gas_calc(sequence.chain) || self.args.skip_simulation;
 
-                // We only wait for a transaction receipt before sending the next transaction, if
-                // there is more than one signer. There would be no way of assuring
-                // their order otherwise.
-                // Or if the chain does not support batched transactions (eg. Arbitrum).
-                // Or if we need to invoke eth_estimateGas before sending transactions.
+                // Determine whether to send transactions sequentially or in batches.
+                // Sequential broadcasting ensures transaction ordering and nonce consistency,
+                // but is slower than batched sending. We use sequential mode when:
                 let sequential_broadcast = estimate_via_rpc
                     || self.args.slow
                     || required_addresses.len() != 1
                     || !has_batch_support(sequence.chain);
+
+                // Conditions for sequential broadcasting:
+                // 1. estimate_via_rpc: Chain requires RPC gas estimation (Arbitrum, Elastic chains)
+                //    or simulation is skipped. These chains need fresh gas estimates right before
+                //    sending, which requires sequential processing to avoid stale estimates.
+                // 2. self.args.slow: User explicitly requested sequential mode via --slow flag.
+                //    This ensures each transaction is confirmed before sending the next one,
+                //    providing maximum reliability at the cost of speed.
+                // 3. required_addresses.len() != 1: Multiple signers require strict ordering to
+                //    maintain nonce consistency across different accounts. With multiple signers,
+                //    we can't guarantee transaction order in batched mode.
+                // 4. !has_batch_support(sequence.chain): Chain doesn't support batched transactions
+                //    (currently only Arbitrum). These chains may have mempool limitations or
+                //    transaction ordering requirements that prevent batch processing.
 
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
