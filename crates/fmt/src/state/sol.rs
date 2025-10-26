@@ -1228,23 +1228,29 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Assign(lhs, None, rhs) => self.print_assign_expr(lhs, rhs),
             ast::ExprKind::Assign(lhs, Some(op), rhs) => self.print_bin_expr(lhs, op, rhs, true),
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
-            ast::ExprKind::Call(call_expr, call_args) => self.print_member_or_call_chain(
-                call_expr,
-                MemberOrCallArgs::CallArgs(
-                    self.estimate_size(call_args.span),
-                    self.has_comments_between_elements(call_args.span, call_args.exprs()),
-                ),
-                |s| {
-                    s.print_call_args(
-                        call_args,
-                        ListFormat::compact()
-                            .break_cmnts()
-                            .break_single(true)
-                            .without_ind(s.return_bin_expr),
-                        get_callee_head_size(call_expr),
-                    );
-                },
-            ),
+            ast::ExprKind::Call(call_expr, call_args) => {
+                let cache = self.call_with_opts_and_args;
+                self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                self.print_member_or_call_chain(
+                    call_expr,
+                    MemberOrCallArgs::CallArgs(
+                        self.estimate_size(call_args.span),
+                        self.has_comments_between_elements(call_args.span, call_args.exprs()),
+                    ),
+                    |s| {
+                        s.print_call_args(
+                            call_args,
+                            ListFormat::compact()
+                                .break_cmnts()
+                                .break_single(true)
+                                .without_ind(s.return_bin_expr)
+                                .with_delimiters(!s.call_with_opts_and_args),
+                            get_callee_head_size(call_expr),
+                        );
+                    },
+                );
+                self.call_with_opts_and_args = cache;
+            }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
                 self.print_named_args(named_args, span.hi());
@@ -1268,11 +1274,10 @@ impl<'ast> State<'_, 'ast> {
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
                         s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        if !matches!(
-                            member_expr.kind,
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)
-                        ) {
-                            s.zerobreak();
+                        match member_expr.kind {
+                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
+                            ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            _ => s.zerobreak(),
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1436,10 +1441,16 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
 
         let mut skip_break = false;
-
+        let mut zerobreak = |this: &mut Self| {
+            if this.skip_index_break {
+                skip_break = true;
+            } else {
+                this.zerobreak();
+            }
+        };
         match kind {
             ast::IndexKind::Index(Some(inner_expr)) => {
-                self.zerobreak();
+                zerobreak(self);
                 self.print_expr(inner_expr);
             }
             ast::IndexKind::Index(None) => {}
@@ -1449,11 +1460,11 @@ impl<'ast> State<'_, 'ast> {
                         .print_comments(start_expr.span.lo(), CommentConfig::skip_ws())
                         .is_none_or(|s| s.is_mixed())
                     {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_expr(start_expr);
                 } else {
-                    self.zerobreak();
+                    zerobreak(self);
                 }
 
                 self.word(":");
@@ -1461,7 +1472,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(end_expr) = end {
                     self.s.ibox(self.ind);
                     if start.is_some() {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_comments(
                         end_expr.span.lo(),
@@ -1590,6 +1601,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
+        let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
@@ -1606,6 +1618,12 @@ impl<'ast> State<'_, 'ast> {
             let no_mixed_comment =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
+            // If call with options, add an extra box to prioritize breaking the call args
+            if self.call_with_opts_and_args {
+                self.cbox(0);
+                extra_box = true;
+            }
+
             if !is_call_chain(&child_expr.kind, true)
                 && no_mixed_comment
                 && callee_fits_line
@@ -1613,7 +1631,8 @@ impl<'ast> State<'_, 'ast> {
                     // calls with cmnts between the args always break
                     || (total_fits_line && !member_or_args.has_comments()))
             {
-                self.s.ibox(0);
+                self.skip_index_break = true;
+                self.cbox(0);
             } else {
                 self.s.ibox(self.ind);
             }
@@ -1621,6 +1640,11 @@ impl<'ast> State<'_, 'ast> {
 
         // Recursively print the child/prefix expression.
         self.print_expr(child_expr);
+
+        // If an extra box was opened, close it
+        if extra_box {
+            self.end();
+        }
 
         // Call the closure to print the suffix for the current link, with the calculated position.
         print_suffix(self);
@@ -1631,6 +1655,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.pop();
             }
             self.end();
+        }
+
+        // Restore cache
+        if self.skip_index_break {
+            self.skip_index_break = skip_cache;
         }
     }
 
@@ -1672,11 +1701,6 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let cache = self.named_call_expr;
-        if !cache {
-            self.named_call_expr = true;
-        };
-
         let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
@@ -1714,16 +1738,12 @@ impl<'ast> State<'_, 'ast> {
                     .break_cmnts()
                     .break_single(true)
                     .without_ind(self.call_stack.is_chain())
-                    .with_delimiters(!self.emit_or_revert),
+                    .with_delimiters(!(self.emit_or_revert || self.call_with_opts_and_args)),
             );
         } else if self.config.bracket_spacing {
             self.nbsp();
         }
         self.word("}");
-
-        if !cache {
-            self.named_call_expr = false;
-        }
     }
 
     /* --- Statements --- */
@@ -2175,7 +2195,9 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_word("{");
                 self.end();
-                self.print_trailing_comment_no_break(catch_span.lo(), None);
+                if !block.is_empty() {
+                    self.print_trailing_comment_no_break(catch_span.lo(), None);
+                }
                 self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
                 if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                     self.print_word("}");
@@ -2791,6 +2813,14 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
     }
 }
 
+fn is_call_with_opts_and_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(call_expr, call_args) = expr_kind {
+        matches!(call_expr.kind, ast::ExprKind::CallOptions(..)) && !call_args.is_empty()
+    } else {
+        false
+    }
+}
+
 #[derive(Debug)]
 struct Decision {
     outcome: bool,
@@ -2839,6 +2869,16 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Ident(id) => id.as_str().len(),
         ast::ExprKind::Type(ast::Type { kind: ast::TypeKind::Elementary(ty), .. }) => {
             ty.to_abi_str().len()
+        }
+        ast::ExprKind::Index(base, idx) => {
+            let idx_len = match idx {
+                ast::IndexKind::Index(expr) => expr.as_ref().map_or(0, |e| get_callee_head_size(e)),
+                ast::IndexKind::Range(e1, e2) => {
+                    1 + e1.as_ref().map_or(0, |e| get_callee_head_size(e))
+                        + e2.as_ref().map_or(0, |e| get_callee_head_size(e))
+                }
+            };
+            get_callee_head_size(base) + 2 + idx_len
         }
         ast::ExprKind::Member(base, member_ident) => {
             match &base.kind {

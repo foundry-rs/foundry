@@ -751,7 +751,7 @@ impl Backend {
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code.0.into())
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
@@ -3309,6 +3309,29 @@ impl Backend {
         Ok(None)
     }
 
+    pub fn get_blobs_by_block_id(
+        &self,
+        id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
+        Ok(self.get_block(id).map(|block| {
+            block
+                .transactions
+                .iter()
+                .filter_map(|tx| tx.as_ref().sidecar())
+                .flat_map(|sidecar| {
+                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                })
+                .filter(|(_, commitment)| {
+                    // Filter blobs by versioned_hashes if provided
+                    versioned_hashes.is_empty()
+                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
+                })
+                .map(|(blob, _)| *blob)
+                .collect()
+        }))
+    }
+
     pub fn get_blob_sidecars_by_block_id(
         &self,
         block_id: BlockId,
@@ -3689,7 +3712,10 @@ impl TransactionValidator for Backend {
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
                 warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                return Err(InvalidTransactionError::BlobFeeCapTooLow);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow(
+                    max_fee_per_blob_gas,
+                    blob_gas_and_price.blob_gasprice,
+                ));
             }
 
             let max_cost = tx.max_cost();

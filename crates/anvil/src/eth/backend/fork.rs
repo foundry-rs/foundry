@@ -274,7 +274,7 @@ impl ClientFork {
         let code = self.provider().get_code_at(address).block_id(block_id).await?;
 
         let mut storage = self.storage_write();
-        storage.code_at.insert((address, blocknumber), code.clone().0.into());
+        storage.code_at.insert((address, blocknumber), code.clone());
 
         Ok(code)
     }

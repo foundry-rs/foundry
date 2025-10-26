@@ -2,7 +2,7 @@ use super::{
     call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
     shrink_sequence,
 };
-use crate::executors::Executor;
+use crate::executors::{EarlyExit, Executor};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Log, U256, map::HashMap};
 use eyre::Result;
@@ -109,6 +109,7 @@ pub fn replay_error(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     show_solidity: bool,
+    early_exit: &EarlyExit,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
@@ -121,6 +122,7 @@ pub fn replay_error(
                 &executor,
                 invariant_contract.call_after_invariant,
                 progress,
+                early_exit,
             )?;
 
             set_up_inner_replay(&mut executor, &failed_case.inner_sequence);

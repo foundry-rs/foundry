@@ -18,3 +18,6 @@ pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call
 
 mod mutators;
 pub use mutators::BoundMutator;
+
+mod literals;
+pub use literals::{LiteralMaps, LiteralsCollector};

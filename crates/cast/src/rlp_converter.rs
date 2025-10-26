@@ -11,7 +11,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Data(Vec<u8>),
-    Array(Vec<Item>),
+    Array(Vec<Self>),
 }
 
 impl Encodable for Item {

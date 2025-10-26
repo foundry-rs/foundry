@@ -55,7 +55,8 @@ contract SimpleCall {
 
 contract ProxyWithDelegateCall {
     function delegateCall(SimpleCall simpleCall) public {
-        address(simpleCall).delegatecall(abi.encodeWithSignature("call()"));
+        (bool success,) = address(simpleCall).delegatecall(abi.encodeWithSignature("call()"));
+        require(success, "delegatecall failed");
     }
 }
 

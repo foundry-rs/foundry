@@ -124,8 +124,10 @@ pub(super) struct State<'sess, 'ast> {
     binary_expr: Option<BinOpGroup>,
     // Whether inside a `return` statement that contains a binary expression, or not.
     return_bin_expr: bool,
-    // Whether inside a named argument call, or not.
-    named_call_expr: bool,
+    // Whether inside a call with call options and at least one argument.
+    call_with_opts_and_args: bool,
+    // Whether to skip the index soft breaks because the callee fits inline.
+    skip_index_break: bool,
     // Whether inside an `emit` or `revert` call with a qualified path, or not.
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
@@ -218,7 +220,8 @@ impl<'sess> State<'sess, '_> {
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
-            named_call_expr: false,
+            call_with_opts_and_args: false,
+            skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
             emit_or_revert: false,
