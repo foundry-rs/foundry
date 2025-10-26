@@ -1754,7 +1754,7 @@ impl<'ast> State<'_, 'ast> {
                     .break_cmnts()
                     .break_single(true)
                     .without_ind(self.call_stack.is_chain())
-                    .with_delimiters(!(self.emit_or_revert || self.call_with_opts_and_args)),
+                    .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
             self.nbsp();
@@ -2280,17 +2280,14 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.s.cbox(0);
-        self.print_path(path, false);
         self.emit_or_revert = path.segments().len() > 1;
-        self.print_call_args(
-            args,
-            if self.config.prefer_compact.calls() {
-                ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
-            } else {
-                ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
-            },
-            path.to_string().len(),
-        );
+        self.print_path(path, false);
+        let format = if self.config.prefer_compact.calls() {
+            ListFormat::compact()
+        } else {
+            ListFormat::consistent()
+        };
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
         self.emit_or_revert = false;
         self.end();
     }
