@@ -1,5 +1,5 @@
 use crate::executors::{
-    Executor,
+    EarlyExit, Executor,
     invariant::{
         call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
     },
@@ -43,6 +43,7 @@ pub(crate) fn shrink_sequence(
     executor: &Executor,
     call_after_invariant: bool,
     progress: Option<&ProgressBar>,
+    early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
@@ -65,6 +66,10 @@ pub(crate) fn shrink_sequence(
 
     let mut shrinker = CallSequenceShrinker::new(calls.len());
     for _ in 0..failed_case.shrink_run_limit {
+        if early_exit.should_stop() {
+            break;
+        }
+
         // Remove call at current index.
         shrinker.included_calls.clear(call_idx);
 
