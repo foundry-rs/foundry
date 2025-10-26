@@ -32,6 +32,8 @@ pub enum LinkerError {
     CyclicDependency,
     #[error("failed linking {artifact}")]
     LinkingFailed { artifact: String },
+    #[error("maximum dependency depth exceeded: {depth}")]
+    MaxDepthExceeded { depth: usize },
 }
 
 pub struct Linker<'a> {
@@ -103,6 +105,20 @@ impl<'a> Linker<'a> {
         target: &'a ArtifactId,
         deps: &mut BTreeSet<&'a ArtifactId>,
     ) -> Result<(), LinkerError> {
+        self.collect_dependencies_with_depth(target, deps, 0, 100)
+    }
+
+    /// Performs DFS on the graph of link references with depth tracking to prevent stack overflow.
+    fn collect_dependencies_with_depth(
+        &'a self,
+        target: &'a ArtifactId,
+        deps: &mut BTreeSet<&'a ArtifactId>,
+        current_depth: usize,
+        max_depth: usize,
+    ) -> Result<(), LinkerError> {
+        if current_depth > max_depth {
+            return Err(LinkerError::MaxDepthExceeded { depth: current_depth });
+        }
         let contract = self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?;
 
         let mut references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -129,7 +145,7 @@ impl<'a> Linker<'a> {
                         name,
                     })?;
                 if deps.insert(id) {
-                    self.collect_dependencies(id, deps)?;
+                    self.collect_dependencies_with_depth(id, deps, current_depth + 1, max_depth)?;
                 }
             }
         }
@@ -801,5 +817,17 @@ mod tests {
             linker_instance.ensure_linked(contract, artifact_id).is_err(),
             "Expected artifact to have unlinked bytecode"
         );
+    }
+
+    #[test]
+    fn test_max_depth_exceeded() {
+        // Test that the MaxDepthExceeded error variant exists and works correctly
+        let error = LinkerError::MaxDepthExceeded { depth: 101 };
+        assert!(matches!(error, LinkerError::MaxDepthExceeded { depth: 101 }));
+
+        // Test error message formatting
+        let error_msg = format!("{}", error);
+        assert!(error_msg.contains("maximum dependency depth exceeded"));
+        assert!(error_msg.contains("101"));
     }
 }
