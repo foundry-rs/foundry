@@ -826,7 +826,7 @@ mod tests {
         assert!(matches!(error, LinkerError::MaxDepthExceeded { depth: 101 }));
 
         // Test error message formatting
-        let error_msg = format!("{}", error);
+        let error_msg = format!("{error}");
         assert!(error_msg.contains("maximum dependency depth exceeded"));
         assert!(error_msg.contains("101"));
     }
