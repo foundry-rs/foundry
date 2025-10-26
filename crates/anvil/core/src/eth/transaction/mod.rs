@@ -493,7 +493,7 @@ impl PendingTransaction {
                     value: *value,
                     gas_price: *max_fee_per_gas, // Use max_fee_per_gas as the gas price
                     gas_priority_fee: Some(*max_priority_fee_per_gas), /* EIP-1559 introduces
-                                                                        * priority fees */
+                                                  * priority fees */
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
                     tx_type: 2, // EIP-1559 transaction type
