@@ -4211,7 +4211,7 @@ contract CounterTest is Test {
         .replace("<url>", &endpoint),
     );
 
-    cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--rpc-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
