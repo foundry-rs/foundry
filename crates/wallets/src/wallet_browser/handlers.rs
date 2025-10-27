@@ -3,7 +3,10 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, HeaderValue, header::CONTENT_TYPE},
+    http::{
+        HeaderMap, HeaderValue,
+        header::{CACHE_CONTROL, CONTENT_TYPE, EXPIRES, PRAGMA},
+    },
     response::Html,
 };
 
@@ -13,18 +16,49 @@ use crate::wallet_browser::{
     types::{BrowserApiResponse, BrowserTransaction, Connection, TransactionResponse},
 };
 
-pub(crate) async fn serve_index(
-    State(state): State<Arc<BrowserWalletState>>,
-) -> impl axum::response::IntoResponse {
-    let token = state.session_token();
-    let html = contents::INDEX_HTML.replace(
-        "<!--SESSION_SCRIPT-->",
-        &format!(r#"<script>window.__WALLET_TOKEN__ = "{token}";</script>"#),
-    );
+pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
+    let html = contents::INDEX_HTML;
 
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers.insert(EXPIRES, HeaderValue::from_static("0"));
     (headers, Html(html))
+}
+
+pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
+    let css = contents::STYLE_CSS;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers.insert(EXPIRES, HeaderValue::from_static("0"));
+    (headers, css)
+}
+
+pub(crate) async fn serve_js(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> impl axum::response::IntoResponse {
+    let token = state.session_token();
+    let js = format!("window.__WALLET_TOKEN__ = \"{}\";\n{}", token, contents::MAIN_JS);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/javascript; charset=utf-8"));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers.insert(EXPIRES, HeaderValue::from_static("0"));
+    (headers, js)
 }
 
 /// Get the next pending transaction request.

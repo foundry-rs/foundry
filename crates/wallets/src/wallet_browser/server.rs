@@ -31,11 +31,9 @@ pub struct BrowserWalletServer {
 impl BrowserWalletServer {
     /// Create a new browser wallet server.
     pub fn new(port: u16, open_browser: bool, timeout: Duration) -> Self {
-        let session_token = Arc::new(Uuid::new_v4().to_string());
-
         Self {
             port,
-            state: Arc::new(BrowserWalletState::new(session_token)),
+            state: Arc::new(BrowserWalletState::new(Uuid::new_v4().to_string())),
             shutdown_tx: None,
             open_browser,
             timeout,
@@ -44,7 +42,7 @@ impl BrowserWalletServer {
 
     /// Start the server and open browser.
     pub async fn start(&mut self) -> Result<(), BrowserWalletError> {
-        let router = build_router(self.state.clone()).await;
+        let router = build_router(self.state.clone(), self.port).await;
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr)
@@ -65,7 +63,7 @@ impl BrowserWalletServer {
         });
 
         if self.open_browser {
-            webbrowser::open(&format!("http://localhost:{}", self.port)).map_err(|e| {
+            webbrowser::open(&format!("http://127.0.0.1:{}", self.port)).map_err(|e| {
                 BrowserWalletError::ServerError(format!("Failed to open browser: {e}"))
             })?;
         }
@@ -99,7 +97,7 @@ impl BrowserWalletServer {
     }
 
     /// Get the session token.
-    pub fn session_token(&self) -> Arc<String> {
+    pub fn session_token(&self) -> &str {
         self.state.session_token()
     }
 

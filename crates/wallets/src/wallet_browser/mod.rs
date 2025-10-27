@@ -477,7 +477,7 @@ mod tests {
     /// Helper to create a reqwest client with the session token header.
     fn client_with_token(server: &BrowserWalletServer) -> reqwest::Client {
         let mut headers = HeaderMap::new();
-        headers.insert("X-Session-Token", HeaderValue::from_str(&server.session_token()).unwrap());
+        headers.insert("X-Session-Token", HeaderValue::from_str(server.session_token()).unwrap());
         reqwest::Client::builder().default_headers(headers).build().unwrap()
     }
 

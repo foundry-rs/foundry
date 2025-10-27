@@ -5012,6 +5012,8 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tokio",
+ "tower",
+ "tower-http",
  "tracing",
  "uuid 1.18.1",
  "webbrowser",
