@@ -380,8 +380,11 @@ mod tests {
 
         // Check first transaction request
         {
-            let url = format!("http://localhost:{}/api/transaction/request", server.port());
-            let resp = reqwest::get(&url).await.unwrap();
+            let resp = client
+                .get(format!("http://localhost:{}/api/transaction/request", server.port()))
+                .send()
+                .await
+                .unwrap();
 
             let BrowserApiResponse::Ok(pending_tx) =
                 resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
@@ -421,8 +424,11 @@ mod tests {
 
         // Check second transaction request
         {
-            let url = format!("http://localhost:{}/api/transaction/request", server.port());
-            let resp = reqwest::get(&url).await.unwrap();
+            let resp = client
+                .get(format!("http://localhost:{}/api/transaction/request", server.port()))
+                .send()
+                .await
+                .unwrap();
 
             let BrowserApiResponse::Ok(pending_tx) =
                 resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
