@@ -1,16 +1,18 @@
+# Reusable workflow for running tests via `cargo nextest`
+
 name: test
 
 permissions: {}
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-  merge_group:
+  workflow_call:
+    inputs:
+      profile:
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -19,211 +21,96 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  nextest:
-    uses: ./.github/workflows/nextest.yml
-    permissions:
-      contents: read
-    with:
-      profile: default
-    secrets: inherit
-
-  docs:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: nightly
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - name: Build documentation
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
-      - name: Setup Pages
-        if: github.ref_name == 'master' && github.event_name == 'push'
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        if: github.ref_name == 'master' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./target/doc
-
-  deploy-docs:
-    if: github.ref_name == 'master' && github.event_name == 'push'
-    needs: [docs]
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-  doctest:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo test --workspace --doc
-
-  typos:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1 # v1
-
-  clippy:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: nightly
-          components: clippy
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo clippy --workspace --all-targets --all-features
-        env:
-          RUSTFLAGS: -Dwarnings
-
-  rustfmt:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: nightly
-          components: rustfmt
-      - run: cargo fmt --all --check
-
-  forge-fmt:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - name: forge fmt
-        shell: bash
-        run: ./.github/scripts/format.sh --check
-
-  crate-checks:
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
-        with:
-          toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@e7ef886cf8f69c25ecef6bbc2858a42e273496ec # v2
-        with:
-          tool: cargo-hack
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo hack check
-
-  deny:
-    uses: ithacaxyz/ci/.github/workflows/deny.yml@9c8d0dc20e7ad02455d3fdab2378a05f29907630 # main
-    permissions:
-      contents: read
-
-  codeql:
-    name: Analyze (${{ matrix.language }})
+  matrices:
+    name: build matrices
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
-      actions: read
       contents: read
+    outputs:
+      test-matrix: ${{ steps.gen.outputs.test-matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Generate matrices
+        id: gen
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PROFILE: ${{ inputs.profile }}
+        shell: bash
+        run: |
+          output=$(python3 .github/scripts/matrices.py)
+          printf '::debug::test-matrix=%s\n' "$output"
+          printf 'test-matrix=%s\n' "$output" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test ${{ matrix.name }}
+    runs-on: ${{ matrix.runner_label }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    needs: matrices
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - language: actions
-            build-mode: none
+      matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+          toolchain: stable
+          target: ${{ matrix.target }}
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      - uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951 # v2
         with:
-          category: "/language:${{matrix.language}}"
+          tool: nextest
 
-  ci-success:
-    runs-on: ubuntu-latest
-    if: always()
-    permissions: {}
-    needs:
-      - nextest
-      - docs
-      - doctest
-      - typos
-      - clippy
-      - rustfmt
-      - forge-fmt
-      - crate-checks
-      - deny
-      - codeql
-    timeout-minutes: 30
-    steps:
-      - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+      # External tests dependencies
+      - name: Setup Node.js
+        if: contains(matrix.name, 'external')
+        uses: actions/setup-node@v6
         with:
-          jobs: ${{ toJSON(needs) }}
+          node-version: 24
+      - name: Install Bun
+        if: contains(matrix.name, 'external')
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        with:
+          bun-version: latest
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install Vyper
+        # Also update vyper version in .devcontainer/Dockerfile.dev
+        run: pip --version && pip install vyper==0.4.3
+
+      - name: Foundry test cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.foundry/cache
+            ~/.config/.foundry/cache
+            testdata/cache
+            testdata/out
+          # Use a unique key for each run to always update the cache.
+          key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-foundry-${{ matrix.name }}-
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+      - name: Setup Git config
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: Test
+        env:
+          SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+          HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
+          WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
+          ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: cargo nextest run ${{ matrix.flags }}

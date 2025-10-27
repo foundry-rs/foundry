@@ -116,14 +116,6 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
-    /// Returns a `RetryProvider` for `self.fork_url`, if any.
-    pub fn fork_provider(&self) -> eyre::Result<Option<RetryProvider>> {
-        match &self.fork_url {
-            Some(fork_url) => self.fork_provider_with_url(fork_url).map(Some),
-            None => Ok(None),
-        }
-    }
-
     /// Returns a `RetryProvider` for the given fork URL configured with options in `self`.
     pub fn fork_provider_with_url(&self, fork_url: &str) -> eyre::Result<RetryProvider> {
         ProviderBuilder::new(fork_url)
@@ -184,7 +176,7 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
-    pub fn local_evm_env(&self) -> crate::Env {
+    fn local_evm_env(&self) -> crate::Env {
         let cfg = configure_env(
             self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
             self.memory_limit,
@@ -239,23 +231,11 @@ impl EvmOpts {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
-    /// Returns the configured chain id, which will be
-    ///   - the value of `chain_id` if set
-    ///   - mainnet if `fork_url` contains "mainnet"
-    ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
-    ///   - mainnet otherwise
-    pub async fn get_chain_id(&self) -> u64 {
-        if let Some(id) = self.env.chain_id {
-            return id;
-        }
-        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
-    }
-
     /// Returns the available compute units per second, which will be
     /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    pub fn get_compute_units_per_second(&self) -> u64 {
+    fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {

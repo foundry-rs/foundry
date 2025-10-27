@@ -1,3 +1,4 @@
+// config: prefer_compact = "none"
 contract RevertStatement {
     error TestError(uint256, bool, string);
 
@@ -42,11 +43,15 @@ contract RevertStatement {
 
         revert TestError(0, false, message);
         revert TestError(
-            0, false, someVeryLongFunctionNameToGetDynamicErrorMessageString()
+            0,
+            false,
+            someVeryLongFunctionNameToGetDynamicErrorMessageString()
         );
 
         revert /* comment13 */ /* comment14 */ TestError( /* comment15 */
-            1234567890, false, message
+            1234567890,
+            false,
+            message
         );
 
         revert TestError( /* comment16 */

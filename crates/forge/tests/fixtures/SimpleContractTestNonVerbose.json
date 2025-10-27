@@ -1,25 +1,25 @@
 {
-    "src/Simple.t.sol:SimpleContractTest": {
-        "duration": "{...}",
-        "test_results": {
-            "test()": {
-                "status": "Success",
-                "reason": null,
-                "counterexample": null,
-                "logs": [],
-                "decoded_logs": [],
-                "kind": {
-                    "Unit": {
-                        "gas": "{...}"
-                    }
-                },
-                "traces": [],
-                "labeled_addresses": {},
-                "duration": "{...}",
-                "breakpoints": {},
-                "gas_snapshots": {}
-            }
+  "src/Simple.t.sol:SimpleContractTest": {
+    "duration": "{...}",
+    "test_results": {
+      "test()": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "logs": [],
+        "decoded_logs": [],
+        "kind": {
+          "Unit": {
+            "gas": "{...}"
+          }
         },
-        "warnings": []
-    }
+        "traces": [],
+        "labeled_addresses": {},
+        "duration": "{...}",
+        "breakpoints": {},
+        "gas_snapshots": {}
+      }
+    },
+    "warnings": []
+  }
 }

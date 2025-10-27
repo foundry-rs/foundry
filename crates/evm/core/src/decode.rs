@@ -54,7 +54,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
-pub fn decode_console_log(log: &Log) -> Option<String> {
+fn decode_console_log(log: &Log) -> Option<String> {
     console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
 }
 
@@ -62,7 +62,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 #[derive(Clone, Debug, Default)]
 pub struct RevertDecoder {
     /// The custom errors to use for decoding.
-    pub errors: HashMap<Selector, Vec<Error>>,
+    errors: HashMap<Selector, Vec<Error>>,
 }
 
 impl Default for &RevertDecoder {
@@ -94,25 +94,15 @@ impl RevertDecoder {
         self
     }
 
-    /// Sets the ABI to use for error decoding, if it is present.
-    ///
-    /// Note that this is decently expensive as it will hash all errors for faster indexing.
-    pub fn with_abi_opt(mut self, abi: Option<&JsonAbi>) -> Self {
-        if let Some(abi) = abi {
-            self.extend_from_abi(abi);
-        }
-        self
-    }
-
     /// Extends the decoder with the given ABI's custom errors.
-    pub fn extend_from_abis<'a>(&mut self, abi: impl IntoIterator<Item = &'a JsonAbi>) {
+    fn extend_from_abis<'a>(&mut self, abi: impl IntoIterator<Item = &'a JsonAbi>) {
         for abi in abi {
             self.extend_from_abi(abi);
         }
     }
 
     /// Extends the decoder with the given ABI's custom errors.
-    pub fn extend_from_abi(&mut self, abi: &JsonAbi) {
+    fn extend_from_abi(&mut self, abi: &JsonAbi) {
         for error in abi.errors() {
             self.push_error(error.clone());
         }
