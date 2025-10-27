@@ -4,16 +4,16 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
 
-import { colors } from '#const.mjs'
+import { KNOWN_TOOLS, colors, resolveTargetTool } from '#const.mjs'
 import { generateBinaryPackageJson } from '../src/generate-package-json.mjs'
 
 /**
  * @typedef {import('#const.mjs').Arch} Arch
  * @typedef {import('#const.mjs').Platform} Platform
  * @typedef {import('#const.mjs').Profile} Profile
+ * @typedef {import('#const.mjs').Tool} Tool
  */
 
-const PRESERVED_FILES = ['package.json', 'README.md']
 const PLATFORM_MAP = /** @type {const} */ (/** @type {Record<Platform, Platform>} */ ({
   linux: 'linux',
   darwin: 'darwin',
@@ -28,115 +28,170 @@ const TARGET_MAP = /** @type {const} */ (/** @type {Record<`${Arch}-${Platform}`
   'amd64-win32': 'x86_64-pc-windows-msvc'
 }))
 
+const PRESERVE = new Set(['package.json', 'README.md'])
+const GENERIC_BIN_ENV_KEYS = [
+  'BIN_PATH',
+  'bin_path',
+  'BIN',
+  'BINARY_PATH',
+  'binary_path',
+  'TARGET_BIN_PATH',
+  'target_bin_path',
+  'TARGET_BINARY_PATH',
+  'target_binary_path'
+]
+
+const TOOL_ENV_KEYS = /** @type {Record<Tool, readonly string[]>} */ ({
+  forge: ['forge_bin_path', 'FORGE_BIN_PATH'],
+  cast: ['cast_bin_path', 'CAST_BIN_PATH'],
+  anvil: ['anvil_bin_path', 'ANVIL_BIN_PATH'],
+  chisel: ['chisel_bin_path', 'CHISEL_BIN_PATH']
+})
+
 main().catch(error => {
   console.error(colors.red, error)
   process.exit(1)
 })
 
 async function main() {
-  const { platform, arch, forgeBinPath } = getPlatformInfo()
-  const distribution = `${platform}-${arch}`
-  const packagePath = NodePath.join(process.cwd(), '@foundry-rs', `forge-${distribution}`)
+  const { tool, platform, arch, binaryPath } = resolveInputs()
+  const packagePath = NodePath.join(process.cwd(), '@foundry-rs', `${tool}-${platform}-${arch}`)
 
-  // ensure the directory exists
   await NodeFS.promises.mkdir(packagePath, { recursive: true, mode: 0o755 })
   console.info(colors.green, `Ensured package directory at ${packagePath}`, colors.reset)
 
-  await generateBinaryPackageJson({ tool: 'forge', platform, arch, packagePath })
-
+  await generateBinaryPackageJson({ tool, platform, arch, packagePath })
   await cleanPackageDirectory(packagePath)
-  await copyBinary(forgeBinPath, packagePath, platform)
+  await copyBinary({ source: binaryPath, tool, packagePath, platform })
 
   console.info(colors.green, 'Binary copy completed successfully!', colors.reset)
 }
 
-function getPlatformInfo() {
-  const platformEnv = Bun.env.PLATFORM_NAME
+function resolveInputs() {
+  const parsed = NodeUtil.parseArgs({
+    args: Bun.argv,
+    allowPositionals: true,
+    options: {
+      tool: { type: 'string' },
+      binary: { type: 'string' },
+      bin: { type: 'string' },
+      'bin-path': { type: 'string' },
+      'binary-path': { type: 'string' }
+    },
+    strict: true
+  })
+
+  const platformEnv = Bun.env.PLATFORM_NAME || ''
   const archEnv = Bun.env.ARCH || ''
 
-  if (!platformEnv || !archEnv)
-    throw new Error('PLATFORM_NAME and ARCH environment variables are required')
-
   const platform = PLATFORM_MAP[platformEnv]
-  // Normalize arch for package names and target mapping
   const arch = archEnv === 'aarch64' ? 'arm64' : archEnv
 
   if (!platform || (arch !== 'amd64' && arch !== 'arm64'))
     throw new Error(`Invalid platform or architecture: platform=${platformEnv}, arch=${archEnv}`)
 
-  const { values } = NodeUtil.parseArgs({
-    args: Bun.argv,
-    strict: true,
-    allowPositionals: true,
-    options: {
-      'forge-bin-path': { type: 'string', default: Bun.env.FORGE_BIN_PATH }
-    }
-  })
+  const tool = resolveTool([
+    parsed.values.tool,
+    parsed.positionals[0],
+    Bun.env.TARGET_TOOL,
+    Bun.env.TOOL,
+    Bun.env.BINARY_TOOL
+  ])
 
   const profile = Bun.env.NODE_ENV === 'production' ? 'release' : Bun.env.PROFILE || 'release'
-  const forgeBinPath = values['forge-bin-path'] || findForgeBinary(arch, platform, profile)
+  const binaryPath = resolveBinaryPath({
+    tool,
+    platform,
+    arch,
+    profile,
+    cliCandidates: [
+      parsed.values.binary,
+      parsed.values.bin,
+      parsed.values['bin-path'],
+      parsed.values['binary-path'],
+      parsed.positionals[1]
+    ]
+  })
 
-  return { platform, arch, forgeBinPath }
+  return { tool, platform, arch, binaryPath }
 }
 
-/**
- * @param {Arch} arch
- * @param {Platform} platform
- * @param {Profile} profile
- * @returns {string}
- */
-function findForgeBinary(arch, platform, profile) {
-  // @ts-ignore
+function resolveTool(candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || candidate.trim() === '') continue
+    try {
+      return resolveTargetTool(candidate)
+    } catch {
+      // try the next candidate
+    }
+  }
+
+  throw new Error(`Tool not specified. Provide --tool=<${KNOWN_TOOLS.join('|')}> or set TARGET_TOOL.`)
+}
+
+function resolveBinaryPath({ tool, platform, arch, profile, cliCandidates }) {
+  const envCandidates = [
+    ...GENERIC_BIN_ENV_KEYS,
+    ...(TOOL_ENV_KEYS[tool] ?? [])
+  ].map(readEnv)
+
+  for (const candidate of [...cliCandidates, ...envCandidates]) {
+    if (typeof candidate === 'string' && candidate.trim())
+      return NodePath.resolve(candidate.trim())
+  }
+
+  return findBinaryFallback({ tool, platform, arch, profile })
+}
+
+function findBinaryFallback({ tool, platform, arch, profile }) {
   const targetDir = TARGET_MAP[`${arch}-${platform}`]
-  const targetPath = NodePath.join(process.cwd(), '..', 'target', targetDir, profile, 'forge')
+  const binaryName = platform === 'win32' ? `${tool}.exe` : tool
+  const searchOrder = []
 
-  if (NodeFS.existsSync(targetPath))
-    return targetPath
+  if (targetDir)
+    searchOrder.push(NodePath.join(process.cwd(), '..', 'target', targetDir, profile, binaryName))
 
-  return NodePath.join(process.cwd(), '..', 'target', 'release', 'forge')
+  searchOrder.push(
+    NodePath.join(process.cwd(), '..', 'target', profile, binaryName),
+    NodePath.join(process.cwd(), '..', 'target', 'release', binaryName)
+  )
+
+  for (const candidate of searchOrder)
+    if (candidate && NodeFS.existsSync(candidate)) return candidate
+
+  throw new Error(`Source binary for ${tool} not found. Looked in: ${searchOrder.join(', ')}`)
 }
 
-/**
- * @param {string} packagePath
- * @returns {Promise<void>}
- */
 async function cleanPackageDirectory(packagePath) {
-  const items = await NodeFS.promises
-    .readdir(packagePath, { withFileTypes: true, recursive: true })
-    .catch(() => [])
+  const items = await NodeFS.promises.readdir(packagePath).catch(() => [])
 
-  items
-    .filter(item => !PRESERVED_FILES.includes(item.name))
-    .forEach(item => {
-      NodeFS.rmSync(NodePath.join(packagePath, item.name), {
-        recursive: true,
-        force: true
-      })
-    })
+  for (const item of items) {
+    if (PRESERVE.has(item)) continue
+    NodeFS.rmSync(NodePath.join(packagePath, item), { recursive: true, force: true })
+  }
 
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 }
 
-/**
- * @param {string} forgeBinPath
- * @param {string} packagePath
- * @param {Platform} platform
- * @returns {Promise<void>}
- */
-async function copyBinary(forgeBinPath, packagePath, platform) {
-  if (!(await Bun.file(forgeBinPath).exists()))
-    throw new Error(`Source binary not found at ${forgeBinPath}`)
+async function copyBinary({ source, tool, packagePath, platform }) {
+  if (!(await Bun.file(source).exists()))
+    throw new Error(`Source binary not found at ${source}`)
 
-  const binaryName = platform === 'win32' ? 'forge.exe' : 'forge'
-  const targetDir = NodePath.join('@foundry-rs', NodePath.basename(packagePath), 'bin')
+  const binaryName = platform === 'win32' ? `${tool}.exe` : tool
+  const targetDir = NodePath.join(packagePath, 'bin')
 
   NodeFS.mkdirSync(targetDir, { recursive: true })
 
   const targetPath = NodePath.join(targetDir, binaryName)
-  console.info(colors.green, `Copying ${forgeBinPath} to ${targetPath}`, colors.reset)
+  console.info(colors.green, `Copying ${source} to ${targetPath}`, colors.reset)
 
-  await Bun.write(targetPath, Bun.file(forgeBinPath))
+  await Bun.write(targetPath, Bun.file(source))
 
   if (platform !== 'win32')
     NodeFS.chmodSync(targetPath, 0o755)
+}
+
+function readEnv(key) {
+  if (!key) return undefined
+  return Bun.env[key] ?? Bun.env[key.toUpperCase()] ?? Bun.env[key.toLowerCase()]
 }

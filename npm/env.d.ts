@@ -7,7 +7,7 @@ interface ImportMetaEnv {
 
   readonly PROVENANCE: 'true' | 'false'
 
-  readonly TARGET_TOOL: 'forge' | 'cast' | 'anvil' | 'chisel'
+  TARGET_TOOL: 'forge' | 'cast' | 'anvil' | 'chisel'
 
   // release.yml#jobs:release:strategy:matrix:include:-|target
   readonly TARGET:

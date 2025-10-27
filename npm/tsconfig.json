@@ -41,8 +41,8 @@
   "include": [
     "./src/**/*",
     "./src/*.mjs",
-
-    "./scripts/**/*"
+    "./scripts/**/*",
+    "./scripts/*.mjs"
   ],
   "files": [
     "env.d.ts",
