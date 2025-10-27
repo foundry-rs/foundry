@@ -17,6 +17,7 @@ mod invariant;
 mod logs;
 mod repros;
 mod spec;
+mod table;
 mod trace;
 
 // Run `forge test` on `/testdata`.
@@ -315,6 +316,7 @@ contract SimpleContractTest is DSTest {
 }
    "#;
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
@@ -322,7 +324,7 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
     // Assert that with verbose output the json output includes the traces
-    cmd.args(["test", "-vvv", "--json"])
+    cmd.args(["test", "-vvvvv", "--json"])
         .assert_success()
         .stdout_eq(file!["../../fixtures/SimpleContractTestVerbose.json": Json]);
 });
@@ -624,7 +626,7 @@ contract CustomTypesTest is Test {
    "#,
     );
 
-    cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -2448,6 +2450,7 @@ contract Dummy {
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(111));
+        config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
     });
 
     prj.add_source(
@@ -3020,7 +3023,7 @@ contract SuppressTracesTest is Test {
     );
 
     // Show traces and logs for failed test only.
-    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvv", "-s"]).assert_failure().stdout_eq(
+    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvvv", "-s"]).assert_failure().stdout_eq(
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -3043,6 +3046,8 @@ Traces:
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
@@ -3103,7 +3108,7 @@ Traces:
 
 Backtrace:
   at VM.assertEq
-  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
+  at SuppressTracesTest.test_increment_failure
 
 [PASS] test_increment_success() ([GAS])
 Logs:
@@ -3861,7 +3866,7 @@ contract NonContractCallRevertTest is Test {
      "#,
     );
 
-    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvv"])
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3874,6 +3879,13 @@ Logs:
   test non contract call failure
 
 Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
   [6350] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3889,6 +3901,13 @@ Logs:
   test non contract (void) call failure
 
 Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
   [6215] NonContractCallRevertTest::test_non_contract_void_call_failure()
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3902,6 +3921,13 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
   [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
     ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3971,7 +3997,7 @@ contract NonContractDelegateCallRevertTest is Test {
      "#,
     );
 
-    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvv"])
+    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3988,6 +4014,8 @@ Traces:
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
     ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
     ├─ [3896] LibraryCaller::foobar(10)
     │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
@@ -4027,7 +4055,7 @@ contract ContractWithCustomError {
    "#,
     );
     // Build and cache project selectors.
-    cmd.forge_fuse().args(["build"]).assert_success();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
     cmd.cast_fuse()
@@ -4288,4 +4316,43 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11632>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(invariant_consistent_output, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "InvariantOutputTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantOutputTest is Test {
+    uint256 count;
+
+    function setCond(uint256 cond) public {
+        if (cond > type(uint256).max / 2) {
+            count++;
+        }
+    }
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_check_count() public view {
+        require(count < 2, "failed invariant");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_check_count", "--color", "always"])
+        .assert_failure()
+        .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
 });

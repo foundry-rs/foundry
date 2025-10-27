@@ -52,7 +52,7 @@ use serde_json::json;
 
 mod shrink;
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, EvmError, FailFast, FuzzTestTimer, corpus::CorpusManager,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, FuzzTestTimer, corpus::CorpusManager,
 };
 pub use shrink::check_sequence;
 
@@ -330,7 +330,7 @@ impl<'a> InvariantExecutor<'a> {
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -345,7 +345,7 @@ impl<'a> InvariantExecutor<'a> {
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
+            if early_exit.should_stop() {
                 return false;
             }
 
@@ -566,10 +566,13 @@ impl<'a> InvariantExecutor<'a> {
             self.select_contracts_and_senders(invariant_contract.address)?;
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
+        let inspector = self.executor.inspector();
         let fuzz_state = EvmFuzzState::new(
             self.executor.backend().mem_db(),
             self.config.dictionary,
             deployed_libs,
+            inspector.analysis.as_ref(),
+            inspector.paths_config(),
         );
 
         // Creates the invariant strategy.

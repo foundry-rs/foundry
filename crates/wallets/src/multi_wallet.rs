@@ -380,7 +380,13 @@ impl MultiWalletOpts {
 
     pub async fn trezors(&self) -> Result<Option<Vec<WalletSigner>>> {
         if self.trezor {
-            create_hw_wallets!(self, utils::create_trezor_signer, wallets);
+            let mut args = self.clone();
+
+            if args.hd_paths.is_some() {
+                args.mnemonic_indexes = None;
+            }
+
+            create_hw_wallets!(args, utils::create_trezor_signer, wallets);
             return Ok(Some(wallets));
         }
         Ok(None)

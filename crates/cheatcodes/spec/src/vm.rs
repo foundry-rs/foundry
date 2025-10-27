@@ -1933,11 +1933,13 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
@@ -1945,6 +1947,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1952,6 +1955,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1959,11 +1963,13 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
@@ -1971,6 +1977,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
     #[cheatcode(group = Filesystem)]
@@ -1978,6 +1985,7 @@ interface Vm {
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
     #[cheatcode(group = Filesystem)]

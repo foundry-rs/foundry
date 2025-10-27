@@ -4083,7 +4083,7 @@
     {
       "func": {
         "id": "deployCode_0",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4103,7 +4103,7 @@
     {
       "func": {
         "id": "deployCode_1",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4123,7 +4123,7 @@
     {
       "func": {
         "id": "deployCode_2",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4143,7 +4143,7 @@
     {
       "func": {
         "id": "deployCode_3",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4163,7 +4163,7 @@
     {
       "func": {
         "id": "deployCode_4",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4183,7 +4183,7 @@
     {
       "func": {
         "id": "deployCode_5",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4203,7 +4203,7 @@
     {
       "func": {
         "id": "deployCode_6",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4223,7 +4223,7 @@
     {
       "func": {
         "id": "deployCode_7",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",

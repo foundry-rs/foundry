@@ -1,4 +1,5 @@
 // config: line_length = 120
+// config: prefer_compact = "none"
 event NewEvent(address beneficiary, uint256 index, uint64 timestamp, uint64 endTimestamp);
 
 function emitEvent() {
@@ -30,9 +31,19 @@ function emitEvent() {
     );
 
     // https://github.com/foundry-rs/foundry/issues/12146
-    emit ISablierComptroller.DisableCustomFeeUSD(protocol, caller, users.sender, 0, feeUSD);
+    emit ISablierComptroller.DisableCustomFeeUSD(
+        protocol_protocol,
+        caller_caller,
+        user_users.sender,
+        previousMinFeeUSD_0,
+        newMinFeeUSD_feeUSD
+    );
     emit ISablierComptroller.DisableCustomFeeUSD({
-        protocol: protocol, caller: caller, user: users.sender, previousMinFeeUSD: 0, newMinFeeUSD: feeUSD
+        protocol: protocol,
+        caller: caller,
+        user: users.sender,
+        previousMinFeeUSD: 0,
+        newMinFeeUSD: feeUSD
     });
 
     emit ISablierLockupLinear.CreateLockupLinearStream({
@@ -41,12 +52,7 @@ function emitEvent() {
             funder: msg.sender,
             sender: sender,
             recipient: recipient,
-            depositAmount: depositAmount,
-            token: token,
-            cancelable: cancelable,
-            transferable: transferable,
-            timestamps: timestamps,
-            shape: shape
+            depositAmount: depositAmount
         }),
         cliffTime: cliffTime,
         unlockAmounts: unlockAmounts

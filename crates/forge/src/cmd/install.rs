@@ -234,7 +234,7 @@ impl DependencyInstallOpts {
                         msg.push_str("\n\n");
 
                         if let Some(dep_id) = &dep_id {
-                            msg.push_str(dep_id.to_string().as_str());
+                            msg.push_str(&dep_id.to_string());
                         } else {
                             msg.push_str(tag);
                         }
@@ -252,7 +252,7 @@ impl DependencyInstallOpts {
                 msg.push(' ');
 
                 if let Some(dep_id) = dep_id {
-                    msg.push_str(dep_id.to_string().as_str());
+                    msg.push_str(&dep_id.to_string());
                 } else {
                     msg.push_str(tag.as_str());
                 }
