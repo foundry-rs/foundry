@@ -128,11 +128,13 @@ Multiple attributes can be specified by separating them with commas, e.g. `#[che
 ### `Cheatcode` trait
 
 This trait defines the interface that all cheatcode implementations must implement.
-There are two methods that can be implemented:
+There are three methods that can be implemented:
 
-- `apply`: implemented when the cheatcode is pure and does not need to access EVM data
-- `apply_stateful`: implemented when the cheatcode needs to access EVM data
-- `apply_full`: implemented when the cheatcode needs to access EVM data and the EVM executor itself, for example to recursively call back into the EVM to execute an arbitrary transaction
+| Method | Purpose | When to use |
+|--------|---------|-------------|
+| `apply` | Pure cheatcodes that don't need EVM data access | For simple state manipulations |
+| `apply_stateful` | Cheatcodes that need EVM data access | For operations requiring current EVM state |
+| `apply_full` | Cheatcodes that need EVM executor access | For operations requiring recursive EVM calls |
 
 Only one of these methods can be implemented.
 

@@ -1,8 +1,9 @@
-<svg width="852px" height="470px" xmlns="http://www.w3.org/2000/svg">
+<svg width="844px" height="470px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
-    .bg { background: #000000 }
+    .bg { fill: #000000 }
     .fg-green { fill: #00AA00 }
+    .fg-red { fill: #AA0000 }
     .fg-yellow { fill: #AA5500 }
     .container {
       padding: 0 10px;
@@ -24,7 +25,7 @@
 </tspan>
     <tspan x="10px" y="64px"><tspan>Ran 1 test for test/Counter.t.sol:CounterTest</tspan>
 </tspan>
-    <tspan x="10px" y="82px"><tspan>[PASS] test_Increment() ([GAS])</tspan>
+    <tspan x="10px" y="82px"><tspan class="fg-green">[PASS]</tspan><tspan> test_Increment() ([GAS])</tspan>
 </tspan>
     <tspan x="10px" y="100px"><tspan>Traces:</tspan>
 </tspan>
@@ -60,11 +61,11 @@
 </tspan>
     <tspan x="10px" y="388px">
 </tspan>
-    <tspan x="10px" y="406px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="406px"><tspan>Suite result: </tspan><tspan class="fg-green">ok</tspan><tspan>. </tspan><tspan class="fg-green">1</tspan><tspan> passed; </tspan><tspan class="fg-red">0</tspan><tspan> failed; </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped; [ELAPSED]</tspan>
 </tspan>
     <tspan x="10px" y="424px">
 </tspan>
-    <tspan x="10px" y="442px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
+    <tspan x="10px" y="442px"><tspan>Ran 1 test suite [ELAPSED]: </tspan><tspan class="fg-green">1</tspan><tspan> tests passed, </tspan><tspan class="fg-red">0</tspan><tspan> failed, </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped (1 total tests)</tspan>
 </tspan>
     <tspan x="10px" y="460px">
 </tspan>

@@ -158,7 +158,7 @@ impl ScriptTester {
 
     /// Adds given address as sender
     pub fn sender(&mut self, addr: Address) -> &mut Self {
-        self.args(&["--sender", addr.to_string().as_str()])
+        self.args(&["--sender", &addr.to_string()])
     }
 
     pub fn add_sig(&mut self, contract_name: &str, sig: &str) -> &mut Self {
@@ -166,7 +166,7 @@ impl ScriptTester {
     }
 
     pub fn add_create2_deployer(&mut self, create2_deployer: Address) -> &mut Self {
-        self.args(&["--create2-deployer", create2_deployer.to_string().as_str()])
+        self.args(&["--create2-deployer", &create2_deployer.to_string()])
     }
 
     /// Adds the `--unlocked` flag
