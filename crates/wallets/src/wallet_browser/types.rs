@@ -33,15 +33,6 @@ impl<T> BrowserApiResponse<T> {
     }
 }
 
-/// Contains information about the active wallet connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletConnection {
-    /// The address of the connected wallet.
-    pub address: Address,
-    /// The chain ID of the connected wallet.
-    pub chain_id: ChainId,
-}
-
 /// Represents a transaction request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTransaction {
@@ -64,13 +55,5 @@ pub(crate) struct TransactionResponse {
 }
 
 /// Represents an account update sent from the browser wallet.
-/// If `address` is `None`, it indicates that the wallet has disconnected.
-/// If `address` is different from the previous one, it indicates a switch to a new account.
-/// If `chain_id` is provided, it indicates a change in the connected chain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AccountUpdate {
-    /// The address of the account.
-    pub address: Option<Address>,
-    /// The chain ID of the account.
-    pub chain_id: Option<ChainId>,
-}
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Connection(pub Address, pub ChainId);

@@ -12,7 +12,10 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::wallet_browser::{server::BrowserWalletServer, types::BrowserTransaction};
+use crate::wallet_browser::{
+    server::BrowserWalletServer,
+    types::{BrowserTransaction, Connection},
+};
 
 #[derive(Clone, Debug)]
 pub struct BrowserSigner {
@@ -33,15 +36,11 @@ impl BrowserSigner {
         let start = Instant::now();
 
         loop {
-            if let Some(connection) = server.get_connection() {
-                let _ = sh_println!("Wallet connected: {}", connection.address);
-                let _ = sh_println!("Chain ID: {}", connection.chain_id);
+            if let Some(Connection(address, chain_id)) = server.get_connection() {
+                let _ = sh_println!("Wallet connected: {}", address);
+                let _ = sh_println!("Chain ID: {}", chain_id);
 
-                return Ok(Self {
-                    server: Arc::new(Mutex::new(server)),
-                    address: connection.address,
-                    chain_id: connection.chain_id,
-                });
+                return Ok(Self { server: Arc::new(Mutex::new(server)), address, chain_id });
             }
 
             if start.elapsed() > timeout {

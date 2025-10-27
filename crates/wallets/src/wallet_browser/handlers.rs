@@ -5,7 +5,7 @@ use axum::{Json, extract::State, http::HeaderMap, response::Html};
 use crate::wallet_browser::{
     app::contents,
     state::BrowserWalletState,
-    types::{AccountUpdate, BrowserApiResponse, BrowserTransaction, TransactionResponse},
+    types::{BrowserApiResponse, BrowserTransaction, Connection, TransactionResponse},
 };
 
 pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
@@ -17,10 +17,10 @@ pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
     (headers, Html(contents::INDEX_HTML))
 }
 
-pub(crate) async fn get_pending_transaction(
+pub(crate) async fn get_next_transaction_request(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<BrowserTransaction>> {
-    match state.get_pending_transaction() {
+    match state.get_next_transaction_request() {
         Some(tx) => Json(BrowserApiResponse::with_data(tx)),
         None => Json(BrowserApiResponse::error("No pending transaction")),
     }
@@ -66,23 +66,12 @@ pub(crate) async fn post_transaction_response(
     Json(BrowserApiResponse::ok())
 }
 
-pub(crate) async fn post_account_update(
+pub(crate) async fn post_connection_update(
     State(state): State<Arc<BrowserWalletState>>,
-    Json(body): Json<AccountUpdate>,
+    Json(body): Json<Option<Connection>>,
 ) -> Json<BrowserApiResponse> {
-    match body.address {
-        Some(addr) => {
-            state.set_connected_address(Some(addr));
-
-            if let Some(chain_id) = body.chain_id {
-                state.set_connected_chain_id(Some(chain_id));
-            }
-        }
-        None => {
-            state.set_connected_address(None);
-            state.set_connected_chain_id(None);
-        }
-    }
+    // Update the connected wallet information.
+    state.set_connection(body);
 
     Json(BrowserApiResponse::ok())
 }

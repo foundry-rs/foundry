@@ -19,14 +19,17 @@ impl<Req, Res> Default for RequestQueue<Req, Res> {
 }
 
 impl<Req, Res> RequestQueue<Req, Res> {
+    /// Create a new request queue.
     pub fn new() -> Self {
         Self { requests: VecDeque::new(), responses: HashMap::new() }
     }
 
+    /// Add a new request to the queue.
     pub fn add_request(&mut self, request: Req) {
         self.requests.push_back(request);
     }
 
+    /// Check if the queue contains any pending requests matching the given ID.
     pub fn has_request(&self, id: &Uuid) -> bool
     where
         Req: HasId,
@@ -34,27 +37,30 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.requests.iter().any(|r| r.id() == id)
     }
 
-    pub fn remove_request(&mut self, id: &Uuid) -> Option<Req>
+    /// Retrieve the next request from the queue without removing it.
+    pub fn get_request(&mut self) -> Option<&Req> {
+        self.requests.front()
+    }
+
+    /// Remove a request by its ID.
+    pub fn remove_request(&mut self, id: &Uuid)
     where
         Req: HasId,
     {
         if let Some(pos) = self.requests.iter().position(|r| r.id() == id) {
-            self.requests.remove(pos)
-        } else {
-            None
+            self.requests.remove(pos);
         }
     }
 
+    /// Add a response to the queue.
     pub fn add_response(&mut self, id: Uuid, response: Res) {
         self.responses.insert(id, response);
     }
 
+    /// Get a response by its ID.
     pub fn get_response(&mut self, id: &Uuid) -> Option<Res> {
+        // Note: This removes the response from the map when retrieved.
         self.responses.remove(id)
-    }
-
-    pub fn get_pending(&self) -> Option<&Req> {
-        self.requests.front()
     }
 }
 

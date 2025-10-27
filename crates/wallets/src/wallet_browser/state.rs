@@ -1,25 +1,17 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, ChainId};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::wallet_browser::{
     queue::RequestQueue,
-    types::{BrowserTransaction, TransactionResponse},
+    types::{BrowserTransaction, Connection, TransactionResponse},
 };
-
-/// Current connection information
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ConnectionInfo {
-    pub address: Option<Address>,
-    pub chain_id: Option<ChainId>,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserWalletState {
     /// Current information about the wallet connection
-    pub connection: Arc<Mutex<ConnectionInfo>>,
+    pub connection: Arc<Mutex<Option<Connection>>>,
     /// Request/response queue for transactions
     pub transactions: Arc<Mutex<RequestQueue<BrowserTransaction, TransactionResponse>>>,
 }
@@ -33,39 +25,24 @@ impl Default for BrowserWalletState {
 impl BrowserWalletState {
     pub fn new() -> Self {
         Self {
-            connection: Arc::new(Mutex::new(ConnectionInfo::default())),
+            connection: Arc::new(Mutex::new(None)),
             transactions: Arc::new(Mutex::new(RequestQueue::new())),
         }
     }
 
     /// Check if wallet is connected
     pub fn is_connected(&self) -> bool {
-        self.connection.lock().address.is_some()
+        self.connection.lock().is_some()
     }
 
-    /// Set connected address.
-    pub fn set_connected_address(&self, address: Option<Address>) {
-        let mut connection = self.connection.lock();
-        connection.address = address;
-
-        if connection.address.is_none() {
-            connection.chain_id = None;
-        }
+    /// Get current connection information.
+    pub fn get_connection(&self) -> Option<Connection> {
+        *self.connection.lock()
     }
 
-    /// Set connected chain ID.
-    pub fn set_connected_chain_id(&self, chain_id: Option<ChainId>) {
-        self.connection.lock().chain_id = chain_id;
-    }
-
-    /// Get connected address.
-    pub fn get_connected_address(&self) -> Option<Address> {
-        self.connection.lock().address
-    }
-
-    /// Get connected chain ID.
-    pub fn get_connected_chain_id(&self) -> Option<ChainId> {
-        self.connection.lock().chain_id
+    /// Set connection information.
+    pub fn set_connection(&self, connection: Option<Connection>) {
+        *self.connection.lock() = connection;
     }
 
     /// Add a transaction request.
@@ -78,12 +55,12 @@ impl BrowserWalletState {
         self.transactions.lock().has_request(id)
     }
 
-    /// Get pending transaction.
-    pub fn get_pending_transaction(&self) -> Option<BrowserTransaction> {
-        self.transactions.lock().get_pending().cloned()
+    /// Get next transaction request.
+    pub fn get_next_transaction_request(&self) -> Option<BrowserTransaction> {
+        self.transactions.lock().get_request().cloned()
     }
 
-    /// Remove transaction request.
+    // Remove a transaction request.
     pub fn remove_transaction_request(&self, id: &Uuid) {
         self.transactions.lock().remove_request(id);
     }
@@ -92,7 +69,7 @@ impl BrowserWalletState {
     pub fn add_transaction_response(&self, response: TransactionResponse) {
         let id = response.id;
         self.transactions.lock().add_response(id, response);
-        self.remove_transaction_request(&id);
+        self.transactions.lock().remove_request(&id);
     }
 
     /// Get transaction response.

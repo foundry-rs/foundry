@@ -18,7 +18,7 @@ use crate::wallet_browser::{
     error::BrowserWalletError,
     handlers,
     state::BrowserWalletState,
-    types::{BrowserTransaction, WalletConnection},
+    types::{BrowserTransaction, Connection},
 };
 
 /// Browser wallet server.
@@ -49,9 +49,9 @@ impl BrowserWalletServer {
             // Serve browser wallet application
             .route("/", get(handlers::serve_index))
             // API endpoints
-            .route("/api/transaction/pending", get(handlers::get_pending_transaction))
+            .route("/api/transaction/request", get(handlers::get_next_transaction_request))
             .route("/api/transaction/response", post(handlers::post_transaction_response))
-            .route("/api/account", post(handlers::post_account_update))
+            .route("/api/connection", post(handlers::post_connection_update))
             .with_state(Arc::clone(&self.state));
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
@@ -102,12 +102,8 @@ impl BrowserWalletServer {
     }
 
     /// Get current wallet connection.
-    pub fn get_connection(&self) -> Option<WalletConnection> {
-        self.state.get_connected_address().map(|address| {
-            let chain_id = self.state.get_connected_chain_id().unwrap_or(31337);
-
-            WalletConnection { address, chain_id }
-        })
+    pub fn get_connection(&self) -> Option<Connection> {
+        self.state.get_connection()
     }
 
     /// Request a transaction to be signed and sent via the browser wallet.
@@ -160,7 +156,7 @@ mod tests {
     use tokio::task::JoinHandle;
     use uuid::Uuid;
 
-    use crate::wallet_browser::types::{AccountUpdate, BrowserApiResponse, TransactionResponse};
+    use crate::wallet_browser::types::{BrowserApiResponse, TransactionResponse};
 
     const ALICE: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
@@ -177,8 +173,8 @@ mod tests {
         // Start server
         server.start().await.unwrap();
 
-        // Check that the pending transaction queue is empty
-        check_pending_transaction_queue_empty(&server).await;
+        // Check that the transaction request queue is empty
+        check_transaction_request_queue_empty(&server).await;
 
         // Stop server
         server.stop().await.unwrap();
@@ -190,18 +186,17 @@ mod tests {
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(5));
         server.start().await.unwrap();
 
-        // Check that the pending transaction queue is empty
-        check_pending_transaction_queue_empty(&server).await;
+        // Check that the transaction request queue is empty
+        check_transaction_request_queue_empty(&server).await;
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, ALICE, 1).await;
+        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Check connection state
-        let connection = server.get_connection();
-        assert!(connection.is_some());
-        let connection = connection.unwrap();
-        assert_eq!(connection.address, ALICE);
-        assert_eq!(connection.chain_id, 1);
+        let Connection(address, chain_id) =
+            server.get_connection().expect("expected an active wallet connection");
+        assert_eq!(address, ALICE);
+        assert_eq!(chain_id, 1);
 
         // Disconnect wallet
         disconnect_wallet(&client, &server).await;
@@ -210,14 +205,13 @@ mod tests {
         assert!(!server.is_connected());
 
         // Connect Bob's wallet
-        connect_wallet(&client, &server, BOB, 42).await;
+        connect_wallet(&client, &server, Connection(BOB, 42)).await;
 
         // Check connection state
-        let connection = server.get_connection();
-        assert!(connection.is_some());
-        let connection = connection.unwrap();
-        assert_eq!(connection.address, BOB);
-        assert_eq!(connection.chain_id, 42);
+        let Connection(address, chain_id) =
+            server.get_connection().expect("expected an active wallet connection");
+        assert_eq!(address, BOB);
+        assert_eq!(chain_id, 42);
 
         // Stop server
         server.stop().await.unwrap();
@@ -230,7 +224,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, ALICE, 1).await;
+        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Create a browser transaction request
         let (tx_request_id, tx_request) = create_browser_transaction();
@@ -238,8 +232,8 @@ mod tests {
         // Spawn the signing flow in the background
         let handle = wait_for_signing(&server, tx_request).await;
 
-        // Check pending transaction
-        check_pending_transaction(&server, tx_request_id).await;
+        // Check transaction request
+        check_transaction_request_content(&server, tx_request_id).await;
 
         // Simulate the wallet accepting and signing the tx
         let resp = client
@@ -273,7 +267,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, ALICE, 1).await;
+        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Create a random transaction response without a matching request
         let tx_request_id = Uuid::new_v4();
@@ -314,7 +308,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, ALICE, 1).await;
+        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Simulate the wallet sending a response with an invalid UUID
         let resp = client
@@ -342,7 +336,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, ALICE, 1).await;
+        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Create a browser transaction request
         let (tx_request_id, tx_request) = create_browser_transaction();
@@ -350,8 +344,8 @@ mod tests {
         // Spawn the signing flow in the background
         let handle = wait_for_signing(&server, tx_request).await;
 
-        // Check pending transaction
-        check_pending_transaction(&server, tx_request_id).await;
+        // Check transaction request
+        check_transaction_request_content(&server, tx_request_id).await;
 
         // Simulate the wallet rejecting the tx
         let resp = client
@@ -383,12 +377,11 @@ mod tests {
     async fn connect_wallet(
         client: &reqwest::Client,
         server: &BrowserWalletServer,
-        address: Address,
-        chain_id: u64,
+        connection: Connection,
     ) {
         let resp = client
-            .post(format!("http://localhost:{}/api/account", server.port()))
-            .json(&AccountUpdate { address: Some(address), chain_id: Some(chain_id) })
+            .post(format!("http://localhost:{}/api/connection", server.port()))
+            .json(&connection)
             .send();
         assert!(resp.await.is_ok());
     }
@@ -396,8 +389,8 @@ mod tests {
     /// Helper to disconnect a wallet from the server.
     async fn disconnect_wallet(client: &reqwest::Client, server: &BrowserWalletServer) {
         let resp = client
-            .post(format!("http://localhost:{}/api/account", server.port()))
-            .json(&AccountUpdate { address: None, chain_id: None })
+            .post(format!("http://localhost:{}/api/connection", server.port()))
+            .json(&Option::<Connection>::None)
             .send();
         assert!(resp.await.is_ok());
     }
@@ -432,9 +425,9 @@ mod tests {
         (id, tx)
     }
 
-    /// Check that the pending transaction queue is empty (expects Error).
-    async fn check_pending_transaction_queue_empty(server: &BrowserWalletServer) {
-        let url = format!("http://localhost:{}/api/transaction/pending", server.port());
+    /// Check that the transaction request queue is empty, if not panic.
+    async fn check_transaction_request_queue_empty(server: &BrowserWalletServer) {
+        let url = format!("http://localhost:{}/api/transaction/request", server.port());
         let resp = reqwest::get(&url).await.unwrap();
 
         let BrowserApiResponse::Error { message } =
@@ -446,9 +439,9 @@ mod tests {
         assert_eq!(message, "No pending transaction");
     }
 
-    /// Check that the pending transaction matches the expected request ID and fields.
-    async fn check_pending_transaction(server: &BrowserWalletServer, tx_request_id: Uuid) {
-        let url = format!("http://localhost:{}/api/transaction/pending", server.port());
+    /// Check that the transaction request matches the expected request ID and fields.
+    async fn check_transaction_request_content(server: &BrowserWalletServer, tx_request_id: Uuid) {
+        let url = format!("http://localhost:{}/api/transaction/request", server.port());
         let resp = reqwest::get(&url).await.unwrap();
 
         let BrowserApiResponse::Ok(pending_tx) =
