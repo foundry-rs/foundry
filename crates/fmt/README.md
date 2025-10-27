@@ -116,7 +116,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `bracket_spacing` | `false` | Print spaces between brackets. |
 | `int_types` | `long` | Style for `uint256`/`int256` types. Options: `long`, `short`, `preserve`. |
 | `multiline_func_header` | `attributes_first` | The style of multiline function headers. Options: `attributes_first`, `params_always`, `params_first_multi`, `all`, `all_params`. |
-| `prefer_compact` | `calls` | Style that determines if a broken list, should keep its elements together on their own line, before breaking individually. Options: `calls`, `events`, `errors`, `events_errors`, `all`. |
+| `prefer_compact` | `all` | Style that determines if a broken list, should keep its elements together on their own line, before breaking individually. Options: `calls`, `events`, `errors`, `events_errors`, `all`. |
 | `quote_style` | `double` | The style of quotation marks. Options: `double`, `single`, `preserve`. |
 | `number_underscore` | `preserve` | The style of underscores in number literals. Options: `preserve`, `remove`, `thousands`. |
 | `hex_underscore` | `remove` | The style of underscores in hex literals. Options: `preserve`, `remove`, `bytes`. |
