@@ -207,7 +207,6 @@ fmt_tests! {
     RevertNamedArgsStatement,
     RevertStatement,
     SimpleComments,
-    SingleLineImports,
     SortedImports,
     StatementBlock,
     StructDefinition,

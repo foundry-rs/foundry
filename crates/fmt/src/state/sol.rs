@@ -218,29 +218,34 @@ impl<'ast> State<'_, 'ast> {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
-                if !use_single_line {
+                if use_single_line {
+                    self.word("{");
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                } else {
                     self.s.cbox(self.ind);
-                }
-                self.word("{");
-                if !use_single_line {
+                    self.word("{");
                     self.braces_break();
                 }
 
-                let aliases_iter: Box<dyn Iterator<Item = _>> = if self.config.sort_imports {
+                if self.config.sort_imports {
                     let mut sorted: Vec<_> = aliases.iter().collect();
                     sorted.sort_by_key(|(ident, _alias)| ident.name.as_str());
-                    Box::new(sorted.into_iter())
+                    self.print_commasep_aliases(sorted.into_iter());
                 } else {
-                    Box::new(aliases.iter())
+                    self.print_commasep_aliases(aliases.iter());
                 };
-                self.print_commasep_aliases(aliases_iter);
 
-                if !use_single_line {
+                if use_single_line {
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                    self.word("}");
+                } else {
                     self.braces_break();
                     self.s.offset(-self.ind);
-                }
-                self.word("}");
-                if !use_single_line {
+                    self.word("}");
                     self.end();
                 }
                 self.word(" from ");
