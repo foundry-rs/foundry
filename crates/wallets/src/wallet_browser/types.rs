@@ -40,7 +40,6 @@ pub struct BrowserTransaction {
     /// The unique identifier for the transaction.
     pub id: Uuid,
     /// The transaction request details.
-    #[serde(flatten)]
     pub request: TransactionRequest,
 }
 
