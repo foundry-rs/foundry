@@ -17,20 +17,12 @@ use foundry_evm::{
 };
 use solang_parser::pt;
 use std::ops::ControlFlow;
-use tracing::debug;
 use yansi::Paint;
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
-    /// the [ChiselResult].
-    ///
-    /// Returns an error if compilation fails.
-    pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
+    pub async fn execute(&mut self) -> Result<ChiselResult> {
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
@@ -38,6 +30,7 @@ impl SessionSource {
             let contract = output
                 .repl_contract()
                 .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
+            trace!(?contract, "REPL contract");
             let bytecode = contract
                 .get_bytecode_bytes()
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
@@ -76,11 +69,11 @@ impl SessionSource {
         // Events and tuples fails compilation due to it not being able to be encoded in
         // `inspectoor`. If that happens, try executing without the inspector.
         let (mut res, err) = match source.execute().await {
-            Ok((_, res)) => (res, None),
+            Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
                 match source_without_inspector.execute().await {
-                    Ok((_, res)) => (res, Some(err)),
+                    Ok(res) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
@@ -204,7 +197,7 @@ impl SessionSource {
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env = self.config.evm_opts.evm_env().await?;
 
-        let backend = match self.config.backend.take() {
+        let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
@@ -422,22 +415,22 @@ enum Type {
     Builtin(DynSolType),
 
     /// (type)
-    Array(Box<Type>),
+    Array(Box<Self>),
 
     /// (type, length)
-    FixedArray(Box<Type>, usize),
+    FixedArray(Box<Self>, usize),
 
     /// (type, index)
-    ArrayIndex(Box<Type>, Option<usize>),
+    ArrayIndex(Box<Self>, Option<usize>),
 
     /// (types)
-    Tuple(Vec<Option<Type>>),
+    Tuple(Vec<Option<Self>>),
 
     /// (name, params, returns)
-    Function(Box<Type>, Vec<Option<Type>>, Vec<Option<Type>>),
+    Function(Box<Self>, Vec<Option<Self>>, Vec<Option<Self>>),
 
     /// (lhs, rhs)
-    Access(Box<Type>, String),
+    Access(Box<Self>, String),
 
     /// (types)
     Custom(Vec<String>),

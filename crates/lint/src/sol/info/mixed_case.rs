@@ -1,7 +1,7 @@
 use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
-    linter::{EarlyLintPass, LintContext},
-    sol::{Severity, SolLint, info::screaming_snake_case::is_screaming_snake_case},
+    linter::{EarlyLintPass, LintContext, Suggestion},
+    sol::{Severity, SolLint, info::screaming_snake_case::check_screaming_snake_case},
 };
 use solar::ast::{FunctionHeader, ItemFunction, VariableDefinition, Visibility};
 
@@ -15,10 +15,19 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
     fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name
-            && !is_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
+            && let Some(expected) =
+                check_mixed_case(name.as_str(), true, ctx.config.mixed_case_exceptions)
             && !is_constant_getter(&func.header)
         {
-            ctx.emit(&MIXED_CASE_FUNCTION, name.span);
+            ctx.emit_with_suggestion(
+                &MIXED_CASE_FUNCTION,
+                name.span,
+                Suggestion::fix(
+                    expected,
+                    solar::interface::diagnostics::Applicability::MachineApplicable,
+                )
+                .with_desc("consider using"),
+            );
         }
     }
 }
@@ -38,60 +47,70 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     ) {
         if var.mutability.is_none()
             && let Some(name) = var.name
-            && !is_mixed_case(name.as_str(), false, ctx.config.mixed_case_exceptions)
+            && let Some(expected) =
+                check_mixed_case(name.as_str(), false, ctx.config.mixed_case_exceptions)
         {
-            ctx.emit(&MIXED_CASE_VARIABLE, name.span);
+            ctx.emit_with_suggestion(
+                &MIXED_CASE_VARIABLE,
+                name.span,
+                Suggestion::fix(
+                    expected,
+                    solar::interface::diagnostics::Applicability::MachineApplicable,
+                )
+                .with_desc("consider using"),
+            );
         }
     }
 }
 
-/// Checks if a string is mixedCase.
+/// If the string `s` is not mixedCase, returns a `Some(String)` with the
+/// suggested conversion. Otherwise, returns `None`.
 ///
-/// To avoid false positives like `fn increment()` or `uint256 counter`,
-/// lowercase strings are treated as mixedCase.
-pub fn is_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> bool {
+/// To avoid false positives:
+/// - lowercase strings like `fn increment()` or `uint256 counter`, are treated as mixedCase.
+/// - test functions starting with `test`, `invariant_` or `statefulFuzz` are ignored.
+/// - user-defined patterns like `ERC20` are allowed.
+fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option<String> {
     if s.len() <= 1 {
-        return true;
+        return None;
     }
 
-    // Remove leading/trailing underscores like `heck` does.
-    if check_lower_mixed_case(s.trim_matches('_')) {
-        return true;
+    // Exception for test, invariant, and stateful fuzzing functions.
+    if is_fn
+        && (s.starts_with("test") || s.starts_with("invariant_") || s.starts_with("statefulFuzz"))
+    {
+        return None;
     }
 
-    // Ignore user-defined infixes.
+    // Exception for user-defined infix patterns.
     for pattern in allowed_patterns {
-        if let Some(pos) = s.find(pattern.as_str())
-            && check_lower_mixed_case(&s[..pos])
-            && check_upper_mixed_case_post_pattern(&s[pos + pattern.len()..])
-        {
-            return true;
+        if let Some(pos) = s.find(pattern.as_str()) {
+            let (pre, post) = s.split_at(pos);
+            let post = &post[pattern.len()..];
+
+            // Check if the part before the pattern is valid lowerCamelCase.
+            let is_pre_valid = pre == heck::AsLowerCamelCase(pre).to_string();
+
+            // Check if the part after is valid UpperCamelCase (allowing leading numbers).
+            let post_trimmed = post.trim_start_matches(|c: char| c.is_numeric());
+            let is_post_valid = post_trimmed == heck::AsUpperCamelCase(post_trimmed).to_string();
+
+            if is_pre_valid && is_post_valid {
+                return None;
+            }
         }
     }
 
-    // Ignore `fn test*`, `fn invariant_*`, and `fn statefulFuzz*` patterns, as they usually contain
-    // (allowed) underscores.
-    is_fn && (s.starts_with("test") || s.starts_with("invariant_") || s.starts_with("statefulFuzz"))
-}
+    // Generate the expected mixedCase version.
+    let suggestion = format!(
+        "{prefix}{name}{suffix}",
+        prefix = if s.starts_with('_') { "_" } else { "" },
+        name = heck::AsLowerCamelCase(s),
+        suffix = if s.ends_with('_') { "_" } else { "" }
+    );
 
-fn check_lower_mixed_case(s: &str) -> bool {
-    s == heck::AsLowerCamelCase(s).to_string().as_str()
-}
-
-fn check_upper_mixed_case_post_pattern(s: &str) -> bool {
-    // Find the index of the first character that is not a numeric digit.
-    let Some(split_idx) = s.find(|c: char| !c.is_numeric()) else {
-        return true;
-    };
-
-    // Validate the characters preceding the initial numbers have the correct format.
-    let trimmed = &s[split_idx..];
-    if let Some(c) = trimmed.chars().next()
-        && !c.is_alphabetic()
-    {
-        return false;
-    }
-    trimmed == heck::AsUpperCamelCase(trimmed).to_string().as_str()
+    // If the original string already matches the suggestion, it's valid.
+    if s == suggestion { None } else { Some(suggestion) }
 }
 
 /// Checks if a function getter is a valid constant getter with a heuristic:
@@ -99,12 +118,15 @@ fn check_upper_mixed_case_post_pattern(s: &str) -> bool {
 ///  * external view visibility and mutability.
 ///  * zero parameters.
 ///  * exactly one return value.
-///  * return value is an elementary type
+///  * return value is an elementary or a custom type
 fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
     header.visibility().is_some_and(|v| matches!(v, Visibility::External))
         && header.state_mutability().is_view()
         && header.parameters.is_empty()
         && header.returns().len() == 1
-        && header.returns().first().is_some_and(|ret| ret.ty.kind.is_elementary())
-        && is_screaming_snake_case(header.name.unwrap().as_str())
+        && header
+            .returns()
+            .first()
+            .is_some_and(|ret| ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
+        && check_screaming_snake_case(header.name.unwrap().as_str()).is_none()
 }

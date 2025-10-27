@@ -3,7 +3,7 @@
 //! Smart contract scripting.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate foundry_common;
@@ -26,13 +26,12 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, GlobalArgs},
+    opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
-    evm::{Breakpoints, EvmArgs},
     shell,
 };
 use foundry_compilers::ArtifactId;
@@ -45,6 +44,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
+    core::Breakpoints,
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
@@ -190,7 +190,7 @@ pub struct ScriptArgs {
     pub etherscan_api_key: Option<String>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
-    #[arg(long)]
+    #[arg(long, requires = "broadcast")]
     pub verify: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
@@ -250,8 +250,7 @@ impl ScriptArgs {
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
-        let bundled = if compiled.args.resume || (compiled.args.verify && !compiled.args.broadcast)
-        {
+        let bundled = if compiled.args.resume {
             compiled.resume().await?
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
@@ -489,9 +488,9 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// We only broadcast transactions if --broadcast or --resume was passed.
+    /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     fn should_broadcast(&self) -> bool {
-        self.broadcast || self.resume
+        self.broadcast || self.resume || self.verify
     }
 }
 
@@ -709,7 +708,7 @@ mod tests {
             "0x4e59b44847b379578588920ca78fbf26c0b4956c",
             "--unlocked",
             "--private-key",
-            key.to_string().as_str(),
+            &key.to_string(),
         ]);
         assert!(args.is_err());
     }

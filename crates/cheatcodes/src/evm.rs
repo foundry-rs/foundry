@@ -21,13 +21,14 @@ use foundry_common::{
         SlotInfo,
     },
 };
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::StackSnapshotType;
+use foundry_evm_traces::TraceMode;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -45,7 +46,8 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
+use foundry_config::evm_spec_id;
+use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
 mod fork;
@@ -1055,13 +1057,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
             original_tracer_config: *tracer.config(),
         };
 
-        // turn on tracer configuration for recording
-        tracer.update_config(|config| {
-            config
-                .set_steps(true)
-                .set_memory_snapshots(true)
-                .set_stack_snapshots(StackSnapshotType::Full)
-        });
+        // turn on tracer debug configuration for recording
+        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
@@ -1088,7 +1085,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         let debug_steps: Vec<DebugStep> =
-            steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+            steps.iter().map(|step| convert_call_trace_ctx_to_debug_step(step)).collect();
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
@@ -1105,6 +1102,24 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         ccx.state.record_debug_steps_info = None;
 
         Ok(debug_steps.abi_encode())
+    }
+}
+
+impl Cheatcode for setEvmVersionCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { evm } = self;
+        let spec_id = evm_spec_id(
+            EvmVersion::from_str(evm)
+                .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
+        );
+        ccx.state.execution_evm_version = Some(spec_id);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getEvmVersionCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        Ok(ccx.ecx.cfg.spec.to_string().to_lowercase().abi_encode())
     }
 }
 

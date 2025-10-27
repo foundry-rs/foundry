@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "utils/Test.sol";
 
 library JsonStructs {
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
@@ -66,7 +64,7 @@ library JsonStructs {
     }
 }
 
-contract ParseJsonTest is DSTest {
+contract ParseJsonTest is Test {
     using JsonStructs for *;
 
     struct FlatJson {
@@ -88,7 +86,6 @@ contract ParseJsonTest is DSTest {
         string name;
     }
 
-    Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
     function setUp() public {
@@ -328,9 +325,7 @@ contract ParseJsonTest is DSTest {
     }
 }
 
-contract WriteJsonTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract WriteJsonTest is Test {
     string json1;
     string json2;
 

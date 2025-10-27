@@ -367,7 +367,7 @@ impl Executor {
         // persistent across fork swaps in forking mode
         self.backend_mut().add_persistent_account(address);
 
-        debug!(%address, "deployed contract");
+        trace!(%address, "deployed contract");
 
         Ok(DeployResult { raw: result, address })
     }
@@ -1130,17 +1130,18 @@ impl FuzzTestTimer {
     }
 }
 
-/// Helper struct to enable fail fast behavior: when one test fails, all other tests stop early.
-#[derive(Clone)]
-pub struct FailFast {
-    /// Shared atomic flag set to `true` when a failure occurs.
-    /// None if fail-fast is disabled.
+/// Helper struct to enable early exit behavior: when one test fails or run is interrupted,
+/// all other tests stop early.
+#[derive(Clone, Debug)]
+pub struct EarlyExit {
+    /// Shared atomic flag set to `true` when a failure occurs or ctrl-c received.
+    /// None if running without fail-fast or show-progress.
     inner: Option<Arc<AtomicBool>>,
 }
 
-impl FailFast {
-    pub fn new(fail_fast: bool) -> Self {
-        Self { inner: fail_fast.then_some(Arc::new(AtomicBool::new(false))) }
+impl EarlyExit {
+    pub fn new(early_exit: bool) -> Self {
+        Self { inner: early_exit.then_some(Arc::new(AtomicBool::new(false))) }
     }
 
     /// Returns `true` if fail-fast is enabled.
@@ -1148,14 +1149,14 @@ impl FailFast {
         self.inner.is_some()
     }
 
-    /// Sets the failure flag. Used by other tests to stop early.
-    pub fn record_fail(&self) {
-        if let Some(fail_fast) = &self.inner {
-            fail_fast.store(true, Ordering::Relaxed);
+    /// Sets the exit flag. Used by other tests to stop early.
+    pub fn record_exit(&self) {
+        if let Some(early_exit) = &self.inner {
+            early_exit.store(true, Ordering::Relaxed);
         }
     }
 
-    /// Whether a failure has been recorded and test should stop.
+    /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
         self.inner.as_ref().map(|flag| flag.load(Ordering::Relaxed)).unwrap_or(false)
     }

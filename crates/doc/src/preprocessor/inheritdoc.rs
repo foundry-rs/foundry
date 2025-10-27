@@ -1,9 +1,9 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
     Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
+    solang_ext::SafeUnwrap,
 };
 use alloy_primitives::map::HashMap;
-use forge_fmt::solang_ext::SafeUnwrap;
 
 /// [`Inheritdoc`] preprocessor ID.
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");
@@ -78,9 +78,9 @@ impl Inheritdoc {
                 // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
                 for children in &item.children {
-                    // TODO: improve matching logic
-                    if source.ident() == children.source.ident() {
-                        let key = format!("{}.{}", base, source.ident());
+                    // Match using signature for functions (includes parameter types for overloads)
+                    if source.signature() == children.source.signature() {
+                        let key = format!("{}.{}", base, source.signature());
                         return Some((key, children.comments.clone()));
                     }
                 }

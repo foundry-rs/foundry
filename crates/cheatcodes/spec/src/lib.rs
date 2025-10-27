@@ -1,7 +1,7 @@
 //! Cheatcode specification for Foundry.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt};
@@ -117,8 +117,7 @@ mod tests {
     #[cfg(feature = "schema")]
     const SCHEMA_PATH: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/cheatcodes.schema.json");
-    const IFACE_PATH: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../testdata/cheats/Vm.sol");
+    const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../testdata/utils/Vm.sol");
 
     /// Generates the `cheatcodes.json` file contents.
     fn json_cheatcodes() -> String {

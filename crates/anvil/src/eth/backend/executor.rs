@@ -27,15 +27,13 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
-    transaction::{
-        DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
-    },
+    transaction::{PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_evm::{
     backend::DatabaseError,
+    core::{either_evm::EitherEvm, precompiles::EC_RECOVER},
     traces::{CallTraceDecoder, CallTraceNode},
 };
-use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use foundry_evm_networks::NetworkConfigs;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
@@ -85,11 +83,16 @@ impl ExecutedTransaction {
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
-                inner: receipt_with_bloom,
-                deposit_nonce: Some(0),
-                deposit_receipt_version: Some(1),
-            }),
+            TypedTransaction::Deposit(_tx) => {
+                TypedReceipt::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
+                    receipt: op_alloy_consensus::OpDepositReceipt {
+                        inner: receipt_with_bloom.receipt,
+                        deposit_nonce: Some(0),
+                        deposit_receipt_version: Some(1),
+                    },
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                })
+            }
         }
     }
 }
@@ -269,7 +272,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
 
-        if self.networks.optimism {
+        if self.networks.is_optimism() {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
@@ -467,7 +470,7 @@ where
     DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if env.networks.optimism {
+    if env.networks.is_optimism() {
         let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
         let op_context = OpContext {
             journaled_state: {

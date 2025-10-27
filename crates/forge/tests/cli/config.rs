@@ -106,6 +106,7 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 celo = false
+bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
@@ -132,9 +133,12 @@ hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
 override_spacing = false
 wrap_comments = false
+docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
+pow_no_space = false
+prefer_compact = "all"
 
 [lint]
 severity = []
@@ -161,7 +165,8 @@ dictionary_weight = 40
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 9830400
+max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
@@ -179,7 +184,8 @@ dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
-max_fuzz_dictionary_values = 6553600
+max_fuzz_dictionary_values = 9830400
+max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
@@ -345,7 +351,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        celo: false,
+        networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -455,7 +461,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
 
     let install = |cmd: &mut TestCommand, dep: &str| {
         cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
-Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
+Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag: None)
     Installed solmate[..]
 
 "#]]);
@@ -896,7 +902,7 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -908,7 +914,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
 
     // additional install don't edit `libs`
     cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
-Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
+Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
     Installed ds-test
 
 "#]]);
@@ -923,7 +929,7 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 
 "#]]);
@@ -1218,7 +1224,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 9830400,
+    "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
     "corpus_gzip": true,
@@ -1238,7 +1245,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "include_storage": true,
     "include_push_bytes": true,
     "max_fuzz_dictionary_addresses": 15728640,
-    "max_fuzz_dictionary_values": 6553600,
+    "max_fuzz_dictionary_values": 9830400,
+    "max_fuzz_dictionary_literals": 6553600,
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
@@ -1304,9 +1312,12 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
-    "sort_imports": false
+    "sort_imports": false,
+    "pow_no_space": false,
+    "prefer_compact": "all"
   },
   "lint": {
     "severity": [],
@@ -1349,6 +1360,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "assertions_revert": true,
   "legacy_assertions": false,
   "celo": false,
+  "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
@@ -1921,30 +1933,144 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 "#]]);
 });
 
-// Test that EVM version configuration works and the incompatibility check is available
-forgetest_init!(evm_version_incompatibility_check, |prj, cmd| {
-    // Clear default contracts
+// <https://github.com/foundry-rs/foundry/issues/5866>
+forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+    cmd.git_init();
+
+    let toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+
+    # Custom sections for other tools
+    [external.scopelint]
+    some_flag = 1
+
+    [external.forge_deploy]
+    another_setting = 123";
+
+    fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10550>
+forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
+    cmd.git_init();
+
+    let faulty_toml = r"[profile.default]
+    src = 'src'
+    out = 'out'
+    solc_version = '0.8.18'
+    foo = 'unknown'
+
+    [profile.another]
+    src = 'src'
+    out = 'out'
+    bar = 'another_unknown'";
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+Warning: Found unknown `bar` config for profile `another` defined in foundry.toml.
+Warning: Found unknown `foo` config for profile `default` defined in foundry.toml.
+
+"#]]);
+});
+
+forgetest_init!(test_ignored_file_paths_normalization, |prj, cmd| {
+    fn gen_contract(name: &str) -> String {
+        let fn_name = name.chars().next().unwrap().to_lowercase().to_string() + &name[1..];
+        format!(
+            r#"
+contract {name} {{
+    function {fn_name}() public returns (bool) {{ return true; }}
+}}
+"#
+        )
+    }
+
+    // Update config to ignore warnings from specific files with various path formats
+    prj.update_config(|config| {
+        config.ignored_file_paths = vec![
+            PathBuf::from("./test/IgnoredWithPrefix.sol"), // With "./" prefix
+            PathBuf::from("src/IgnoredNoPrefix.sol"),      // Without "./" prefix
+            PathBuf::from("./src/nested/IgnoredNested.sol"), // Nested path with prefix
+        ];
+    });
+
+    // Create contracts that will generate warnings
+    prj.add_source("IgnoredNoPrefix.sol", &gen_contract("IgnoredNoPrefix"));
+    prj.add_test("IgnoredWithPrefix.sol", &gen_contract("IgnoredWithPrefix"));
+
+    fs::create_dir_all(prj.root().join("src/nested")).unwrap();
+    fs::write(prj.root().join("src/nested/IgnoredNested.sol"), gen_contract("IgnoredNested"))
+        .unwrap();
+
+    prj.add_source("NotIgnored.sol", &gen_contract("NotIgnored"));
+
+    // Verify the config loads paths as specified (before normalization)
+    let config = cmd.config();
+    let raw_paths = vec![
+        PathBuf::from("./test/IgnoredWithPrefix.sol"),
+        PathBuf::from("src/IgnoredNoPrefix.sol"),
+        PathBuf::from("./src/nested/IgnoredNested.sol"),
+    ];
+    assert_eq!(config.ignored_file_paths, raw_paths);
+
+    // Build and verify compilation succeeds with just 1 warning:
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function notIgnored() public returns (bool) { return true; }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"#,
+    );
+});
+
+forgetest_init!(test_failures_file_normalization, |prj, cmd| {
+    // Update config with custom path containing "./" prefix
+    prj.update_config(|config| {
+        config.test_failures_file = PathBuf::from("./my-custom-failures");
+    });
+
     prj.wipe_contracts();
-
-    // Add a simple contract
-    prj.add_source(
-        "Simple.sol",
+    prj.add_test(
+        "MixedTests.t.sol",
         r#"
-pragma solidity ^0.8.5;
+import {Test} from "forge-std/Test.sol";
 
-contract Simple {
-    uint public value = 42;
+contract MixedTests is Test {
+    function testPass() public pure {
+        require(1 == 1);
+    }
+
+    function testFail() public pure {
+        require(1 == 2, "testFail failed");
+    }
 }
 "#,
     );
 
-    prj.update_config(|config| {
-        config.evm_version = EvmVersion::Cancun;
-        config.solc = Some(SolcReq::Version("0.8.5".parse().unwrap()));
-    });
+    // Run test and verify test_failures_file is created at the correct location
+    cmd.args(["test"]).assert_failure();
+    let failures_file = prj.root().join("my-custom-failures");
+    assert!(failures_file.exists());
+    assert!(fs::read_to_string(&failures_file).unwrap().contains("testFail"));
 
-    let result = cmd.args(["build"]).assert_success();
-    let output = result.get_output();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warning: evm_version 'cancun' may be incompatible with solc version. Consider using 'berlin'"));
+    // Verify --rerun works from subdirectory
+    let rerun_output = cmd
+        .forge_fuse()
+        .current_dir(prj.root().join("src"))
+        .args(["test", "--rerun"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(rerun_output.contains("Ran 1 test"));
+    assert!(rerun_output.contains("testFail()"));
+    assert!(!rerun_output.contains("[PASS] testPass()"));
 });

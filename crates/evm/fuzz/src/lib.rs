@@ -3,7 +3,7 @@
 //! EVM fuzzing implementation using [`proptest`].
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -13,7 +13,8 @@ use alloy_primitives::{
     Address, Bytes, Log,
     map::{AddressHashMap, HashMap},
 };
-use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
+use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_evm_core::Breakpoints;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use itertools::Itertools;
@@ -27,6 +28,7 @@ pub use error::FuzzError;
 
 pub mod invariant;
 pub mod strategies;
+pub use strategies::LiteralMaps;
 
 mod inspector;
 pub use inspector::Fuzzer;

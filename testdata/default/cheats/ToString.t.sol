@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract ToStringTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract ToStringTest is Test {
     function testAddressToString() public {
         address testAddress = 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D;
         string memory stringAddress = vm.toString(testAddress);

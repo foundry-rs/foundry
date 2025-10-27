@@ -1,3 +1,4 @@
+use crate::debug::handle_traces;
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
@@ -10,7 +11,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{TraceResult, handle_traces, init_progress},
+    utils::{TraceResult, init_progress},
 };
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_impersonated_tx, is_known_system_sender, shell};
 use foundry_compilers::artifacts::EvmVersion;
@@ -23,12 +24,12 @@ use foundry_config::{
 };
 use foundry_evm::{
     Env,
+    core::env::AsEnvMut,
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
 };
-use foundry_evm_core::env::AsEnvMut;
 
 use crate::utils::apply_chain_and_block_specific_env_changes;
 
@@ -188,7 +189,11 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Prague);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(
+                env.as_env_mut(),
+                block,
+                config.networks,
+            );
         }
 
         let trace_mode = TraceMode::Call

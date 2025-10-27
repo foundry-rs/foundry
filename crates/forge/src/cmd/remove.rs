@@ -33,7 +33,6 @@ impl RemoveArgs {
         let config = self.load_config()?;
         let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
-
         let git = Git::new(&root);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         let _synced = lockfile.sync(config.install_lib_dir())?;
@@ -42,8 +41,15 @@ impl RemoveArgs {
         git.rm(self.force, &paths)?;
 
         // remove all the dependencies from .git/modules
-        for (Dependency { name, url, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
-            sh_println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display())?;
+        for (Dependency { name, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
+            // Get the URL from git submodule config instead of using the parsed dependency URL
+            let url = git.submodule_url(path).unwrap_or(None);
+            sh_println!(
+                "Removing '{name}' in {}, (url: {}, tag: {})",
+                path.display(),
+                url.as_deref().unwrap_or("None"),
+                tag.as_deref().unwrap_or("None")
+            )?;
             let _ = lockfile.remove(path);
             std::fs::remove_dir_all(git_modules.join(path))?;
         }

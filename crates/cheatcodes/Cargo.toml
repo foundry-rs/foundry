@@ -25,6 +25,8 @@ foundry-evm-traces.workspace = true
 foundry-wallets.workspace = true
 forge-script-sequence.workspace = true
 
+solar.workspace = true
+
 alloy-dyn-abi.workspace = true
 alloy-evm.workspace = true
 alloy-json-abi.workspace = true
@@ -46,12 +48,12 @@ alloy-chains.workspace = true
 alloy-ens.workspace = true
 
 base64.workspace = true
-dialoguer = "0.11"
+dialoguer.workspace = true
 eyre.workspace = true
 itertools.workspace = true
 jsonpath_lib.workspace = true
 k256.workspace = true
-memchr = "2.7"
+memchr.workspace = true
 p256 = "0.13"
 ecdsa = "0.16"
 rand.workspace = true

@@ -58,7 +58,8 @@ macro_rules! forgetest_async {
         $(#[$attr])*
         async fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $e
+            $e;
+            return (); // Works around weird method resolution in `$e` due to `#[tokio::test]`.
         }
     };
 }
@@ -83,7 +84,8 @@ macro_rules! casttest {
         $(#[$attr])*
         async fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
-            $e
+            $e;
+            return (); // Works around weird method resolution in `$e` due to `#[tokio::test]`.
         }
     };
 }
@@ -121,4 +123,18 @@ macro_rules! forgesoldeer {
             $e
         }
     };
+}
+
+#[macro_export]
+macro_rules! test_debug {
+    ($($args:tt)*) => {
+        $crate::test_debug(format_args!($($args)*))
+    }
+}
+
+#[macro_export]
+macro_rules! test_trace {
+    ($($args:tt)*) => {
+        $crate::test_trace(format_args!($($args)*))
+    }
 }

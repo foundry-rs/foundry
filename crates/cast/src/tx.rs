@@ -26,7 +26,6 @@ use serde_json::value::RawValue;
 use std::fmt::Write;
 
 /// Different sender kinds used by [`CastTxBuilder`].
-#[expect(clippy::large_enum_variant)]
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
@@ -34,7 +33,7 @@ pub enum SenderKind<'a> {
     /// A reference to a signer.
     Signer(&'a WalletSigner),
     /// An owned signer.
-    OwnedSigner(WalletSigner),
+    OwnedSigner(Box<WalletSigner>),
 }
 
 impl SenderKind<'_> {
@@ -58,7 +57,7 @@ impl SenderKind<'_> {
         if let Some(from) = opts.from {
             Ok(from.into())
         } else if let Ok(signer) = opts.signer().await {
-            Ok(Self::OwnedSigner(signer))
+            Ok(Self::OwnedSigner(Box::new(signer)))
         } else {
             Ok(Address::ZERO.into())
         }
@@ -68,7 +67,7 @@ impl SenderKind<'_> {
     pub fn as_signer(&self) -> Option<&WalletSigner> {
         match self {
             Self::Signer(signer) => Some(signer),
-            Self::OwnedSigner(signer) => Some(signer),
+            Self::OwnedSigner(signer) => Some(signer.as_ref()),
             _ => None,
         }
     }
@@ -88,7 +87,7 @@ impl<'a> From<&'a WalletSigner> for SenderKind<'a> {
 
 impl From<WalletSigner> for SenderKind<'_> {
     fn from(signer: WalletSigner) -> Self {
-        Self::OwnedSigner(signer)
+        Self::OwnedSigner(Box::new(signer))
     }
 }
 
@@ -273,7 +272,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
 }
 
 impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
-    /// Builds [TransactionRequest] and fiils missing fields. Returns a transaction which is ready
+    /// Builds [TransactionRequest] and fills missing fields. Returns a transaction which is ready
     /// to be broadcasted.
     pub async fn build(
         self,
@@ -370,14 +369,12 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         {
             let estimate = self.provider.estimate_eip1559_fees().await?;
 
-            if !self.legacy {
-                if self.tx.max_fee_per_gas.is_none() {
-                    self.tx.max_fee_per_gas = Some(estimate.max_fee_per_gas);
-                }
+            if self.tx.max_fee_per_gas.is_none() {
+                self.tx.max_fee_per_gas = Some(estimate.max_fee_per_gas);
+            }
 
-                if self.tx.max_priority_fee_per_gas.is_none() {
-                    self.tx.max_priority_fee_per_gas = Some(estimate.max_priority_fee_per_gas);
-                }
+            if self.tx.max_priority_fee_per_gas.is_none() {
+                self.tx.max_priority_fee_per_gas = Some(estimate.max_priority_fee_per_gas);
             }
         }
 

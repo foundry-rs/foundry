@@ -4,10 +4,14 @@ use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{CreateFork, configure_env},
 };
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
+use foundry_common::{
+    ALCHEMY_FREE_TIER_CUPS,
+    provider::{ProviderBuilder, RetryProvider},
+};
 use foundry_config::{Chain, Config, GasLimit};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{BlockEnv, TxEnv};
@@ -112,6 +116,16 @@ impl Default for EvmOpts {
 }
 
 impl EvmOpts {
+    /// Returns a `RetryProvider` for the given fork URL configured with options in `self`.
+    pub fn fork_provider_with_url(&self, fork_url: &str) -> eyre::Result<RetryProvider> {
+        ProviderBuilder::new(fork_url)
+            .maybe_max_retry(self.fork_retries)
+            .maybe_initial_backoff(self.fork_retry_backoff)
+            .maybe_headers(self.fork_headers.clone())
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()
+    }
+
     /// Configures a new `revm::Env`
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
@@ -124,14 +138,22 @@ impl EvmOpts {
         }
     }
 
-    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
-    /// And the block that was used to configure the environment.
+    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint,
+    /// and the block that was used to configure the environment.
     pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
-        let provider = ProviderBuilder::new(fork_url)
-            .compute_units_per_second(self.get_compute_units_per_second())
-            .build()?;
+        let provider = self.fork_provider_with_url(fork_url)?;
+        self.fork_evm_env_with_provider(fork_url, &provider).await
+    }
+
+    /// Returns the `revm::Env` that is configured with settings retrieved from the provider,
+    /// and the block that was used to configure the environment.
+    pub async fn fork_evm_env_with_provider<P: Provider<N>, N: Network>(
+        &self,
+        fork_url: &str,
+        provider: &P,
+    ) -> eyre::Result<(crate::Env, N::BlockResponse)> {
         environment(
-            &provider,
+            provider,
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
@@ -139,6 +161,7 @@ impl EvmOpts {
             self.sender,
             self.disable_block_gas_limit,
             self.enable_tx_gas_limit,
+            self.networks,
         )
         .await
         .wrap_err_with(|| {
@@ -153,7 +176,7 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
-    pub fn local_evm_env(&self) -> crate::Env {
+    fn local_evm_env(&self) -> crate::Env {
         let cfg = configure_env(
             self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
             self.memory_limit,
@@ -208,23 +231,11 @@ impl EvmOpts {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
-    /// Returns the configured chain id, which will be
-    ///   - the value of `chain_id` if set
-    ///   - mainnet if `fork_url` contains "mainnet"
-    ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
-    ///   - mainnet otherwise
-    pub async fn get_chain_id(&self) -> u64 {
-        if let Some(id) = self.env.chain_id {
-            return id;
-        }
-        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
-    }
-
     /// Returns the available compute units per second, which will be
     /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    pub fn get_compute_units_per_second(&self) -> u64 {
+    fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
@@ -236,13 +247,10 @@ impl EvmOpts {
 
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
-        if let Some(ref url) = self.fork_url {
+        if let Some(url) = &self.fork_url
+            && let Ok(provider) = self.fork_provider_with_url(url)
+        {
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = ProviderBuilder::new(url.as_str())
-                .compute_units_per_second(self.get_compute_units_per_second())
-                .build()
-                .ok()
-                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));

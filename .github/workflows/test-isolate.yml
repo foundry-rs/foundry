@@ -11,7 +11,7 @@ on:
 
 jobs:
   nextest:
-    uses: ./.github/workflows/nextest.yml
+    uses: ./.github/workflows/test.yml
     permissions:
       contents: read
     with:

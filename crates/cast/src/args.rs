@@ -273,6 +273,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Artifact(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
+        CastSubcommand::B2EPayload(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             sh_println!("{}", pretty_calldata(&calldata, offline).await?)?;
@@ -729,17 +730,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
-        CastSubcommand::GenerateFigSpec => {
-            generate(
-                foundry_common::clap::Shell::Fig,
-                &mut CastArgs::command(),
-                "cast",
-                &mut std::io::stdout(),
-            );
-            sh_eprintln!(
-                "[deprecated] `cast generate-fig-spec` is deprecated; use `cast completions fig`"
-            )?;
-        }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
@@ -771,7 +761,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens: Vec<serde_json::Value> = tokens
                 .iter()
                 .cloned()
-                .map(serialize_value_as_json)
+                .map(|t| serialize_value_as_json(t, None))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
             let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());

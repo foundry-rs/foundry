@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract SimpleContract {
     constructor() {
@@ -12,9 +11,7 @@ contract SimpleContract {
     }
 }
 
-contract DumpStateTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract DumpStateTest is Test {
     function testDumpStateCheatAccount() public {
         // Path to temporary file that is deleted after the test
         string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_cheat.json");

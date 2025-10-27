@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract StorageContract {
     // Simple variables - 1 slot each
@@ -44,8 +43,7 @@ contract StorageContract {
     }
 }
 
-contract GetStorageSlotsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract GetStorageSlotsTest is Test {
     StorageContract storageContract;
 
     function setUp() public {

@@ -3,7 +3,7 @@
 //! EVM trace identifying and decoding.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
 extern crate foundry_common;
@@ -51,6 +51,8 @@ pub mod debug;
 pub use debug::DebugTraceIdentifier;
 
 pub mod folded_stack_trace;
+
+pub mod backtrace;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -294,6 +296,10 @@ pub enum TraceMode {
     None,
     /// Simple call trace, no steps tracing required.
     Call,
+    /// Call trace with steps tracing for JUMP and JUMPDEST opcodes.
+    ///
+    /// Does not enable tracking memory or stack snapshots.
+    Steps,
     /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
     ///
     /// Used for internal functions identification. Does not track memory snapshots.
@@ -317,6 +323,10 @@ impl TraceMode {
 
     pub const fn is_call(self) -> bool {
         matches!(self, Self::Call)
+    }
+
+    pub const fn is_steps(self) -> bool {
+        matches!(self, Self::Steps)
     }
 
     pub const fn is_jump_simple(self) -> bool {
@@ -348,7 +358,13 @@ impl TraceMode {
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        if verbosity >= 3 { std::cmp::max(self, Self::Call) } else { self }
+        match verbosity {
+            0..3 => self,
+            3..=4 => std::cmp::max(self, Self::Call),
+            // Enable step recording for backtraces when verbosity is 5 or higher.
+            // We need to ensure we're recording JUMP AND JUMPDEST steps.
+            _ => std::cmp::min(self, Self::Steps),
+        }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
@@ -356,9 +372,9 @@ impl TraceMode {
             None
         } else {
             TracingInspectorConfig {
-                record_steps: self >= Self::JumpSimple,
+                record_steps: self >= Self::Steps,
                 record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self >= Self::JumpSimple {
+                record_stack_snapshots: if self > Self::Steps {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
@@ -366,7 +382,7 @@ impl TraceMode {
                 record_logs: true,
                 record_state_diff: self.record_state_diff(),
                 record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
+                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
                     .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
                 record_immediate_bytes: self.is_debug(),

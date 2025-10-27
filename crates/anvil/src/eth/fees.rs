@@ -46,6 +46,8 @@ pub fn default_elasticity() -> f64 {
 pub struct FeeManager {
     /// Hardfork identifier
     spec_id: SpecId,
+    /// The blob params that determine blob fees
+    blob_params: Arc<RwLock<BlobParams>>,
     /// Tracks the base fee for the next block post London
     ///
     /// This value will be updated after a new block was mined
@@ -70,9 +72,11 @@ impl FeeManager {
         is_min_priority_fee_enforced: bool,
         gas_price: u128,
         blob_excess_gas_and_price: BlobExcessGasAndPrice,
+        blob_params: BlobParams,
     ) -> Self {
         Self {
             spec_id,
+            blob_params: Arc::new(RwLock::new(blob_params)),
             base_fee: Arc::new(RwLock::new(base_fee)),
             is_min_priority_fee_enforced,
             gas_price: Arc::new(RwLock::new(gas_price)),
@@ -156,15 +160,29 @@ impl FeeManager {
         calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
 
-    /// Calculates the next block blob base fee, using the provided excess blob gas
-    pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: u128) -> u128 {
-        alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas as u64)
+    /// Calculates the next block blob base fee.
+    pub fn get_next_block_blob_base_fee_per_gas(&self) -> u128 {
+        self.blob_params().calc_blob_fee(self.blob_excess_gas_and_price.read().excess_blob_gas)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
     /// parent blob excess gas
     pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
-        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used, blob_excess_gas)
+        self.blob_params().next_block_excess_blob_gas_osaka(
+            blob_excess_gas,
+            blob_gas_used,
+            self.base_fee(),
+        )
+    }
+
+    /// Configures the blob params
+    pub fn set_blob_params(&self, blob_params: BlobParams) {
+        *self.blob_params.write() = blob_params;
+    }
+
+    /// Returns the active [`BlobParams`]
+    pub fn blob_params(&self) -> BlobParams {
+        *self.blob_params.read()
     }
 }
 

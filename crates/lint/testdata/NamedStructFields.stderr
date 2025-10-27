@@ -1,0 +1,8 @@
+note[named-struct-fields]: prefer initializing structs with named fields
+  --> ROOT/testdata/NamedStructFields.sol:LL:CC
+   |
+LL |         Person memory person = Person("Alice", 25, address(0));
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using named fields: `Person({ name: "Alice", age: 25, wallet: address(0) })`
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+

@@ -100,8 +100,8 @@ enum BytecodeDependencyKind {
         value: Option<String>,
         /// `salt` (if any) used when creating contract.
         salt: Option<String>,
-        /// Whether it's a try contract creation statement.
-        try_stmt: bool,
+        /// Whether it's a try contract creation statement, with custom return.
+        try_stmt: Option<bool>,
     },
 }
 
@@ -173,7 +173,6 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                     call_expr,
                     call_args,
                     named_args,
-                    false,
                 ) {
                     self.collect_dependency(dependency);
                 }
@@ -199,17 +198,30 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind
             && let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind
-            && let Some(dependency) = handle_call_expr(
+            && let Some(mut dependency) = handle_call_expr(
                 self.src,
                 self.gcx.sess.source_map(),
                 &stmt_try.expr,
                 call_expr,
                 call_args,
                 named_args,
-                true,
             )
         {
+            let has_custom_return = if let Some(clause) = stmt_try.clauses.first()
+                && clause.args.len() == 1
+                && let Some(ret_var) = clause.args.first()
+                && let TypeKind::Custom(_) = self.hir().variable(*ret_var).ty.kind
+            {
+                true
+            } else {
+                false
+            };
+
+            if let BytecodeDependencyKind::New { try_stmt, .. } = &mut dependency.kind {
+                *try_stmt = Some(has_custom_return);
+            }
             self.collect_dependency(dependency);
+
             for clause in stmt_try.clauses {
                 for &var in clause.args {
                     self.visit_nested_var(var)?;
@@ -232,7 +244,6 @@ fn handle_call_expr(
     call_expr: &Expr<'_>,
     call_args: &CallArgs<'_>,
     named_args: &Option<&[NamedArg<'_>]>,
-    try_stmt: bool,
 ) -> Option<BytecodeDependency> {
     if let ExprKind::New(ty_new) = &call_expr.kind
         && let TypeKind::Custom(item_id) = ty_new.kind
@@ -258,7 +269,7 @@ fn handle_call_expr(
                 call_args_offset,
                 value: named_arg(src, named_args, "value", source_map),
                 salt: named_arg(src, named_args, "salt", source_map),
-                try_stmt,
+                try_stmt: None,
             },
             loc: span_to_range(source_map, call_expr.span),
             referenced_contract: contract_id,
@@ -284,6 +295,17 @@ fn named_arg(
 
 /// Goes over all test/script files and replaces bytecode dependencies with cheatcode
 /// invocations.
+///
+/// Special handling of try/catch statements with custom returns, where the try statement becomes
+/// ```solidity
+/// try this.addressToCounter() returns (Counter c)
+/// ```
+/// and helper to cast address is appended
+/// ```solidity
+/// function addressToCounter(address addr) returns (Counter) {
+///     return Counter(addr);
+/// }
+/// ```
 pub(crate) fn remove_bytecode_dependencies(
     gcx: Gcx<'_>,
     deps: &PreprocessorDependencies,
@@ -303,6 +325,7 @@ pub(crate) fn remove_bytecode_dependencies(
         let vm_interface_name = format!("VmContractHelper{}", contract_id.get());
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
+        let mut try_catch_helpers: HashSet<&str> = HashSet::default();
 
         for dep in deps {
             let Some(ContractData { artifact, constructor_data, .. }) =
@@ -328,8 +351,14 @@ pub(crate) fn remove_bytecode_dependencies(
                     salt,
                     try_stmt,
                 } => {
-                    let (mut update, closing_seq) = if *try_stmt {
-                        (String::new(), "})")
+                    let (mut update, closing_seq) = if let Some(has_ret) = try_stmt {
+                        if *has_ret {
+                            // try this.addressToCounter1() returns (Counter c)
+                            try_catch_helpers.insert(name);
+                            (format!("this.addressTo{name}{id}(", id = contract_id.get()), "}))")
+                        } else {
+                            (String::new(), "})")
+                        }
                     } else {
                         (format!("{name}(payable("), "})))")
                     };
@@ -369,6 +398,30 @@ pub(crate) fn remove_bytecode_dependencies(
                 }
             };
         }
+
+        // Add try catch statements after last function of the test contract.
+        if !try_catch_helpers.is_empty()
+            && let Some(last_fn_id) = contract.functions().last()
+        {
+            let last_fn_range =
+                span_to_range(gcx.sess.source_map(), gcx.hir.function(last_fn_id).span);
+            let to_address_fns = try_catch_helpers
+                .iter()
+                .map(|ty| {
+                    format!(
+                        r#"
+                            function addressTo{ty}{id}(address addr) public pure returns ({ty}) {{
+                                return {ty}(addr);
+                            }}
+                        "#,
+                        id = contract_id.get()
+                    )
+                })
+                .collect::<String>();
+
+            updates.insert((last_fn_range.end, last_fn_range.end, to_address_fns));
+        }
+
         let helper_imports = used_helpers.into_iter().map(|id| {
             let id = id.get();
             format!(
