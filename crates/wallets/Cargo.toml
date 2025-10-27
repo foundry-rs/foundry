@@ -53,7 +53,7 @@ eth-keystore = "0.5.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true, features = ["json"] }
 
 [features]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config"]
