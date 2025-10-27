@@ -17,9 +17,9 @@ use std::{
     time::Duration,
 };
 
-const BASE_URL: &str = "https://api.openchain.xyz";
-const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
-const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
+const BASE_URL: &str = "https://api.4byte.sourcify.dev";
+const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
+const SELECTOR_IMPORT_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/import";
 
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -106,7 +106,7 @@ impl OpenChainClient {
         if is_connectivity_err(err) {
             warn!("spurious network detected for OpenChain");
             let previous = self.timedout_requests.fetch_add(1, Ordering::SeqCst);
-            if previous >= self.max_timedout_requests {
+            if previous + 1 >= self.max_timedout_requests {
                 self.set_spurious();
             }
         }
@@ -641,5 +641,22 @@ mod tests {
             result,
             ParsedSignatures { signatures: Default::default(), ..Default::default() }
         );
+    }
+
+    #[tokio::test]
+    async fn spurious_marked_on_timeout_threshold() {
+        // Use an unreachable local port to trigger a quick connect error.
+        let client = OpenChainClient::new().expect("client must build");
+        let url = "http://127.0.0.1:9"; // Discard port; typically closed and fails fast.
+
+        // After MAX_TIMEDOUT_REQ - 1 failures we should NOT be spurious.
+        for i in 0..(MAX_TIMEDOUT_REQ - 1) {
+            let _ = client.get_text(url).await; // expect an error and internal counter increment
+            assert!(!client.is_spurious(), "unexpected spurious after {} failed attempts", i + 1);
+        }
+
+        // The Nth failure (N == MAX_TIMEDOUT_REQ) should flip the spurious flag.
+        let _ = client.get_text(url).await;
+        assert!(client.is_spurious(), "expected spurious after threshold failures");
     }
 }

@@ -1,3 +1,4 @@
+// config: number_underscore = "thousands"
 contract Yul {
     function test() external {
         // https://github.com/euler-xyz/euler-contracts/blob/d4f207a4ac5a6e8ab7447a0f09d1399150c41ef4/contracts/vendor/MerkleProof.sol#L54

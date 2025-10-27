@@ -775,18 +775,30 @@ impl EthApi {
         node_info!("eth_getAccountInfo");
 
         if let Some(fork) = self.get_fork() {
+            let block_request = self.block_request(block_number).await?;
             // check if the number predates the fork, if in fork mode
-            if let BlockRequest::Number(number) = self.block_request(block_number).await?
-                && fork.predates_fork(number)
-            {
-                // if this predates the fork we need to fetch balance, nonce, code individually
-                // because the provider might not support this endpoint
-                let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
-                let code = fork.get_code(address, number).map_err(BlockchainError::from);
-                let nonce = self.get_transaction_count(address, Some(number.into()));
-                let (balance, code, nonce) = try_join!(balance, code, nonce)?;
+            if let BlockRequest::Number(number) = block_request {
+                trace!(target: "node", "get_account_info: fork block {}, requested block {number}", fork.block_number());
+                return if fork.predates_fork(number) {
+                    // if this predates the fork we need to fetch balance, nonce, code individually
+                    // because the provider might not support this endpoint
+                    let balance = fork.get_balance(address, number).map_err(BlockchainError::from);
+                    let code = fork.get_code(address, number).map_err(BlockchainError::from);
+                    let nonce = self.get_transaction_count(address, Some(number.into()));
+                    let (balance, code, nonce) = try_join!(balance, code, nonce)?;
 
-                return Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code });
+                    Ok(alloy_rpc_types::eth::AccountInfo { balance, nonce, code })
+                } else {
+                    // Anvil node is at the same block or higher than the fork block,
+                    // return account info from backend to reflect current state.
+                    let account_info = self.backend.get_account(address).await?;
+                    let code = self.backend.get_code(address, Some(block_request)).await?;
+                    Ok(alloy_rpc_types::eth::AccountInfo {
+                        balance: account_info.balance,
+                        nonce: account_info.nonce,
+                        code,
+                    })
+                };
             }
         }
 
@@ -1357,6 +1369,16 @@ impl EthApi {
     pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
         node_info!("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobsByBlockId`
+    pub fn anvil_get_blobs_by_block_id(
+        &self,
+        block_id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByBlockId");
+        Ok(self.backend.get_blobs_by_block_id(block_id, versioned_hashes)?)
     }
 
     /// Handler for RPC call: `anvil_getBlobSidecarsByBlockId`
@@ -3405,7 +3427,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
     let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
-        return_revert!() => Err(InvalidTransactionError::Revert(Some(out.0.into())).into()),
+        return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
         reason => Err(BlockchainError::EvmError(reason)),
     }
 }

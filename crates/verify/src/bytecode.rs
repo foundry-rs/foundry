@@ -11,10 +11,12 @@ use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
     ext::TraceApi,
-    network::{AnyTxEnvelope, TransactionBuilder},
+    network::{
+        AnyTxEnvelope, TransactionBuilder, TransactionResponse, primitives::BlockTransactions,
+    },
 };
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest, TransactionTrait,
     trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use clap::{Parser, ValueHint};
@@ -23,11 +25,14 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, LoadConfig, read_constructor_args_file},
 };
-use foundry_common::shell;
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, core::AsEnvMut, utils::configure_tx_req_env,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    core::AsEnvMut,
+    executors::EvmError,
+    utils::{configure_tx_env, configure_tx_req_env},
 };
 use revm::state::AccountInfo;
 use std::path::PathBuf;
@@ -255,7 +260,7 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut env.as_env_mut(), block);
+                configure_env_block(&mut env.as_env_mut(), block, config.networks);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit);
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
@@ -323,6 +328,7 @@ impl VerifyBytecodeArgs {
             .ok_or_else(|| {
                 eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
             })?;
+        let tx_hash = transaction.tx_hash();
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
@@ -478,7 +484,50 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut env.as_env_mut(), block)
+                configure_env_block(&mut env.as_env_mut(), block, config.networks);
+
+                let BlockTransactions::Full(ref txs) = block.transactions else {
+                    return Err(eyre::eyre!("Could not get block txs"));
+                };
+
+                // Replay txes in block until the contract creation one.
+                for tx in txs {
+                    trace!("replay tx::: {}", tx.tx_hash());
+                    if is_known_system_sender(tx.from())
+                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+                    {
+                        continue;
+                    }
+                    if tx.tx_hash() == tx_hash {
+                        break;
+                    }
+
+                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+
+                    if let TxKind::Call(_) = tx.inner.kind() {
+                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
+                            format!(
+                                "Failed to execute transaction: {:?} in block {}",
+                                tx.tx_hash(),
+                                env.evm_env.block_env.number
+                            )
+                        })?;
+                    } else if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                        match error {
+                            // Reverted transactions should be skipped
+                            EvmError::Execution(_) => (),
+                            error => {
+                                return Err(error).wrap_err_with(|| {
+                                    format!(
+                                        "Failed to deploy transaction: {:?} in block {}",
+                                        tx.tx_hash(),
+                                        env.evm_env.block_env.number
+                                    )
+                                });
+                            }
+                        }
+                    }
+                }
             }
 
             // Replace the `input` with local creation code in the creation tx.

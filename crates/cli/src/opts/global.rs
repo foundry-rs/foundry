@@ -18,7 +18,8 @@ pub struct GlobalArgs {
     /// - 2 (-vv): Print logs for all tests.
     /// - 3 (-vvv): Print execution traces for failing tests.
     /// - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-    /// - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
+    /// - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes and
+    ///   backtraces with line numbers.
     #[arg(help_heading = "Display options", global = true, short, long, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count)]
     verbosity: Verbosity,
 

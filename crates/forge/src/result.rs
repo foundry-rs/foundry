@@ -167,7 +167,6 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
@@ -201,7 +200,6 @@ impl TestOutcome {
             test_word
         )?;
 
-        // TODO: Avoid process::exit
         std::process::exit(1);
     }
 

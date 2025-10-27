@@ -526,10 +526,10 @@ impl TestArgs {
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
-        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive.
         if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+            identifier = identifier.with_external(&config, remote_chain_id)?;
         }
 
         // Build the trace decoder.
@@ -566,6 +566,7 @@ impl TestArgs {
         let mut backtrace_builder = None;
         for (contract_name, mut suite_result) in rx {
             let tests = &mut suite_result.test_results;
+            let has_tests = !tests.is_empty();
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -583,7 +584,7 @@ impl TestArgs {
                 for warning in &suite_result.warnings {
                     sh_warn!("{warning}")?;
                 }
-                if !tests.is_empty() {
+                if has_tests {
                     let len = tests.len();
                     let tests = if len > 1 { "tests" } else { "test" };
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
@@ -808,7 +809,7 @@ impl TestArgs {
             }
 
             // Print suite summary.
-            if !silent {
+            if !silent && has_tests {
                 sh_println!("{}", suite_result.summary())?;
             }
 

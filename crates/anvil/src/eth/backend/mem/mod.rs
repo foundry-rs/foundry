@@ -42,6 +42,7 @@ use alloy_consensus::{
 };
 use alloy_eip5792::{Capabilities, DelegationCapability};
 use alloy_eips::{
+    Encodable2718,
     eip1559::BaseFeeParams,
     eip4844::{BlobTransactionSidecar, kzg_to_versioned_hash},
     eip7840::BlobParams,
@@ -750,7 +751,7 @@ impl Backend {
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code.0.into())
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
@@ -1149,11 +1150,15 @@ impl Backend {
     }
 
     /// Returns the environment for the next block
+    ///
+    /// This is used for obtaining the evm environment for the next (pending) block (e.g.
+    /// transaction validation in eth_sendrawTransaction)
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(U256::from(1));
         env.evm_env.block_env.basefee = self.base_fee();
+        env.evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         env.evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
@@ -1515,7 +1520,7 @@ impl Backend {
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
-    ///  - `nonce` check is skipped if `request.nonce` is None
+    ///  - `nonce` check is skipped
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1566,6 +1571,9 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
+        // Disable nonce check in revm
+        env.evm_env.cfg_env.disable_nonce_check = true;
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1603,9 +1611,6 @@ impl Backend {
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
-        } else {
-            // Disable nonce check in revm
-            env.evm_env.cfg_env.disable_nonce_check = true;
         }
 
         if env.evm_env.block_env.basefee == 0 {
@@ -1904,8 +1909,9 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
-            opts;
+        let GethDebugTracingCallOptions {
+            tracing_options, block_overrides, state_overrides, ..
+        } = opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, mut block| {
@@ -2763,7 +2769,10 @@ impl Backend {
 
             let target_tx = block.transactions[index].clone();
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
-            let tx_env = target_tx.to_revm_tx_env();
+            let mut tx_env = target_tx.to_revm_tx_env();
+            if env.networks.is_optimism() {
+                tx_env.enveloped_tx = Some(target_tx.transaction.transaction.encoded_2718().into());
+            }
 
             let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
 
@@ -3300,6 +3309,29 @@ impl Backend {
         Ok(None)
     }
 
+    pub fn get_blobs_by_block_id(
+        &self,
+        id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
+        Ok(self.get_block(id).map(|block| {
+            block
+                .transactions
+                .iter()
+                .filter_map(|tx| tx.as_ref().sidecar())
+                .flat_map(|sidecar| {
+                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                })
+                .filter(|(_, commitment)| {
+                    // Filter blobs by versioned_hashes if provided
+                    versioned_hashes.is_empty()
+                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
+                })
+                .map(|(blob, _)| *blob)
+                .collect()
+        }))
+    }
+
     pub fn get_blob_sidecars_by_block_id(
         &self,
         block_id: BlockId,
@@ -3680,7 +3712,10 @@ impl TransactionValidator for Backend {
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
                 warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                return Err(InvalidTransactionError::BlobFeeCapTooLow);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow(
+                    max_fee_per_blob_gas,
+                    blob_gas_and_price.blob_gasprice,
+                ));
             }
 
             let max_cost = tx.max_cost();

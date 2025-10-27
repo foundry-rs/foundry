@@ -47,7 +47,7 @@ use std::{
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
 use foundry_config::evm_spec_id;
-use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
+use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
 mod fork;
@@ -1085,7 +1085,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         let debug_steps: Vec<DebugStep> =
-            steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+            steps.iter().map(|step| convert_call_trace_ctx_to_debug_step(step)).collect();
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
@@ -1108,10 +1108,11 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { evm } = self;
-        ccx.ecx.cfg.spec = evm_spec_id(
+        let spec_id = evm_spec_id(
             EvmVersion::from_str(evm)
                 .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
         );
+        ccx.state.execution_evm_version = Some(spec_id);
         Ok(Default::default())
     }
 }

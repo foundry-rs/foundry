@@ -919,6 +919,7 @@ impl Config {
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
         self.snapshots = p(&root, &self.snapshots);
+        self.test_failures_file = p(&root, &self.test_failures_file);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -1153,7 +1154,15 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(self.ignored_file_paths.clone())
+            .ignore_paths(
+                self.ignored_file_paths
+                    .iter()
+                    .map(|path| {
+                        // Strip "./" prefix for consistent path matching
+                        path.strip_prefix("./").unwrap_or(path).to_path_buf()
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
@@ -1399,7 +1408,7 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
-        let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
+        let maybe_alias = self.eth_rpc_url.as_deref()?;
         if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
             Some(alias)
         } else {

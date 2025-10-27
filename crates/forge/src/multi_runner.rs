@@ -21,7 +21,7 @@ use foundry_evm::{
     Env,
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder, FailFast},
+    executors::{EarlyExit, Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -307,8 +307,8 @@ pub struct TestRunnerConfig {
     pub isolation: bool,
     /// Networks with enabled features.
     pub networks: NetworkConfigs,
-    /// Whether to exit early on test failure.
-    pub fail_fast: FailFast,
+    /// Whether to exit early on test failure or if test run interrupted.
+    pub early_exit: EarlyExit,
 }
 
 impl TestRunnerConfig {
@@ -323,11 +323,14 @@ impl TestRunnerConfig {
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
-        // TODO: self.evm_opts
-        // TODO: self.env
-        // self.coverage = N/A;
+        // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
+
+        // TODO: self.evm_opts
+        self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
+
+        // TODO: self.env
 
         self.config = config;
     }
@@ -598,8 +601,8 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 networks: self.networks,
+                early_exit: EarlyExit::new(self.fail_fast || self.config.show_progress),
                 config: self.config,
-                fail_fast: FailFast::new(self.fail_fast),
             },
 
             fork: self.fork,

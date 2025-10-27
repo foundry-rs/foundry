@@ -43,6 +43,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use tokio::signal;
 use tracing::Span;
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
@@ -147,6 +148,7 @@ impl<'a> ContractRunner<'a> {
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
             result.extend(raw, TraceKind::Deployment);
             if reason.is_some() {
+                debug!(?reason, "deployment of library failed");
                 result.reason = reason;
                 return Ok(result);
             }
@@ -175,6 +177,7 @@ impl<'a> ContractRunner<'a> {
         let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
         result.extend(raw, TraceKind::Deployment);
         if reason.is_some() {
+            debug!(?reason, "deployment of test contract failed");
             result.reason = reason;
             return Ok(result);
         }
@@ -393,14 +396,22 @@ impl<'a> ContractRunner<'a> {
             return SuiteResult::new(start.elapsed(), test_results, warnings);
         }
 
-        let fail_fast = &self.tcfg.fail_fast;
+        let early_exit = &self.tcfg.early_exit;
+
+        if self.progress.is_some() {
+            let interrupt = early_exit.clone();
+            self.tokio_handle.spawn(async move {
+                signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+                interrupt.record_exit();
+            });
+        }
 
         let test_results = functions
             .par_iter()
-            .map(|&func| {
+            .filter_map(|&func| {
                 // Early exit if we're running with fail-fast and a test already failed.
-                if fail_fast.should_stop() {
-                    return (func.signature(), TestResult::setup_result(setup.clone()));
+                if early_exit.should_stop() {
+                    return None;
                 }
 
                 let start = Instant::now();
@@ -433,10 +444,10 @@ impl<'a> ContractRunner<'a> {
 
                 // Set fail fast flag if current test failed.
                 if res.status.is_failure() {
-                    fail_fast.record_fail();
+                    early_exit.record_exit();
                 }
 
-                (sig, res)
+                Some((sig, res))
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -635,7 +646,7 @@ impl<'a> FunctionRunner<'a> {
         let mut result = FuzzTestResult::default();
 
         for i in 0..fixtures_len {
-            if self.tcfg.fail_fast.should_stop() {
+            if self.tcfg.early_exit.should_stop() {
                 return self.result;
             }
 
@@ -820,7 +831,7 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             progress.as_ref(),
-            &self.tcfg.fail_fast,
+            &self.tcfg.early_exit,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -854,6 +865,7 @@ impl<'a> FunctionRunner<'a> {
                         &mut self.result.deprecated_cheatcodes,
                         progress.as_ref(),
                         show_solidity,
+                        &self.tcfg.early_exit,
                     ) {
                         Ok(call_sequence) => {
                             if !call_sequence.is_empty() {
@@ -971,7 +983,7 @@ impl<'a> FunctionRunner<'a> {
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
-            &self.tcfg.fail_fast,
+            &self.tcfg.early_exit,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -1008,13 +1020,12 @@ impl<'a> FunctionRunner<'a> {
         let address = self.setup.address;
 
         // Apply before test configured functions (if any).
-        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count()
-            == 1
-        {
+        if self.cr.contract.abi.functions().any(|func| func.name.is_before_test_setup()) {
             for calldata in self.executor.call_sol_default(
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
+                debug!(?calldata, spec=%self.executor.spec_id(), "applying before_test_setup");
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
