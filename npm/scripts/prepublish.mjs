@@ -4,7 +4,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
 
-import { KNOWN_TOOLS, colors, resolveTargetTool } from '#const.mjs'
+import { colors, KNOWN_TOOLS, resolveTargetTool } from '#const.mjs'
 import { generateBinaryPackageJson } from '../src/generate-package-json.mjs'
 
 /**
@@ -12,6 +12,34 @@ import { generateBinaryPackageJson } from '../src/generate-package-json.mjs'
  * @typedef {import('#const.mjs').Platform} Platform
  * @typedef {import('#const.mjs').Profile} Profile
  * @typedef {import('#const.mjs').Tool} Tool
+ */
+
+/**
+ * @typedef {{
+ *   tool: Tool
+ *   platform: Platform
+ *   arch: Arch
+ *   binaryPath: string
+ * }} ResolvedInputs
+ */
+
+/**
+ * @typedef {{
+ *   tool: Tool
+ *   platform: Platform
+ *   arch: Arch
+ *   profile: Profile
+ *   cliCandidates: Array<string | undefined>
+ * }} ResolveBinaryPathOptions
+ */
+
+/**
+ * @typedef {{
+ *   tool: Tool
+ *   platform: Platform
+ *   arch: Arch
+ *   profile: Profile
+ * }} FallbackSearchOptions
  */
 
 const PLATFORM_MAP = /** @type {const} */ (/** @type {Record<Platform, Platform>} */ ({
@@ -53,6 +81,10 @@ main().catch(error => {
   process.exit(1)
 })
 
+/**
+ * Orchestrates package preparation for the current platform/tool pair.
+ * @returns {Promise<void>}
+ */
 async function main() {
   const { tool, platform, arch, binaryPath } = resolveInputs()
   const packagePath = NodePath.join(process.cwd(), '@foundry-rs', `${tool}-${platform}-${arch}`)
@@ -67,9 +99,13 @@ async function main() {
   console.info(colors.green, 'Binary copy completed successfully!', colors.reset)
 }
 
+/**
+ * Collects CLI/env inputs, normalises them, and resolves the binary path.
+ * @returns {ResolvedInputs}
+ */
 function resolveInputs() {
   const parsed = NodeUtil.parseArgs({
-    args: Bun.argv,
+    args: Bun.argv.slice(2),
     allowPositionals: true,
     options: {
       tool: { type: 'string' },
@@ -116,6 +152,11 @@ function resolveInputs() {
   return { tool, platform, arch, binaryPath }
 }
 
+/**
+ * Picks the first candidate that resolves to a known tool.
+ * @param {Array<string | undefined>} candidates
+ * @returns {Tool}
+ */
 function resolveTool(candidates) {
   for (const candidate of candidates) {
     if (typeof candidate !== 'string' || candidate.trim() === '') continue
@@ -129,6 +170,11 @@ function resolveTool(candidates) {
   throw new Error(`Tool not specified. Provide --tool=<${KNOWN_TOOLS.join('|')}> or set TARGET_TOOL.`)
 }
 
+/**
+ * Resolves the filesystem path to the tool binary, honouring CLI/env overrides.
+ * @param {ResolveBinaryPathOptions} options
+ * @returns {string}
+ */
 function resolveBinaryPath({ tool, platform, arch, profile, cliCandidates }) {
   const envCandidates = [
     ...GENERIC_BIN_ENV_KEYS,
@@ -143,6 +189,11 @@ function resolveBinaryPath({ tool, platform, arch, profile, cliCandidates }) {
   return findBinaryFallback({ tool, platform, arch, profile })
 }
 
+/**
+ * Searches the local Cargo build artefacts for the requested binary as a fallback.
+ * @param {FallbackSearchOptions} options
+ * @returns {string}
+ */
 function findBinaryFallback({ tool, platform, arch, profile }) {
   const targetDir = TARGET_MAP[`${arch}-${platform}`]
   const binaryName = platform === 'win32' ? `${tool}.exe` : tool
@@ -162,6 +213,11 @@ function findBinaryFallback({ tool, platform, arch, profile }) {
   throw new Error(`Source binary for ${tool} not found. Looked in: ${searchOrder.join(', ')}`)
 }
 
+/**
+ * Removes previously staged files while preserving metadata such as README/package.json.
+ * @param {string} packagePath
+ * @returns {Promise<void>}
+ */
 async function cleanPackageDirectory(packagePath) {
   const items = await NodeFS.promises.readdir(packagePath).catch(() => [])
 
@@ -173,6 +229,11 @@ async function cleanPackageDirectory(packagePath) {
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 }
 
+/**
+ * Copies the tool binary into the package directory.
+ * @param {{ source: string; tool: Tool; packagePath: string; platform: Platform }} parameters
+ * @returns {Promise<void>}
+ */
 async function copyBinary({ source, tool, packagePath, platform }) {
   if (!(await Bun.file(source).exists()))
     throw new Error(`Source binary not found at ${source}`)
@@ -191,6 +252,11 @@ async function copyBinary({ source, tool, packagePath, platform }) {
     NodeFS.chmodSync(targetPath, 0o755)
 }
 
+/**
+ * Reads an environment variable, falling back across case variants.
+ * @param {string | undefined} key
+ * @returns {string | undefined}
+ */
 function readEnv(key) {
   if (!key) return undefined
   return Bun.env[key] ?? Bun.env[key.toUpperCase()] ?? Bun.env[key.toLowerCase()]

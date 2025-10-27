@@ -5,6 +5,10 @@ import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * @typedef {import('#const.mjs').Tool} Tool
+ */
+
 const require = NodeModule.createRequire(import.meta.url)
 const __dirname = NodePath.dirname(fileURLToPath(import.meta.url))
 
@@ -24,6 +28,10 @@ if (!platformPackage) {
 
 NodeChildProcess.spawn(selectBinaryPath(), process.argv.slice(2), { stdio: 'inherit' })
 
+/**
+ * Determines which tool wrapper is executing.
+ * @returns {Tool}
+ */
 function resolveTool() {
   const candidates = [
     process.env.TARGET_TOOL,
@@ -44,6 +52,10 @@ function resolveTool() {
   throw new Error('TARGET_TOOL must be set to one of: ' + KNOWN_TOOLS.join(', '))
 }
 
+/**
+ * Attempts to read the tool name from the nearest package.json.
+ * @returns {Tool | undefined}
+ */
 function toolFromLocalPackage() {
   try {
     const packageJsonPath = NodePath.join(__dirname, 'package.json')
@@ -55,21 +67,44 @@ function toolFromLocalPackage() {
   }
 }
 
+/**
+ * Extracts the tool name from an @foundry-rs scoped package identifier.
+ * @param {unknown} name
+ * @returns {Tool | undefined}
+ */
 function toolFromPackageName(name) {
   if (typeof name !== 'string') return undefined
   const match = name.match(/^@foundry-rs\/(forge|cast|anvil|chisel)(?:$|-)/)
-  return match ? match[1] : undefined
+  return match ? /** @type {Tool} */ (match[1]) : undefined
 }
 
+/**
+ * Walks up the directory tree to infer the tool name from the folder structure.
+ * @returns {Tool | undefined}
+ */
 function toolFromPath() {
   const segments = NodePath.resolve(__dirname).split(NodePath.sep)
   for (let i = segments.length - 1; i >= 0; i--) {
     const candidate = segments[i]
-    if (KNOWN_TOOLS.includes(candidate)) return candidate
+    if (isTool(candidate)) return candidate
   }
   return undefined
 }
 
+/**
+ * Type guard verifying a candidate string is a known tool.
+ * @param {string | undefined} candidate
+ * @returns {candidate is Tool}
+ */
+function isTool(candidate) {
+  if (typeof candidate !== 'string') return false
+  return KNOWN_TOOLS.includes(/** @type {Tool} */ (candidate))
+}
+
+/**
+ * Determines the executable file path for the current platform.
+ * @returns {string}
+ */
 function selectBinaryPath() {
   try {
     const candidate = require.resolve(`${platformPackage}/bin/${binaryName}`)
