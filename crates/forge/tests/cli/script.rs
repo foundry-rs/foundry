@@ -38,7 +38,7 @@ contract ContractScript is Script {
 
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
-        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
+        cmd.arg("script").arg(script).args(["--rpc-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
 
@@ -201,7 +201,7 @@ contract DeployScript is Script {
         &deploy_contract,
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--sender",
         format!("{dev:?}").as_str(),
@@ -301,7 +301,7 @@ contract DeployScript is Script {
         &deploy_contract,
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "-vvvvv",
         "--slow",
@@ -517,7 +517,7 @@ contract DeployScript is Script {
         &deploy_contract,
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "-vvvvv",
         "--broadcast",
@@ -595,7 +595,7 @@ contract RunScript is Script {
             &run_contract,
             "--root",
             prj.root().to_str().unwrap(),
-            "--fork-url",
+            "--rpc-url",
             &handle.http_endpoint(),
             "-vvvvv",
             "--broadcast",
@@ -1774,7 +1774,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--sender",
         format!("{dev:?}").as_str(),
@@ -1831,7 +1831,7 @@ Warning: Script contains a transaction to 0x000000000000000000000000000000000000
         .args([
             "script",
             "SimpleScript",
-            "--fork-url",
+            "--rpc-url",
             &handle.http_endpoint(),
             "--sender",
             format!("{dev:?}").as_str(),
@@ -1900,7 +1900,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--sender",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -1934,7 +1934,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--sender",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -1975,7 +1975,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
         "--unlocked",
@@ -2047,7 +2047,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
         "--unlocked",
@@ -2089,7 +2089,7 @@ contract SimpleScript is Script {
     cmd.args([
         "script",
         "SimpleScript",
-        "--fork-url",
+        "--rpc-url",
         &url,
         "--sender",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -3049,7 +3049,7 @@ contract FactoryScript is Script {
         &deploy_contract,
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--slow",
         "--broadcast",
@@ -3128,7 +3128,7 @@ contract CounterScript is Script {
         &deploy_script.display().to_string(),
         "--root",
         prj.root().to_str().unwrap(),
-        "--fork-url",
+        "--rpc-url",
         &handle.http_endpoint(),
         "--slow",
         "--broadcast",
