@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_response_zero_hash_rejected() {
         let client = reqwest::Client::new();
-        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(2));
+        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
@@ -364,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_transaction_requests() {
         let client = reqwest::Client::new();
-        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(2));
+        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
