@@ -422,7 +422,7 @@ pub struct AnvilEvmArgs {
 
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(
         long = "fork-header",
         value_name = "HEADERS",
@@ -447,7 +447,7 @@ pub struct AnvilEvmArgs {
     ///
     /// If negative, the given value is subtracted from the `latest` block number.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(
         long,
         requires = "fork_url",
@@ -459,7 +459,7 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from after a specific transaction hash has been applied over a remote endpoint.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(
         long,
         requires = "fork_url",
@@ -471,13 +471,13 @@ pub struct AnvilEvmArgs {
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
     pub fork_retry_backoff: Option<u64>,
 
     /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
     ///
-    /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your
+    /// You still must pass both `--rpc-url` and `--fork-block-number`, and already have your
     /// required state cached on disk, anything missing locally would be fetched from the
     /// remote.
     #[arg(
@@ -522,7 +522,7 @@ pub struct AnvilEvmArgs {
     ///
     /// This flag overrides the project's configuration file.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
 
@@ -856,7 +856,7 @@ mod tests {
     fn can_parse_fork_headers() {
         let args: NodeArgs = NodeArgs::parse_from([
             "anvil",
-            "--fork-url",
+            "--rpc-url",
             "http,://localhost:8545",
             "--fork-header",
             "User-Agent: test-agent",
