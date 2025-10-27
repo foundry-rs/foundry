@@ -49,21 +49,21 @@ pub struct EvmArgs {
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long, requires = "url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Number of retries.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long, requires = "url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long, requires = "url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
@@ -74,7 +74,7 @@ pub struct EvmArgs {
     ///
     /// This flag overrides the project's configuration file.
     ///
-    /// See --fork-url.
+    /// See --rpc-url.
     #[arg(long)]
     #[serde(skip)]
     pub no_storage_caching: bool,
@@ -241,7 +241,7 @@ pub struct EnvArgs {
 impl EvmArgs {
     /// Ensures that fork url exists and returns its reference.
     pub fn ensure_fork_url(&self) -> eyre::Result<&String> {
-        self.rpc.url.as_ref().wrap_err("Missing `--fork-url` field.")
+        self.rpc.url.as_ref().wrap_err("Missing `--rpc-url` field.")
     }
 }
 
