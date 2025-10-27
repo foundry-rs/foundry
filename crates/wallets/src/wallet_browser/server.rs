@@ -5,10 +5,6 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use axum::{
-    Router,
-    routing::{get, post},
-};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, oneshot},
@@ -17,7 +13,7 @@ use uuid::Uuid;
 
 use crate::wallet_browser::{
     error::BrowserWalletError,
-    handlers,
+    router::build_router,
     state::BrowserWalletState,
     types::{BrowserTransaction, Connection},
 };
@@ -31,8 +27,6 @@ pub struct BrowserWalletServer {
     open_browser: bool,
     timeout: Duration,
 }
-
-// TODO: harden using session token
 
 impl BrowserWalletServer {
     /// Create a new browser wallet server.
@@ -50,15 +44,7 @@ impl BrowserWalletServer {
 
     /// Start the server and open browser.
     pub async fn start(&mut self) -> Result<(), BrowserWalletError> {
-        let router = Router::new()
-            // Serve browser wallet application
-            .route("/", get(handlers::serve_index))
-            // API endpoints
-            .route("/api/transaction/request", get(handlers::get_next_transaction_request))
-            .route("/api/transaction/response", post(handlers::post_transaction_response))
-            .route("/api/connection", get(handlers::get_connection_info))
-            .route("/api/connection", post(handlers::post_connection_update))
-            .with_state(Arc::clone(&self.state));
+        let router = build_router(self.state.clone()).await;
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr)
@@ -110,6 +96,11 @@ impl BrowserWalletServer {
     /// Get the timeout duration.
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// Get the session token.
+    pub fn session_token(&self) -> Arc<String> {
+        self.state.session_token()
     }
 
     /// Check if a wallet is connected.
