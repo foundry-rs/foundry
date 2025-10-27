@@ -39,7 +39,8 @@ impl CheatsManager {
             // need to check if already impersonated, so we don't overwrite the code
             return true;
         }
-        state.impersonated_accounts.insert(addr)
+        state.impersonated_accounts.insert(addr);
+        false
     }
 
     /// Removes the account that from the impersonated set
@@ -144,4 +145,17 @@ impl Precompile for CheatEcrecover {
 #[derive(Clone, Debug)]
 pub struct CheatEcrecover {
     cheats: Arc<CheatsManager>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn impersonate_returns_false_then_true() {
+        let mgr = CheatsManager::default();
+        let addr = Address::from([1u8; 20]);
+        assert!(!mgr.impersonate(addr));
+        assert!(mgr.impersonate(addr));
+    }
 }
