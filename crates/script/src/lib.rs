@@ -637,7 +637,7 @@ impl ScriptConfig {
                 }
             }
         } else {
-            // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
+            // It's only really `None`, when we don't pass any `--rpc-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
             Backend::spawn(None)?
@@ -744,7 +744,7 @@ mod tests {
             "foundry-cli",
             "script",
             "script/Test.s.sol:TestScript",
-            "--fork-url",
+            "--rpc-url",
             "http://localhost:8545",
             "--verifier-url",
             "http://localhost:3000/api/verify",
@@ -766,7 +766,7 @@ mod tests {
             "foundry-cli",
             "script",
             "script/Test.s.sol:TestScript",
-            "--fork-url",
+            "--rpc-url",
             "http://localhost:8545",
             "--broadcast",
             "--code-size-limit",
