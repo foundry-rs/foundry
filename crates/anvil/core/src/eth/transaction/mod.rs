@@ -1,6 +1,9 @@
 //! Transaction related types
 use alloy_consensus::{
-    constants::{EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID},
+    constants::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        LEGACY_TX_TYPE_ID,
+    },
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
     TxEnvelope, TxLegacy, TxReceipt, Typed2718,
     transaction::{
