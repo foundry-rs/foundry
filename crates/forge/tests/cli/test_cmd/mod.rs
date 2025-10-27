@@ -4273,3 +4273,36 @@ contract InvariantOutputTest is Test {
         .assert_failure()
         .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
 });
+
+forgetest_init!(memory_limit, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.memory_limit = 500 * 32;
+    });
+    prj.add_test(
+        "MemoryLimit.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Memory {
+    function allocate(uint256 n) external pure returns (uint256[] memory) {
+        return new uint256[](n);
+    }
+}
+
+contract MemoryLimitTest is Test {
+    Memory public m = new Memory();
+
+    function test_inBounds() public {
+        m.allocate(100);
+    }
+
+    function test_oom() public {
+        m.allocate(1000);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#""#]]);
+});
