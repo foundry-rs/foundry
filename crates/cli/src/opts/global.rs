@@ -54,7 +54,14 @@ impl GlobalArgs {
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
         // Set the global shell.
-        self.shell().set();
+        let shell = self.shell();
+        // Argument takes precedence over the env var global color choice.
+        match shell.color_choice() {
+            ColorChoice::Auto => {}
+            ColorChoice::Always => yansi::enable(),
+            ColorChoice::Never => yansi::disable(),
+        }
+        shell.set();
 
         // Initialize the thread pool only if `threads` was requested to avoid unnecessary overhead.
         if self.threads.is_some() {
@@ -62,9 +69,9 @@ impl GlobalArgs {
         }
 
         // Display a warning message if the current version is not stable.
-        if std::env::var("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_err()
+        if IS_NIGHTLY_VERSION
             && !self.json
-            && IS_NIGHTLY_VERSION
+            && std::env::var_os("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_none()
         {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
         }
