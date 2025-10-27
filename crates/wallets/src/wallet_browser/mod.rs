@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multiple_transaction_requests() {
+    async fn test_send_multiple_transaction_requests() {
         let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
         server.start().await.unwrap();
