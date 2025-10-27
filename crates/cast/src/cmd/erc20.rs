@@ -25,9 +25,9 @@ pub enum Erc20Subcommand {
         #[arg(value_parser = NameOrAddress::from_str)]
         token: NameOrAddress,
 
-        /// The account to query.
+        /// The owner to query balance for.
         #[arg(value_parser = NameOrAddress::from_str)]
-        account: NameOrAddress,
+        owner: NameOrAddress,
 
         /// The block height to query at.
         #[arg(long, short = 'B')]
@@ -114,14 +114,13 @@ pub enum Erc20Subcommand {
 impl Erc20Subcommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            // TODO: change account for who???
-            Self::Balance { token, account, block, rpc } => {
+            Self::Balance { token, owner, block, rpc } => {
                 let config = rpc.load_config()?;
                 let provider = get_provider(&config)?;
-                let account_addr = account.resolve(&provider).await?;
+                let owner_addr = owner.resolve(&provider).await?;
                 let token_addr = token.resolve(&provider).await?;
                 let balance =
-                    Cast::new(&provider).erc20_balance(token_addr, account_addr, block).await?;
+                    Cast::new(&provider).erc20_balance(token_addr, owner_addr, block).await?;
                 sh_println!("{}", format_uint_exp(balance))?
             }
             Self::Transfer { token, to, amount, block: _, rpc, wallet } => {

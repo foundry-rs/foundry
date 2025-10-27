@@ -4204,9 +4204,9 @@ Transaction successfully executed.
 casttest!(erc20_balance_success, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
-    let account = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
+    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
 
-    cmd.args(["erc20", "balance", usdt, account, "--rpc-url", &rpc]).assert_success().stdout_eq(
+    cmd.args(["erc20", "balance", usdt, owner, "--rpc-url", &rpc]).assert_success().stdout_eq(
         str![[r#"
 0
 
