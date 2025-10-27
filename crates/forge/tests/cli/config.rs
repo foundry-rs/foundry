@@ -2031,3 +2031,46 @@ Warning (2018): Function state mutability can be restricted to pure
 "#,
     );
 });
+
+forgetest_init!(test_failures_file_normalization, |prj, cmd| {
+    // Update config with custom path containing "./" prefix
+    prj.update_config(|config| {
+        config.test_failures_file = PathBuf::from("./my-custom-failures");
+    });
+
+    prj.wipe_contracts();
+    prj.add_test(
+        "MixedTests.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract MixedTests is Test {
+    function testPass() public pure {
+        require(1 == 1);
+    }
+
+    function testFail() public pure {
+        require(1 == 2, "testFail failed");
+    }
+}
+"#,
+    );
+
+    // Run test and verify test_failures_file is created at the correct location
+    cmd.args(["test"]).assert_failure();
+    let failures_file = prj.root().join("my-custom-failures");
+    assert!(failures_file.exists());
+    assert!(fs::read_to_string(&failures_file).unwrap().contains("testFail"));
+
+    // Verify --rerun works from subdirectory
+    let rerun_output = cmd
+        .forge_fuse()
+        .current_dir(prj.root().join("src"))
+        .args(["test", "--rerun"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(rerun_output.contains("Ran 1 test"));
+    assert!(rerun_output.contains("testFail()"));
+    assert!(!rerun_output.contains("[PASS] testPass()"));
+});
