@@ -15,8 +15,7 @@ use foundry_wallets::WalletOpts;
 #[doc(hidden)]
 pub use foundry_config::utils::*;
 
-/// ERC20 token subcommands.
-/// CLI arguments for `cast tx-pool`.
+/// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
     /// Query ERC20 token balance.
