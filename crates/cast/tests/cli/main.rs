@@ -4259,6 +4259,21 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
     let to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Anvil second address
     let amount = "100000000000000000000"; // 100 tokens (18 decimals)
 
+    // initial balance
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
     // `cast erc20 transfer` test
     cmd.cast_fuse()
         .args([
@@ -4275,6 +4290,21 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
         .assert_success()
         .stdout_eq(str![[r#"
 0x60bfcd46dbda87681f35f82a93c1efa381bb12d3cdd8cee10e80b078a95619e8
+
+"#]]);
+    // new balance
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+100000000000000000000 [1e20]
 
 "#]]);
 
