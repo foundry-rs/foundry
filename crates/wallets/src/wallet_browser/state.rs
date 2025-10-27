@@ -73,6 +73,11 @@ impl BrowserWalletState {
         self.transactions.lock().add_request(request);
     }
 
+    /// Check if a transaction request exists.
+    pub fn has_transaction_request(&self, id: &Uuid) -> bool {
+        self.transactions.lock().has_request(id)
+    }
+
     /// Get pending transaction.
     pub fn get_pending_transaction(&self) -> Option<BrowserTransaction> {
         self.transactions.lock().get_pending().cloned()

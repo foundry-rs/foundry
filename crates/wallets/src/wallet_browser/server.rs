@@ -160,7 +160,7 @@ mod tests {
     use tokio::task::JoinHandle;
     use uuid::Uuid;
 
-    use crate::wallet_browser::types::{AccountUpdate, TransactionResponse};
+    use crate::wallet_browser::types::{AccountUpdate, BrowserApiResponse, TransactionResponse};
 
     const ALICE: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_transaction_accept() {
+    async fn test_send_transaction_client_accept() {
         let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
         server.start().await.unwrap();
@@ -267,7 +267,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_transaction_reject() {
+    async fn test_send_transaction_client_not_requested() {
+        let client = reqwest::Client::new();
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
+        server.start().await.unwrap();
+
+        // Connect Alice's wallet
+        connect_wallet(&client, &server, ALICE, 1).await;
+
+        // Create a random transaction response without a matching request
+        let tx_request_id = Uuid::new_v4();
+
+        // Simulate the wallet sending a response for an unknown request
+        let resp = client
+            .post(format!("http://localhost:{}/api/transaction/response", server.port()))
+            .json(&TransactionResponse {
+                id: tx_request_id,
+                hash: Some(TxHash::random()),
+                error: None,
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        // Assert that no transaction without a matching request is accepted
+        let api: BrowserApiResponse<()> = resp.json().await.unwrap();
+        match api {
+            BrowserApiResponse::Error { message } => {
+                assert_eq!(message, "Unknown transaction id");
+            }
+            _ => panic!("expected error response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_transaction_invalid_response_format() {
+        // non uuid
+
+        let client = reqwest::Client::new();
+
+        let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
+        server.start().await.unwrap();
+
+        // Connect Alice's wallet
+        connect_wallet(&client, &server, ALICE, 1).await;
+
+        // Simulate the wallet sending a response with an invalid UUID
+        let resp = client
+            .post(format!("http://localhost:{}/api/transaction/response", server.port()))
+            .body(
+                r#"{
+                "id": "invalid-uuid",
+                "hash": "invalid-hash",
+                "error": null
+            }"#,
+            )
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap();
+
+        // The server should respond with a 422 Unprocessable Entity status
+        assert_eq!(resp.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_send_transaction_client_reject() {
         let client = reqwest::Client::new();
         let mut server = BrowserWalletServer::new(0, false, Duration::from_secs(1));
         server.start().await.unwrap();
@@ -363,25 +432,31 @@ mod tests {
         (id, tx)
     }
 
-    /// Check that the pending transaction queue is empty.
+    /// Check that the pending transaction queue is empty (expects Error).
     async fn check_pending_transaction_queue_empty(server: &BrowserWalletServer) {
-        let resp =
-            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
-                .await
-                .unwrap();
-        let resp_json: Option<BrowserTransaction> = resp.json().await.unwrap();
-        assert!(resp_json.is_none());
+        let url = format!("http://localhost:{}/api/transaction/pending", server.port());
+        let resp = reqwest::get(&url).await.unwrap();
+
+        let BrowserApiResponse::Error { message } =
+            resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+        else {
+            panic!("expected BrowserApiResponse::Error (no pending transaction), but got Ok");
+        };
+
+        assert_eq!(message, "No pending transaction");
     }
 
     /// Check that the pending transaction matches the expected request ID and fields.
     async fn check_pending_transaction(server: &BrowserWalletServer, tx_request_id: Uuid) {
-        let resp =
-            reqwest::get(&format!("http://localhost:{}/api/transaction/pending", server.port()))
-                .await
-                .unwrap();
-        let resp_json: Option<BrowserTransaction> = resp.json().await.unwrap();
-        assert!(resp_json.is_some());
-        let pending_tx = resp_json.unwrap();
+        let url = format!("http://localhost:{}/api/transaction/pending", server.port());
+        let resp = reqwest::get(&url).await.unwrap();
+
+        let BrowserApiResponse::Ok(pending_tx) =
+            resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+        else {
+            panic!("expected BrowserApiResponse::Ok with a pending transaction");
+        };
+
         assert_eq!(pending_tx.id, tx_request_id);
         assert_eq!(pending_tx.request.from, Some(ALICE));
         assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));

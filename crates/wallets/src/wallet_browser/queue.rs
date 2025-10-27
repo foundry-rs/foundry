@@ -27,6 +27,13 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.requests.push_back(request);
     }
 
+    pub fn has_request(&self, id: &Uuid) -> bool
+    where
+        Req: HasId,
+    {
+        self.requests.iter().any(|r| r.id() == id)
+    }
+
     pub fn remove_request(&mut self, id: &Uuid) -> Option<Req>
     where
         Req: HasId,
