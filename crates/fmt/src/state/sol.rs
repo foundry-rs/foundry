@@ -217,14 +217,14 @@ impl<'ast> State<'_, 'ast> {
             ast::ImportItems::Aliases(aliases) => {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
-                
+
                 if use_single_line {
                     // Single import on one line - no box at all to avoid line wrapping
                     self.word("{");
                     if self.config.bracket_spacing {
                         self.word(" ");
                     }
-                    
+
                     // Print single alias directly without commasep to avoid spaces
                     if let Some((ident, alias)) = aliases.first() {
                         self.print_ident(ident);
@@ -233,7 +233,7 @@ impl<'ast> State<'_, 'ast> {
                             self.print_ident(alias);
                         }
                     }
-                    
+
                     if self.config.bracket_spacing {
                         self.word(" ");
                     }
