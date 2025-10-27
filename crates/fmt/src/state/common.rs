@@ -510,7 +510,9 @@ impl<'ast> State<'_, 'ast> {
         for (pos, ident) in path.segments().iter().delimited() {
             self.print_ident(ident);
             if !pos.is_last {
-                self.zerobreak();
+                if !self.emit_or_revert {
+                    self.zerobreak();
+                }
                 self.word(".");
             }
         }
