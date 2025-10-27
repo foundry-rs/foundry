@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::HeaderMap, response::Html};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, HeaderValue, header::CONTENT_TYPE},
+    response::Html,
+};
 
 use crate::wallet_browser::{
     app::contents,
@@ -10,17 +15,14 @@ use crate::wallet_browser::{
 
 pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
-    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
     (headers, Html(contents::INDEX_HTML))
 }
 
 pub(crate) async fn get_next_transaction_request(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<BrowserTransaction>> {
-    match state.get_next_transaction_request() {
+    match state.read_next_transaction_request() {
         Some(tx) => Json(BrowserApiResponse::with_data(tx)),
         None => Json(BrowserApiResponse::error("No pending transaction")),
     }
@@ -70,7 +72,7 @@ pub(crate) async fn post_connection_update(
     State(state): State<Arc<BrowserWalletState>>,
     Json(body): Json<Option<Connection>>,
 ) -> Json<BrowserApiResponse> {
-    // Update the connected wallet information.
+    // Update the connection state, setting it to None if disconnected.
     state.set_connection(body);
 
     Json(BrowserApiResponse::ok())

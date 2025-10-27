@@ -190,7 +190,7 @@ mod tests {
         check_transaction_request_queue_empty(&server).await;
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Check connection state
         let Connection(address, chain_id) =
@@ -205,7 +205,7 @@ mod tests {
         assert!(!server.is_connected());
 
         // Connect Bob's wallet
-        connect_wallet(&client, &server, Connection(BOB, 42)).await;
+        connect_wallet(&client, &server, Connection::new(BOB, 42)).await;
 
         // Check connection state
         let Connection(address, chain_id) =
@@ -224,7 +224,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Create a browser transaction request
         let (tx_request_id, tx_request) = create_browser_transaction();
@@ -267,7 +267,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Create a random transaction response without a matching request
         let tx_request_id = Uuid::new_v4();
@@ -308,7 +308,7 @@ mod tests {
         server.start().await.unwrap();
 
         // Connect Alice's wallet
-        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Simulate the wallet sending a response with an invalid UUID
         let resp = client

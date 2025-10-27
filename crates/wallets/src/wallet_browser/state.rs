@@ -10,10 +10,10 @@ use crate::wallet_browser::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserWalletState {
-    /// Current information about the wallet connection
-    pub connection: Arc<Mutex<Option<Connection>>>,
-    /// Request/response queue for transactions
-    pub transactions: Arc<Mutex<RequestQueue<BrowserTransaction, TransactionResponse>>>,
+    /// Current information about the wallet connection.
+    connection: Arc<Mutex<Option<Connection>>>,
+    /// Request/response queue for transactions.
+    transactions: Arc<Mutex<RequestQueue<BrowserTransaction, TransactionResponse>>>,
 }
 
 impl Default for BrowserWalletState {
@@ -23,6 +23,7 @@ impl Default for BrowserWalletState {
 }
 
 impl BrowserWalletState {
+    /// Create a new browser wallet state.
     pub fn new() -> Self {
         Self {
             connection: Arc::new(Mutex::new(None)),
@@ -30,7 +31,7 @@ impl BrowserWalletState {
         }
     }
 
-    /// Check if wallet is connected
+    /// Check if wallet is connected.
     pub fn is_connected(&self) -> bool {
         self.connection.lock().is_some()
     }
@@ -55,9 +56,9 @@ impl BrowserWalletState {
         self.transactions.lock().has_request(id)
     }
 
-    /// Get next transaction request.
-    pub fn get_next_transaction_request(&self) -> Option<BrowserTransaction> {
-        self.transactions.lock().get_request().cloned()
+    /// Read the next transaction request.
+    pub fn read_next_transaction_request(&self) -> Option<BrowserTransaction> {
+        self.transactions.lock().read_request().cloned()
     }
 
     // Remove a transaction request.
@@ -68,11 +69,12 @@ impl BrowserWalletState {
     /// Add transaction response.
     pub fn add_transaction_response(&self, response: TransactionResponse) {
         let id = response.id;
-        self.transactions.lock().add_response(id, response);
-        self.transactions.lock().remove_request(&id);
+        let mut transactions = self.transactions.lock();
+        transactions.add_response(id, response);
+        transactions.remove_request(&id);
     }
 
-    /// Get transaction response.
+    /// Get transaction response, removing it from the queue.
     pub fn get_transaction_response(&self, id: &Uuid) -> Option<TransactionResponse> {
         self.transactions.lock().get_response(id)
     }

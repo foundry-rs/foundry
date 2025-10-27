@@ -37,18 +37,20 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.requests.iter().any(|r| r.id() == id)
     }
 
-    /// Retrieve the next request from the queue without removing it.
-    pub fn get_request(&mut self) -> Option<&Req> {
+    /// Read the next request from the queue without removing it.
+    pub fn read_request(&self) -> Option<&Req> {
         self.requests.front()
     }
 
     /// Remove a request by its ID.
-    pub fn remove_request(&mut self, id: &Uuid)
+    pub fn remove_request(&mut self, id: &Uuid) -> Option<Req>
     where
         Req: HasId,
     {
         if let Some(pos) = self.requests.iter().position(|r| r.id() == id) {
-            self.requests.remove(pos);
+            self.requests.remove(pos)
+        } else {
+            None
         }
     }
 
@@ -57,9 +59,8 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.responses.insert(id, response);
     }
 
-    /// Get a response by its ID.
+    /// Get a response by its ID, removing it from the queue.
     pub fn get_response(&mut self, id: &Uuid) -> Option<Res> {
-        // Note: This removes the response from the map when retrieved.
         self.responses.remove(id)
     }
 }

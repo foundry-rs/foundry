@@ -35,6 +35,7 @@ impl<T> BrowserApiResponse<T> {
 
 /// Represents a transaction request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserTransaction {
     /// The unique identifier for the transaction.
     pub id: Uuid,
@@ -45,6 +46,7 @@ pub struct BrowserTransaction {
 
 /// Represents a transaction response sent from the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TransactionResponse {
     /// The unique identifier for the transaction, must match the request ID sent earlier.
     pub id: Uuid,
@@ -54,6 +56,13 @@ pub(crate) struct TransactionResponse {
     pub error: Option<String>,
 }
 
-/// Represents an account update sent from the browser wallet.
-#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Represents an active connection to a browser wallet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection(pub Address, pub ChainId);
+
+impl Connection {
+    /// Create a new connection instance.
+    pub fn new(address: Address, chain_id: ChainId) -> Self {
+        Self(address, chain_id)
+    }
+}
