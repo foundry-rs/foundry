@@ -4271,5 +4271,5 @@ contract InvariantOutputTest is Test {
 
     cmd.args(["test", "--mt", "invariant_check_count", "--color", "always"])
         .assert_failure()
-        .stdout_eq(file!["../fixtures/invariant_traces.svg": TermSvg]);
+        .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
 });

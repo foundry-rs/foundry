@@ -1,13 +1,16 @@
-<svg width="2322px" height="686px" xmlns="http://www.w3.org/2000/svg">
+<svg width="2322px" height="488px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { fill: #000000 }
+    .fg-cyan { fill: #00AAAA }
     .fg-green { fill: #00AA00 }
     .fg-red { fill: #AA0000 }
+    .fg-yellow { fill: #AA5500 }
     .container {
       padding: 0 10px;
       line-height: 18px;
     }
+    .dimmed { opacity: 0.7; }
     tspan {
       font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
       white-space: pre;
@@ -22,75 +25,53 @@
 </tspan>
     <tspan x="10px" y="46px"><tspan>[SOLC_VERSION] [ELAPSED]</tspan>
 </tspan>
-    <tspan x="10px" y="64px"><tspan>Compiler run successful!</tspan>
+    <tspan x="10px" y="64px"><tspan>Compiler run </tspan><tspan class="fg-green">successful</tspan><tspan>!</tspan>
 </tspan>
     <tspan x="10px" y="82px">
 </tspan>
     <tspan x="10px" y="100px"><tspan>Ran 1 test for test/InvariantOutputTest.t.sol:InvariantOutputTest</tspan>
 </tspan>
-    <tspan x="10px" y="118px"><tspan>[FAIL: failed invariant]</tspan>
+    <tspan x="10px" y="118px"><tspan class="fg-red">[FAIL: failed invariant]</tspan>
 </tspan>
-    <tspan x="10px" y="136px"><tspan>	[Sequence] (original: 100, shrunk: 2)</tspan>
+    <tspan x="10px" y="136px"><tspan class="fg-red">	[Sequence] (original: 18, shrunk: 2)</tspan>
 </tspan>
-    <tspan x="10px" y="154px"><tspan>		sender=0xC5Ef3CF3d36e514Df9597Bbf8A50302cB89aC113 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 [1.157e77]]</tspan>
+    <tspan x="10px" y="154px"><tspan class="fg-red">		sender=0x6a3f0afe248BBfEa8188dDf90B4Cf62D35c99493 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 </tspan><tspan class="fg-red dimmed">[1.157e77]</tspan><tspan class="fg-red">]</tspan>
 </tspan>
-    <tspan x="10px" y="172px"><tspan>		sender=0x0000000000000000000000000000000000000164 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[61678357398080765210293718086378416697372618187842506566286863523773954249006 [6.167e76]]</tspan>
+    <tspan x="10px" y="172px"><tspan class="fg-red">		sender=0xF343C4D80b93a0Aac984Ebf89a625095399CaF11 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 </tspan><tspan class="fg-red dimmed">[1.157e77]</tspan><tspan class="fg-red">]</tspan>
 </tspan>
-    <tspan x="10px" y="190px"><tspan> invariant_check_count() (runs: 0, calls: 0, reverts: 0)</tspan>
+    <tspan x="10px" y="190px"><tspan> invariant_check_count() (runs: 1, calls: 100, reverts: 0)</tspan>
 </tspan>
-    <tspan x="10px" y="208px"><tspan>Traces:</tspan>
+    <tspan x="10px" y="208px"><tspan>Suite result: </tspan><tspan class="fg-red">FAILED</tspan><tspan>. </tspan><tspan class="fg-green">0</tspan><tspan> passed; </tspan><tspan class="fg-red">1</tspan><tspan> failed; </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped; [ELAPSED]</tspan>
 </tspan>
-    <tspan x="10px" y="226px"><tspan>  [44571] </tspan><tspan class="fg-green">InvariantOutputTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
+    <tspan x="10px" y="226px">
 </tspan>
-    <tspan x="10px" y="244px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="244px"><tspan>Ran 1 test suite [ELAPSED]: </tspan><tspan class="fg-green">0</tspan><tspan> tests passed, </tspan><tspan class="fg-red">1</tspan><tspan> failed, </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped (1 total tests)</tspan>
 </tspan>
     <tspan x="10px" y="262px">
 </tspan>
-    <tspan x="10px" y="280px"><tspan>  [22881] </tspan><tspan class="fg-green">InvariantOutputTest</tspan><tspan>::</tspan><tspan class="fg-green">setCond</tspan><tspan>(115792089237316195423570985008687907853269984665640564039457584007913129639933 [1.157e77])</tspan>
+    <tspan x="10px" y="280px"><tspan>Failing tests:</tspan>
 </tspan>
-    <tspan x="10px" y="298px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="298px"><tspan>Encountered 1 failing test in test/InvariantOutputTest.t.sol:InvariantOutputTest</tspan>
 </tspan>
-    <tspan x="10px" y="316px">
+    <tspan x="10px" y="316px"><tspan class="fg-red">[FAIL: failed invariant]</tspan>
 </tspan>
-    <tspan x="10px" y="334px"><tspan>  [5781] </tspan><tspan class="fg-green">InvariantOutputTest</tspan><tspan>::</tspan><tspan class="fg-green">setCond</tspan><tspan>(61678357398080765210293718086378416697372618187842506566286863523773954249006 [6.167e76])</tspan>
+    <tspan x="10px" y="334px"><tspan class="fg-red">	[Sequence] (original: 18, shrunk: 2)</tspan>
 </tspan>
-    <tspan x="10px" y="352px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="352px"><tspan class="fg-red">		sender=0x6a3f0afe248BBfEa8188dDf90B4Cf62D35c99493 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 </tspan><tspan class="fg-red dimmed">[1.157e77]</tspan><tspan class="fg-red">]</tspan>
 </tspan>
-    <tspan x="10px" y="370px">
+    <tspan x="10px" y="370px"><tspan class="fg-red">		sender=0xF343C4D80b93a0Aac984Ebf89a625095399CaF11 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639934 </tspan><tspan class="fg-red dimmed">[1.157e77]</tspan><tspan class="fg-red">]</tspan>
 </tspan>
-    <tspan x="10px" y="388px"><tspan>  [2594] </tspan><tspan class="fg-red">InvariantOutputTest</tspan><tspan>::</tspan><tspan class="fg-red">invariant_check_count</tspan><tspan>()</tspan>
+    <tspan x="10px" y="388px"><tspan> invariant_check_count() (runs: 1, calls: 100, reverts: 0)</tspan>
 </tspan>
-    <tspan x="10px" y="406px"><tspan>    └─ </tspan><tspan class="fg-red">← [Revert]</tspan><tspan> failed invariant</tspan>
+    <tspan x="10px" y="406px">
 </tspan>
-    <tspan x="10px" y="424px">
+    <tspan x="10px" y="424px"><tspan>Encountered a total of </tspan><tspan class="fg-red">1</tspan><tspan> failing tests, </tspan><tspan class="fg-green">0</tspan><tspan> tests succeeded</tspan>
 </tspan>
-    <tspan x="10px" y="442px"><tspan>Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="442px">
 </tspan>
-    <tspan x="10px" y="460px">
+    <tspan x="10px" y="460px"><tspan>Tip: Run </tspan><tspan class="fg-cyan">`forge test --rerun`</tspan><tspan> to retry only the 1 failed test</tspan>
 </tspan>
-    <tspan x="10px" y="478px"><tspan>Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)</tspan>
-</tspan>
-    <tspan x="10px" y="496px">
-</tspan>
-    <tspan x="10px" y="514px"><tspan>Failing tests:</tspan>
-</tspan>
-    <tspan x="10px" y="532px"><tspan>Encountered 1 failing test in test/InvariantOutputTest.t.sol:InvariantOutputTest</tspan>
-</tspan>
-    <tspan x="10px" y="550px"><tspan>[FAIL: failed invariant]</tspan>
-</tspan>
-    <tspan x="10px" y="568px"><tspan>	[Sequence] (original: 100, shrunk: 2)</tspan>
-</tspan>
-    <tspan x="10px" y="586px"><tspan>		sender=0xC5Ef3CF3d36e514Df9597Bbf8A50302cB89aC113 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[115792089237316195423570985008687907853269984665640564039457584007913129639933 [1.157e77]]</tspan>
-</tspan>
-    <tspan x="10px" y="604px"><tspan>		sender=0x0000000000000000000000000000000000000164 addr=[test/InvariantOutputTest.t.sol:InvariantOutputTest]0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=setCond(uint256) args=[61678357398080765210293718086378416697372618187842506566286863523773954249006 [6.167e76]]</tspan>
-</tspan>
-    <tspan x="10px" y="622px"><tspan> invariant_check_count() (runs: 0, calls: 0, reverts: 0)</tspan>
-</tspan>
-    <tspan x="10px" y="640px">
-</tspan>
-    <tspan x="10px" y="658px"><tspan>Encountered a total of 1 failing tests, 0 tests succeeded</tspan>
-</tspan>
-    <tspan x="10px" y="676px">
+    <tspan x="10px" y="478px">
 </tspan>
   </text>
 
