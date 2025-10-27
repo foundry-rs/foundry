@@ -13,12 +13,22 @@ use crate::wallet_browser::{
     types::{BrowserApiResponse, BrowserTransaction, Connection, TransactionResponse},
 };
 
-pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
+pub(crate) async fn serve_index(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> impl axum::response::IntoResponse {
+    let token = state.session_token();
+    let html = contents::INDEX_HTML.replace(
+        "<!--SESSION_SCRIPT-->",
+        &format!(r#"<script>window.__WALLET_TOKEN__ = "{token}";</script>"#),
+    );
+
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
-    (headers, Html(contents::INDEX_HTML))
+    (headers, Html(html))
 }
 
+/// Get the next pending transaction request.
+/// Route: GET /api/transaction/request
 pub(crate) async fn get_next_transaction_request(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<BrowserTransaction>> {
@@ -28,6 +38,8 @@ pub(crate) async fn get_next_transaction_request(
     }
 }
 
+/// Post a transaction response (signed or error).
+/// Route: POST /api/transaction/response
 pub(crate) async fn post_transaction_response(
     State(state): State<Arc<BrowserWalletState>>,
     Json(body): Json<TransactionResponse>,
@@ -68,11 +80,22 @@ pub(crate) async fn post_transaction_response(
     Json(BrowserApiResponse::ok())
 }
 
+/// Get current connection information.
+/// Route: GET /api/connection
+pub(crate) async fn get_connection_info(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> Json<BrowserApiResponse<Option<Connection>>> {
+    let connection = state.get_connection();
+
+    Json(BrowserApiResponse::with_data(connection))
+}
+
+/// Post connection update (connect or disconnect).
+/// Route: POST /api/connection
 pub(crate) async fn post_connection_update(
     State(state): State<Arc<BrowserWalletState>>,
     Json(body): Json<Option<Connection>>,
 ) -> Json<BrowserApiResponse> {
-    // Update the connection state, setting it to None if disconnected.
     state.set_connection(body);
 
     Json(BrowserApiResponse::ok())

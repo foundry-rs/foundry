@@ -13,6 +13,7 @@ use tokio::{
     net::TcpListener,
     sync::{Mutex, oneshot},
 };
+use uuid::Uuid;
 
 use crate::wallet_browser::{
     error::BrowserWalletError,
@@ -31,12 +32,16 @@ pub struct BrowserWalletServer {
     timeout: Duration,
 }
 
+// TODO: harden using session token
+
 impl BrowserWalletServer {
     /// Create a new browser wallet server.
     pub fn new(port: u16, open_browser: bool, timeout: Duration) -> Self {
+        let session_token = Arc::new(Uuid::new_v4().to_string());
+
         Self {
             port,
-            state: Arc::new(BrowserWalletState::new()),
+            state: Arc::new(BrowserWalletState::new(session_token)),
             shutdown_tx: None,
             open_browser,
             timeout,
@@ -51,6 +56,7 @@ impl BrowserWalletServer {
             // API endpoints
             .route("/api/transaction/request", get(handlers::get_next_transaction_request))
             .route("/api/transaction/response", post(handlers::post_transaction_response))
+            .route("/api/connection", get(handlers::get_connection_info))
             .route("/api/connection", post(handlers::post_connection_update))
             .with_state(Arc::clone(&self.state));
 
