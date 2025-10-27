@@ -218,48 +218,33 @@ impl<'ast> State<'_, 'ast> {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
-                if use_single_line {
-                    // Single import on one line - no box at all to avoid line wrapping
-                    self.word("{");
-                    if self.config.bracket_spacing {
-                        self.word(" ");
-                    }
-
-                    // Print single alias directly without commasep to avoid spaces
-                    if let Some((ident, alias)) = aliases.first() {
-                        self.print_ident(ident);
-                        if let Some(alias) = alias {
-                            self.word(" as ");
-                            self.print_ident(alias);
-                        }
-                    }
-
-                    if self.config.bracket_spacing {
-                        self.word(" ");
-                    }
-                    self.word("} from ");
-                    self.print_ast_str_lit(path);
-                } else {
-                    // Multi-line format for multiple imports or when single_line_imports is false
+                if !use_single_line {
                     self.s.cbox(self.ind);
-                    self.word("{");
+                }
+                self.word("{");
+                if !use_single_line {
                     self.braces_break();
+                }
 
-                    if self.config.sort_imports {
-                        let mut sorted: Vec<_> = aliases.iter().collect();
-                        sorted.sort_by_key(|(ident, _alias)| ident.name.as_str());
-                        self.print_commasep_aliases(sorted.into_iter());
-                    } else {
-                        self.print_commasep_aliases(aliases.iter());
-                    };
+                let aliases_iter: Box<dyn Iterator<Item = _>> = if self.config.sort_imports {
+                    let mut sorted: Vec<_> = aliases.iter().collect();
+                    sorted.sort_by_key(|(ident, _alias)| ident.name.as_str());
+                    Box::new(sorted.into_iter())
+                } else {
+                    Box::new(aliases.iter())
+                };
+                self.print_commasep_aliases(aliases_iter);
 
+                if !use_single_line {
                     self.braces_break();
                     self.s.offset(-self.ind);
-                    self.word("}");
-                    self.end();
-                    self.word(" from ");
-                    self.print_ast_str_lit(path);
                 }
+                self.word("}");
+                if !use_single_line {
+                    self.end();
+                }
+                self.word(" from ");
+                self.print_ast_str_lit(path);
             }
         }
         self.word(";");
