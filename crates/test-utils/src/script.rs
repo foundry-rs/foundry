@@ -24,7 +24,7 @@ fn init_script_cmd(
     cmd.args(["script", target_contract, "--root", project_root.to_str().unwrap(), "-vvvvv"]);
 
     if let Some(rpc_url) = endpoint {
-        cmd.args(["--fork-url", rpc_url]);
+        cmd.args(["--rpc-url", rpc_url]);
     }
 }
 /// A helper struct to test forge script scenarios
