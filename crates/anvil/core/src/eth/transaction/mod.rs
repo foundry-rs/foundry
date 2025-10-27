@@ -1,5 +1,6 @@
 //! Transaction related types
 use alloy_consensus::{
+    constants::{EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID},
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
     TxEnvelope, TxLegacy, TxReceipt, Typed2718,
     transaction::{
@@ -436,7 +437,7 @@ impl PendingTransaction {
                     gas_priority_fee: None,
                     gas_limit: *gas_limit,
                     access_list: vec![].into(),
-                    tx_type: 0,
+                    tx_type: LEGACY_TX_TYPE_ID,
                     ..Default::default()
                 })
             }
@@ -463,7 +464,7 @@ impl PendingTransaction {
                     gas_priority_fee: None,
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 1,
+                    tx_type: EIP2930_TX_TYPE_ID,
                     ..Default::default()
                 })
             }
@@ -491,7 +492,7 @@ impl PendingTransaction {
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 2,
+                    tx_type: EIP1559_TX_TYPE_ID,
                     ..Default::default()
                 })
             }
@@ -523,7 +524,7 @@ impl PendingTransaction {
                     blob_hashes: blob_versioned_hashes.clone(),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 3,
+                    tx_type: EIP4844_TX_TYPE_ID,
                     ..Default::default()
                 })
             }
@@ -552,7 +553,7 @@ impl PendingTransaction {
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    tx_type: 4,
+                    tx_type: EIP7702_TX_TYPE_ID,
                     ..Default::default()
                 };
                 tx.set_signed_authorization(authorization_list.clone());
