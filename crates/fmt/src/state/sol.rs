@@ -725,7 +725,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.errors() {
+                ListFormat::compact()
+            } else {
+                ListFormat::consistent()
+            },
+        );
         self.word(";");
     }
 
@@ -733,7 +741,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact().break_cmnts());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.events() {
+                ListFormat::compact().break_cmnts()
+            } else {
+                ListFormat::consistent().break_cmnts()
+            },
+        );
         if *anonymous {
             self.word(" anonymous");
         }
@@ -1701,7 +1717,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
+        let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
             (true, true) => ListFormat::compact().with_space(),
@@ -1738,7 +1754,7 @@ impl<'ast> State<'_, 'ast> {
                     .break_cmnts()
                     .break_single(true)
                     .without_ind(self.call_stack.is_chain())
-                    .with_delimiters(!(self.emit_or_revert || self.call_with_opts_and_args)),
+                    .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
             self.nbsp();
@@ -2264,17 +2280,14 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.s.cbox(0);
-        self.print_path(path, false);
         self.emit_or_revert = path.segments().len() > 1;
-        self.print_call_args(
-            args,
-            if self.config.call_compact_args {
-                ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
-            } else {
-                ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
-            },
-            path.to_string().len(),
-        );
+        self.print_path(path, false);
+        let format = if self.config.prefer_compact.calls() {
+            ListFormat::compact()
+        } else {
+            ListFormat::consistent()
+        };
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
         self.emit_or_revert = false;
         self.end();
     }
@@ -2797,6 +2810,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         }
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
+        ast::ExprKind::Tuple(..) => false,
         _ => true,
     }
 }
