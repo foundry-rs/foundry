@@ -215,9 +215,19 @@ impl<'ast> State<'_, 'ast> {
             }
 
             ast::ImportItems::Aliases(aliases) => {
-                self.s.cbox(self.ind);
-                self.word("{");
-                self.braces_break();
+                // Check if we should keep single imports on one line
+                let use_single_line = self.config.single_line_imports && aliases.len() == 1;
+
+                if use_single_line {
+                    self.word("{");
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                } else {
+                    self.s.cbox(self.ind);
+                    self.word("{");
+                    self.braces_break();
+                }
 
                 if self.config.sort_imports {
                     let mut sorted: Vec<_> = aliases.iter().collect();
@@ -227,10 +237,17 @@ impl<'ast> State<'_, 'ast> {
                     self.print_commasep_aliases(aliases.iter());
                 };
 
-                self.braces_break();
-                self.s.offset(-self.ind);
-                self.word("}");
-                self.end();
+                if use_single_line {
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                    self.word("}");
+                } else {
+                    self.braces_break();
+                    self.s.offset(-self.ind);
+                    self.word("}");
+                    self.end();
+                }
                 self.word(" from ");
                 self.print_ast_str_lit(path);
             }
@@ -1855,7 +1872,7 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly ");
+            self.print_word("assembly "); // 9 chars
             if let Some(dialect) = dialect {
                 self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
@@ -1872,7 +1889,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false);
+        self.print_yul_block(block, block.span, false, 9);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,
