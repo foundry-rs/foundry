@@ -184,38 +184,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          TOOL='${{ matrix.tool }}'
-          PLATFORM='${{ matrix.os }}'
-          ARCH='${{ matrix.arch }}'
-
-          TMP_DIR="$ARTIFACT_DIR/tmp"
-          rm -rf "$TMP_DIR"
-          mkdir -p "$TMP_DIR"
-
-          FILE_PREFIX="$ARTIFACT_DIR/foundry_${RELEASE_VERSION}_${PLATFORM}_${ARCH}"
-          if [[ -f "${FILE_PREFIX}.zip" ]]; then
-            echo "Extracting ${FILE_PREFIX}.zip"
-            if ! command -v unzip >/dev/null 2>&1; then
-              sudo apt-get update -y && sudo apt-get install -y unzip
-            fi
-            unzip -o "${FILE_PREFIX}.zip" -d "$TMP_DIR"
-            BIN="$TMP_DIR/${TOOL}.exe"
-          else
-            echo "Extracting ${FILE_PREFIX}.tar.gz"
-            tar -xzf "${FILE_PREFIX}.tar.gz" -C "$TMP_DIR"
-            BIN="$TMP_DIR/${TOOL}"
-          fi
-
-          if [[ ! -f "$BIN" ]]; then
-            echo "ERROR: Expected binary $BIN not found" >&2
-            exit 1
-          fi
-
-          PACKAGE_DIR="@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
-          echo "Staging binary $BIN into $PACKAGE_DIR"
-
-          TARGET_TOOL="$TOOL" PLATFORM_NAME="$PLATFORM" ARCH="$ARCH" \
-            bun ./scripts/prepublish.mjs --tool "$TOOL" --binary "$BIN"
+          bun ./scripts/stage-from-artifact.mjs \
+            --tool '${{ matrix.tool }}' \
+            --platform '${{ matrix.os }}' \
+            --arch '${{ matrix.arch }}' \
+            --release-version "$RELEASE_VERSION" \
+            --artifact-dir "$ARTIFACT_DIR"
 
       - name: Sanity Check Binary
         working-directory: ./npm
@@ -307,10 +281,7 @@ jobs:
         working-directory: ./npm
         run: |
           set -euo pipefail
-          for tool in forge cast anvil chisel; do
-            echo "Publishing meta package @foundry-rs/$tool"
-            TARGET_TOOL="$tool" bun ./scripts/publish.mjs "./@foundry-rs/$tool"
-          done
+          bun ./scripts/publish-meta.mjs --release-version "$RELEASE_VERSION"
         env:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
