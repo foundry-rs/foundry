@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "postinstall": "node ./dist/install.mjs"
+    "postinstall": "node ./dist/postinstall.mjs"
   },
   "optionalDependencies": {
     "@foundry-rs/cast-darwin-arm64": "0.0.0",

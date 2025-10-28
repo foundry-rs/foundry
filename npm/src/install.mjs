@@ -1,4 +1,3 @@
-import * as Bun from 'bun'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import * as NodeHttp from 'node:http'
@@ -253,11 +252,11 @@ async function downloadBinaryFromRegistry() {
   ensureSecureUrl(dist.tarball, 'tarball URL')
 
   console.info(
-    Bun.color('green', 'ansi'),
+    colors.green,
     'Downloading binary from:\n',
     dist.tarball,
     '\n',
-    Bun.color('reset', 'ansi')
+    colors.reset
   )
 
   /**
@@ -322,9 +321,9 @@ async function downloadBinaryFromRegistry() {
       )
     }
     console.warn(
-      Bun.color('yellow', 'ansi'),
+      colors.yellow,
       'Warning: proceeding without integrity verification (explicitly allowed).',
-      Bun.color('reset', 'ansi')
+      colors.reset
     )
   }
 
