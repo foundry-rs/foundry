@@ -137,7 +137,7 @@ jobs:
         run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Upload benchmark results as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-results
           path: |
