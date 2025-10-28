@@ -7,7 +7,8 @@ import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as NodeZlib from 'node:zlib'
-import { BINARY_NAME, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME, resolveTargetTool } from './const.mjs'
+
+import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME, resolveTargetTool } from './const.mjs'
 
 const __dirname = NodePath.dirname(fileURLToPath(import.meta.url))
 const targetTool = resolveTargetTool()
