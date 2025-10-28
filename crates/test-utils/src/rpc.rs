@@ -7,9 +7,12 @@ use foundry_config::{
     RpcEndpointUrl, RpcEndpoints,
 };
 use rand::seq::SliceRandom;
-use std::sync::{
-    LazyLock,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    env,
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 macro_rules! shuffled_list {
@@ -153,7 +156,10 @@ fn next_archive_url(is_ws: bool) -> String {
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
-    let key = ETHERSCAN_KEYS.next().to_string();
+    let mut key = env::var("ETHERSCAN_KEY").unwrap_or_default();
+    if key.is_empty() {
+        key = ETHERSCAN_KEYS.next().to_string();
+    }
     test_debug!("next_etherscan_api_key() = {}...", &key[..6]);
     key
 }
@@ -181,6 +187,14 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Arbitrum) {
+        let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
+        if !rpc_url.is_empty() {
+            return rpc_url;
+        }
+        return "https://arbitrum-one-rpc.publicnode.com".to_string();
+    }
+
     let reth_works = true;
     let domain = if reth_works && matches!(chain, Mainnet) {
         *(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS }).next()
@@ -189,8 +203,8 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         let key = DRPC_KEYS.next();
         let network = match chain {
             Mainnet => "ethereum",
-            Arbitrum => "arbitrum",
             Polygon => "polygon",
+            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };

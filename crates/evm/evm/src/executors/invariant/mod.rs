@@ -1,5 +1,8 @@
 use crate::{
-    executors::{Executor, RawCallResult, corpus::WorkerCorpus},
+    executors::{
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
+        RawCallResult, corpus::WorkerCorpus,
+    },
     inspectors::Fuzzer,
 };
 use alloy_primitives::{
@@ -8,7 +11,11 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    TestFunctionExt,
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    sh_println,
+};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
@@ -30,6 +37,8 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
@@ -45,13 +54,9 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-use foundry_common::{TestFunctionExt, sh_println};
 pub use result::InvariantFuzzTestResult;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 mod shrink;
-use crate::executors::{DURATION_BETWEEN_METRICS_REPORT, EvmError, FailFast, FuzzTestTimer};
 pub use shrink::check_sequence;
 
 sol! {
@@ -328,7 +333,7 @@ impl<'a> InvariantExecutor<'a> {
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -343,7 +348,7 @@ impl<'a> InvariantExecutor<'a> {
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
+            if early_exit.should_stop() {
                 return false;
             }
 

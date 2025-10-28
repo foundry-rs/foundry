@@ -4055,7 +4055,7 @@ contract ContractWithCustomError {
    "#,
     );
     // Build and cache project selectors.
-    cmd.forge_fuse().args(["build"]).assert_success();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
 
     // Assert cast can decode custom error with local cache.
     cmd.cast_fuse()
@@ -4233,4 +4233,43 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11632>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(invariant_consistent_output, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+        config.invariant.show_metrics = false;
+    });
+    prj.add_test(
+        "InvariantOutputTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantOutputTest is Test {
+    uint256 count;
+
+    function setCond(uint256 cond) public {
+        if (cond > type(uint256).max / 2) {
+            count++;
+        }
+    }
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_check_count() public view {
+        require(count < 2, "failed invariant");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_check_count", "--color", "always"])
+        .assert_failure()
+        .stdout_eq(file!["../../fixtures/invariant_traces.svg": TermSvg]);
 });

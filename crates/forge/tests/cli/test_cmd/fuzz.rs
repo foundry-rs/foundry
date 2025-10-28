@@ -117,7 +117,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 forgetest_init!(test_fuzz_fail_on_revert, |prj, cmd| {
     prj.wipe_contracts();
-    prj.update_config(|config| config.fuzz.fail_on_revert = false);
+    prj.update_config(|config| {
+        config.fuzz.fail_on_revert = false;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
     prj.add_source(
         "Counter.sol",
         r#"
@@ -672,6 +675,9 @@ Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 // random values (instead edge cases) are generated if no fixtures defined
 forgetest_init!(fuzz_uint, |prj, cmd| {
     prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
     prj.add_test(
         "FuzzUint.t.sol",
         r#"

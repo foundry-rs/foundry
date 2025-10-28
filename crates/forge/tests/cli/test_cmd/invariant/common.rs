@@ -188,6 +188,7 @@ forgetest!(invariant_calldata_dictionary, |prj, cmd| {
     prj.wipe_contracts();
     prj.insert_utils();
     prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
         config.invariant.depth = 10;
     });
 
@@ -293,7 +294,7 @@ Ran 1 test for test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionar
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 
-[STATS]
+...
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -1056,35 +1057,17 @@ contract InvariantRollForkStateTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
-[FAIL: wrong supply]
-	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
-[FAIL: too many blocks mined]
-	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
-	[SEQUENCE]
+...
  invariant_fork_handler_block() ([RUNS])
 
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
-	[SEQUENCE]
+...
  invariant_fork_handler_state() ([RUNS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
@@ -1098,6 +1081,7 @@ forgetest_init!(invariant_scrape_values, |prj, cmd| {
     prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
     });
 
     prj.add_test(
@@ -1173,24 +1157,6 @@ contract FindFromLogValueTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
-[FAIL: value from return found]
-	[SEQUENCE]
- invariant_value_not_found() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
-[FAIL: value from logs found]
-	[SEQUENCE]
- invariant_value_not_found() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
@@ -1273,6 +1239,7 @@ forgetest_init!(
             config.fuzz.seed = Some(U256::from(119u32));
             config.invariant.runs = 1;
             config.invariant.depth = 1000;
+            config.invariant.shrink_run_limit = 365;
         });
 
         prj.add_test(

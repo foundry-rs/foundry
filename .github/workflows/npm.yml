@@ -77,7 +77,7 @@ jobs:
           ls -la "$ARTIFACT_DIR" || true
 
       - name: Download Release Assets
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run

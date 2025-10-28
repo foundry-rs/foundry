@@ -1,5 +1,5 @@
 use crate::executors::{
-    DURATION_BETWEEN_METRICS_REPORT, Executor, FailFast, FuzzTestTimer, RawCallResult,
+    DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
     corpus::WorkerCorpus,
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -102,7 +102,7 @@ impl FuzzedExecutor {
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
-        fail_fast: &FailFast,
+        early_exit: &EarlyExit,
     ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
@@ -133,7 +133,7 @@ impl FuzzedExecutor {
         let mut last_metrics_report = Instant::now();
         let max_runs = self.config.runs;
         let continue_campaign = |runs: u32| {
-            if fail_fast.should_stop() {
+            if early_exit.should_stop() {
                 return false;
             }
 

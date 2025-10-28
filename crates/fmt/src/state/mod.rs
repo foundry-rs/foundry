@@ -126,6 +126,8 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
+    // Whether to skip the index soft breaks because the callee fits inline.
+    skip_index_break: bool,
     // Whether inside an `emit` or `revert` call with a qualified path, or not.
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
@@ -219,6 +221,7 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
+            skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
             emit_or_revert: false,
@@ -247,11 +250,17 @@ impl<'sess> State<'sess, '_> {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
+    /// Computes the space left, bounded by the max space left.
     fn space_left(&self) -> usize {
-        std::cmp::min(
-            self.s.space_left(),
-            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
-        )
+        std::cmp::min(self.s.space_left(), self.max_space_left(0))
+    }
+
+    /// Computes the maximum space left given the context information available:
+    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
+    fn max_space_left(&self, prefix_len: usize) -> usize {
+        self.config
+            .line_length
+            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -861,15 +870,14 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    config.offset = self.ind;
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
+                        config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
+                    }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(
-                                &line,
-                                prefix,
-                                if cmnt.is_doc { 0 } else { config.offset },
-                                cmnt.is_doc,
-                            );
+                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);
