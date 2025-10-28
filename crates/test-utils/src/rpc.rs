@@ -192,7 +192,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         if !rpc_url.is_empty() {
             return rpc_url;
         }
-        return "https://arb1.arbitrum.io/rpc".to_string();
+        return "https://arbitrum-one-rpc.publicnode.com".to_string();
     }
 
     let reth_works = true;
@@ -204,6 +204,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         let network = match chain {
             Mainnet => "ethereum",
             Polygon => "polygon",
+            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };
