@@ -1222,7 +1222,7 @@ async fn test_arbitrum_fork_dev_balance() {
 // <https://github.com/foundry-rs/foundry/issues/9152>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_arb_fork_mining() {
-    let fork_block_number = 266137031u64;
+    let fork_block_number = 394274860u64;
     let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
     let (api, _handle) = spawn(
         fork_config()
