@@ -156,6 +156,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Arbitrum) {
+        return "https://arbitrum-one-rpc.publicnode.com".to_string();
+    }
+
     let reth_works = true;
     let domain = if reth_works && matches!(chain, Mainnet) {
         *next(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS })
