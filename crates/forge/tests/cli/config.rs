@@ -1905,7 +1905,9 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
         ]
     });
     cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
 "#]]);
 });

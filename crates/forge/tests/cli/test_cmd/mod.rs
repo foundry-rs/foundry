@@ -380,6 +380,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // checks that forge test repeatedly produces the same output
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
@@ -2211,6 +2212,7 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
 );
 
 forgetest_init!(requires_single_test, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
 Error: 2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
 
@@ -2287,6 +2289,7 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2841,6 +2844,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
@@ -2897,6 +2901,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"
@@ -2937,6 +2942,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
         .assert_success()
         .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
@@ -2946,6 +2952,7 @@ forgetest_init!(colored_traces, |prj, cmd| {
 // <https://github.com/foundry-rs/foundry/issues/9864>
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "SuppressTracesTest.t.sol",
         r#"
@@ -3269,6 +3276,7 @@ Traces:
 
 // <https://github.com/foundry-rs/foundry/issues/10068>
 forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_source(
         "CounterV1.sol",
         r#"
@@ -3733,6 +3741,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/10544>
 forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "Counter.t.sol",
         r#"
@@ -3778,6 +3787,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "NonContractCallRevertTest.t.sol",
         r#"
@@ -4032,6 +4042,7 @@ MyUniqueEventWithinLocalProject(uint256,address)
 
 // <https://github.com/foundry-rs/foundry/issues/11021>
 forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.add_test(
         "PrankBug.t.sol",
         r#"

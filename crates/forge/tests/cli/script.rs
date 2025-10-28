@@ -2703,6 +2703,7 @@ Warning: No transactions to broadcast.
 // Tests EIP-7702 broadcast <https://github.com/foundry-rs/foundry/issues/10461>
 forgetest_async!(can_broadcast_txes_with_signed_auth, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_script(
             "EIP7702Script.s.sol",
             r#"
@@ -3208,6 +3209,7 @@ For more information, try '--help'.
 // <https://github.com/foundry-rs/foundry/issues/11855>
 forgetest_async!(can_broadcast_from_deploy_code_cheatcode, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_script(
         "Counter.s.sol",
         r#"
