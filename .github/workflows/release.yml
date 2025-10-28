@@ -146,6 +146,11 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        if: ${{ contains(matrix.runner, 'depot') }}
+      - run: printf 'RUSTC_WRAPPER=sccache' >> "$GITHUB_ENV
+        if: ${{ contains(matrix.runner, 'depot') }}
+
       - name: Apple M1 setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
