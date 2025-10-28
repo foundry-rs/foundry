@@ -215,9 +215,19 @@ impl<'ast> State<'_, 'ast> {
             }
 
             ast::ImportItems::Aliases(aliases) => {
-                self.s.cbox(self.ind);
-                self.word("{");
-                self.braces_break();
+                // Check if we should keep single imports on one line
+                let use_single_line = self.config.single_line_imports && aliases.len() == 1;
+
+                if use_single_line {
+                    self.word("{");
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                } else {
+                    self.s.cbox(self.ind);
+                    self.word("{");
+                    self.braces_break();
+                }
 
                 if self.config.sort_imports {
                     let mut sorted: Vec<_> = aliases.iter().collect();
@@ -227,10 +237,17 @@ impl<'ast> State<'_, 'ast> {
                     self.print_commasep_aliases(aliases.iter());
                 };
 
-                self.braces_break();
-                self.s.offset(-self.ind);
-                self.word("}");
-                self.end();
+                if use_single_line {
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                    self.word("}");
+                } else {
+                    self.braces_break();
+                    self.s.offset(-self.ind);
+                    self.word("}");
+                    self.end();
+                }
                 self.word(" from ");
                 self.print_ast_str_lit(path);
             }
@@ -565,7 +582,6 @@ impl<'ast> State<'_, 'ast> {
         if !skip_returns
             && let Some(ret) = returns
             && !ret.is_empty()
-            && let Some(ret) = returns
         {
             if !self.handle_span(self.cursor.span(ret.span.lo()), false) {
                 if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
@@ -725,7 +741,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.errors() {
+                ListFormat::compact()
+            } else {
+                ListFormat::consistent()
+            },
+        );
         self.word(";");
     }
 
@@ -733,7 +757,15 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::compact().break_cmnts());
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            if self.config.prefer_compact.events() {
+                ListFormat::compact().break_cmnts()
+            } else {
+                ListFormat::consistent().break_cmnts()
+            },
+        );
         if *anonymous {
             self.word(" anonymous");
         }
@@ -1274,11 +1306,10 @@ impl<'ast> State<'_, 'ast> {
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
                         s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        if !matches!(
-                            member_expr.kind,
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)
-                        ) {
-                            s.zerobreak();
+                        match member_expr.kind {
+                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
+                            ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            _ => s.zerobreak(),
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1442,10 +1473,16 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
 
         let mut skip_break = false;
-
+        let mut zerobreak = |this: &mut Self| {
+            if this.skip_index_break {
+                skip_break = true;
+            } else {
+                this.zerobreak();
+            }
+        };
         match kind {
             ast::IndexKind::Index(Some(inner_expr)) => {
-                self.zerobreak();
+                zerobreak(self);
                 self.print_expr(inner_expr);
             }
             ast::IndexKind::Index(None) => {}
@@ -1455,11 +1492,11 @@ impl<'ast> State<'_, 'ast> {
                         .print_comments(start_expr.span.lo(), CommentConfig::skip_ws())
                         .is_none_or(|s| s.is_mixed())
                     {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_expr(start_expr);
                 } else {
-                    self.zerobreak();
+                    zerobreak(self);
                 }
 
                 self.word(":");
@@ -1467,7 +1504,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(end_expr) = end {
                     self.s.ibox(self.ind);
                     if start.is_some() {
-                        self.zerobreak();
+                        zerobreak(self);
                     }
                     self.print_comments(
                         end_expr.span.lo(),
@@ -1528,34 +1565,35 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.s.ibox(0);
 
-        let mut print_ternary_expr =
-            |span_lo, prefix: Option<&'static str>, expr: &'ast ast::Expr<'ast>| {
-                match prefix {
-                    Some(prefix) => {
-                        if self.peek_comment_before(span_lo).is_some() {
-                            self.space();
-                        }
-                        self.print_comments(span_lo, CommentConfig::skip_ws());
-                        self.end();
-                        if !self.is_bol_or_only_ind() {
-                            self.space();
-                        }
-                        self.s.ibox(0);
-                        self.word(prefix);
+        let print_sub_expr = |this: &mut Self, span_lo, prefix, expr: &'ast ast::Expr<'ast>| {
+            match prefix {
+                Some(prefix) => {
+                    if this.peek_comment_before(span_lo).is_some() {
+                        this.space();
                     }
-                    None => {
-                        self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                    this.print_comments(span_lo, CommentConfig::skip_ws());
+                    this.end();
+                    if !this.is_bol_or_only_ind() {
+                        this.space();
                     }
-                };
-                self.print_expr(expr);
+                    this.s.ibox(0);
+                    this.word(prefix);
+                }
+                None => {
+                    this.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                }
             };
+            this.print_expr(expr);
+        };
 
         // conditional expression
-        print_ternary_expr(then.span.lo(), None, cond);
+        self.s.ibox(-self.ind);
+        print_sub_expr(self, then.span.lo(), None, cond);
+        self.end();
         // then expression
-        print_ternary_expr(then.span.lo(), Some("? "), then);
+        print_sub_expr(self, then.span.lo(), Some("? "), then);
         // else expression
-        print_ternary_expr(els.span.lo(), Some(": "), els);
+        print_sub_expr(self, els.span.lo(), Some(": "), els);
 
         self.end();
         self.neverbreak();
@@ -1596,7 +1634,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
 
-        let mut extra_box = false;
+        let (mut extra_box, skip_cache) = (false, self.skip_index_break);
         let parent_is_chain = self.call_stack.last().copied().is_some_and(|call| call.is_chained());
         if !parent_is_chain {
             // Estimate sizes of callee and optional member
@@ -1626,6 +1664,7 @@ impl<'ast> State<'_, 'ast> {
                     // calls with cmnts between the args always break
                     || (total_fits_line && !member_or_args.has_comments()))
             {
+                self.skip_index_break = true;
                 self.cbox(0);
             } else {
                 self.s.ibox(self.ind);
@@ -1649,6 +1688,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.pop();
             }
             self.end();
+        }
+
+        // Restore cache
+        if self.skip_index_break {
+            self.skip_index_break = skip_cache;
         }
     }
 
@@ -1690,7 +1734,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        let list_format = match (self.config.bracket_spacing, self.config.call_compact_args) {
+        let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
             (true, true) => ListFormat::compact().with_space(),
@@ -1727,7 +1771,7 @@ impl<'ast> State<'_, 'ast> {
                     .break_cmnts()
                     .break_single(true)
                     .without_ind(self.call_stack.is_chain())
-                    .with_delimiters(!(self.emit_or_revert || self.call_with_opts_and_args)),
+                    .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
             self.nbsp();
@@ -1828,7 +1872,7 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly ");
+            self.print_word("assembly "); // 9 chars
             if let Some(dialect) = dialect {
                 self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
@@ -1845,7 +1889,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false);
+        self.print_yul_block(block, block.span, false, 9);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,
@@ -2184,7 +2228,9 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.print_word("{");
                 self.end();
-                self.print_trailing_comment_no_break(catch_span.lo(), None);
+                if !block.is_empty() {
+                    self.print_trailing_comment_no_break(catch_span.lo(), None);
+                }
                 self.print_block_without_braces(block, catch_span.hi(), Some(self.ind));
                 if self.cursor.enabled || self.cursor.pos < try_span.hi() {
                     self.print_word("}");
@@ -2251,17 +2297,14 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         };
         self.s.cbox(0);
-        self.print_path(path, false);
         self.emit_or_revert = path.segments().len() > 1;
-        self.print_call_args(
-            args,
-            if self.config.call_compact_args {
-                ListFormat::compact().break_cmnts().with_delimiters(args.len() == 1)
-            } else {
-                ListFormat::consistent().break_cmnts().with_delimiters(args.len() == 1)
-            },
-            path.to_string().len(),
-        );
+        self.print_path(path, false);
+        let format = if self.config.prefer_compact.calls() {
+            ListFormat::compact()
+        } else {
+            ListFormat::consistent()
+        };
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
         self.emit_or_revert = false;
         self.end();
     }
@@ -2784,6 +2827,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         }
         ast::ExprKind::Unary(_, expr) => has_complex_successor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
+        ast::ExprKind::Tuple(..) => false,
         _ => true,
     }
 }
@@ -2856,6 +2900,16 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Ident(id) => id.as_str().len(),
         ast::ExprKind::Type(ast::Type { kind: ast::TypeKind::Elementary(ty), .. }) => {
             ty.to_abi_str().len()
+        }
+        ast::ExprKind::Index(base, idx) => {
+            let idx_len = match idx {
+                ast::IndexKind::Index(expr) => expr.as_ref().map_or(0, |e| get_callee_head_size(e)),
+                ast::IndexKind::Range(e1, e2) => {
+                    1 + e1.as_ref().map_or(0, |e| get_callee_head_size(e))
+                        + e2.as_ref().map_or(0, |e| get_callee_head_size(e))
+                }
+            };
+            get_callee_head_size(base) + 2 + idx_len
         }
         ast::ExprKind::Member(base, member_ident) => {
             match &base.kind {
