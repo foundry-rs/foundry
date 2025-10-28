@@ -192,6 +192,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         if !rpc_url.is_empty() {
             return rpc_url;
         }
+        return "https://arbitrum-one-rpc.publicnode.com".to_string();
     }
 
     let reth_works = true;
