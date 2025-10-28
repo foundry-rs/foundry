@@ -491,12 +491,14 @@ impl<'ast> State<'_, 'ast> {
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsFirst => ListFormat::always_break(),
             MultilineFuncHeaderStyle::All
-                if header.parameters.len() > 1 && !self.can_header_be_inlined(header) =>
+                if header.parameters.len() > 1
+                    && !self.can_header_be_inlined(header, body.is_some()) =>
             {
                 ListFormat::always_break()
             }
             MultilineFuncHeaderStyle::AllParams
-                if !header.parameters.is_empty() && !self.can_header_be_inlined(header) =>
+                if !header.parameters.is_empty()
+                    && !self.can_header_be_inlined(header, body.is_some()) =>
             {
                 ListFormat::always_break()
             }
@@ -2553,9 +2555,7 @@ impl<'ast> State<'_, 'ast> {
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
-        const FUNCTION: usize = 8;
-
+    fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>, has_body: bool) -> bool {
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
@@ -2569,17 +2569,23 @@ impl<'ast> State<'_, 'ast> {
         let returns = header.returns.as_ref().map_or(0, |ret| {
             ret.vars
                 .iter()
-                .fold(0, |len, p| if len != 0 { len + 2 } else { 8 } + self.estimate_size(p.span))
+                .fold(0, |len, p| if len != 0 { len + 2 } else { 10 } + self.estimate_size(p.span))
         });
+        // ' {' or ';'
+        let end = if has_body { 2 } else { 1 };
 
-        FUNCTION
-            + self.estimate_header_params_size(header)
+        self.estimate_header_params_size(header) // accounts for 'function name(..)'
             + visibility
             + mutability
             + modifiers
             + override_
             + returns
+            + end
             <= self.space_left()
+    }
+
+    fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
+        self.estimate_header_params_size(header) <= self.space_left()
     }
 
     fn estimate_header_params_size(&mut self, header: &ast::FunctionHeader<'_>) -> usize {
@@ -2592,10 +2598,6 @@ impl<'ast> State<'_, 'ast> {
 
         // 'function ' + name + ' ' + params
         9 + header.name.map_or(0, |name| self.estimate_size(name.span) + 1) + params
-    }
-
-    fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
-        self.estimate_header_params_size(header) <= self.space_left()
     }
 
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
