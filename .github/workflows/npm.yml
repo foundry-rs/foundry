@@ -31,22 +31,72 @@ jobs:
       contents: read
       actions: read
       id-token: write
-    name: ${{ matrix.os }}-${{ matrix.arch }}
+    name: ${{ matrix.tool }}-${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 3
       fail-fast: false
       matrix:
         include:
-          - os: linux
+          - tool: forge
+            os: linux
             arch: amd64
-          - os: linux
+          - tool: forge
+            os: linux
             arch: arm64
-          - os: darwin
+          - tool: forge
+            os: darwin
             arch: amd64
-          - os: darwin
+          - tool: forge
+            os: darwin
             arch: arm64
-          - os: win32
+          - tool: forge
+            os: win32
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: amd64
+          - tool: cast
+            os: linux
+            arch: arm64
+          - tool: cast
+            os: darwin
+            arch: amd64
+          - tool: cast
+            os: darwin
+            arch: arm64
+          - tool: cast
+            os: win32
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: amd64
+          - tool: anvil
+            os: linux
+            arch: arm64
+          - tool: anvil
+            os: darwin
+            arch: amd64
+          - tool: anvil
+            os: darwin
+            arch: arm64
+          - tool: anvil
+            os: win32
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: amd64
+          - tool: chisel
+            os: linux
+            arch: arm64
+          - tool: chisel
+            os: darwin
+            arch: amd64
+          - tool: chisel
+            os: darwin
+            arch: arm64
+          - tool: chisel
+            os: win32
             arch: amd64
     # Run automatically after a successful 'release' workflow, or manually if a run_id is provided
     if: >-
@@ -133,33 +183,52 @@ jobs:
           ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
           set -euo pipefail
-          mkdir -p "$ARTIFACT_DIR/tmp"
 
-          FILE_PREFIX="$ARTIFACT_DIR/foundry_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}"
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
+
+          TMP_DIR="$ARTIFACT_DIR/tmp"
+          rm -rf "$TMP_DIR"
+          mkdir -p "$TMP_DIR"
+
+          FILE_PREFIX="$ARTIFACT_DIR/foundry_${RELEASE_VERSION}_${PLATFORM}_${ARCH}"
           if [[ -f "${FILE_PREFIX}.zip" ]]; then
             echo "Extracting ${FILE_PREFIX}.zip"
             if ! command -v unzip >/dev/null 2>&1; then
               sudo apt-get update -y && sudo apt-get install -y unzip
             fi
-            unzip -o "${FILE_PREFIX}.zip" -d "$ARTIFACT_DIR/tmp"
-            BIN="$ARTIFACT_DIR/tmp/forge.exe"
+            unzip -o "${FILE_PREFIX}.zip" -d "$TMP_DIR"
+            BIN="$TMP_DIR/${TOOL}.exe"
           else
             echo "Extracting ${FILE_PREFIX}.tar.gz"
-            tar -xzf "${FILE_PREFIX}.tar.gz" -C "$ARTIFACT_DIR/tmp"
-            BIN="$ARTIFACT_DIR/tmp/forge"
+            tar -xzf "${FILE_PREFIX}.tar.gz" -C "$TMP_DIR"
+            BIN="$TMP_DIR/${TOOL}"
           fi
 
-          echo "Staging binary $BIN into @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-          PLATFORM_NAME=${{ matrix.os }} ARCH=${{ matrix.arch }} FORGE_BIN_PATH="$BIN" bun ./scripts/prepublish.mjs
+          if [[ ! -f "$BIN" ]]; then
+            echo "ERROR: Expected binary $BIN not found" >&2
+            exit 1
+          fi
+
+          PACKAGE_DIR="@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          echo "Staging binary $BIN into $PACKAGE_DIR"
+
+          TARGET_TOOL="$TOOL" PLATFORM_NAME="$PLATFORM" ARCH="$ARCH" \
+            bun ./scripts/prepublish.mjs --tool "$TOOL" --binary "$BIN"
 
       - name: Sanity Check Binary
         working-directory: ./npm
         run: |
           set -euo pipefail
-          PKG_DIR="./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
-          BIN="$PKG_DIR/bin/forge"
-          if [[ "${{ matrix.os }}" == "win32" ]]; then
-            BIN="$PKG_DIR/bin/forge.exe"
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
+
+          PKG_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          BIN="$PKG_DIR/bin/${TOOL}"
+          if [[ "$PLATFORM" == "win32" ]]; then
+            BIN="$PKG_DIR/bin/${TOOL}.exe"
           fi
           echo "Verifying binary at: $BIN"
           ls -la "$BIN"
@@ -186,11 +255,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          ls -la ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          TOOL='${{ matrix.tool }}'
+          PLATFORM='${{ matrix.os }}'
+          ARCH='${{ matrix.arch }}'
 
-          bun ./scripts/publish.mjs ./@foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}
+          PACKAGE_DIR="./@foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
+          ls -la "$PACKAGE_DIR"
 
-          echo "Published @foundry-rs/forge-${{ matrix.os }}-${{ matrix.arch }}"
+          bun ./scripts/publish.mjs "$PACKAGE_DIR"
+
+          echo "Published @foundry-rs/${TOOL}-${PLATFORM}-${ARCH}"
 
   publish-meta:
     permissions:
@@ -225,13 +299,18 @@ jobs:
         working-directory: ./npm
         run: bun install --frozen-lockfile
 
-      - name: Transpile TS -> JS
+      - name: Typecheck
         working-directory: ./npm
-        run: bun run build
+        run: bun tsc --project tsconfig.json --noEmit
 
-      - name: Publish Meta
+      - name: Publish Meta Packages
         working-directory: ./npm
-        run: bun run ./scripts/publish.mjs ./@foundry-rs/forge
+        run: |
+          set -euo pipefail
+          for tool in forge cast anvil chisel; do
+            echo "Publishing meta package @foundry-rs/$tool"
+            TARGET_TOOL="$tool" bun ./scripts/publish.mjs "./@foundry-rs/$tool"
+          done
         env:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
