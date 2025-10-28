@@ -65,7 +65,7 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951 # v2
+      - uses: taiki-e/install-action@0ed4032d5406d133639ce4e858011eb498223338 # v2
         with:
           tool: nextest
 
