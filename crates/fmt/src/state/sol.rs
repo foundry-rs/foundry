@@ -2531,7 +2531,7 @@ impl<'ast> State<'_, 'ast> {
         // ' {' or ';'
         let end = if has_body { 2 } else { 1 };
 
-        self.estimate_header_params_size(header)
+        self.estimate_header_params_size(header) // accounts for 'function name(..)'
             + visibility
             + mutability
             + modifiers
