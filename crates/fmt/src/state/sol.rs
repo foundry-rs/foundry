@@ -1872,7 +1872,7 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly ");
+            self.print_word("assembly "); // 9 chars
             if let Some(dialect) = dialect {
                 self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
@@ -1889,7 +1889,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false);
+        self.print_yul_block(block, block.span, false, 9);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,

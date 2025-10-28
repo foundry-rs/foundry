@@ -574,7 +574,7 @@ impl<'ast> State<'_, 'ast> {
                                 self.s.offset(offset);
                             }
                         } else if style.is_isolated() {
-                            self.print_sep_unhandled(Separator::Space);
+                            self.print_sep_unhandled(Separator::Hardbreak);
                             self.s.offset(offset);
                         }
                     }
