@@ -174,7 +174,7 @@ impl ChiselSession {
             let file_name = entry.file_name();
             let file_name = file_name
                 .into_string()
-                .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
+                .map_err(|e| eyre::eyre!(e.to_string_lossy().into_owned()))?;
             sessions.push((
                 systemtime_strftime(modified_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
                     .unwrap(),
