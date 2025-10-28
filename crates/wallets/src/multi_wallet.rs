@@ -1,4 +1,5 @@
 use crate::{
+    registry::{WalletKind, WalletRegistry},
     utils,
     wallet_signer::{PendingSigner, WalletSigner},
 };
@@ -241,6 +242,9 @@ impl MultiWalletOpts {
         if let Some(gcp_signer) = self.gcp_signers().await? {
             signers.extend(gcp_signer);
         }
+        if let Some(reg_signers) = self.registry_signers().await? {
+            signers.extend(reg_signers);
+        }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
             signers.extend(unlocked);
@@ -374,6 +378,40 @@ impl MultiWalletOpts {
 
             create_hw_wallets!(args, utils::create_ledger_signer, wallets);
             return Ok(Some(wallets));
+        }
+        Ok(None)
+    }
+
+    /// Returns signers created from registry aliases present in `--accounts`.
+    pub async fn registry_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+        if let Some(names) = &self.keystore_account_names {
+            let reg = WalletRegistry::load().unwrap_or_default();
+            let mut signers: Vec<WalletSigner> = Vec::new();
+            for name in names {
+                if let Some(entry) = reg.get(name) {
+                    match entry.kind {
+                        WalletKind::Ledger => {
+                            let signer = utils::create_ledger_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?;
+                            signers.push(signer);
+                        }
+                        WalletKind::Trezor => {
+                            let signer = utils::create_trezor_signer(
+                                entry.hd_path.as_deref(),
+                                entry.mnemonic_index.unwrap_or(0),
+                            )
+                            .await?;
+                            signers.push(signer);
+                        }
+                    }
+                }
+            }
+            if !signers.is_empty() {
+                return Ok(Some(signers));
+            }
         }
         Ok(None)
     }

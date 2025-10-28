@@ -1995,6 +1995,11 @@ impl Config {
         Some(Self::foundry_dir()?.join("keystores"))
     }
 
+    /// Returns the path to foundry's wallets registry file: `~/.foundry/wallets.json`.
+    pub fn foundry_wallets_file() -> Option<PathBuf> {
+        Some(Self::foundry_dir()?.join("wallets.json"))
+    }
+
     /// Returns the path to foundry's etherscan cache dir for `chain_id`:
     /// `~/.foundry/cache/etherscan/<chain>`
     pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
