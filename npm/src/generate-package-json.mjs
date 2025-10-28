@@ -61,7 +61,7 @@ export async function generateBinaryPackageJson({
     type: 'module',
     homepage,
     description: `${description} (${humanPlatform} ${cpu})`,
-    bin: { [tool]: binName },
+    bin: { [tool]: `./bin/${binName}` },
     os: [platform],
     cpu: [cpu],
     files: ['bin'],
