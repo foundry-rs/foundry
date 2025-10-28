@@ -284,7 +284,7 @@ pub fn initialize(target: &Path) {
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             test_debug!("- initializing template dir in {}", prj.root().display());
 
-            cmd.args(["init", "--force", "--empty"]).assert_success();
+            cmd.args(["init", "--force"]).assert_success();
             prj.write_config(Config {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
                 ..Default::default()
@@ -300,6 +300,10 @@ pub fn initialize(target: &Path) {
 
             // Build the project.
             cmd.forge_fuse().arg("build").assert_success();
+
+            // Wipe the contracts after. We don't use `--empty` since we want the contracts to be
+            // cached, but we still want the output project to be empty.
+            prj.wipe_contracts();
 
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
