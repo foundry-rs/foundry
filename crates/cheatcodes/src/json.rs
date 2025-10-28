@@ -801,14 +801,15 @@ mod tests {
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
 
-    fn contains_tuple(value: &DynSolValue) -> bool {
-        match value {
-            DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => true,
-            DynSolValue::Array(v) | DynSolValue::FixedArray(v) => {
-                v.first().is_some_and(contains_tuple)
-            }
-            _ => false,
-        }
+    fn valid_value(value: &DynSolValue) -> bool {
+        (match value {
+            DynSolValue::String(s) if s == "{}" => false,
+
+            DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => false,
+
+            DynSolValue::Array(v) | DynSolValue::FixedArray(v) => v.iter().all(valid_value),
+            _ => true,
+        }) && value.as_type().is_some()
     }
 
     /// [DynSolValue::Bytes] of length 32 and 20 are converted to [DynSolValue::FixedBytes] and
@@ -836,10 +837,7 @@ mod tests {
     }
 
     fn guessable_types() -> impl proptest::strategy::Strategy<Value = DynSolValue> {
-        any::<DynSolValue>()
-            .prop_map(fixup_guessable)
-            .prop_filter("tuples are not supported", |v| !contains_tuple(v))
-            .prop_filter("filter out values without type", |v| v.as_type().is_some())
+        any::<DynSolValue>().prop_map(fixup_guessable).prop_filter("invalid value", valid_value)
     }
 
     /// A proptest strategy for generating a (simple) `DynSolValue::CustomStruct`
