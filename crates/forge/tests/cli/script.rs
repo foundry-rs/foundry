@@ -2603,6 +2603,7 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 // Tests warn when artifact source file no longer exists.
 // <https://github.com/foundry-rs/foundry/issues/9068>
 forgetest_init!(should_warn_if_artifact_source_no_longer_exists, |prj, cmd| {
+    prj.initialize_default_contracts();
     cmd.args(["script", "script/Counter.s.sol"]).assert_success().stdout_eq(str![[r#"
 ...
 Script ran successfully.

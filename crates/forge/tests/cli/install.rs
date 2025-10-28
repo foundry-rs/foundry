@@ -20,8 +20,10 @@ fn lockfile_get(root: &Path, dep_path: &Path) -> Option<DepIdentifier> {
     l.read().unwrap();
     l.get(dep_path).cloned()
 }
+
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     // wipe forge-std
@@ -52,6 +54,7 @@ No files changed, compilation skipped
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+    prj.initialize_default_contracts();
     prj.clear();
 
     // wipe forge-std

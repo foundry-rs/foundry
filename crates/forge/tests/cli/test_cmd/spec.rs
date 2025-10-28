@@ -4,7 +4,6 @@ use foundry_test_utils::rpc;
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
 forgetest_init!(test_set_evm_version, |prj, cmd| {
-    prj.wipe_contracts();
     let endpoint = rpc::next_http_archive_rpc_url();
     prj.add_test(
         "TestEvmVersion.t.sol",

@@ -472,8 +472,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests that libraries are handled correctly in multiforking mode
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_source(
         "Contract.sol",
         r"
@@ -539,7 +537,6 @@ contract FailingTest is Test {
 "#;
 
 forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("failing_test", FAILING_TEST);
 
     cmd.args(["test", "--fail-fast"]);
@@ -548,8 +545,6 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
 });
 
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_source("failing_test", FAILING_TEST);
     cmd.args(["test", "--fail-fast", "--json"]);
 
@@ -558,8 +553,6 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
 
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
-    prj.wipe_contracts();
-
     let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
@@ -605,8 +598,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Contract.t.sol",
         r#"
@@ -662,8 +653,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Contract.t.sol",
         r#"
@@ -716,8 +705,6 @@ forgetest_init!(
     #[ignore = "Too slow"]
     can_disable_block_gas_limit,
     |prj, cmd| {
-        prj.wipe_contracts();
-
         let endpoint = rpc::next_http_archive_rpc_url();
 
         prj.add_test(
@@ -766,8 +753,6 @@ contract Dummy {
 });
 
 forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {
-    prj.wipe_contracts();
-
     // deterministic test so we always have 54 runs until test fails with overflow
     prj.update_config(|config| {
         config.fuzz.runs = 256;
@@ -825,7 +810,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "CounterInvariant.t.sol",
         r#"
@@ -877,7 +861,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_replay_failures_only, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "ReplayFailures.t.sol",
         r#"
@@ -979,8 +962,6 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Contract.t.sol",
         r#"
@@ -1059,8 +1040,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests that `forge test` with config `show_logs: true` for fuzz tests will
 // display `console.log` info
 forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
-    prj.wipe_contracts();
-
     // run fuzz test 3 times
     prj.update_config(|config| {
         config.fuzz.runs = 3;
@@ -1103,8 +1082,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests that `forge test` with inline config `show_logs = true` for fuzz tests will
 // display `console.log` info
 forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
-    prj.wipe_contracts();
-
     // run fuzz test 3 times
     prj.update_config(|config| {
         config.fuzz.runs = 3;
@@ -1147,8 +1124,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests that `forge test` with config `show_logs: false` for fuzz tests will not display
 // `console.log` info
 forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
-    prj.wipe_contracts();
-
     // run fuzz test 3 times
     prj.update_config(|config| {
         config.fuzz.runs = 3;
@@ -1186,8 +1161,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests that `forge test` with inline config `show_logs = false` for fuzz tests will not
 // display `console.log` info
 forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
-    prj.wipe_contracts();
-
     // run fuzz test 3 times
     prj.update_config(|config| {
         config.fuzz.runs = 3;
@@ -1225,7 +1198,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests internal functions trace
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace, |prj, cmd| {
-    prj.wipe_contracts();
     prj.clear();
 
     prj.add_test(
@@ -1299,7 +1271,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // tests internal functions trace with memory decoding
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
-    prj.wipe_contracts();
     prj.clear();
 
     prj.add_test(
@@ -1345,7 +1316,6 @@ Traces:
 
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
 forgetest_init!(deterministic_randomness_with_seed, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "DeterministicRandomnessTest.t.sol",
         r#"
@@ -1426,8 +1396,6 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "ATest.t.sol",
         r#"
@@ -1472,8 +1440,6 @@ contract ATest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/5564
 forgetest_init!(gas_metering_expect_revert, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "ATest.t.sol",
         r#"
@@ -1509,8 +1475,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "ATest.t.sol",
         r#"
@@ -1570,8 +1534,6 @@ Traces:
 
 // https://github.com/foundry-rs/foundry/issues/4370
 forgetest_init!(pause_gas_metering_with_delete, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "ATest.t.sol",
         r#"
@@ -1598,7 +1560,6 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -1682,7 +1643,6 @@ Traces:
 });
 
 forgetest_init!(gas_metering_reset, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -1802,8 +1762,6 @@ contract ATest is DSTest {
 
 // https://github.com/foundry-rs/foundry/issues/8705
 forgetest_init!(test_expect_revert_decode, |prj, cmd| {
-    prj.wipe_contracts();
-
     prj.add_test(
         "Counter.t.sol",
         r#"
@@ -1847,7 +1805,6 @@ contract CounterTest is Test {
 
 // Tests that `expectPartialRevert` cheatcode partially matches revert data.
 forgetest_init!(test_expect_partial_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -1894,7 +1851,6 @@ contract CounterTest is DSTest {
 });
 
 forgetest_init!(test_assume_no_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -1977,7 +1933,6 @@ contract CounterRevertTest is DSTest {
 });
 
 forgetest_init!(skip_output, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -2073,7 +2028,6 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 });
 
 forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -2152,7 +2106,6 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
 });
 
 forgetest_init!(should_generate_junit_xml_report_with_logs, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source(
         "JunitReportTest.t.sol",
         r#"
@@ -3586,7 +3539,6 @@ Listing selectors for contracts in the project...
 
 // tests `interceptInitcode` function
 forgetest_init!(intercept_initcode, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
@@ -3696,7 +3648,6 @@ contract InterceptInitcodeTest is DSTest {
 // <https://github.com/foundry-rs/foundry/issues/10296>
 // <https://github.com/foundry-rs/foundry/issues/10552>
 forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "Counter.t.sol",
         &r#"
