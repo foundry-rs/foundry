@@ -3171,7 +3171,7 @@ impl Backend {
             blob_gas_used,
         };
 
-        Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
+        Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
     /// Returns the blocks receipts for the given number
