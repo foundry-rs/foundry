@@ -188,7 +188,7 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, Arbitrum) {
-        return "https://arb1.arbitrum.io/rpc".to_string();
+        return env::var("ARBITRUM_RPC").unwrap_or("https://arb1.arbitrum.io/rpc".to_string());
     }
 
     let reth_works = true;

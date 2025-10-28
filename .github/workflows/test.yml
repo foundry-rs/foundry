@@ -113,4 +113,5 @@ jobs:
           HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           WS_ARCHIVE_URLS: ${{ secrets.WS_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
         run: cargo nextest run ${{ matrix.flags }}
