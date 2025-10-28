@@ -2095,8 +2095,11 @@ impl SimpleCast {
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
         // Hex-decode if data starts with 0x.
-        let hash =
-            if data.starts_with("0x") { keccak256(hex::decode(data)?) } else { keccak256(data) };
+        let hash = if data.starts_with("0x") {
+            keccak256(hex::decode(data.trim_end())?)
+        } else {
+            keccak256(data)
+        };
         Ok(hash.to_string())
     }
 
