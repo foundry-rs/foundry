@@ -30,22 +30,16 @@ impl CheatsManager {
     ///
     /// Returns `true` if the account is already impersonated
     pub fn impersonate(&self, addr: Address) -> bool {
-        trace!(target: "cheats", "Start impersonating {:?}", addr);
-        let mut state = self.state.write();
+        trace!(target: "cheats", %addr, "start impersonating");
         // When somebody **explicitly** impersonates an account we need to store it so we are able
         // to return it from `eth_accounts`. That's why we do not simply call `is_impersonated()`
         // which does not check that list when auto impersonation is enabled.
-        if state.impersonated_accounts.contains(&addr) {
-            // need to check if already impersonated, so we don't overwrite the code
-            return true;
-        }
-        state.impersonated_accounts.insert(addr);
-        false
+        !self.state.write().impersonated_accounts.insert(addr)
     }
 
     /// Removes the account that from the impersonated set
     pub fn stop_impersonating(&self, addr: &Address) {
-        trace!(target: "cheats", "Stop impersonating {:?}", addr);
+        trace!(target: "cheats", %addr, "stop impersonating");
         self.state.write().impersonated_accounts.remove(addr);
     }
 
