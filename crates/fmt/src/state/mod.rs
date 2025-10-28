@@ -870,15 +870,14 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    config.offset = self.ind;
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
+                        config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
+                    }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(
-                                &line,
-                                prefix,
-                                if cmnt.is_doc { 0 } else { config.offset },
-                                cmnt.is_doc,
-                            );
+                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);
