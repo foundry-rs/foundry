@@ -349,21 +349,11 @@ function isPlatformSpecificPackageInstalled() {
 
 // Skip downloading the binary if it was already installed via optionalDependencies
 if (!isPlatformSpecificPackageInstalled()) {
-<<<<<<< HEAD:npm/src/install.ts
   console.log('Platform specific package not found. Will manually download binary.')
   downloadBinaryFromRegistry().catch(error => {
     console.error(colors.red, 'Failed to download binary:', error, colors.reset)
     process.exitCode = 1
   })
-||||||| parent of 5d8bf5f6c8 (save):npm/src/install.ts
-  console.log('Platform specific package not found. Will manually download binary.')
-  downloadBinaryFromRegistry()
-=======
-  console.log(
-    'Platform specific package not found. Will manually download binary.'
-  )
-  downloadBinaryFromRegistry()
->>>>>>> 5d8bf5f6c8 (save):npm/src/install.mjs
 } else {
   console.log(
     'Platform specific package already installed. Skipping manual download.'
