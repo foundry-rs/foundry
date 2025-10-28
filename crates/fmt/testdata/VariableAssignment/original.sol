@@ -46,8 +46,10 @@ contract TestContract {
 
     // https://github.com/foundry-rs/foundry/issues/12322
     function test_longComplexBinExpr() {
-        vars.previousTotalDebt =
-            getDescaledAmount(flow.getSnapshotDebtScaled(streamId), flow.getTokenDecimals(streamId))
-                + vars.previousOngoingDebtScaled;
+        vars.previousTotalDebt = getDescaledAmount(flow.getSnapshotDebtScaled(streamId), flow.getTokenDecimals(streamId)) + vars.previousOngoingDebtScaled;
+
+        vars.previousTotalDebt = vars.reallyLongVarThatCausesALineBreak + vars.previousOngoingDebtScaled;
+
+        vars.previousTotalDebt = vars.reallyLongVarThatCausesALineBreak() .previousOngoingDebtScaled();
     }
 }

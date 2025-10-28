@@ -846,7 +846,13 @@ impl<'ast> State<'_, 'ast> {
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
                         // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        print_inline(self);
+                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                            self.s.ibox(-self.ind);
+                            print_inline(self);
+                            self.end();
+                        } else {
+                            print_inline(self);
+                        }
                     } else {
                         print_with_break(self, false);
                     }
