@@ -836,24 +836,48 @@ impl<'ast> State<'_, 'ast> {
                 self.s.offset(self.ind);
                 self.print_expr(rhs);
             }
-            ast::ExprKind::Binary(_, op, _) => {
-                // Binary expressions: check if we need to break and indent
-                if force_break || self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
-                    if !self.is_bol_or_only_ind() {
+            ast::ExprKind::Binary(lhs, op, _) => {
+                let print_inline = |this: &mut Self| {
+                    this.print_sep(Separator::Nbsp);
+                    this.neverbreak();
+                    this.print_expr(rhs);
+                };
+                let print_with_break = |this: &mut Self, force_break: bool| {
+                    if !this.is_bol_or_only_ind() {
                         if force_break {
-                            self.print_sep(Separator::Hardbreak);
+                            this.print_sep(Separator::Hardbreak);
                         } else {
-                            self.print_sep(Separator::Space);
+                            this.print_sep(Separator::Space);
                         }
                     }
-                    self.s.offset(self.ind);
-                    self.s.ibox(self.ind);
-                    self.print_expr(rhs);
-                    self.end();
-                } else {
-                    self.print_sep(Separator::Nbsp);
-                    self.neverbreak();
-                    self.print_expr(rhs);
+                    this.s.offset(this.ind);
+                    this.s.ibox(this.ind);
+                    this.print_expr(rhs);
+                    this.end();
+                };
+
+                // Binary expressions: check if we need to break and indent
+                if force_break {
+                    print_with_break(self, true);
+                } else if self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
+                    if has_complex_successor(&rhs.kind, true)
+                        && get_callee_head_size(lhs) + lhs_size <= space_left
+                    {
+                        // Keep complex exprs (where callee fits) inline, as they will have breaks
+                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                            self.s.ibox(-self.ind);
+                            print_inline(self);
+                            self.end();
+                        } else {
+                            print_inline(self);
+                        }
+                    } else {
+                        print_with_break(self, false);
+                    }
+                }
+                // Otherwise, if expr fits, ensure no breaks
+                else {
+                    print_inline(self);
                 }
             }
             _ => {
@@ -2927,6 +2951,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 _ => member_ident.as_str().len(),
             }
         }
+        ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
         _ => 0,
