@@ -864,10 +864,10 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    if !cmnt.is_doc && matches!(cmnt.kind, ast::CommentKind::Block) {
-                        config.offset = self.ind;
-                    } else {
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
                         config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
                     }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
