@@ -1637,9 +1637,9 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 });
 
 casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
-    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
-    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
-    // as in the `mktx_raw_unsigned` test.
+    // As chain is not provided, a query is made to the provider to get the chain id, before the
+    // tx is built. Anvil is configured to use chain id 1 so that the produced tx will
+    // be the same as in the `mktx_raw_unsigned` test.
     let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     cmd.args([
         "mktx",
@@ -4199,3 +4199,131 @@ Transaction successfully executed.
 "#]]);
     }
 );
+
+// tests that `cast erc20 balance` command works correctly
+casttest!(erc20_balance_success, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
+    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
+
+    cmd.args(["erc20", "balance", usdt, owner, "--rpc-url", &rpc]).assert_success().stdout_eq(
+        str![[r#"
+0
+
+"#]],
+    );
+});
+
+// tests that `cast erc20 allowance` command works correctly
+casttest!(erc20_allowance_success, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"; // USDT on mainnet
+    let owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil first address
+    let spender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Anvil second address
+
+    cmd.args(["erc20", "allowance", usdt, owner, spender, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+});
+
+// tests that `cast erc20 transfer` and `cast erc20 approve` commands works correctly
+forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    // Deploy TestToken contract using forge
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestToken.sol", include_str!("../fixtures/TestToken.sol"));
+    cmd.args([
+        "create",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "src/TestToken.sol:TestToken",
+    ]);
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
+
+    let to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Anvil second address
+    let amount = "100000000000000000000"; // 100 tokens (18 decimals)
+
+    // initial balance
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+    // `cast erc20 transfer` test
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            amount,
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x60bfcd46dbda87681f35f82a93c1efa381bb12d3cdd8cee10e80b078a95619e8
+
+"#]]);
+    // new balance
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+100000000000000000000 [1e20]
+
+"#]]);
+
+    // `cast erc20 approve` test
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "approve",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            to,
+            amount,
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x98712738efeb4030bd58a5bd13d25c650197548b56f38add80e689bfe55f1557
+
+"#]]);
+});
