@@ -1373,7 +1373,7 @@ impl SimpleCast {
         let mut out = String::new();
         for s in values {
             let s = s.as_ref();
-            out.push_str(s.strip_prefix("0x").unwrap_or(s))
+            out.push_str(strip_0x(s))
         }
         format!("0x{out}")
     }
