@@ -1,5 +1,5 @@
 // config: line_length = 110
-function test() public {
+function repros() public {
     require(
         keccak256(abi.encodePacked("this is a long string"))
             == keccak256(abi.encodePacked("some other long string")),
@@ -86,7 +86,7 @@ function returnLongBinaryOp() returns (bytes32) {
     );
 }
 
-contract Orchestrator {
+contract Repros {
     function test() public {
         uint256 globalBuyAmount =
             Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
@@ -144,5 +144,27 @@ contract Orchestrator {
         public
     {
         a = 1;
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/12324
+    function test_longCallWithOpts() {
+        flow.withdraw{value: FLOW_MIN_FEE_WEI}({
+            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        });
+    }
+
+    function test_longCallWithOpts() {
+        flow.withdraw{value: FLOW_MIN_FEE_WEI}({
+            streamId: defaultStreamId,
+            to: users.eve,
+            /* cmnt */
+            amount: WITHDRAW_AMOUNT_6D
+        });
+    }
+
+    function test_longCallWithOpts() {
+        flow.withdraw{value: FLOW_MIN_FEE_WEI}({ // cmnt
+            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        });
     }
 }
