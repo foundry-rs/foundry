@@ -147,9 +147,6 @@ contract Repros {
             to: users.eve,
             amount: WITHDRAW_AMOUNT_6D
         });
-    }
-
-    function test_longCallWithOpts() {
         flow.withdraw{
             value: FLOW_MIN_FEE_WEI /* cmnt */
         }({
@@ -158,9 +155,6 @@ contract Repros {
             /* cmnt */
             amount: WITHDRAW_AMOUNT_6D
         });
-    }
-
-    function test_longCallWithOpts() {
         flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
             // cmnt
             streamId: defaultStreamId,
