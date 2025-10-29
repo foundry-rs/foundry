@@ -31,7 +31,7 @@ pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
 }
 
 pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
-    let css = contents::STYLE_CSS;
+    let css = contents::STYLES_CSS;
 
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
@@ -56,6 +56,20 @@ pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     headers.insert(EXPIRES, HeaderValue::from_static("0"));
     (headers, js)
+}
+
+pub(crate) async fn serve_banner_png() -> impl axum::response::IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    (headers, contents::BANNER_PNG)
+}
+
+pub(crate) async fn serve_logo_png() -> impl axum::response::IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    (headers, contents::LOGO_PNG)
 }
 
 /// Get the next pending transaction request.

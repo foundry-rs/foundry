@@ -26,14 +26,14 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
                 "object-src 'none'; ",
                 "base-uri 'none'; ",
                 "frame-ancestors 'none'; ",
-                "img-src 'none'; ",
+                "img-src 'self'; ",
                 "font-src 'none'; ",
                 "connect-src 'self'; ",
                 "style-src 'self'; ",
                 "script-src 'self'; ",
                 "form-action 'none'; ",
                 "worker-src 'none'; ",
-                "frame-src 'none';"
+                "frame-src https://id.porto.sh;"
             )),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -48,6 +48,7 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
             CorsLayer::new()
                 .allow_origin([
                     format!("http://127.0.0.1:{port}").parse().unwrap(),
+                    // TODO(zerosnacks): Remove this in production.
                     "https://localhost:5173".to_string().parse().unwrap(),
                 ])
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -57,8 +58,10 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
 
     Router::new()
         .route("/", get(handlers::serve_index))
-        .route("/style.css", get(handlers::serve_css))
+        .route("/styles.css", get(handlers::serve_css))
         .route("/main.js", get(handlers::serve_js))
+        .route("/banner.png", get(handlers::serve_banner_png))
+        .route("/logo.png", get(handlers::serve_logo_png))
         .nest("/api", api)
         .layer(security_headers)
         .with_state(state)
