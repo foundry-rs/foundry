@@ -22,10 +22,24 @@ use foundry_config::{
     },
     filter::expand_globs,
 };
-use serde::Serialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::{path::PathBuf, process::Command};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
+
+#[derive(Debug, Deserialize)]
+struct SoldeerLockEntry {
+    name: String,
+    version: String,
+    source: String,
+    #[serde(default, rename = "checksum")]
+    _checksum: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SoldeerLock {
+    dependencies: Vec<SoldeerLockEntry>,
+}
 
 /// CLI arguments for `forge build`.
 ///
@@ -79,6 +93,8 @@ impl BuildArgs {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
+
+        self.check_soldeer_lock_consistency(&config);
 
         let project = config.project()?;
 
@@ -206,6 +222,56 @@ impl BuildArgs {
             let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
             Ok([config.src, config.test, config.script, foundry_toml])
         })
+    }
+
+    /// Check soldeer.lock file consistency with actual git revisions
+    fn check_soldeer_lock_consistency(&self, config: &Config) {
+        let soldeer_lock_path = config.root.join("soldeer.lock");
+        if !soldeer_lock_path.exists() {
+            return;
+        }
+
+        let lock_content = match foundry_common::fs::read_to_string(&soldeer_lock_path) {
+            Ok(content) => content,
+            Err(_) => return,
+        };
+
+        let soldeer_lock: SoldeerLock = match toml::from_str(&lock_content) {
+            Ok(lock) => lock,
+            Err(_) => return,
+        };
+
+        for dep in &soldeer_lock.dependencies {
+            if let Some((_, expected_rev)) = dep.source.split_once('#') {
+                let dep_dir_name = format!("{}-{}", dep.name, dep.version);
+                let dep_path = config.root.join("dependencies").join(&dep_dir_name);
+
+                if dep_path.exists() {
+                    let actual_rev = Command::new("git")
+                        .args(["rev-parse", "HEAD"])
+                        .current_dir(&dep_path)
+                        .output();
+
+                    if let Ok(output) = actual_rev
+                        && output.status.success()
+                    {
+                        let actual_rev = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                        if !actual_rev.starts_with(expected_rev)
+                            && !expected_rev.starts_with(&actual_rev)
+                        {
+                            sh_warn!(
+                                "Dependency '{}' revision mismatch: \n  Expected (from soldeer.lock): {}\n  Actual (in {}): {}",
+                                dep.name,
+                                expected_rev,
+                                dep_dir_name,
+                                actual_rev
+                            ).ok();
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
