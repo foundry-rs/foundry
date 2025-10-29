@@ -26,4 +26,15 @@ contract IfStatement {
                 );
         }
     }
+
+    // https://github.com/foundry-rs/foundry/issues/12315
+    function repro_longComplexExpr() {
+        vars.expectedSnapshotTime = withdrawAmount
+            <= getDescaledAmount(
+                flow.getSnapshotDebtScaled(streamId),
+                flow.getTokenDecimals(streamId)
+            )
+            ? flow.getSnapshotTime(streamId)
+            : getBlockTimestamp();
+    }
 }

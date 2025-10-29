@@ -250,11 +250,17 @@ impl<'sess> State<'sess, '_> {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
+    /// Computes the space left, bounded by the max space left.
     fn space_left(&self) -> usize {
-        std::cmp::min(
-            self.s.space_left(),
-            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
-        )
+        std::cmp::min(self.s.space_left(), self.max_space_left(0))
+    }
+
+    /// Computes the maximum space left given the context information available:
+    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
+    fn max_space_left(&self, prefix_len: usize) -> usize {
+        self.config
+            .line_length
+            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -864,15 +870,14 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    config.offset = self.ind;
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
+                        config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
+                    }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(
-                                &line,
-                                prefix,
-                                if cmnt.is_doc { 0 } else { config.offset },
-                                cmnt.is_doc,
-                            );
+                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);
