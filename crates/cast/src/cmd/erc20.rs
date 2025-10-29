@@ -117,8 +117,6 @@ pub enum Erc20Subcommand {
 }
 
 impl Erc20Subcommand {
-    // Helper to get the rpc and be able to de-duplicate code.
-    // Acceptable to match twice as performance is not critical in cast + there are few commands.
     fn rpc(&self) -> &RpcOpts {
         match self {
             Self::Allowance { rpc, .. } => rpc,
