@@ -2557,9 +2557,9 @@ impl<'ast> State<'_, 'ast> {
         let kw = match kind {
             ast::FunctionKind::Constructor => 11, // 'constructor'
             ast::FunctionKind::Function => 9,     // 'function '
-            ast::FunctionKind::Fallback => 9,     // 'fallback '
             ast::FunctionKind::Modifier => 9,     // 'modifier '
-            ast::FunctionKind::Receive => 8,      // 'receive '
+            ast::FunctionKind::Fallback => 8,     // 'fallback'
+            ast::FunctionKind::Receive => 7,      // 'receive'
         };
 
         // '(' + param + (', ' + param) + ')'
@@ -3005,55 +3005,44 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_header_params_size() {
+    fn test_estimate_header_sizes() {
         let test_cases = [
-            // (source, expected_size, description)
-            ("function foo() public {}", 14, "no parameters"),
-            ("function foo(uint256 a) public {}", 23, "single parameter"),
-            ("function foo(uint256 a, address b, bool c) public {}", 42, "multiple parameters"),
-            ("contract C { constructor(uint256 a) {} }", 22, "unnamed function (constructor)"),
+            ("function foo();", 14, 15),
+            ("function foo() {}", 14, 16),
+            ("function foo() public {}", 14, 23),
+            ("function foo(uint256 a) public {}", 23, 32),
+            ("function foo(uint256 a, address b, bool c) public {}", 42, 51),
+            ("function foo() public pure {}", 14, 28),
+            ("function foo() public virtual {}", 14, 31),
+            ("function foo() public override {}", 14, 32),
+            ("function foo() public onlyOwner {}", 14, 33),
+            ("function foo() public returns(uint256) {}", 14, 40),
+            ("function foo() public returns(uint256, address) {}", 14, 49),
+            ("function foo(uint256 a) public virtual override returns(uint256) {}", 23, 66),
+            ("function foo() external payable {}", 14, 33),
+            // other function types
+            ("contract C { constructor() {} }", 13, 15),
+            ("contract C { constructor(uint256 a) {} }", 22, 24),
+            ("contract C { modifier onlyOwner() {} }", 20, 22),
+            ("contract C { modifier onlyRole(bytes32 role) {} }", 31, 33),
+            ("contract C { fallback() external payable {} }", 10, 29),
+            ("contract C { receive() external payable {} }", 9, 28),
         ];
 
-        for (source, expected_size, description) in &test_cases {
+        for (source, expected_params_size, expected_header_size) in &test_cases {
             parse_and_test(source, |state, func| {
-                let size = state.estimate_header_params_size(func);
+                let params_size = state.estimate_header_params_size(func);
                 assert_eq!(
-                    size, *expected_size,
-                    "Failed for case '{}': expected size {}, got {} for source: {}",
-                    description, expected_size, size, source
+                    params_size, *expected_params_size,
+                    "Failed params size: expected {}, got {} for source: {}",
+                    expected_params_size, params_size, source
                 );
-            });
-        }
-    }
 
-    #[test]
-    fn test_estimate_header_size() {
-        let test_cases = [
-            // (source, has_body, expected_size, description)
-            ("function foo();", 15, "without body"),
-            ("function foo() {}", 16, "with body"),
-            ("function foo() public {}", 23, "with visibility"),
-            ("function foo() public pure {}", 28, "with state mutability"),
-            ("function foo() public virtual {}", 31, "with virtual"),
-            ("function foo() public override {}", 32, "with override"),
-            ("function foo() public onlyOwner {}", 33, "with modifier"),
-            ("function foo() public returns(uint256) {}", 40, "with returns"),
-            ("function foo() public returns(uint256, address) {}", 49, "with multiple returns"),
-            (
-                "function foo(uint256 a) public virtual override returns(uint256) {}",
-                66,
-                "with all attributes",
-            ),
-            ("function foo() external payable {}", 33, "external payable"),
-        ];
-
-        for (source, expected_size, description) in &test_cases {
-            parse_and_test(source, |state, func| {
-                let size = state.estimate_header_size(func);
+                let header_size = state.estimate_header_size(func);
                 assert_eq!(
-                    size, *expected_size,
-                    "Failed for case '{}': expected size {}, got {} for source: {}",
-                    description, expected_size, size, source
+                    header_size, *expected_header_size,
+                    "Failed header size: expected {}, got {} for source: {}",
+                    expected_header_size, header_size, source
                 );
             });
         }
