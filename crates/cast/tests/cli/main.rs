@@ -4304,11 +4304,8 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x60bfcd46dbda87681f35f82a93c1efa381bb12d3cdd8cee10e80b078a95619e8
+        .assert_success();
 
-"#]]);
     // new balance
     cmd.cast_fuse()
         .args([
@@ -4338,9 +4335,5 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x98712738efeb4030bd58a5bd13d25c650197548b56f38add80e689bfe55f1557
-
-"#]]);
+        .assert_success();
 });

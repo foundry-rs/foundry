@@ -1,5 +1,6 @@
 use crate::{
     Cast, SimpleCast,
+    cmd::erc20::IERC20,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
 };
@@ -310,8 +311,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
             match erc20 {
                 Some(token) => {
-                    let balance =
-                        Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    let balance = IERC20::new(token, &provider)
+                        .balanceOf(account_addr)
+                        .block(block.unwrap_or_default())
+                        .call()
+                        .await?;
+
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     sh_println!("{}", format_uint_exp(balance))?
                 }
