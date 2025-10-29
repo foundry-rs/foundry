@@ -102,7 +102,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_assume, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -185,7 +184,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 // https://github.com/foundry-rs/foundry/issues/5868
 forgetest!(invariant_calldata_dictionary, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_utils();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
@@ -314,7 +312,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_custom_error, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -384,7 +381,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_excluded_senders, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -439,7 +435,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(invariant_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
@@ -555,7 +550,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_breaks_without_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
         config.invariant.runs = 1;
@@ -721,7 +715,6 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_inner_contract,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.invariant.depth = 10;
         });
@@ -999,7 +992,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
@@ -1078,7 +1070,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_scrape_values, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.fuzz.seed = Some(U256::from(100u32));
@@ -1178,7 +1169,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_sequence_no_reverts, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 15;
         config.invariant.fail_on_revert = false;
@@ -1234,7 +1224,6 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_shrink_big_sequence,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.fuzz.seed = Some(U256::from(119u32));
             config.invariant.runs = 1;
@@ -1294,7 +1283,6 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
 );
 
 forgetest_init!(invariant_shrink_fail_on_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.fail_on_revert = true;
@@ -1340,7 +1328,6 @@ Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
 });
 
 forgetest_init!(invariant_shrink_with_assert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.runs = 1;
@@ -1399,7 +1386,6 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
     });

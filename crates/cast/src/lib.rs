@@ -21,6 +21,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
@@ -78,6 +79,9 @@ sol! {
     interface IERC20 {
         #[derive(Debug)]
         function balanceOf(address owner) external view returns (uint256);
+        function transfer(address to, uint256 amount) external returns (bool);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
     }
 }
 
@@ -1124,6 +1128,56 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .call()
             .await?)
     }
+
+    pub async fn erc20_allowance(
+        &self,
+        token: Address,
+        owner: Address,
+        spender: Address,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(IERC20::new(token, &self.provider)
+            .allowance(owner, spender)
+            .block(block.unwrap_or_default())
+            .call()
+            .await?)
+    }
+
+    pub async fn erc20_transfer(
+        &self,
+        token: Address,
+        to: Address,
+        amount: U256,
+        signer: Option<foundry_wallets::WalletSigner>,
+    ) -> Result<TxHash> {
+        let contract = IERC20::new(token, &self.provider);
+
+        if let Some(signer) = signer {
+            let tx = contract.transfer(to, amount).from(signer.address()).send().await?;
+            Ok(*tx.tx_hash())
+        } else {
+            let tx = contract.transfer(to, amount).send().await?;
+            Ok(*tx.tx_hash())
+        }
+    }
+
+    pub async fn erc20_approve(
+        &self,
+        token: Address,
+        spender: Address,
+        amount: U256,
+        signer: Option<foundry_wallets::WalletSigner>,
+    ) -> Result<TxHash> {
+        let contract = IERC20::new(token, &self.provider);
+
+        if let Some(signer) = signer {
+            let tx = contract.approve(spender, amount).from(signer.address()).send().await?;
+            Ok(*tx.tx_hash())
+        } else {
+            let tx = contract.approve(spender, amount).send().await?;
+            Ok(*tx.tx_hash())
+        }
+    }
 }
 
 pub struct SimpleCast;
@@ -1319,7 +1373,7 @@ impl SimpleCast {
         let mut out = String::new();
         for s in values {
             let s = s.as_ref();
-            out.push_str(s.strip_prefix("0x").unwrap_or(s))
+            out.push_str(strip_0x(s))
         }
         format!("0x{out}")
     }
@@ -2041,8 +2095,11 @@ impl SimpleCast {
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
         // Hex-decode if data starts with 0x.
-        let hash =
-            if data.starts_with("0x") { keccak256(hex::decode(data)?) } else { keccak256(data) };
+        let hash = if data.starts_with("0x") {
+            keccak256(hex::decode(data.trim_end())?)
+        } else {
+            keccak256(data)
+        };
         Ok(hash.to_string())
     }
 

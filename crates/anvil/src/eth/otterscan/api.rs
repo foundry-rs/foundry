@@ -32,7 +32,7 @@ impl EthApi {
         &self,
         number: BlockNumber,
     ) -> Result<Option<AnyRpcBlock>> {
-        node_info!("ots_getApiLevel");
+        node_info!("erigon_getHeaderByNumber");
 
         self.backend.block_by_number(number).await
     }

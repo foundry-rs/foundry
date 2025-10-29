@@ -1,4 +1,4 @@
-<svg width="844px" height="470px" xmlns="http://www.w3.org/2000/svg">
+<svg width="860px" height="506px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { fill: #000000 }
@@ -19,55 +19,59 @@
   <rect width="100%" height="100%" y="0" rx="4.5" class="bg" />
 
   <text xml:space="preserve" class="container fg">
-    <tspan x="10px" y="28px"><tspan>No files changed, compilation skipped</tspan>
+    <tspan x="10px" y="28px"><tspan>[COMPILING_FILES] with [SOLC_VERSION]</tspan>
 </tspan>
-    <tspan x="10px" y="46px">
+    <tspan x="10px" y="46px"><tspan>[SOLC_VERSION] [ELAPSED]</tspan>
 </tspan>
-    <tspan x="10px" y="64px"><tspan>Ran 1 test for test/Counter.t.sol:CounterTest</tspan>
+    <tspan x="10px" y="64px"><tspan>Compiler run </tspan><tspan class="fg-green">successful</tspan><tspan>!</tspan>
 </tspan>
-    <tspan x="10px" y="82px"><tspan class="fg-green">[PASS]</tspan><tspan> test_Increment() ([GAS])</tspan>
+    <tspan x="10px" y="82px">
 </tspan>
-    <tspan x="10px" y="100px"><tspan>Traces:</tspan>
+    <tspan x="10px" y="100px"><tspan>Ran 1 test for test/Counter.t.sol:CounterTest</tspan>
 </tspan>
-    <tspan x="10px" y="118px"><tspan>  [137242] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
+    <tspan x="10px" y="118px"><tspan class="fg-green">[PASS]</tspan><tspan> test_Increment() ([GAS])</tspan>
 </tspan>
-    <tspan x="10px" y="136px"><tspan>    ├─ [96345] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
+    <tspan x="10px" y="136px"><tspan>Traces:</tspan>
 </tspan>
-    <tspan x="10px" y="154px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 481 bytes of code</tspan>
+    <tspan x="10px" y="154px"><tspan>  [137242] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="172px"><tspan>    ├─ [2592] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">setNumber</tspan><tspan>(0)</tspan>
+    <tspan x="10px" y="172px"><tspan>    ├─ [96345] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
 </tspan>
-    <tspan x="10px" y="190px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="190px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 481 bytes of code</tspan>
 </tspan>
-    <tspan x="10px" y="208px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="208px"><tspan>    ├─ [2592] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">setNumber</tspan><tspan>(0)</tspan>
 </tspan>
-    <tspan x="10px" y="226px">
+    <tspan x="10px" y="226px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
-    <tspan x="10px" y="244px"><tspan>  [28783] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="244px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
-    <tspan x="10px" y="262px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="262px">
 </tspan>
-    <tspan x="10px" y="280px"><tspan>    │   ├─  storage changes:</tspan>
+    <tspan x="10px" y="280px"><tspan>  [28783] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="298px"><tspan>    │   │   @ 0: 0 → 1</tspan>
+    <tspan x="10px" y="298px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="316px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="316px"><tspan>    │   ├─  storage changes:</tspan>
 </tspan>
-    <tspan x="10px" y="334px"><tspan>    ├─ [424] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">number</tspan><tspan>()</tspan><tspan class="fg-yellow"> [staticcall]</tspan>
+    <tspan x="10px" y="334px"><tspan>    │   │   @ 0: 0 → 1</tspan>
 </tspan>
-    <tspan x="10px" y="352px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 1</tspan>
+    <tspan x="10px" y="352px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
-    <tspan x="10px" y="370px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="370px"><tspan>    ├─ [424] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">number</tspan><tspan>()</tspan><tspan class="fg-yellow"> [staticcall]</tspan>
 </tspan>
-    <tspan x="10px" y="388px">
+    <tspan x="10px" y="388px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 1</tspan>
 </tspan>
-    <tspan x="10px" y="406px"><tspan>Suite result: </tspan><tspan class="fg-green">ok</tspan><tspan>. </tspan><tspan class="fg-green">1</tspan><tspan> passed; </tspan><tspan class="fg-red">0</tspan><tspan> failed; </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="406px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
     <tspan x="10px" y="424px">
 </tspan>
-    <tspan x="10px" y="442px"><tspan>Ran 1 test suite [ELAPSED]: </tspan><tspan class="fg-green">1</tspan><tspan> tests passed, </tspan><tspan class="fg-red">0</tspan><tspan> failed, </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped (1 total tests)</tspan>
+    <tspan x="10px" y="442px"><tspan>Suite result: </tspan><tspan class="fg-green">ok</tspan><tspan>. </tspan><tspan class="fg-green">1</tspan><tspan> passed; </tspan><tspan class="fg-red">0</tspan><tspan> failed; </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped; [ELAPSED]</tspan>
 </tspan>
     <tspan x="10px" y="460px">
+</tspan>
+    <tspan x="10px" y="478px"><tspan>Ran 1 test suite [ELAPSED]: </tspan><tspan class="fg-green">1</tspan><tspan> tests passed, </tspan><tspan class="fg-red">0</tspan><tspan> failed, </tspan><tspan class="fg-yellow">0</tspan><tspan> skipped (1 total tests)</tspan>
+</tspan>
+    <tspan x="10px" y="496px">
 </tspan>
   </text>
 

@@ -4,33 +4,6 @@
 /// closure to configure and execute the test. The `TestProject` provides utility functions to setup
 /// the project's workspace. The `TestCommand` is a wrapper around the actual `forge` executable
 /// that this then executed with the configured command arguments.
-///
-/// # Example
-///
-/// run `forge init`
-///
-/// ```no_run
-/// use foundry_test_utils::*;
-/// forgetest!(my_test, |prj, cmd| {
-///     // adds `init` to forge's command arguments
-///     cmd.arg("init");
-///     // executes forge <args> and panics if the command failed or output is empty
-///     cmd.assert_success().stdout_eq(str![[r#""#]]);
-/// });
-/// ```
-///
-/// Configure a hardhat project layout by adding a `PathStyle::HardHat` argument
-///
-/// ```no_run
-/// use foundry_test_utils::*;
-/// use foundry_test_utils::foundry_compilers::PathStyle;
-/// forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
-///     prj.assert_create_dirs_exists();
-///     prj.assert_style_paths_exist(PathStyle::HardHat);
-///     cmd.arg("clean");
-///     cmd.assert_empty_stdout();
-///     prj.assert_cleaned();
-/// });
 #[macro_export]
 macro_rules! forgetest {
     ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
@@ -90,7 +63,7 @@ macro_rules! casttest {
     };
 }
 
-/// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
+/// Same as `forgetest` but returns an already initialized project workspace (`forge init --empty`).
 #[macro_export]
 macro_rules! forgetest_init {
     ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {

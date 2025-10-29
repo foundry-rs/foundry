@@ -42,6 +42,8 @@ pub struct FormatterConfig {
     /// Style that determines if a broken list, should keep its elements together on their own
     /// line, before breaking individually.
     pub prefer_compact: PreferCompact,
+    /// Keep single imports on a single line even if they exceed line length.
+    pub single_line_imports: bool,
 }
 
 /// Style of integer types.
@@ -251,6 +253,7 @@ impl Default for FormatterConfig {
             pow_no_space: false,
             prefer_compact: PreferCompact::default(),
             docs_style: DocCommentStyle::default(),
+            single_line_imports: false,
         }
     }
 }
