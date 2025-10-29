@@ -138,14 +138,19 @@ impl ResolvedEtherscanConfigs {
         self,
         chain: Chain,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
+        let mut first_err: Option<EtherscanConfigError> = None;
         for (_, config) in self.configs.into_iter() {
             match config {
                 Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
-                Err(e) => return Some(Err(e)),
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
                 _ => continue,
             }
         }
-        None
+        first_err.map(Err)
     }
 
     /// Returns true if there's a config that couldn't be resolved
@@ -517,5 +522,40 @@ mod tests {
 
         let resolved = config.resolve(Some("base-sepolia")).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+    }
+
+    #[test]
+    fn find_chain_ignores_unrelated_errors() {
+        let mut configs = EtherscanConfigs::default();
+        use NamedChain::{Arbitrum, Mainnet};
+
+        // Unrelated entry that errors due to unresolved env var
+        configs.insert(
+            "a_err".to_string(),
+            EtherscanConfig {
+                chain: Some(Arbitrum.into()),
+                url: None,
+                key: EtherscanApiKey::Env("${__UNSET_ENV_VAR_FOR_TEST}".to_string()),
+            },
+        );
+
+        // Matching entry that should be selected
+        configs.insert(
+            "b_ok".to_string(),
+            EtherscanConfig {
+                chain: Some(Mainnet.into()),
+                url: None,
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let res = configs.resolved().find_chain(Mainnet.into());
+        let config = res.expect("expected some result").expect("expected ok result");
+
+        let urls = Mainnet.etherscan_urls().unwrap();
+        assert_eq!(config.chain, Some(Mainnet.into()));
+        assert_eq!(config.api_url, urls.0.to_string());
+        assert_eq!(config.browser_url, Some(urls.1.to_string()));
+        assert_eq!(config.key, "ABCDEFG");
     }
 }
