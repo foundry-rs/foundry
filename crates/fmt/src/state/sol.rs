@@ -474,14 +474,12 @@ impl<'ast> State<'_, 'ast> {
         let params_format = match header_style {
             MultilineFuncHeaderStyle::ParamsAlways => ListFormat::always_break(),
             MultilineFuncHeaderStyle::All
-                if header.parameters.len() > 1
-                    && !self.can_header_be_inlined(header, body.is_some()) =>
+                if header.parameters.len() > 1 && !self.can_header_be_inlined(func) =>
             {
                 ListFormat::always_break()
             }
             MultilineFuncHeaderStyle::AllParams
-                if !header.parameters.is_empty()
-                    && !self.can_header_be_inlined(header, body.is_some()) =>
+                if !header.parameters.is_empty() && !self.can_header_be_inlined(func) =>
             {
                 ListFormat::always_break()
             }
@@ -535,7 +533,7 @@ impl<'ast> State<'_, 'ast> {
 
         let attrib_box = self.config.multiline_func_header.params_first()
             || (self.config.multiline_func_header.attrib_first()
-                && !self.can_header_params_be_inlined(header));
+                && !self.can_header_params_be_inlined(func));
         if attrib_box {
             self.s.cbox(0);
         }
@@ -2512,16 +2510,28 @@ impl<'ast> State<'_, 'ast> {
         els_opt.is_none_or(|els| self.is_inline_stmt(els, 6))
     }
 
-    fn can_header_be_inlined(&mut self, header: &ast::FunctionHeader<'_>, has_body: bool) -> bool {
+    fn can_header_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+        self.estimate_header_size(func) <= self.space_left()
+    }
+
+    fn can_header_params_be_inlined(&mut self, func: &ast::ItemFunction<'_>) -> bool {
+        self.estimate_header_params_size(func) <= self.space_left()
+    }
+
+    fn estimate_header_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+        let ast::ItemFunction { kind: _, ref header, ref body, body_span: _ } = *func;
+
         // ' ' + visibility
         let visibility = header.visibility.map_or(0, |v| self.estimate_size(v.span) + 1);
         // ' ' + state mutability
         let mutability = header.state_mutability.map_or(0, |sm| self.estimate_size(sm.span) + 1);
         // ' ' + modifier + (' ' + modifier)
-        let modifiers =
-            header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span())) + 1;
+        let m = header.modifiers.iter().fold(0, |len, m| len + self.estimate_size(m.span()));
+        let modifiers = if m != 0 { m + 1 } else { 0 };
         // ' ' + override
         let override_ = header.override_.as_ref().map_or(0, |o| self.estimate_size(o.span) + 1);
+        // ' ' + virtual
+        let virtual_ = if header.virtual_.is_none() { 0 } else { 8 };
         // ' returns(' + var + (', ' + var) + ')'
         let returns = header.returns.as_ref().map_or(0, |ret| {
             ret.vars
@@ -2529,23 +2539,29 @@ impl<'ast> State<'_, 'ast> {
                 .fold(0, |len, p| if len != 0 { len + 2 } else { 10 } + self.estimate_size(p.span))
         });
         // ' {' or ';'
-        let end = if has_body { 2 } else { 1 };
+        let end = if body.is_some() { 2 } else { 1 };
 
-        self.estimate_header_params_size(header) // accounts for 'function name(..)'
+        self.estimate_header_params_size(func)
             + visibility
             + mutability
             + modifiers
             + override_
+            + virtual_
             + returns
             + end
-            <= self.space_left()
     }
 
-    fn can_header_params_be_inlined(&mut self, header: &ast::FunctionHeader<'_>) -> bool {
-        self.estimate_header_params_size(header) <= self.space_left()
-    }
+    fn estimate_header_params_size(&mut self, func: &ast::ItemFunction<'_>) -> usize {
+        let ast::ItemFunction { kind, ref header, body: _, body_span: _ } = *func;
 
-    fn estimate_header_params_size(&mut self, header: &ast::FunctionHeader<'_>) -> usize {
+        let kw = match kind {
+            ast::FunctionKind::Constructor => 11, // 'constructor'
+            ast::FunctionKind::Function => 9,     // 'function '
+            ast::FunctionKind::Fallback => 9,     // 'fallback '
+            ast::FunctionKind::Modifier => 9,     // 'modifier '
+            ast::FunctionKind::Receive => 8,      // 'receive '
+        };
+
         // '(' + param + (', ' + param) + ')'
         let params = header
             .parameters
@@ -2553,8 +2569,7 @@ impl<'ast> State<'_, 'ast> {
             .iter()
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
-        // 'function ' + name + ' ' + params
-        9 + header.name.map_or(0, |name| self.estimate_size(name.span) + 1) + params
+        kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
     }
 
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
@@ -2913,5 +2928,134 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
 
         // If the callee is not an identifier or member access, it has no "head"
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FormatterConfig, InlineConfig};
+    use foundry_common::comments::Comments;
+    use solar::{
+        interface::{Session, source_map::FileName},
+        sema::Compiler,
+    };
+    use std::sync::Arc;
+
+    /// This helper extracts function headers from the AST and passes them to the test function.
+    fn parse_and_test<F>(source: &str, test_fn: F)
+    where
+        F: FnOnce(&mut State<'_, '_>, &ast::ItemFunction<'_>) + Send,
+    {
+        let session = Session::builder().with_buffer_emitter(Default::default()).build();
+        let mut compiler = Compiler::new(session);
+
+        compiler
+            .enter_mut(|c| -> solar::interface::Result<()> {
+                let mut pcx = c.parse();
+                pcx.set_resolve_imports(false);
+
+                // Create a source file using stdin as the filename
+                let file = c
+                    .sess()
+                    .source_map()
+                    .new_source_file(FileName::Stdin, source)
+                    .map_err(|e| c.sess().dcx.err(e.to_string()).emit())?;
+
+                pcx.add_file(file.clone());
+                pcx.parse();
+                c.dcx().has_errors()?;
+
+                // Get AST from parsed source
+                let gcx = c.gcx();
+                let (_, source_obj) = gcx.get_ast_source(&file.name).expect("Failed to get AST");
+                let ast = source_obj.ast.as_ref().expect("No AST found");
+
+                // Create State for testing
+                let comments =
+                    Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
+                let config = Arc::new(FormatterConfig::default());
+                let inline_config = InlineConfig::default();
+                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+
+                // Extract the first function header (either top-level or inside a contract)
+                let func = ast
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.kind {
+                        ast::ItemKind::Function(func) => Some(func),
+                        ast::ItemKind::Contract(contract) => {
+                            contract.body.iter().find_map(|contract_item| {
+                                match &contract_item.kind {
+                                    ast::ItemKind::Function(func) => Some(func),
+                                    _ => None,
+                                }
+                            })
+                        }
+                        _ => None,
+                    })
+                    .expect("No function found in source");
+
+                // Run the closure
+                test_fn(&mut state, func);
+
+                Ok(())
+            })
+            .expect("Test failed");
+    }
+
+    #[test]
+    fn test_estimate_header_params_size() {
+        let test_cases = [
+            // (source, expected_size, description)
+            ("function foo() public {}", 14, "no parameters"),
+            ("function foo(uint256 a) public {}", 23, "single parameter"),
+            ("function foo(uint256 a, address b, bool c) public {}", 42, "multiple parameters"),
+            ("contract C { constructor(uint256 a) {} }", 22, "unnamed function (constructor)"),
+        ];
+
+        for (source, expected_size, description) in &test_cases {
+            parse_and_test(source, |state, func| {
+                let size = state.estimate_header_params_size(func);
+                assert_eq!(
+                    size, *expected_size,
+                    "Failed for case '{}': expected size {}, got {} for source: {}",
+                    description, expected_size, size, source
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn test_estimate_header_size() {
+        let test_cases = [
+            // (source, has_body, expected_size, description)
+            ("function foo();", 15, "without body"),
+            ("function foo() {}", 16, "with body"),
+            ("function foo() public {}", 23, "with visibility"),
+            ("function foo() public pure {}", 28, "with state mutability"),
+            ("function foo() public virtual {}", 31, "with virtual"),
+            ("function foo() public override {}", 32, "with override"),
+            ("function foo() public onlyOwner {}", 33, "with modifier"),
+            ("function foo() public returns(uint256) {}", 40, "with returns"),
+            ("function foo() public returns(uint256, address) {}", 49, "with multiple returns"),
+            (
+                "function foo(uint256 a) public virtual override returns(uint256) {}",
+                66,
+                "with all attributes",
+            ),
+            ("function foo() external payable {}", 33, "external payable"),
+        ];
+
+        for (source, expected_size, description) in &test_cases {
+            parse_and_test(source, |state, func| {
+                let size = state.estimate_header_size(func);
+                assert_eq!(
+                    size, *expected_size,
+                    "Failed for case '{}': expected size {}, got {} for source: {}",
+                    description, expected_size, size, source
+                );
+            });
+        }
     }
 }
