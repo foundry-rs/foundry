@@ -147,18 +147,14 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let fork = backend.get_fork();
 
-    let NodeConfig {
-        signer_accounts,
-        block_time,
-        port,
-        max_transactions,
-        server_config,
-        no_mining,
-        transaction_order,
-        genesis,
-        mixed_mining,
-        ..
-    } = config.clone();
+    let signer_accounts = config.signer_accounts.clone();
+    let block_time = config.block_time;
+    let port = config.port;
+    let max_transactions = config.max_transactions;
+    let server_config = config.server_config.clone();
+    let no_mining = config.no_mining;
+    let transaction_order = config.transaction_order;
+    let mixed_mining = config.mixed_mining;
 
     let pool = Arc::new(Pool::default());
 
@@ -186,7 +182,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
-    if let Some(genesis) = genesis {
+    if let Some(genesis) = config.genesis.as_ref() {
         let genesis_signers = genesis
             .alloc
             .values()
