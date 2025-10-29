@@ -9,7 +9,6 @@ use tokio::{
     net::TcpListener,
     sync::{Mutex, oneshot},
 };
-use uuid::Uuid;
 
 use crate::wallet_browser::{
     error::BrowserWalletError,
@@ -33,7 +32,7 @@ impl BrowserWalletServer {
     pub fn new(port: u16, open_browser: bool, timeout: Duration) -> Self {
         Self {
             port,
-            state: Arc::new(BrowserWalletState::new(Uuid::new_v4().to_string())),
+            state: Arc::new(BrowserWalletState::new()),
             shutdown_tx: None,
             open_browser,
             timeout,
@@ -94,11 +93,6 @@ impl BrowserWalletServer {
     /// Get the timeout duration.
     pub fn timeout(&self) -> Duration {
         self.timeout
-    }
-
-    /// Get the session token.
-    pub fn session_token(&self) -> &str {
-        self.state.session_token()
     }
 
     /// Check if a wallet is connected.

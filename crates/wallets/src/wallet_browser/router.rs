@@ -46,7 +46,10 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         ))
         .layer(
             CorsLayer::new()
-                .allow_origin([format!("http://127.0.0.1:{port}").parse().unwrap()])
+                .allow_origin([
+                    format!("http://127.0.0.1:{port}").parse().unwrap(),
+                    "https://localhost:5173".to_string().parse().unwrap(),
+                ])
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([header::CONTENT_TYPE])
                 .allow_credentials(false),

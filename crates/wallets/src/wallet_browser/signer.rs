@@ -56,6 +56,22 @@ impl BrowserSigner {
         &self,
         tx_request: TransactionRequest,
     ) -> Result<B256> {
+        if let Some(from) = tx_request.from
+            && from != self.address
+        {
+            return Err(alloy_signer::Error::other(
+                "Transaction 'from' address does not match connected wallet address",
+            ));
+        }
+
+        if let Some(chain_id) = tx_request.chain_id
+            && chain_id != self.chain_id
+        {
+            return Err(alloy_signer::Error::other(
+                "Transaction 'chainId' does not match connected wallet chain ID",
+            ));
+        }
+
         let request = BrowserTransaction { id: Uuid::new_v4(), request: tx_request };
 
         let server = self.server.lock().await;

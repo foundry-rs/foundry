@@ -14,23 +14,15 @@ pub(crate) struct BrowserWalletState {
     connection: Arc<Mutex<Option<Connection>>>,
     /// Request/response queue for transactions.
     transactions: Arc<Mutex<RequestQueue<BrowserTransaction, TransactionResponse>>>,
-    /// Unique session token for the wallet browser instance.
-    session_token: String,
 }
 
 impl BrowserWalletState {
     /// Create a new browser wallet state.
-    pub fn new(session_token: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            session_token,
             connection: Arc::new(Mutex::new(None)),
             transactions: Arc::new(Mutex::new(RequestQueue::new())),
         }
-    }
-
-    /// Get the session token.
-    pub fn session_token(&self) -> &str {
-        &self.session_token
     }
 
     /// Check if wallet is connected.

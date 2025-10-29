@@ -111,10 +111,10 @@ pub struct WalletOpts {
     #[arg(
         long,
         help_heading = "Wallet options - browser",
-        default_value_t = true,
+        default_value_t = false,
         requires = "browser"
     )]
-    pub browser_open: bool,
+    pub disable_browser_open: bool,
 }
 
 impl WalletOpts {
@@ -145,7 +145,7 @@ impl WalletOpts {
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
         } else if self.browser {
-            WalletSigner::from_browser(self.browser_port, self.browser_open).await?
+            WalletSigner::from_browser(self.browser_port, !self.disable_browser_open).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -251,7 +251,7 @@ mod tests {
             gcp: false,
             browser: false,
             browser_port: 9545,
-            browser_open: true,
+            disable_browser_open: false,
         };
         match wallet.signer().await {
             Ok(_) => {

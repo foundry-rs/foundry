@@ -44,11 +44,8 @@ pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
     (headers, css)
 }
 
-pub(crate) async fn serve_js(
-    State(state): State<Arc<BrowserWalletState>>,
-) -> impl axum::response::IntoResponse {
-    let token = state.session_token();
-    let js = format!("window.__WALLET_TOKEN__ = \"{}\";\n{}", token, contents::MAIN_JS);
+pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
+    let js = contents::MAIN_JS;
 
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/javascript; charset=utf-8"));
