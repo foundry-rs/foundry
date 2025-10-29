@@ -84,7 +84,7 @@ impl Fuzzer {
             {
                 // There's only a 30% chance that an override happens.
                 if let Some(tx) = call_generator.next(call.caller, call.target_address) {
-                    call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
+                    call.input = CallInput::Bytes(tx.call_details.calldata.into());
                     call.caller = tx.sender;
                     call.target_address = tx.call_details.target;
 
