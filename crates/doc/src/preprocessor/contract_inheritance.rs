@@ -62,7 +62,7 @@ impl ContractInheritance {
                 && let ParseSource::Contract(ref contract) = item.source
                 && base == contract.name.safe_unwrap().name
             {
-                return Some(candidate.target_path.clone());
+                return Some(candidate.relative_output_path().to_path_buf());
             }
         }
         None

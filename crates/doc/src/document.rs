@@ -1,4 +1,4 @@
-use crate::{DocBuilder, ParseItem, PreprocessorId, PreprocessorOutput};
+use crate::{ParseItem, PreprocessorId, PreprocessorOutput};
 use alloy_primitives::map::HashMap;
 use std::{
     path::{Path, PathBuf},
@@ -69,7 +69,7 @@ impl Document {
     }
 
     fn try_relative_output_path(&self) -> Option<&Path> {
-        self.target_path.strip_prefix(&self.out_target_dir).ok()?.strip_prefix(DocBuilder::SRC).ok()
+        self.target_path.strip_prefix(&self.out_target_dir).ok()
     }
 
     /// Returns the relative path of the document output.
