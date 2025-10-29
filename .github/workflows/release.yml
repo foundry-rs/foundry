@@ -163,6 +163,7 @@ jobs:
         with:
           git: https://github.com/cross-rs/cross
           rev: baf457efc2555225af47963475bd70e8d2f5993f
+          tool: cross
 
       - name: Build binaries
         env:
