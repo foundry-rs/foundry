@@ -343,6 +343,7 @@ impl EthApi {
             EthRequest::DebugCodeByHash(hash, block) => {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
+            EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
