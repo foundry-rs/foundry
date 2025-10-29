@@ -2,35 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Foundry Browser Wallet</title>
-    <link rel="stylesheet" href="style.css" />
+    <title>Foundry</title>
+    <script type="module" crossorigin src="/main.js"></script>
+    <link rel="stylesheet" crossorigin href="/styles.css">
   </head>
   <body>
-    <h1>Foundry Browser Wallet</h1>
-
-    <section>
-      <h2>Wallet Connection</h2>
-      <button id="connect">Connect</button>
-      <button id="check-connection">Check connection</button>
-      <button id="disconnect">Disconnect</button>
-      <div id="conn-status">Status: <b>disconnected</b></div>
-    </section>
-
-    <section>
-      <h2>Pending Transaction</h2>
-      <pre id="pending"></pre>
-    </section>
-
-    <section>
-      <button id="sign">Sign and send</button>
-    </section>
-
-    <section>
-      <h2>Log</h2>
-      <pre id="log"></pre>
-    </section>
-
-    <script src="main.js"></script>
+    <div id="root"></div>
   </body>
 </html>
