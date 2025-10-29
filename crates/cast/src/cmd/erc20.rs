@@ -1,11 +1,9 @@
 use std::str::FromStr;
 
-use crate::format_uint_exp;
+use crate::{format_uint_exp, tx::signing_provider};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::EthereumWallet;
 use alloy_primitives::U256;
-use alloy_provider::ProviderBuilder;
 use alloy_sol_types::sol;
 use clap::Parser;
 use foundry_cli::{
@@ -162,13 +160,7 @@ impl Erc20Subcommand {
                 let to = to.resolve(&provider).await?;
                 let amount = U256::from_str(&amount)?;
 
-                // Create the default provider builder to sign txs locally
-                let wallet = EthereumWallet::from(wallet.signer().await?);
-                let provider = ProviderBuilder::default()
-                    .with_recommended_fillers()
-                    .wallet(wallet)
-                    .connect_provider(&provider);
-
+                let provider = signing_provider(wallet, &provider).await?;
                 let tx = IERC20::new(token, &provider).transfer(to, amount).send().await?;
                 sh_println!("{}", tx.tx_hash())?
             }
@@ -177,13 +169,7 @@ impl Erc20Subcommand {
                 let spender = spender.resolve(&provider).await?;
                 let amount = U256::from_str(&amount)?;
 
-                // Create signer from wallet options if available
-                let wallet = EthereumWallet::from(wallet.signer().await?);
-                let provider = ProviderBuilder::default()
-                    .with_recommended_fillers()
-                    .wallet(wallet)
-                    .connect_provider(&provider);
-
+                let provider = signing_provider(wallet, &provider).await?;
                 let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
                 sh_println!("{}", tx.tx_hash())?
             }
