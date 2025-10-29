@@ -2401,7 +2401,7 @@ impl SimpleCast {
     }
 }
 
-fn strip_0x(s: &str) -> &str {
+pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
