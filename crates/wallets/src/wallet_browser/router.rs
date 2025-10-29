@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Request, State},
-    http::{HeaderValue, Method, StatusCode, header},
-    middleware::{self, Next},
-    response::Response,
+    http::{HeaderValue, Method, header},
     routing::{get, post},
 };
 use tower::ServiceBuilder;
@@ -19,7 +16,6 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         .route("/transaction/response", post(handlers::post_transaction_response))
         .route("/connection", get(handlers::get_connection_info))
         .route("/connection", post(handlers::post_connection_update))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_session_token))
         .with_state(state.clone());
 
     let security_headers = ServiceBuilder::new()
@@ -52,10 +48,7 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
             CorsLayer::new()
                 .allow_origin([format!("http://127.0.0.1:{port}").parse().unwrap()])
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-                .allow_headers([
-                    header::CONTENT_TYPE,
-                    header::HeaderName::from_static("x-session-token"),
-                ])
+                .allow_headers([header::CONTENT_TYPE])
                 .allow_credentials(false),
         );
 
@@ -66,27 +59,4 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         .nest("/api", api)
         .layer(security_headers)
         .with_state(state)
-}
-
-async fn require_session_token(
-    State(state): State<Arc<BrowserWalletState>>,
-    req: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if req.method() == Method::OPTIONS {
-        return Ok(next.run(req).await);
-    }
-
-    let expected = state.session_token();
-    let provided = req
-        .headers()
-        .get("X-Session-Token")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(StatusCode::FORBIDDEN)?;
-
-    if provided != expected {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    Ok(next.run(req).await)
 }

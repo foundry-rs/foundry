@@ -2,7 +2,6 @@
 
 const headers = {
   "Content-Type": "application/json",
-  "X-Session-Token": window.__WALLET_TOKEN__,
 };
 let currentTxId = null;
 
