@@ -148,7 +148,7 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         if: ${{ contains(matrix.runner, 'depot') }}
-      - run: printf 'RUSTC_WRAPPER=sccache\n' >> "$GITHUB_ENV
+      - run: printf 'RUSTC_WRAPPER=sccache\n' >> "$GITHUB_ENV"
         if: ${{ contains(matrix.runner, 'depot') }}
 
       - name: Apple M1 setup
