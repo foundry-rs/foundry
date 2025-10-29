@@ -2843,7 +2843,7 @@ impl Backend {
     /// Returns the value associated with a key from the database
     /// Currently only supports bytecode lookups.
     ///
-    /// Based on Reth implemenation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
+    /// Based on Reth implementation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
     ///
     /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
     /// Total key length must be 33 bytes.
