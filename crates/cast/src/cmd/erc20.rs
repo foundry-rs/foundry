@@ -1,19 +1,32 @@
 use std::str::FromStr;
 
-use crate::Cast;
+use crate::format_uint_exp;
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
+use alloy_network::EthereumWallet;
 use alloy_primitives::U256;
+use alloy_provider::ProviderBuilder;
+use alloy_sol_types::sol;
 use clap::Parser;
 use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_common::fmt::format_uint_exp;
 use foundry_wallets::WalletOpts;
 
 #[doc(hidden)]
 pub use foundry_config::utils::*;
+
+sol! {
+    #[sol(rpc)]
+    interface IERC20 {
+        #[derive(Debug)]
+        function balanceOf(address owner) external view returns (uint256);
+        function transfer(address to, uint256 amount) external returns (bool);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
+    }
+}
 
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
@@ -51,10 +64,6 @@ pub enum Erc20Subcommand {
         /// The amount to transfer.
         amount: String,
 
-        /// The block height to query at.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
-
         #[command(flatten)]
         rpc: RpcOpts,
 
@@ -75,10 +84,6 @@ pub enum Erc20Subcommand {
 
         /// The amount to approve.
         amount: String,
-
-        /// The block height to query at.
-        #[arg(long, short = 'B')]
-        block: Option<BlockId>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -112,60 +117,79 @@ pub enum Erc20Subcommand {
 }
 
 impl Erc20Subcommand {
-    pub async fn run(self) -> eyre::Result<()> {
+    // Helper to get the rpc and be able to de-duplicate code.
+    // Acceptable to match twice as performance is not critical in cast + there are few commands.
+    fn rpc(&self) -> &RpcOpts {
         match self {
-            Self::Balance { token, owner, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let owner_addr = owner.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let balance =
-                    Cast::new(&provider).erc20_balance(token_addr, owner_addr, block).await?;
-                sh_println!("{}", format_uint_exp(balance))?
-            }
-            Self::Transfer { token, to, amount, block: _, rpc, wallet } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let to_addr = to.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let amount_u256 = U256::from_str(&amount)?;
+            Self::Allowance { rpc, .. } => rpc,
+            Self::Approve { rpc, .. } => rpc,
+            Self::Balance { rpc, .. } => rpc,
+            Self::Transfer { rpc, .. } => rpc,
+        }
+    }
 
-                // Create signer from wallet options if available
-                let signer = wallet.signer().await.ok();
+    pub async fn run(self) -> eyre::Result<()> {
+        let config = self.rpc().load_config()?;
+        let provider = get_provider(&config)?;
 
-                let tx_hash = Cast::new(&provider)
-                    .erc20_transfer(token_addr, to_addr, amount_u256, signer)
+        match self {
+            // Read-only
+            Self::Allowance { token, owner, spender, block, .. } => {
+                let token = token.resolve(&provider).await?;
+                let owner = owner.resolve(&provider).await?;
+                let spender = spender.resolve(&provider).await?;
+
+                let allowance = IERC20::new(token, &provider)
+                    .allowance(owner, spender)
+                    .block(block.unwrap_or_default())
+                    .call()
                     .await?;
-                sh_println!("{}", tx_hash)?
-            }
-            Self::Approve { token, spender, amount, block: _, rpc, wallet } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let spender_addr = spender.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-                let amount_u256 = U256::from_str(&amount)?;
 
-                // Create signer from wallet options if available
-                let signer = wallet.signer().await.ok();
-
-                let tx_hash = Cast::new(&provider)
-                    .erc20_approve(token_addr, spender_addr, amount_u256, signer)
-                    .await?;
-                sh_println!("{}", tx_hash)?
-            }
-            Self::Allowance { token, owner, spender, block, rpc } => {
-                let config = rpc.load_config()?;
-                let provider = get_provider(&config)?;
-                let owner_addr = owner.resolve(&provider).await?;
-                let spender_addr = spender.resolve(&provider).await?;
-                let token_addr = token.resolve(&provider).await?;
-
-                let allowance = Cast::new(&provider)
-                    .erc20_allowance(token_addr, owner_addr, spender_addr, block)
-                    .await?;
                 sh_println!("{}", format_uint_exp(allowance))?
             }
-        }
+            Self::Balance { token, owner, block, .. } => {
+                let token = token.resolve(&provider).await?;
+                let owner = owner.resolve(&provider).await?;
+
+                let balance = IERC20::new(token, &provider)
+                    .balanceOf(owner)
+                    .block(block.unwrap_or_default())
+                    .call()
+                    .await?;
+                sh_println!("{}", format_uint_exp(balance))?
+            }
+            // State-changing
+            Self::Transfer { token, to, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let to = to.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                // Create the default provider builder to sign txs locally
+                let wallet = EthereumWallet::from(wallet.signer().await?);
+                let provider = ProviderBuilder::default()
+                    .with_recommended_fillers()
+                    .wallet(wallet)
+                    .connect_provider(&provider);
+
+                let tx = IERC20::new(token, &provider).transfer(to, amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+            Self::Approve { token, spender, amount, wallet, .. } => {
+                let token = token.resolve(&provider).await?;
+                let spender = spender.resolve(&provider).await?;
+                let amount = U256::from_str(&amount)?;
+
+                // Create signer from wallet options if available
+                let wallet = EthereumWallet::from(wallet.signer().await?);
+                let provider = ProviderBuilder::default()
+                    .with_recommended_fillers()
+                    .wallet(wallet)
+                    .connect_provider(&provider);
+
+                let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
+                sh_println!("{}", tx.tx_hash())?
+            }
+        };
         Ok(())
     }
 }
