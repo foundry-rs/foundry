@@ -234,7 +234,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 let event = get_event(event_sig.as_str())?;
                 event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
             } else {
-                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let data = crate::strip_0x(&data);
                 let selector = data.get(..64).unwrap_or_default();
                 let selector = selector.parse()?;
                 let identified_event =
@@ -254,7 +254,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let error = if let Some(err_sig) = sig {
                 get_error(err_sig.as_str())?
             } else {
-                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let data = crate::strip_0x(&data);
                 let selector = data.get(..8).unwrap_or_default();
                 let identified_error =
                     SignaturesIdentifier::new(false)?.identify_error(selector.parse()?).await;
