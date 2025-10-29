@@ -323,10 +323,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(
-        &self,
-        raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let tx = hex::decode(strip_0x(&raw_tx))?;
         let res = self.provider.send_raw_transaction(&tx).await?;
 
