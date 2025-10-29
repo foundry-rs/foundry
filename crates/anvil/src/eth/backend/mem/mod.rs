@@ -2840,6 +2840,42 @@ impl Backend {
         Ok(None)
     }
 
+    /// Returns the value associated with a key from the database
+    /// Currently only supports bytecode lookups.
+    ///
+    /// Based on Reth implemenation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
+    ///
+    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
+    /// Total key length must be 33 bytes.
+    pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>, BlockchainError> {
+        let key_bytes = if key.starts_with("0x") {
+            hex::decode(&key)
+                .map_err(|_| BlockchainError::Message("Invalid hex key".to_string()))?
+        } else {
+            key.into_bytes()
+        };
+
+        // Validate key length: must be 33 bytes (1 byte prefix + 32 bytes code hash)
+        if key_bytes.len() != 33 {
+            return Err(BlockchainError::Message(format!(
+                "Invalid key length: expected 33 bytes, got {}",
+                key_bytes.len()
+            )));
+        }
+
+        // Check for bytecode prefix (0x63 = 'c' in ASCII)
+        if key_bytes[0] != 0x63 {
+            return Err(BlockchainError::Message(
+                "Key prefix must be 0x63 for code hash lookups".to_string(),
+            ));
+        }
+
+        let code_hash = B256::from_slice(&key_bytes[1..33]);
+
+        // Use the existing debug_code_by_hash method to retrieve the bytecode
+        self.debug_code_by_hash(code_hash, None).await
+    }
+
     fn geth_trace(
         &self,
         tx: &MinedTransaction,
