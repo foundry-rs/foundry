@@ -325,13 +325,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// ```
     pub async fn publish(
         &self,
-        mut raw_tx: String,
+        raw_tx: String,
     ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
-        raw_tx = match raw_tx.strip_prefix("0x") {
-            Some(s) => s.to_string(),
-            None => raw_tx,
-        };
-        let tx = hex::decode(raw_tx)?;
+        let tx = hex::decode(strip_0x(&raw_tx))?;
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
