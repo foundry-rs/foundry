@@ -3009,12 +3009,10 @@ mod tests {
                 pcx.parse();
                 c.dcx().has_errors()?;
 
-                // Get AST from parsed source
+                // Get AST from parsed source and setup the formatter
                 let gcx = c.gcx();
                 let (_, source_obj) = gcx.get_ast_source(&file.name).expect("Failed to get AST");
                 let ast = source_obj.ast.as_ref().expect("No AST found");
-
-                // Create State for testing
                 let comments =
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
@@ -3072,20 +3070,18 @@ mod tests {
             ("contract C { receive() external payable {} }", 9, 28),
         ];
 
-        for (source, expected_params_size, expected_header_size) in &test_cases {
+        for (source, expected_params, expected_header) in &test_cases {
             parse_and_test(source, |state, func| {
                 let params_size = state.estimate_header_params_size(func);
                 assert_eq!(
-                    params_size, *expected_params_size,
-                    "Failed params size: expected {}, got {} for source: {}",
-                    expected_params_size, params_size, source
+                    params_size, *expected_params,
+                    "Failed params size: expected {expected_params}, got {params_size} for source: {source}",
                 );
 
                 let header_size = state.estimate_header_size(func);
                 assert_eq!(
-                    header_size, *expected_header_size,
-                    "Failed header size: expected {}, got {} for source: {}",
-                    expected_header_size, header_size, source
+                    header_size, *expected_header,
+                    "Failed header size: expected {expected_header}, got {header_size} for source: {source}",
                 );
             });
         }
