@@ -140,7 +140,9 @@ contract Repros {
     }
 
     function test_longCallWithOpts() {
-        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
+        flow.withdraw{
+            value: FLOW_MIN_FEE_WEI /* cmnt */
+        }({
             streamId: defaultStreamId,
             to: users.eve,
             /* cmnt */
