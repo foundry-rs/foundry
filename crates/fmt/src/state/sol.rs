@@ -215,9 +215,19 @@ impl<'ast> State<'_, 'ast> {
             }
 
             ast::ImportItems::Aliases(aliases) => {
-                self.s.cbox(self.ind);
-                self.word("{");
-                self.braces_break();
+                // Check if we should keep single imports on one line
+                let use_single_line = self.config.single_line_imports && aliases.len() == 1;
+
+                if use_single_line {
+                    self.word("{");
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                } else {
+                    self.s.cbox(self.ind);
+                    self.word("{");
+                    self.braces_break();
+                }
 
                 if self.config.sort_imports {
                     let mut sorted: Vec<_> = aliases.iter().collect();
@@ -227,10 +237,17 @@ impl<'ast> State<'_, 'ast> {
                     self.print_commasep_aliases(aliases.iter());
                 };
 
-                self.braces_break();
-                self.s.offset(-self.ind);
-                self.word("}");
-                self.end();
+                if use_single_line {
+                    if self.config.bracket_spacing {
+                        self.nbsp();
+                    }
+                    self.word("}");
+                } else {
+                    self.braces_break();
+                    self.s.offset(-self.ind);
+                    self.word("}");
+                    self.end();
+                }
                 self.word(" from ");
                 self.print_ast_str_lit(path);
             }
@@ -818,24 +835,48 @@ impl<'ast> State<'_, 'ast> {
                 self.s.offset(self.ind);
                 self.print_expr(rhs);
             }
-            ast::ExprKind::Binary(_, op, _) => {
-                // Binary expressions: check if we need to break and indent
-                if force_break || self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
-                    if !self.is_bol_or_only_ind() {
+            ast::ExprKind::Binary(lhs, op, _) => {
+                let print_inline = |this: &mut Self| {
+                    this.print_sep(Separator::Nbsp);
+                    this.neverbreak();
+                    this.print_expr(rhs);
+                };
+                let print_with_break = |this: &mut Self, force_break: bool| {
+                    if !this.is_bol_or_only_ind() {
                         if force_break {
-                            self.print_sep(Separator::Hardbreak);
+                            this.print_sep(Separator::Hardbreak);
                         } else {
-                            self.print_sep(Separator::Space);
+                            this.print_sep(Separator::Space);
                         }
                     }
-                    self.s.offset(self.ind);
-                    self.s.ibox(self.ind);
-                    self.print_expr(rhs);
-                    self.end();
-                } else {
-                    self.print_sep(Separator::Nbsp);
-                    self.neverbreak();
-                    self.print_expr(rhs);
+                    this.s.offset(this.ind);
+                    this.s.ibox(this.ind);
+                    this.print_expr(rhs);
+                    this.end();
+                };
+
+                // Binary expressions: check if we need to break and indent
+                if force_break {
+                    print_with_break(self, true);
+                } else if self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
+                    if has_complex_successor(&rhs.kind, true)
+                        && get_callee_head_size(lhs) + lhs_size <= space_left
+                    {
+                        // Keep complex exprs (where callee fits) inline, as they will have breaks
+                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                            self.s.ibox(-self.ind);
+                            print_inline(self);
+                            self.end();
+                        } else {
+                            print_inline(self);
+                        }
+                    } else {
+                        print_with_break(self, false);
+                    }
+                }
+                // Otherwise, if expr fits, ensure no breaks
+                else {
+                    print_inline(self);
                 }
             }
             _ => {
@@ -1548,34 +1589,35 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.s.ibox(0);
 
-        let mut print_ternary_expr =
-            |span_lo, prefix: Option<&'static str>, expr: &'ast ast::Expr<'ast>| {
-                match prefix {
-                    Some(prefix) => {
-                        if self.peek_comment_before(span_lo).is_some() {
-                            self.space();
-                        }
-                        self.print_comments(span_lo, CommentConfig::skip_ws());
-                        self.end();
-                        if !self.is_bol_or_only_ind() {
-                            self.space();
-                        }
-                        self.s.ibox(0);
-                        self.word(prefix);
+        let print_sub_expr = |this: &mut Self, span_lo, prefix, expr: &'ast ast::Expr<'ast>| {
+            match prefix {
+                Some(prefix) => {
+                    if this.peek_comment_before(span_lo).is_some() {
+                        this.space();
                     }
-                    None => {
-                        self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                    this.print_comments(span_lo, CommentConfig::skip_ws());
+                    this.end();
+                    if !this.is_bol_or_only_ind() {
+                        this.space();
                     }
-                };
-                self.print_expr(expr);
+                    this.s.ibox(0);
+                    this.word(prefix);
+                }
+                None => {
+                    this.print_comments(expr.span.lo(), CommentConfig::skip_ws());
+                }
             };
+            this.print_expr(expr);
+        };
 
         // conditional expression
-        print_ternary_expr(then.span.lo(), None, cond);
+        self.s.ibox(-self.ind);
+        print_sub_expr(self, then.span.lo(), None, cond);
+        self.end();
         // then expression
-        print_ternary_expr(then.span.lo(), Some("? "), then);
+        print_sub_expr(self, then.span.lo(), Some("? "), then);
         // else expression
-        print_ternary_expr(els.span.lo(), Some(": "), els);
+        print_sub_expr(self, els.span.lo(), Some(": "), els);
 
         self.end();
         self.neverbreak();
@@ -1854,7 +1896,7 @@ impl<'ast> State<'_, 'ast> {
         _ = self.handle_span(self.cursor.span(span.lo()), false);
         if !self.handle_span(span.until(block.span), false) {
             self.cursor.advance_to(span.lo(), true);
-            self.print_word("assembly ");
+            self.print_word("assembly "); // 9 chars
             if let Some(dialect) = dialect {
                 self.print_ast_str_lit(dialect);
                 self.print_sep(Separator::Nbsp);
@@ -1871,7 +1913,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_sep(Separator::Nbsp);
             }
         }
-        self.print_yul_block(block, block.span, false);
+        self.print_yul_block(block, block.span, false, 9);
     }
 
     /// Prints a multiple-variable declaration with a single initializer expression,
@@ -2925,6 +2967,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 _ => member_ident.as_str().len(),
             }
         }
+        ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
         _ => 0,

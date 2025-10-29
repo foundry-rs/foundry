@@ -3,7 +3,6 @@
 use foundry_test_utils::str;
 
 forgetest_init!(debug_logs, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "DebugLogs.t.sol",
         r#"
@@ -239,7 +238,6 @@ Ran 1 test suite [ELAPSED]: 19 tests passed, 0 failed, 0 skipped (19 total tests
 });
 
 forgetest_init!(hardhat_logs, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_test(
         "HardhatLogs.t.sol",
         r#"

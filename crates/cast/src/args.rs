@@ -312,6 +312,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(token) => {
                     let balance =
                         Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     sh_println!("{}", format_uint_exp(balance))?
                 }
                 None => {
@@ -747,6 +748,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
+        CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }

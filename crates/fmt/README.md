@@ -116,7 +116,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `bracket_spacing` | `false` | Print spaces between brackets. |
 | `int_types` | `long` | Style for `uint256`/`int256` types. Options: `long`, `short`, `preserve`. |
 | `multiline_func_header` | `attributes_first` | The style of multiline function headers. Options: `attributes_first`, `params_always`, `params_first_multi`, `all`, `all_params`. |
-| `prefer_compact` | `all` | Style that determines if a broken list, should keep its elements together on their own line, before breaking individually. Options: `calls`, `events`, `errors`, `events_errors`, `all`. |
+| `prefer_compact` | `all` | Style that determines if a broken list, should keep its elements together on their own line, before breaking individually. Options: `none`, `calls`, `events`, `errors`, `events_errors`, `all`. |
 | `quote_style` | `double` | The style of quotation marks. Options: `double`, `single`, `preserve`. |
 | `number_underscore` | `preserve` | The style of underscores in number literals. Options: `preserve`, `remove`, `thousands`. |
 | `hex_underscore` | `remove` | The style of underscores in hex literals. Options: `preserve`, `remove`, `bytes`. |
@@ -128,6 +128,7 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `contract_new_lines` | `false` | Add a new line at the start and end of contract declarations. |
 | `sort_imports` | `false` | Sort import statements alphabetically in groups. A group is a set of imports separated by a newline. |
 | `pow_no_space` | `false` | Suppress spaces around the power operator (`**`). |
+| `single_line_imports` | `false` | Keep single imports on a single line, even if they exceed the line length limit. |
 
 > Check [`FormatterConfig`](../config/src/fmt.rs) for a more detailed explanation.
 

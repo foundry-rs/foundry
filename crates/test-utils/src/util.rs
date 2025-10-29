@@ -284,7 +284,7 @@ pub fn initialize(target: &Path) {
             let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
             test_debug!("- initializing template dir in {}", prj.root().display());
 
-            cmd.args(["init", "--force"]).assert_success();
+            cmd.args(["init", "--force", "--empty"]).assert_success();
             prj.write_config(Config {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
                 ..Default::default()
@@ -669,14 +669,29 @@ impl TestProject {
         self.inner.add_script(name, Self::add_source_prelude(contents)).unwrap()
     }
 
+    /// Adds a script file to the project. Prefer using `add_script` instead.
+    pub fn add_raw_script(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_script(name, contents).unwrap()
+    }
+
     /// Adds a test file to the project.
     pub fn add_test(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_test(name, Self::add_source_prelude(contents)).unwrap()
     }
 
+    /// Adds a test file to the project. Prefer using `add_test` instead.
+    pub fn add_raw_test(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_test(name, contents).unwrap()
+    }
+
     /// Adds a library file to the project.
     pub fn add_lib(&self, name: &str, contents: &str) -> PathBuf {
         self.inner.add_lib(name, Self::add_source_prelude(contents)).unwrap()
+    }
+
+    /// Adds a library file to the project. Prefer using `add_lib` instead.
+    pub fn add_raw_lib(&self, name: &str, contents: &str) -> PathBuf {
+        self.inner.add_lib(name, contents).unwrap()
     }
 
     fn add_source_prelude(s: &str) -> String {
@@ -873,6 +888,26 @@ impl TestProject {
         rm_create(&self.paths().sources);
         rm_create(&self.paths().tests);
         rm_create(&self.paths().scripts);
+    }
+
+    /// Initializes the default contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
+    ///
+    /// This is useful for tests that need the default contracts created by `forge init`.
+    /// Most tests should not need this method, as the default behavior is to create an empty
+    /// project.
+    pub fn initialize_default_contracts(&self) {
+        self.add_raw_source(
+            "Counter.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.sol"),
+        );
+        self.add_raw_test(
+            "Counter.t.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.t.sol"),
+        );
+        self.add_raw_script(
+            "Counter.s.sol",
+            include_str!("../../forge/assets/solidity/CounterTemplate.s.sol"),
+        );
     }
 }
 
