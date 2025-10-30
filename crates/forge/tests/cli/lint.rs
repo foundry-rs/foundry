@@ -784,9 +784,6 @@ fn ensure_no_privileged_lint_id() {
 }
 
 forgetest!(skips_linting_for_old_solidity_versions, |prj, cmd| {
-    prj.wipe_contracts();
-
-    // Add a contract with Solidity 0.7.x which has lint issues
     const OLD_CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.0;
@@ -798,9 +795,8 @@ contract OldContract {
 }
 "#;
 
+    // Add a contract with Solidity 0.7.x which has lint issues
     prj.add_source("OldContract", OLD_CONTRACT);
-
-    // Configure linter to show all severities
     prj.update_config(|config| {
         config.lint = LinterConfig {
             severity: vec![],
@@ -812,13 +808,16 @@ contract OldContract {
     });
 
     // Run forge build - should SUCCEED without linting
-    cmd.arg("build").assert_success().stderr_eq(
-        "Warning: unable to lint. Solar only supports Solidity versions prior to 0.8.0\n",
-    );
+    cmd.arg("build").assert_success().stderr_eq(str![[
+        r#"Warning: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+
+"#
+    ]]);
 
     // Run forge lint - should FAIL
-    cmd.forge_fuse()
-        .arg("lint")
-        .assert_failure()
-        .stderr_eq("Error: unable to lint. Solar only supports Solidity versions prior to 0.8.0\n");
+    cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[
+        r#"Error: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+
+"#
+    ]]);
 });

@@ -51,7 +51,7 @@ pub fn configure_pcx(
 
     // Only process sources with latest Solidity version to avoid conflicts.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let (version, sources, _) = graph
+    let (version, sources) = graph
         // Resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
         .sources
@@ -65,7 +65,7 @@ pub fn configure_pcx(
         .filter(|(v, _, _)| v >= &MIN_SUPPORTED_VERSION)
         // Always pick the latest version
         .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .unwrap();
+        .map_or((MIN_SUPPORTED_VERSION, Sources::default()), |(v, s, _)| (v, s));
 
     if sources.is_empty() {
         sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
