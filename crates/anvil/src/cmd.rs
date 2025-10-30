@@ -522,7 +522,7 @@ pub struct AnvilEvmArgs {
     ///
     /// This flag overrides the project's configuration file.
     ///
-    /// See --rpc-url.
+    /// See --fork-url.
     #[arg(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
 
