@@ -34,5 +34,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 
 forge/*/bin/forge
+anvil/*/bin/anvil
+cast/*/bin/cast
+chisel/*/bin/chisel
 @foundry-rs/*/bin/
-test/workspace/bun.lock
+_
