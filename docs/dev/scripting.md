@@ -64,7 +64,7 @@ ScriptArgs::execute-- "(resume || verify) && !broadcast" -->ScriptArgs::resume_d
 ```mermaid
 graph TD;
 subgraph ScriptArgs::execute
-a[*]-->ScriptArgs::prepare_runner
+Start[Start]-->ScriptArgs::prepare_runner
 subgraph ::prepare_runner
 ScriptArgs::prepare_runner--fork_url-->Backend::spawn;
 ScriptArgs::prepare_runner-->Backend::spawn;
