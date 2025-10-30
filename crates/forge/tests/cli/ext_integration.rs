@@ -6,7 +6,7 @@ use foundry_test_utils::util::ExtTester;
 // <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "60acb7aaadcce2d68e52986a0a66fe79f07d138f")
+    ExtTester::new("foundry-rs", "forge-std", "a6d71da563bbb8d6eef8fbec3a16c61c603d2764")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
         .verbosity(2)
@@ -44,7 +44,7 @@ fn sablier_v2_core() {
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
-            .args(["--gas-limit", u64::MAX.to_string().as_str()])
+            .args(["--gas-limit", &u64::MAX.to_string()])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])

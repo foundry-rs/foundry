@@ -1,26 +1,43 @@
 //! RPC API keys utilities.
 
 use foundry_config::{
-    NamedChain,
     NamedChain::{
-        Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+        self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
     },
+    RpcEndpointUrl, RpcEndpoints,
 };
 use rand::seq::SliceRandom;
-use std::sync::{
-    LazyLock,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    env,
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
-
-fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
-    vec.shuffle(&mut rand::rng());
-    vec
-}
 
 macro_rules! shuffled_list {
     ($name:ident, $e:expr $(,)?) => {
-        static $name: LazyLock<Vec<&'static str>> = LazyLock::new(|| shuffled($e));
+        static $name: LazyLock<ShuffledList<&'static str>> =
+            LazyLock::new(|| ShuffledList::new($e));
     };
+}
+
+struct ShuffledList<T> {
+    list: Vec<T>,
+    index: AtomicUsize,
+}
+
+impl<T> ShuffledList<T> {
+    fn new(mut list: Vec<T>) -> Self {
+        assert!(!list.is_empty());
+        list.shuffle(&mut rand::rng());
+        Self { list, index: AtomicUsize::new(0) }
+    }
+
+    fn next(&self) -> &T {
+        let index = self.index.fetch_add(1, Ordering::Relaxed);
+        &self.list[index % self.list.len()]
+    }
 }
 
 shuffled_list!(
@@ -79,15 +96,20 @@ shuffled_list!(
     ],
 );
 
-/// Returns the next index to use.
-fn next_idx() -> usize {
-    static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
-    NEXT_INDEX.fetch_add(1, Ordering::SeqCst)
-}
-
-/// Returns the next item in the list to use.
-fn next<T>(list: &[T]) -> &T {
-    &list[next_idx() % list.len()]
+/// the RPC endpoints used during tests
+pub fn rpc_endpoints() -> RpcEndpoints {
+    RpcEndpoints::new([
+        ("mainnet", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
+        ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
+        ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
+        ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
+        ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
+        ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
+        ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
+    ])
 }
 
 /// Returns the next _mainnet_ rpc URL in inline
@@ -126,20 +148,29 @@ pub fn next_ws_archive_rpc_url() -> String {
 
 /// Returns a URL that has access to archive state.
 fn next_archive_url(is_ws: bool) -> String {
-    let domain = next(if is_ws { &WS_ARCHIVE_DOMAINS } else { &HTTP_ARCHIVE_DOMAINS });
+    let domain = if is_ws { &WS_ARCHIVE_DOMAINS } else { &HTTP_ARCHIVE_DOMAINS }.next();
     let url = if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") };
-    test_debug!("next_archive_url(is_ws={is_ws}) = {url}");
+    test_debug!("next_archive_url(is_ws={is_ws}) = {}", debug_url(&url));
     url
 }
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
-    let key = next(&ETHERSCAN_KEYS).to_string();
-    test_debug!("next_etherscan_api_key() = {key}");
+    let mut key = env::var("ETHERSCAN_KEY").unwrap_or_default();
+    if key.is_empty() {
+        key = ETHERSCAN_KEYS.next().to_string();
+    }
+    test_debug!("next_etherscan_api_key() = {}...", &key[..6]);
     key
 }
 
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
+    let url = next_url_inner(is_ws, chain);
+    test_debug!("next_url(is_ws={is_ws}, chain={chain:?}) = {}", debug_url(&url));
+    url
+}
+
+fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     if matches!(chain, Base) {
         return "https://mainnet.base.org".to_string();
     }
@@ -156,27 +187,42 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Arbitrum) {
+        let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
+        if !rpc_url.is_empty() {
+            return rpc_url;
+        }
+        return "https://arbitrum-one-rpc.publicnode.com".to_string();
+    }
+
     let reth_works = true;
     let domain = if reth_works && matches!(chain, Mainnet) {
-        *next(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS })
+        *(if is_ws { &WS_DOMAINS } else { &HTTP_DOMAINS }).next()
     } else {
         // DRPC for other networks used in tests.
-        let key = next(&DRPC_KEYS);
-
+        let key = DRPC_KEYS.next();
         let network = match chain {
             Mainnet => "ethereum",
-            Arbitrum => "arbitrum",
             Polygon => "polygon",
+            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };
         &format!("lb.drpc.org/ogrpc?network={network}&dkey={key}")
     };
 
-    let url = if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") };
+    if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") }
+}
 
-    test_debug!("next_url(is_ws={is_ws}, chain={chain:?}) = {url}");
-    url
+/// Basic redaction for debugging RPC URLs.
+fn debug_url(url: &str) -> impl std::fmt::Display + '_ {
+    let url = reqwest::Url::parse(url).unwrap();
+    format!(
+        "{scheme}://{host}{path}",
+        scheme = url.scheme(),
+        host = url.host_str().unwrap(),
+        path = url.path().get(..8).unwrap_or(url.path()),
+    )
 }
 
 #[cfg(test)]
@@ -192,7 +238,7 @@ mod tests {
         let address = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
         let mut first_abi = None;
         let mut failed = Vec::new();
-        for (i, &key) in ETHERSCAN_KEYS.iter().enumerate() {
+        for (i, &key) in ETHERSCAN_KEYS.list.iter().enumerate() {
             println!("trying key {i} ({key})");
 
             let client = foundry_block_explorers::Client::builder()

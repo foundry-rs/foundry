@@ -113,7 +113,6 @@ contract CounterTest {
 "#;
 
 forgetest!(can_use_config, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -141,7 +140,6 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 });
 
 forgetest!(can_use_config_ignore, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -181,7 +179,6 @@ note[mixed-case-function]: function names should use mixedCase
 });
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
 
@@ -199,7 +196,6 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -227,7 +223,6 @@ note[mixed-case-function]: function names should use mixedCase
 });
 
 forgetest!(can_override_config_path, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -255,7 +250,6 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 });
 
 forgetest!(can_override_config_lint, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
 
@@ -285,7 +279,6 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 });
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
@@ -349,7 +342,6 @@ Warning (2018): Function state mutability can be restricted to pure
 });
 
 forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -368,7 +360,6 @@ forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
 });
 
 forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
@@ -397,7 +388,6 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
 });
 
 forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
@@ -451,12 +441,10 @@ Warning (2018): Function state mutability can be restricted to pure
 });
 
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     cmd.arg("lint").assert_success();
 
-    prj.wipe_contracts();
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
     prj.add_source("ContractWithLints", CONTRACT);
     cmd.arg("lint").assert_success();
@@ -464,7 +452,6 @@ forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/11080>
 forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
@@ -482,7 +469,6 @@ note[unused-import]: unused imports should be removed
 
 // <https://github.com/foundry-rs/foundry/issues/11234>
 forgetest!(can_lint_only_built_files, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("CounterAWithLints", COUNTER_A);
     prj.add_source("CounterBWithLints", COUNTER_B);
 
@@ -511,7 +497,6 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 // <https://github.com/foundry-rs/foundry/issues/11392>
 forgetest!(can_lint_param_constants, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("Counter", COUNTER_WITH_CONST);
     prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
@@ -525,7 +510,6 @@ Compiler run successful!
 
 // <https://github.com/foundry-rs/foundry/issues/11460>
 forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source(
         "UnwrappedModifierTest",
         r#"
@@ -673,7 +657,6 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
 });
 
 forgetest!(can_fail_on_lints, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT);
 
     // -- LINT ALL SEVERITIES [OUTPUT: WARN + NOTE] ----------------------------

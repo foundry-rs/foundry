@@ -17,7 +17,7 @@ contract SampleContract {
     // comment 16
     external /* comment 17 */
     pure
-    returns(uint256) 
+    returns(uint256)
     // comment 18
     { // comment 19
         return arg1 > arg2 ? arg1 : arg2;
@@ -38,3 +38,15 @@ contract ERC20DecimalsMock is ERC20 {
         _decimals = decimals_;
     }
 }
+
+contract SomeContract is
+    ERC165Upgradeable, // 1 inherited component
+    ISomeContract // 4 inherited components
+{ }
+
+contract AnotherContract is
+    Adminable, /* 1 inherited components */
+    UUPSUpgradeable /* 1 inherited component */
+{ }
+
+contract WithLayoutAndBase layout at 69 is Base {}

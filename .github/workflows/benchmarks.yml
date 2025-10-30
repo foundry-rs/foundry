@@ -64,7 +64,7 @@ jobs:
         run: cargo build --release --bin foundry-bench
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -137,7 +137,7 @@ jobs:
         run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Upload benchmark results as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-results
           path: |
@@ -165,7 +165,7 @@ jobs:
           persist-credentials: false
 
       - name: Download benchmark results
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: benchmark-results
           path: benches/

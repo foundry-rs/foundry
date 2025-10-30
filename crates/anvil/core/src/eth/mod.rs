@@ -303,6 +303,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_codeByHash")]
     DebugCodeByHash(B256, #[serde(default)] Option<BlockId>),
 
+    /// reth's `debug_dbGet` endpoint
+    #[serde(rename = "debug_dbGet")]
+    DebugDbGet(String),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(B256),

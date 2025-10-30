@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
-contract Rlp is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
+contract Rlp is Test {
     function testToRlp() public {
         bytes[] memory data = new bytes[](2);
         data[0] = hex"01";

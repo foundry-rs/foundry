@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.2"
+version = "1.4.4"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.89"
@@ -154,6 +154,11 @@ rand.opt-level = 3
 rand_chacha.opt-level = 3
 ppv-lite86.opt-level = 3
 
+# Backtraces.
+addr2line.opt-level = 3
+backtrace.opt-level = 3
+gimli.opt-level = 3
+
 # Forking.
 axum.opt-level = 3
 
@@ -223,7 +228,7 @@ foundry-compilers = { version = "0.19.5", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.18"
+foundry-fork-db = "0.19"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
@@ -231,45 +236,45 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 
 ## alloy
-alloy-consensus = { version = "1.0.38", default-features = false }
-alloy-contract = { version = "1.0.38", default-features = false }
-alloy-eips = { version = "1.0.38", default-features = false }
-alloy-eip5792 = { version = "1.0.38", default-features = false }
-alloy-ens = { version = "1.0.38", default-features = false }
-alloy-genesis = { version = "1.0.38", default-features = false }
-alloy-json-rpc = { version = "1.0.38", default-features = false }
-alloy-network = { version = "1.0.38", default-features = false }
-alloy-provider = { version = "1.0.38", default-features = false }
-alloy-pubsub = { version = "1.0.38", default-features = false }
-alloy-rpc-client = { version = "1.0.38", default-features = false }
-alloy-rpc-types = { version = "1.0.38", default-features = true }
-alloy-rpc-types-beacon = { version = "1.0.38", default-features = true }
-alloy-serde = { version = "1.0.38", default-features = false }
-alloy-signer = { version = "1.0.38", default-features = false }
-alloy-signer-aws = { version = "1.0.38", default-features = false }
-alloy-signer-gcp = { version = "1.0.38", default-features = false }
-alloy-signer-ledger = { version = "1.0.38", default-features = false }
-alloy-signer-local = { version = "1.0.38", default-features = false }
-alloy-signer-trezor = { version = "1.0.38", default-features = false }
-alloy-transport = { version = "1.0.38", default-features = false }
-alloy-transport-http = { version = "1.0.38", default-features = false }
-alloy-transport-ipc = { version = "1.0.38", default-features = false }
-alloy-transport-ws = { version = "1.0.38", default-features = false }
-alloy-hardforks = { version = "0.3.2", default-features = false }
-alloy-op-hardforks = { version = "0.3.2", default-features = false }
+alloy-consensus = { version = "1.0.41", default-features = false }
+alloy-contract = { version = "1.0.41", default-features = false }
+alloy-eips = { version = "1.0.41", default-features = false }
+alloy-eip5792 = { version = "1.0.41", default-features = false }
+alloy-ens = { version = "1.0.41", default-features = false }
+alloy-genesis = { version = "1.0.41", default-features = false }
+alloy-json-rpc = { version = "1.0.41", default-features = false }
+alloy-network = { version = "1.0.41", default-features = false }
+alloy-provider = { version = "1.0.41", default-features = false }
+alloy-pubsub = { version = "1.0.41", default-features = false }
+alloy-rpc-client = { version = "1.0.41", default-features = false }
+alloy-rpc-types = { version = "1.0.41", default-features = true }
+alloy-rpc-types-beacon = { version = "1.0.41", default-features = true }
+alloy-serde = { version = "1.0.41", default-features = false }
+alloy-signer = { version = "1.0.41", default-features = false }
+alloy-signer-aws = { version = "1.0.41", default-features = false }
+alloy-signer-gcp = { version = "1.0.41", default-features = false }
+alloy-signer-ledger = { version = "1.0.41", default-features = false }
+alloy-signer-local = { version = "1.0.41", default-features = false }
+alloy-signer-trezor = { version = "1.0.41", default-features = false }
+alloy-transport = { version = "1.0.41", default-features = false }
+alloy-transport-http = { version = "1.0.41", default-features = false }
+alloy-transport-ipc = { version = "1.0.41", default-features = false }
+alloy-transport-ws = { version = "1.0.41", default-features = false }
+alloy-hardforks = { version = "0.4.0", default-features = false }
+alloy-op-hardforks = { version = "0.4.0", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "1.4.1"
-alloy-json-abi = "1.3.0"
-alloy-primitives = { version = "1.3.1", features = [
+alloy-json-abi = "1.4.1"
+alloy-primitives = { version = "1.4.1", features = [
     "getrandom",
     "rand",
     "map-fxhash",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "1.3.1"
-alloy-sol-macro-input = "1.3.1"
-alloy-sol-types = "1.3.1"
+alloy-sol-macro-expander = "1.4.1"
+alloy-sol-macro-input = "1.4.1"
+alloy-sol-types = "1.4.1"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
@@ -281,12 +286,12 @@ op-alloy-rpc-types = "0.20.0"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "29.0.0", default-features = false }
-revm-inspectors = { version = "0.30.0", features = ["serde"] }
-op-revm = { version = "10.0.0", default-features = false }
+revm = { version = "30.2.0", default-features = false }
+revm-inspectors = { version = "0.31.2", features = ["serde"] }
+op-revm = { version = "11.1.2", default-features = false }
 ## alloy-evm
-alloy-evm = "0.21.1"
-alloy-op-evm = "0.21.1"
+alloy-evm = "0.22.3"
+alloy-op-evm = "0.22.3"
 
 ## cli
 anstream = "0.6"
@@ -330,7 +335,7 @@ evmole = "0.8"
 eyre = "0.6"
 figment = "0.10"
 futures = { version = "0.3", default-features = false }
-hyper = "1.6"
+hyper = "1.7"
 indicatif = "0.18"
 itertools = "0.14"
 jsonpath_lib = "0.3"
@@ -339,7 +344,7 @@ mesc = "0.3"
 memchr = "2.7"
 num-format = "0.4"
 parking_lot = "0.12"
-proptest = "1.7.0"
+proptest = "1.8.0"
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 rand_chacha = "0.9.0"
@@ -354,10 +359,10 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
-soldeer-commands = "=0.8.0"
-soldeer-core = { version = "=0.8.0", features = ["serde"] }
+soldeer-commands = "=0.9.0"
+soldeer-core = { version = "=0.9.0", features = ["serde"] }
 strum = "0.27"
-tempfile = "3.20"
+tempfile = "3.23"
 tokio = "1"
 toml = "0.9"
 toml_edit = "0.23"
@@ -374,7 +379,7 @@ jiff = { version = "0.2", default-features = false, features = [
     "perf-inline",
 ] }
 heck = "0.5"
-uuid = "1.17.0"
+uuid = "1.18.1"
 flate2 = "1.1"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
@@ -430,18 +435,18 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
-# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "3c6cebb" }
+# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "085ad53" }
+# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "085ad53" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "d9cda3a" }
-# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "74e215d" }
+# revm-inspectors = { git = "https://github.com/zerosnacks/revm-inspectors.git", rev = "340d37e" }
 
 ## foundry
 # foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "f5b46b2" }
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "main" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "eee6563" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "be95912" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar.git", branch = "main" }

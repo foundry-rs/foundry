@@ -228,7 +228,10 @@ if (!PLATFORM_SPECIFIC_PACKAGE_NAME)
 // Skip downloading the binary if it was already installed via optionalDependencies
 if (!isPlatformSpecificPackageInstalled()) {
   console.log('Platform specific package not found. Will manually download binary.')
-  downloadBinaryFromRegistry()
+  downloadBinaryFromRegistry().catch(error => {
+    console.error(colors.red, 'Failed to download binary:', error, colors.reset)
+    process.exitCode = 1
+  })
 } else {
   console.log('Platform specific package already installed. Skipping manual download.')
 }

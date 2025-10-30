@@ -123,11 +123,14 @@ impl<'ast> State<'_, 'ast> {
         }
         if source.contains('.') {
             out.push('.');
-            if !fract.is_empty() {
-                add_underscores(&mut out, config, fract, is_dec, is_yul, true);
-            } else {
-                out.push('0');
-            }
+            match (fract.is_empty(), exp.is_empty()) {
+                // `X.YeZ`: keep as is
+                (false, false) => out.push_str(fract),
+                // `X.Y`
+                (false, true) => add_underscores(&mut out, config, fract, is_dec, is_yul, true),
+                // `X.` -> `X.0`
+                (true, _) => out.push('0'),
+            };
         }
         if !exp.is_empty() {
             out.push('e');
@@ -350,7 +353,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         if !values.is_empty() && !format.with_delimiters {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
             self.s.offset(self.ind);
             return true;
         }
@@ -508,7 +511,7 @@ impl<'ast> State<'_, 'ast> {
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
-            self.zerobreak();
+            format.print_break(true, values.len(), &mut self.s);
         }
     }
 
@@ -521,7 +524,9 @@ impl<'ast> State<'_, 'ast> {
         for (pos, ident) in path.segments().iter().delimited() {
             self.print_ident(ident);
             if !pos.is_last {
-                self.zerobreak();
+                if !self.emit_or_revert {
+                    self.zerobreak();
+                }
                 self.word(".");
             }
         }
@@ -583,7 +588,7 @@ impl<'ast> State<'_, 'ast> {
                                 self.s.offset(offset);
                             }
                         } else if style.is_isolated() {
-                            self.print_sep_unhandled(Separator::Space);
+                            self.print_sep_unhandled(Separator::Hardbreak);
                             self.s.offset(offset);
                         }
                     }
@@ -867,9 +872,9 @@ impl ListFormat {
         self
     }
 
-    pub(crate) fn no_delimiters(mut self) -> Self {
+    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
-            self.with_delimiters = false;
+            self.with_delimiters = with;
         }
         self
     }

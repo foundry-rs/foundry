@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
-import "ds-test/test.sol";
-import "cheats/Vm.sol";
+import "utils/Test.sol";
 
 contract Counter {
     event TestEvent(uint256 n);
@@ -24,8 +23,7 @@ contract Counter {
 }
 
 // https://github.com/foundry-rs/foundry/issues/6643
-contract Issue6643Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract Issue6643Test is Test {
     Counter public counter;
 
     event TestEvent(uint256 n);

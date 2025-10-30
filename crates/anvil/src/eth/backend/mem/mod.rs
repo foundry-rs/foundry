@@ -751,7 +751,7 @@ impl Backend {
 
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        self.db.write().await.set_code(address, code.0.into())
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
@@ -1520,7 +1520,7 @@ impl Backend {
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
-    ///  - `nonce` check is skipped if `request.nonce` is None
+    ///  - `nonce` check is skipped
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1571,6 +1571,9 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
+        // Disable nonce check in revm
+        env.evm_env.cfg_env.disable_nonce_check = true;
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1608,9 +1611,6 @@ impl Backend {
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
-        } else {
-            // Disable nonce check in revm
-            env.evm_env.cfg_env.disable_nonce_check = true;
         }
 
         if env.evm_env.block_env.basefee == 0 {
@@ -1909,8 +1909,9 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
-            opts;
+        let GethDebugTracingCallOptions {
+            tracing_options, block_overrides, state_overrides, ..
+        } = opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, mut block| {
@@ -2839,6 +2840,42 @@ impl Backend {
         Ok(None)
     }
 
+    /// Returns the value associated with a key from the database
+    /// Currently only supports bytecode lookups.
+    ///
+    /// Based on Reth implementation: <https://github.com/paradigmxyz/reth/blob/66cfa9ed1a8c4bc2424aacf6fb2c1e67a78ee9a2/crates/rpc/rpc/src/debug.rs#L1146-L1178>
+    ///
+    /// Key should be: 0x63 (1-byte prefix) + 32 bytes (code_hash)
+    /// Total key length must be 33 bytes.
+    pub async fn debug_db_get(&self, key: String) -> Result<Option<Bytes>, BlockchainError> {
+        let key_bytes = if key.starts_with("0x") {
+            hex::decode(&key)
+                .map_err(|_| BlockchainError::Message("Invalid hex key".to_string()))?
+        } else {
+            key.into_bytes()
+        };
+
+        // Validate key length: must be 33 bytes (1 byte prefix + 32 bytes code hash)
+        if key_bytes.len() != 33 {
+            return Err(BlockchainError::Message(format!(
+                "Invalid key length: expected 33 bytes, got {}",
+                key_bytes.len()
+            )));
+        }
+
+        // Check for bytecode prefix (0x63 = 'c' in ASCII)
+        if key_bytes[0] != 0x63 {
+            return Err(BlockchainError::Message(
+                "Key prefix must be 0x63 for code hash lookups".to_string(),
+            ));
+        }
+
+        let code_hash = B256::from_slice(&key_bytes[1..33]);
+
+        // Use the existing debug_code_by_hash method to retrieve the bytecode
+        self.debug_code_by_hash(code_hash, None).await
+    }
+
     fn geth_trace(
         &self,
         tx: &MinedTransaction,
@@ -3170,7 +3207,7 @@ impl Backend {
             blob_gas_used,
         };
 
-        Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
+        Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
     /// Returns the blocks receipts for the given number
@@ -3306,6 +3343,29 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    pub fn get_blobs_by_block_id(
+        &self,
+        id: impl Into<BlockId>,
+        versioned_hashes: Vec<B256>,
+    ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
+        Ok(self.get_block(id).map(|block| {
+            block
+                .transactions
+                .iter()
+                .filter_map(|tx| tx.as_ref().sidecar())
+                .flat_map(|sidecar| {
+                    sidecar.sidecar.blobs.iter().zip(sidecar.sidecar.commitments.iter())
+                })
+                .filter(|(_, commitment)| {
+                    // Filter blobs by versioned_hashes if provided
+                    versioned_hashes.is_empty()
+                        || versioned_hashes.contains(&kzg_to_versioned_hash(commitment.as_slice()))
+                })
+                .map(|(blob, _)| *blob)
+                .collect()
+        }))
     }
 
     pub fn get_blob_sidecars_by_block_id(
@@ -3688,7 +3748,10 @@ impl TransactionValidator for Backend {
                 && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
             {
                 warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                return Err(InvalidTransactionError::BlobFeeCapTooLow);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow(
+                    max_fee_per_blob_gas,
+                    blob_gas_and_price.blob_gasprice,
+                ));
             }
 
             let max_cost = tx.max_cost();

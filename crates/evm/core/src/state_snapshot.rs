@@ -1,7 +1,6 @@
 //! Support for snapshotting different states
 
 use alloy_primitives::{U256, map::HashMap};
-use std::ops::Add;
 
 /// Represents all state snapshots
 #[derive(Clone, Debug)]
@@ -30,7 +29,7 @@ impl<T> StateSnapshots<T> {
         let snapshot_state = self.state_snapshots.remove(&id);
 
         // Revert all state snapshots taken after the state snapshot with the `id`
-        let mut to_revert = id.add(U256::from(1));
+        let mut to_revert = id + U256::from(1);
         while to_revert < self.id {
             self.state_snapshots.remove(&to_revert);
             to_revert += U256::from(1);
@@ -61,9 +60,8 @@ impl<T> StateSnapshots<T> {
     /// Inserts the new state snapshot at the given `id`.
     ///
     ///  Does not auto-increment the next `id`.
-    pub fn insert_at(&mut self, state_snapshot: T, id: U256) -> U256 {
+    pub fn insert_at(&mut self, state_snapshot: T, id: U256) {
         self.state_snapshots.insert(id, state_snapshot);
-        id
     }
 }
 
