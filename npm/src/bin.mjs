@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { BINARY_NAME, colors, KNOWN_TOOLS, PLATFORM_SPECIFIC_PACKAGE_NAME, resolveTargetTool } from '#const.mjs'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'

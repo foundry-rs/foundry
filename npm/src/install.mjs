@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import * as NodeHttp from 'node:http'
