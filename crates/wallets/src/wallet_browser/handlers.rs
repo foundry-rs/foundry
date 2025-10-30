@@ -17,8 +17,6 @@ use crate::wallet_browser::{
 };
 
 pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
-    let html = contents::INDEX_HTML;
-
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
     headers.insert(
@@ -27,12 +25,10 @@ pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
     );
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     headers.insert(EXPIRES, HeaderValue::from_static("0"));
-    (headers, Html(html))
+    (headers, Html(contents::INDEX_HTML))
 }
 
 pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
-    let css = contents::STYLES_CSS;
-
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
     headers.insert(
@@ -41,12 +37,10 @@ pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
     );
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     headers.insert(EXPIRES, HeaderValue::from_static("0"));
-    (headers, css)
+    (headers, contents::STYLES_CSS)
 }
 
 pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
-    let js = contents::MAIN_JS;
-
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/javascript; charset=utf-8"));
     headers.insert(
@@ -55,7 +49,7 @@ pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
     );
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     headers.insert(EXPIRES, HeaderValue::from_static("0"));
-    (headers, js)
+    (headers, contents::MAIN_JS)
 }
 
 pub(crate) async fn serve_banner_png() -> impl axum::response::IntoResponse {
