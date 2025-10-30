@@ -118,18 +118,21 @@ async function prepareMetaPackage(tool) {
   }
 
   const binSource = await NodeFS.readFile(NodePath.join(sourceDir, 'bin.mjs'), 'utf8')
-  const binContent = binSource.replace(/'#const\.mjs'/g, '\'./postinstall.mjs\'')
-  await NodeFS.writeFile(NodePath.join(metaDir, 'bin.mjs'), binContent)
+  await NodeFS.writeFile(NodePath.join(metaDir, 'bin.mjs'), binSource)
+
+  const constSource = await NodeFS.readFile(NodePath.join(sourceDir, 'const.mjs'), 'utf8')
+  await NodeFS.writeFile(NodePath.join(metaDir, 'const.mjs'), constSource)
 
   const packageJsonPath = NodePath.join(metaDir, 'package.json')
   const pkg = JSON.parse(await NodeFS.readFile(packageJsonPath, 'utf8'))
-  pkg.imports = { ...(pkg.imports || {}), '#const.mjs': './postinstall.mjs' }
+  pkg.imports = { ...(pkg.imports || {}), '#const.mjs': './const.mjs' }
   pkg.scripts = { ...(pkg.scripts || {}), postinstall: 'node ./postinstall.mjs' }
 
   const files = new Set([...(pkg.files ?? [])])
   files.delete('dist')
   files.delete('bin')
   files.add('bin.mjs')
+  files.add('const.mjs')
   files.add('postinstall.mjs')
   pkg.files = Array.from(files)
 

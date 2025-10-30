@@ -15,8 +15,10 @@ const TOOL_SET = new Set(KNOWN_TOOLS)
 /**
  * @param {string | undefined} [raw]
  * @returns {Tool}
+ *
+ * could be process.argv[2]
  */
-export function resolveTargetTool(raw = process.env.TARGET_TOOL) {
+export function resolveTargetTool(raw = process.env.TARGET_TOOL || process.argv[2]) {
   const value = typeof raw === 'string' ? raw.trim() : ''
   if (!value)
     throw new Error('TARGET_TOOL must be set to one of: ' + KNOWN_TOOLS.join(', '))
