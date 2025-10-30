@@ -471,7 +471,7 @@ pub struct AnvilEvmArgs {
 
     /// Initial retry backoff on encountering errors.
     ///
-    /// See --rpc-url.
+    /// See --fork-url.
     #[arg(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
     pub fork_retry_backoff: Option<u64>,
 
