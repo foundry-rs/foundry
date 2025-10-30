@@ -132,11 +132,13 @@ hex_underscore = "remove"
 single_line_statement_blocks = "preserve"
 override_spacing = false
 wrap_comments = false
+docs_style = "preserve"
 ignore = []
 contract_new_lines = false
 sort_imports = false
 pow_no_space = false
-call_compact_args = true
+prefer_compact = "all"
+single_line_imports = false
 
 [lint]
 severity = []
@@ -1306,11 +1308,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_statement_blocks": "preserve",
     "override_spacing": false,
     "wrap_comments": false,
+    "docs_style": "preserve",
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false,
     "pow_no_space": false,
-    "call_compact_args": true
+    "prefer_compact": "all",
+    "single_line_imports": false
   },
   "lint": {
     "severity": [],

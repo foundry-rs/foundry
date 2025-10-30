@@ -115,17 +115,20 @@ The formatter supports multiple configuration options defined in `foundry.toml`.
 | `style` | `space` | The style of indentation. Options: `space`, `tab`. |
 | `bracket_spacing` | `false` | Print spaces between brackets. |
 | `int_types` | `long` | Style for `uint256`/`int256` types. Options: `long`, `short`, `preserve`. |
-| `multiline_func_header` | `attributes_first` | The style of multiline function headers. Options: `attributes_first`, `params_first`, `params_first_multi`, `all`, `all_params`. |
+| `multiline_func_header` | `attributes_first` | The style of multiline function headers. Options: `attributes_first`, `params_always`, `params_first_multi`, `all`, `all_params`. |
+| `prefer_compact` | `all` | Style that determines if a broken list, should keep its elements together on their own line, before breaking individually. Options: `none`, `calls`, `events`, `errors`, `events_errors`, `all`. |
 | `quote_style` | `double` | The style of quotation marks. Options: `double`, `single`, `preserve`. |
 | `number_underscore` | `preserve` | The style of underscores in number literals. Options: `preserve`, `remove`, `thousands`. |
 | `hex_underscore` | `remove` | The style of underscores in hex literals. Options: `preserve`, `remove`, `bytes`. |
 | `single_line_statement_blocks` | `preserve` | The style of single-line blocks in statements. Options: `preserve`, `single`, `multi`. |
 | `override_spacing` | `false` | Print a space in the `override` attribute. |
 | `wrap_comments` | `false` | Wrap comments when `line_length` is reached. |
+| `docs_style` | `preserve` | Enforces the style of doc (natspec) comments. Options: `preserve`, `line`, `block`. |
 | `ignore` | `[]` | Globs to ignore. |
 | `contract_new_lines` | `false` | Add a new line at the start and end of contract declarations. |
 | `sort_imports` | `false` | Sort import statements alphabetically in groups. A group is a set of imports separated by a newline. |
 | `pow_no_space` | `false` | Suppress spaces around the power operator (`**`). |
+| `single_line_imports` | `false` | Keep single imports on a single line, even if they exceed the line length limit. |
 
 
 ### Inline Configuration

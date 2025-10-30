@@ -498,11 +498,8 @@ pub struct Cheatcodes {
     pub wallets: Option<Wallets>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
-    /// Used to determine whether the broadcasted call has non-fixed gas limit.
-    /// Holds values for (seen opcode GAS, seen opcode CALL) pair.
-    /// If GAS opcode is followed by CALL opcode then both flags are marked true and call
-    /// has non-fixed gas limit, otherwise the call is considered to have fixed gas limit.
-    pub dynamic_gas_limit_sequence: Option<(bool, bool)>,
+    /// Used to determine whether the broadcasted call has dynamic gas limit.
+    pub dynamic_gas_limit: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -558,7 +555,7 @@ impl Cheatcodes {
             deprecated: Default::default(),
             wallets: Default::default(),
             signatures_identifier: Default::default(),
-            dynamic_gas_limit_sequence: Default::default(),
+            dynamic_gas_limit: Default::default(),
         }
     }
 
@@ -835,6 +832,11 @@ impl Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
+            // Additional check as transfers in forge scripts seem to be estimated at 2300
+            // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
+            let is_fixed_gas_limit = call.gas_limit >= 21_000 && !self.dynamic_gas_limit;
+            self.dynamic_gas_limit = false;
+
             // We only apply a broadcast *to a specific depth*.
             //
             // We do this because any subsequent contract calls *must* exist on chain and
@@ -862,15 +864,6 @@ impl Cheatcodes {
                         });
                     }
 
-                    let (gas_seen, call_seen) =
-                        self.dynamic_gas_limit_sequence.take().unwrap_or_default();
-                    // Transaction has fixed gas limit if no GAS opcode seen before CALL opcode.
-                    let mut is_fixed_gas_limit = !(gas_seen && call_seen);
-                    // Additional check as transfers in forge scripts seem to be estimated at 2300
-                    // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
-                    if call.gas_limit < 21_000 {
-                        is_fixed_gas_limit = false;
-                    }
                     let input = TransactionInput::new(call.input.bytes(ecx));
                     // Ensure account is touched.
                     ecx.journaled_state.touch(broadcast.new_origin);
@@ -1095,7 +1088,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.pc = interpreter.bytecode.pc();
 
         if self.broadcast.is_some() {
-            self.record_gas_limit_opcode(interpreter);
+            self.set_gas_limit_type(interpreter);
         }
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -1138,10 +1131,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        if self.broadcast.is_some() {
-            self.set_gas_limit_type(interpreter);
-        }
-
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -2331,37 +2320,17 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_gas_limit_opcode(&mut self, interpreter: &mut Interpreter) {
-        match interpreter.bytecode.opcode() {
-            // If current opcode is CREATE2 then set non-fixed gas limit.
-            op::CREATE2 => self.dynamic_gas_limit_sequence = Some((true, true)),
-            op::GAS => {
-                if self.dynamic_gas_limit_sequence.is_none() {
-                    // If current opcode is GAS then mark as seen.
-                    self.dynamic_gas_limit_sequence = Some((true, false));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    #[cold]
     fn set_gas_limit_type(&mut self, interpreter: &mut Interpreter) {
-        // Early exit in case we already determined is non-fixed gas limit.
-        if matches!(self.dynamic_gas_limit_sequence, Some((true, true))) {
-            return;
+        match interpreter.bytecode.opcode() {
+            op::CREATE2 => self.dynamic_gas_limit = true,
+            op::CALL => {
+                // If first element of the stack is close to current remaining gas then assume
+                // dynamic gas limit.
+                self.dynamic_gas_limit =
+                    try_or_return!(interpreter.stack.peek(0)) >= interpreter.gas.remaining() - 100
+            }
+            _ => self.dynamic_gas_limit = false,
         }
-
-        // Record CALL opcode if GAS opcode was seen.
-        if matches!(self.dynamic_gas_limit_sequence, Some((true, false)))
-            && interpreter.bytecode.opcode() == op::CALL
-        {
-            self.dynamic_gas_limit_sequence = Some((true, true));
-            return;
-        }
-
-        // Reset dynamic gas limit sequence if GAS opcode was not followed by a CALL opcode.
-        self.dynamic_gas_limit_sequence = None;
     }
 }
 

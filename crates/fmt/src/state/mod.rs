@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::IndentStyle;
+use foundry_config::fmt::{DocCommentStyle, IndentStyle};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, SourceMap},
@@ -126,6 +126,8 @@ pub(super) struct State<'sess, 'ast> {
     return_bin_expr: bool,
     // Whether inside a call with call options and at least one argument.
     call_with_opts_and_args: bool,
+    // Whether to skip the index soft breaks because the callee fits inline.
+    skip_index_break: bool,
     // Whether inside an `emit` or `revert` call with a qualified path, or not.
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
@@ -219,6 +221,7 @@ impl<'sess> State<'sess, '_> {
             contract: None,
             single_line_stmt: None,
             call_with_opts_and_args: false,
+            skip_index_break: false,
             binary_expr: None,
             return_bin_expr: false,
             emit_or_revert: false,
@@ -247,11 +250,17 @@ impl<'sess> State<'sess, '_> {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
     }
 
+    /// Computes the space left, bounded by the max space left.
     fn space_left(&self) -> usize {
-        std::cmp::min(
-            self.s.space_left(),
-            self.config.line_length.saturating_sub(self.block_depth * self.config.tab_width),
-        )
+        std::cmp::min(self.s.space_left(), self.max_space_left(0))
+    }
+
+    /// Computes the maximum space left given the context information available:
+    /// `block_depth`, `tab_width`, and a user-defined unavailable size `prefix_len`.
+    fn max_space_left(&self, prefix_len: usize) -> usize {
+        self.config
+            .line_length
+            .saturating_sub(self.block_depth * self.config.tab_width + prefix_len)
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
@@ -495,8 +504,29 @@ impl<'sess> State<'sess, '_> {
         let config_cache = config;
         let mut buffered_blank = None;
         while self.peek_comment().is_some_and(|c| c.pos() < pos) {
-            let cmnt = self.next_comment().unwrap();
+            let mut cmnt = self.next_comment().unwrap();
             let style_cache = cmnt.style;
+
+            // Merge consecutive line doc comments when converting to block style
+            if self.config.docs_style == foundry_config::fmt::DocCommentStyle::Block
+                && cmnt.is_doc
+                && cmnt.kind == ast::CommentKind::Line
+            {
+                let mut ref_line = self.sm.lookup_char_pos(cmnt.span.hi()).line;
+                while let Some(next_cmnt) = self.peek_comment() {
+                    if !next_cmnt.is_doc
+                        || next_cmnt.kind != ast::CommentKind::Line
+                        || ref_line + 1 != self.sm.lookup_char_pos(next_cmnt.span.lo()).line
+                    {
+                        break;
+                    }
+
+                    let next_to_merge = self.next_comment().unwrap();
+                    cmnt.lines.extend(next_to_merge.lines);
+                    cmnt.span = cmnt.span.to(next_to_merge.span);
+                    ref_line += 1;
+                }
+            }
 
             // Ensure breaks are never skipped when there are multiple comments
             if self.peek_comment_before(pos).is_some() {
@@ -710,6 +740,11 @@ impl<'sess> State<'sess, '_> {
 
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
+
+        if cmnt.is_doc {
+            cmnt = style_doc_comment(self.config.docs_style, cmnt);
+        }
+
         match cmnt.style {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
@@ -835,15 +870,14 @@ impl<'sess> State<'sess, '_> {
                 if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
                 } else if self.config.wrap_comments {
-                    config.offset = self.ind;
+                    if cmnt.is_doc || matches!(cmnt.kind, ast::CommentKind::Line) {
+                        config.offset = 0;
+                    } else {
+                        config.offset = self.ind;
+                    }
                     for (lpos, line) in cmnt.lines.into_iter().delimited() {
                         if !line.is_empty() {
-                            self.print_wrapped_line(
-                                &line,
-                                prefix,
-                                if cmnt.is_doc { 0 } else { config.offset },
-                                cmnt.is_doc,
-                            );
+                            self.print_wrapped_line(&line, prefix, config.offset, cmnt.is_doc);
                         }
                         if !lpos.is_last {
                             config.hardbreak(&mut self.s);
@@ -1111,4 +1145,48 @@ fn snippet_with_tabs(s: String, tab_width: usize) -> String {
     }
 
     formatted
+}
+
+/// Formats a doc comment with the requested style.
+///
+/// NOTE: assumes comments have already been normalized.
+fn style_doc_comment(style: DocCommentStyle, mut cmnt: Comment) -> Comment {
+    match style {
+        DocCommentStyle::Line if cmnt.kind == ast::CommentKind::Block => {
+            let mut new_lines = Vec::new();
+            for (pos, line) in cmnt.lines.iter().delimited() {
+                if pos.is_first || pos.is_last {
+                    // Skip the opening '/**' and closing '*/' lines
+                    continue;
+                }
+
+                // Convert ' * {content}' to '/// {content}'
+                let trimmed = line.trim_start();
+                if let Some(content) = trimmed.strip_prefix('*') {
+                    new_lines.push(format!("///{content}"));
+                } else if !trimmed.is_empty() {
+                    new_lines.push(format!("/// {trimmed}"));
+                }
+            }
+
+            cmnt.lines = new_lines;
+            cmnt.kind = ast::CommentKind::Line;
+            cmnt
+        }
+        DocCommentStyle::Block if cmnt.kind == ast::CommentKind::Line => {
+            let mut new_lines = vec!["/**".to_string()];
+
+            for line in &cmnt.lines {
+                // Convert '/// {content}' to ' * {content}'
+                new_lines.push(format!(" *{content}", content = &line[3..]))
+            }
+
+            new_lines.push(" */".to_string());
+            cmnt.lines = new_lines;
+            cmnt.kind = ast::CommentKind::Block;
+            cmnt
+        }
+        // Otherwise, no conversion needed.
+        _ => cmnt,
+    }
 }
