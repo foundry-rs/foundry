@@ -856,7 +856,7 @@ mod tests {
     fn can_parse_fork_headers() {
         let args: NodeArgs = NodeArgs::parse_from([
             "anvil",
-            "--rpc-url",
+            "--fork-url",
             "http,://localhost:8545",
             "--fork-header",
             "User-Agent: test-agent",
