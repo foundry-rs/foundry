@@ -459,7 +459,7 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from after a specific transaction hash has been applied over a remote endpoint.
     ///
-    /// See --rpc-url.
+    /// See --fork-url.
     #[arg(
         long,
         requires = "fork_url",
