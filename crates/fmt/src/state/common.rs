@@ -284,6 +284,7 @@ impl<'ast> State<'_, 'ast> {
         values: &[T],
         mut get_span: S,
         format: ListFormat,
+        manual_opening: bool,
     ) -> bool
     where
         S: FnMut(&T) -> Span,
@@ -313,6 +314,14 @@ impl<'ast> State<'_, 'ast> {
                     self.s.offset(self.ind);
                 }
             };
+
+            // If manual opening flag is passed, we simply force the break, and skip the comment.
+            // It will be dealt with when printing the item in the main loop of `commasep`.
+            if manual_opening {
+                self.hardbreak();
+                self.s.offset(self.ind);
+                return true;
+            }
 
             let cmnt_config = if format.with_delimiters {
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()
@@ -377,23 +386,37 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        let first = get_span(&values[0]);
-        // we can't simply check `peek_comment_before(pos_hi)` cause we would also account for
+        // We can't simply check `peek_comment_before(pos_hi)` cause we would also account for
         // comments in the child expression, and those don't matter.
-        let has_comments = self.peek_comment_before(first.lo()).is_some()
-            || self.peek_comment_between(first.hi(), pos_hi).is_some();
-        let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
+        let has_comments =
+            // check for comments before the first element
+            self.peek_comment_before(get_span(&values[0]).lo()).is_some() ||
+            // check for comments between elements
+            values.windows(2).any(|w| self.peek_comment_between(get_span(&w[0]).hi(), get_span(&w[1]).lo()).is_some()) ||
+            // check for comments after the last element
+            self.peek_comment_between(get_span(values.last().unwrap()).hi(), pos_hi).is_some();
 
+        // For calls with opts and args, which should break consistently, we need to skip the
+        // wrapping cbox to prioritize call args breaking before the call opts. Because of that, we
+        // must manually offset the breaks between args, so that they are properly indented.
+        let manual_opening =
+            format.is_consistent() && !format.with_delimiters && self.call_with_opts_and_args;
+        // When there are comments, we can preserve the cbox, as they will make it break
+        let manual_offset = !has_comments && manual_opening;
+
+        let is_single_without_cmnts = values.len() == 1 && !format.break_single && !has_comments;
         let skip_first_break = if format.with_delimiters || format.is_inline() {
             self.s.cbox(if format.no_ind { 0 } else { self.ind });
             if is_single_without_cmnts {
                 true
             } else {
-                self.commasep_opening_logic(values, &mut get_span, format)
+                self.commasep_opening_logic(values, &mut get_span, format, manual_opening)
             }
         } else {
-            let res = self.commasep_opening_logic(values, &mut get_span, format);
-            self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            let res = self.commasep_opening_logic(values, &mut get_span, format, manual_opening);
+            if !manual_offset {
+                self.s.cbox(if format.no_ind { 0 } else { self.ind });
+            }
             res
         };
 
@@ -403,6 +426,9 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
         } else if !skip_first_break && !format.is_inline() {
             format.print_break(true, values.len(), &mut self.s);
+            if manual_offset {
+                self.s.offset(self.ind);
+            }
         }
 
         if format.is_compact() && !(format.breaks_with_comments() && has_comments) {
@@ -485,6 +511,9 @@ impl<'ast> State<'_, 'ast> {
                 && !next_span.is_dummy()
             {
                 format.print_break(false, values.len(), &mut self.s);
+                if manual_offset {
+                    self.s.offset(self.ind);
+                }
             }
         }
 
@@ -507,7 +536,9 @@ impl<'ast> State<'_, 'ast> {
             self.word(sym);
         }
 
-        self.end();
+        if !manual_offset {
+            self.end();
+        }
         self.cursor.advance_to(pos_hi, true);
 
         if last_delimiter_break {
@@ -798,6 +829,10 @@ impl ListFormat {
 
     pub(crate) fn post_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_post, .. } = self.kind { sym_post } else { None }
+    }
+
+    pub(crate) fn is_consistent(&self) -> bool {
+        matches!(self.kind, ListFormatKind::Consistent)
     }
 
     pub(crate) fn is_compact(&self) -> bool {

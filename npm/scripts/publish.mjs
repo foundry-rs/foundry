@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
+
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 
-import { colors } from '#const.ts'
+import { colors } from '#const.mjs'
 
 const REGISTRY_URL = Bun.env.NPM_REGISTRY_URL || 'https://registry.npmjs.org'
 
@@ -35,12 +36,15 @@ async function main() {
   await publishPackage(packagePath, packedFile, publishVersion)
 }
 
+/**
+ * @returns {string}
+ */
 function getPublishVersion() {
   const maybeVersion = (Bun.env.VERSION_NAME || '').replace(/^v/, '')
-  if (maybeVersion && isValidSemver(maybeVersion)) return maybeVersion
+  if (maybeVersion && Bun.semver.satisfies(maybeVersion, maybeVersion)) return maybeVersion
 
   const bump = (Bun.env.BUMP_VERSION || '').replace(/^v/, '')
-  if (bump && isValidSemver(bump)) return bump
+  if (bump && (!!bump && Bun.semver.satisfies(bump, bump))) return bump
 
   const releaseVersion = (Bun.env.RELEASE_VERSION || '').replace(/^v/, '')
   const isNightly = releaseVersion.toLowerCase() === 'nightly' || Bun.env.IS_NIGHTLY === 'true'
@@ -54,6 +58,7 @@ function getPublishVersion() {
   if (!versionMatch) throw new Error('Version not found in Cargo.toml')
 
   const [, base] = versionMatch
+  if (!base) throw new Error('Version not found in Cargo.toml')
   if (!isNightly) return base
 
   const date = new Date()
@@ -66,11 +71,12 @@ function getPublishVersion() {
   return `${base}-${suffix}`
 }
 
-function isValidSemver(v: string) {
-  return !!v && Bun.semver.satisfies(v, v)
-}
-
-async function updateOptionalDependencies(packagePath: string, version: string) {
+/**
+ * @param {string} packagePath
+ * @param {string} version
+ * @returns {Promise<void>}
+ */
+async function updateOptionalDependencies(packagePath, version) {
   const packageJsonPath = NodePath.join(packagePath, 'package.json')
   const packageJson = JSON.parse(NodeFS.readFileSync(packageJsonPath, 'utf-8'))
 
@@ -83,17 +89,28 @@ async function updateOptionalDependencies(packagePath: string, version: string) 
   }
 }
 
-async function isMetaPackage(packagePath: string) {
+/**
+ * @param {string} packagePath
+ * @returns {Promise<boolean>}
+ */
+async function isMetaPackage(packagePath) {
   try {
     const packageJsonPath = NodePath.join(packagePath, 'package.json')
     const packageJson = JSON.parse(NodeFS.readFileSync(packageJsonPath, 'utf-8'))
-    return packageJson?.name === '@foundry-rs/forge'
+    return ['@foundry-rs/forge', '@foundry-rs/cast', '@foundry-rs/anvil', '@foundry-rs/chisel'].includes(
+      packageJson?.name
+    )
   } catch {
     return false
   }
 }
 
-async function setPackageVersion(packagePath: string, version: string) {
+/**
+ * @param {string} packagePath
+ * @param {string} version
+ * @returns {Promise<void>}
+ */
+async function setPackageVersion(packagePath, version) {
   console.info(colors.green, 'Setting package version:', version)
   const result = await Bun.$`npm version ${version} --allow-same-version --no-git-tag-version`
     .cwd(packagePath)
@@ -109,7 +126,11 @@ async function setPackageVersion(packagePath: string, version: string) {
     throw new Error(`Failed to set version: ${result.stderr}`)
 }
 
-async function packPackage(packagePath: string) {
+/**
+ * @param {string} packagePath
+ * @returns {Promise<string>}
+ */
+async function packPackage(packagePath) {
   let packedFile = ''
 
   for await (const line of Bun.$`bun pm pack`.cwd(packagePath).lines())
@@ -119,7 +140,13 @@ async function packPackage(packagePath: string) {
   return packedFile
 }
 
-async function publishPackage(packagePath: string, packedFile: string, version: string) {
+/**
+ * @param {string} packagePath
+ * @param {string} packedFile
+ * @param {string} version
+ * @returns {Promise<void>}
+ */
+async function publishPackage(packagePath, packedFile, version) {
   const tag = /-nightly(\.|$)/.test(version) ? 'nightly' : 'latest'
   const result = await Bun
     .$`npm publish ./${packedFile} --access=public --registry=${REGISTRY_URL} --tag=${tag} --provenance=${
