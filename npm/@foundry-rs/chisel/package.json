@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "postinstall": "node ./dist/postinstall.mjs"
+    "postinstall": "TARGET_TOOL=chisel node ./dist/postinstall.mjs"
   },
   "optionalDependencies": {
     "@foundry-rs/chisel-darwin-arm64": "0.0.0",

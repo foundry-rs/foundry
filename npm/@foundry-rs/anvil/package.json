@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "postinstall": "node ./dist/postinstall.mjs"
+    "postinstall": "TARGET_TOOL=anvil node ./dist/postinstall.mjs"
   },
   "optionalDependencies": {
     "@foundry-rs/anvil-darwin-arm64": "0.0.0",

@@ -126,7 +126,7 @@ async function prepareMetaPackage(tool) {
   const packageJsonPath = NodePath.join(metaDir, 'package.json')
   const pkg = JSON.parse(await NodeFS.readFile(packageJsonPath, 'utf8'))
   pkg.imports = { ...(pkg.imports || {}), '#const.mjs': './const.mjs' }
-  pkg.scripts = { ...(pkg.scripts || {}), postinstall: 'node ./postinstall.mjs' }
+  pkg.scripts = { ...(pkg.scripts || {}), postinstall: `TARGET_TOOL=${tool} node ./postinstall.mjs` }
 
   const files = new Set([...(pkg.files ?? [])])
   files.delete('dist')

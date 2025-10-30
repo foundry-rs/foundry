@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "postinstall": "node ./dist/postinstall.mjs"
+    "postinstall": "TARGET_TOOL=forge node ./dist/postinstall.mjs"
   },
   "optionalDependencies": {
     "@foundry-rs/forge-darwin-arm64": "0.0.0",
