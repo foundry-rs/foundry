@@ -79,7 +79,6 @@ solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml.workspace = true
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
@@ -95,6 +94,7 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
+soldeer-core.workspace = true
 quick-junit = "0.5.1"
 
 [dev-dependencies]
