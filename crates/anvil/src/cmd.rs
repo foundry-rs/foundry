@@ -447,7 +447,7 @@ pub struct AnvilEvmArgs {
     ///
     /// If negative, the given value is subtracted from the `latest` block number.
     ///
-    /// See --rpc-url.
+    /// See --fork-url.
     #[arg(
         long,
         requires = "fork_url",
