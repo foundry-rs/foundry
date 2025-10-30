@@ -194,9 +194,6 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
         | DynSolType::Uint(_)
         | DynSolType::FixedBytes(_)
         | DynSolType::Bytes => {
-            if !s.starts_with("0x") && hex::check_raw(s) {
-                return Some(Err("missing hex prefix (\"0x\") for hex string"));
-            }
         }
         _ => {}
     }
