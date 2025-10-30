@@ -228,7 +228,7 @@ Anvil is a fast local Ethereum development node.
 Let's fork Ethereum mainnet at the latest block:
 
 ```sh
-anvil --rpc-url https://eth.merkle.io
+anvil --fork-url https://eth.merkle.io
 ```
 
 You can use those same `cast` subcommands against your `anvil` instance:
