@@ -1,22 +1,20 @@
-// config: line_length = 110
+// config: line_length = 120
+// config: bracket_spacing = true
+// config: prefer_compact = "none"
 function repros() public {
     require(
-        keccak256(abi.encodePacked("this is a long string"))
-            == keccak256(abi.encodePacked("some other long string")),
+        keccak256(abi.encodePacked("this is a long string")) == keccak256(abi.encodePacked("some other long string")),
         "string mismatch"
     );
 
-    address lerp =
-        LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
+    address lerp = LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
 
-    (oracleRouter, eVault) = execute(
-        oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount
-    );
+    (oracleRouter, eVault) =
+        execute(oracleRouterFactory, deployRouterForOracle, eVaultFactory, upgradable, asset, oracle, unitOfAccount);
 
     if (eVault == address(0)) {
         eVault = address(
-            GenericFactory(eVaultFactory)
-                .createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0)))
+            GenericFactory(eVaultFactory).createProxy(address(0), true, abi.encodePacked(asset, address(0), address(0)))
         );
     }
 
@@ -28,9 +26,8 @@ function repros() public {
         "\"}\n"
     );
 
-    oracleInfo = abi.encode(
-        LidoOracleInfo({base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH()})
-    );
+    oracleInfo =
+        abi.encode(LidoOracleInfo({ base: IOracle(oracleAddress).WSTETH(), quote: IOracle(oracleAddress).STETH() }));
 
     return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
 
@@ -58,9 +55,7 @@ function repros() public {
         onBehalfOfAccount: user,
         targetContract: address(swapVerifier),
         value: 0,
-        data: abi.encodeCall(
-            swapVerifier.verifyDebtMax, (address(eSTETH), user, exactOutTolerance, type(uint256).max)
-        )
+        data: abi.encodeCall(swapVerifier.verifyDebtMax, (address(eSTETH), user, exactOutTolerance, type(uint256).max))
     });
 
     uint256 fork = vm.createSelectFork("arbitrum", bytes32(0xdeadc0ffeedeadbeef));
@@ -81,17 +76,14 @@ function repros() public {
 }
 
 function returnLongBinaryOp() returns (bytes32) {
-    return bytes32(
-        uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce))
-    );
+    return
+        bytes32(uint256(Feature.unwrap(feature)) << 128 | uint256(block.chainid) << 64 | uint256(Nonce.unwrap(nonce)));
 }
 
 contract Repros {
     function test() public {
-        uint256 globalBuyAmount =
-            Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
-        uint256 globalBuyAmount =
-            Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
+        uint256 globalBuyAmount = Take.take(state, notes, uint32(IPoolManager.take.selector), recipient, minBuyAmount);
 
         {
             u.executionData = _transferExecution(address(paymentToken), address(0xabcd), 1 ether);
@@ -99,10 +91,14 @@ contract Repros {
         }
 
         ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
-            recipient: payable(address(0)), buyToken: IERC20(address(0)), minAmountOut: 0
+            recipient: payable(address(0)),
+            buyToken: IERC20(address(0)),
+            minAmountOut: 0
         });
         ISettlerBase.AllowedSlippage memory allowedSlippage = ISettlerBase.AllowedSlippage({
-            recipient: payable(address(0)), buyToken: IERC20(address(0)), minAmountOut: 0
+            recipient: payable(address(0)),
+            buyToken: IERC20(address(0)),
+            minAmountOut: 0
         });
 
         ISignatureTransfer.PermitTransferFrom memory permit = defaultERC20PermitTransfer(
@@ -117,8 +113,7 @@ contract Repros {
         );
 
         // https://github.com/foundry-rs/foundry/issues/11834
-        CurrenciesOutOfOrderOrEqual.selector
-            .revertWith(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
+        CurrenciesOutOfOrderOrEqual.selector.revertWith(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
 
         nestedStruct.withCalls.thatCause
             .aBreak(
@@ -128,28 +123,29 @@ contract Repros {
             );
 
         // https://github.com/foundry-rs/foundry/issues/11835
-        feeGrowthInside0X128 =
-            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
-        feeGrowthInside0X128 =
-            self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
+        feeGrowthInside0X128 = self.feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128 - upper.feeGrowthOutside0X128;
 
         // https://github.com/foundry-rs/foundry/issues/11875
         lpTail = LpPosition({
-            tickLower: posTickLower, tickUpper: posTickUpper, liquidity: lpTailLiquidity, id: uint16(id)
+            tickLower: posTickLower,
+            tickUpper: posTickUpper,
+            liquidity: lpTailLiquidity,
+            id: uint16(id)
         });
     }
 
     // https://github.com/foundry-rs/foundry/issues/11834
-    function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed)
-        public
-    {
+    function test_ffi_fuzz_addLiquidity_defaultPool(IPoolManager.ModifyLiquidityParams memory paramSeed) public {
         a = 1;
     }
 
     // https://github.com/foundry-rs/foundry/issues/12324
     function test_longCallWithOpts() {
-        flow.withdraw{value: FLOW_MIN_FEE_WEI}({
-            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
+            streamId: defaultStreamId,
+            to: users.eve,
+            amount: WITHDRAW_AMOUNT_6D
         });
         flow.withdraw{
             value: FLOW_MIN_FEE_WEI /* cmnt */
@@ -159,8 +155,11 @@ contract Repros {
             /* cmnt */
             amount: WITHDRAW_AMOUNT_6D
         });
-        flow.withdraw{value: FLOW_MIN_FEE_WEI}({ // cmnt
-            streamId: defaultStreamId, to: users.eve, amount: WITHDRAW_AMOUNT_6D
+        flow.withdraw{ value: FLOW_MIN_FEE_WEI }({
+            // cmnt
+            streamId: defaultStreamId,
+            to: users.eve,
+            amount: WITHDRAW_AMOUNT_6D
         });
     }
 }
