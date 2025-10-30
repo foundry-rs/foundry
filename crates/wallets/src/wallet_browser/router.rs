@@ -28,7 +28,7 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
                 "frame-ancestors 'none'; ",
                 "img-src 'self'; ",
                 "font-src 'none'; ",
-                "connect-src 'self'; ",
+                "connect-src 'self' https: http: wss: ws:;",
                 "style-src 'self'; ",
                 "script-src 'self'; ",
                 "form-action 'none'; ",
