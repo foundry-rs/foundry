@@ -9192,7 +9192,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -9208,7 +9208,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -9223,7 +9223,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "colorchoice",
  "strum 0.27.2",
@@ -9232,7 +9232,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -9246,7 +9246,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "annotate-snippets 0.12.5",
  "anstream",
@@ -9273,7 +9273,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9283,7 +9283,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.10.0",
@@ -9304,7 +9304,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=main#a264ef3c9f93388ed0ff84d07ae383e0676ee2d4"
+source = "git+https://github.com/paradigmxyz/solar.git?rev=0bea5f0#0bea5f09ac7a3895cac27e111b429a4c30968168"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
