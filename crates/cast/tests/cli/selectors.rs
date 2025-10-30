@@ -140,7 +140,7 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
 [
-  78,
+  "78",
   "0x0000000000000000000000000000000000D0004F"
 ]
 
@@ -168,7 +168,7 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
 [
-  101,
+  "101",
   "0x0000000000000000000000000000000000D0004F"
 ]
 
