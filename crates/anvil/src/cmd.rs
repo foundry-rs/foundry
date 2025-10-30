@@ -422,7 +422,7 @@ pub struct AnvilEvmArgs {
 
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
-    /// See --rpc-url.
+    /// See --fork-url.
     #[arg(
         long = "fork-header",
         value_name = "HEADERS",
