@@ -17,21 +17,20 @@ mod anvil_const {
     pub const TOKEN: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 }
 
+fn get_u256_from_cmd(cmd: &mut foundry_test_utils::TestCommand, args: &[&str]) -> U256 {
+    let output = cmd.cast_fuse().args(args).assert_success().get_output().stdout_lossy();
+
+    // Parse balance from output (format: "100000000000000000000 [1e20]")
+    output.split_whitespace().next().unwrap().parse().unwrap()
+}
+
 fn get_balance(
     cmd: &mut foundry_test_utils::TestCommand,
     token: &str,
     address: &str,
     rpc: &str,
-) -> alloy_primitives::U256 {
-    let output = cmd
-        .cast_fuse()
-        .args(["erc20", "balance", token, address, "--rpc-url", rpc])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    // Parse balance from output (format: "100000000000000000000 [1e20]")
-    output.split_whitespace().next().unwrap().parse().unwrap()
+) -> U256 {
+    get_u256_from_cmd(cmd, &["erc20", "balance", token, address, "--rpc-url", rpc])
 }
 
 fn get_allowance(
@@ -40,16 +39,8 @@ fn get_allowance(
     owner: &str,
     spender: &str,
     rpc: &str,
-) -> alloy_primitives::U256 {
-    let output = cmd
-        .cast_fuse()
-        .args(["erc20", "allowance", token, owner, spender, "--rpc-url", rpc])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    // Parse allowance from output (format: "100000000000000000000 [1e20]")
-    output.split_whitespace().next().unwrap().parse().unwrap()
+) -> U256 {
+    get_u256_from_cmd(cmd, &["erc20", "allowance", token, owner, spender, "--rpc-url", rpc])
 }
 
 /// Helper function to deploy TestToken contract
