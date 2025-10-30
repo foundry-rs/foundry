@@ -21,8 +21,6 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
-use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -73,17 +71,6 @@ extern crate tracing;
 extern crate foundry_common;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
-
-sol! {
-    #[sol(rpc)]
-    interface IERC20 {
-        #[derive(Debug)]
-        function balanceOf(address owner) external view returns (uint256);
-        function transfer(address to, uint256 amount) external returns (bool);
-        function approve(address spender, uint256 amount) external returns (bool);
-        function allowance(address owner, address spender) external view returns (uint256);
-    }
-}
 
 pub struct Cast<P> {
     provider: P,
@@ -1114,69 +1101,6 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         }
 
         Ok(())
-    }
-
-    pub async fn erc20_balance(
-        &self,
-        token: Address,
-        owner: Address,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(IERC20::new(token, &self.provider)
-            .balanceOf(owner)
-            .block(block.unwrap_or_default())
-            .call()
-            .await?)
-    }
-
-    pub async fn erc20_allowance(
-        &self,
-        token: Address,
-        owner: Address,
-        spender: Address,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(IERC20::new(token, &self.provider)
-            .allowance(owner, spender)
-            .block(block.unwrap_or_default())
-            .call()
-            .await?)
-    }
-
-    pub async fn erc20_transfer(
-        &self,
-        token: Address,
-        to: Address,
-        amount: U256,
-        signer: Option<foundry_wallets::WalletSigner>,
-    ) -> Result<TxHash> {
-        let contract = IERC20::new(token, &self.provider);
-
-        if let Some(signer) = signer {
-            let tx = contract.transfer(to, amount).from(signer.address()).send().await?;
-            Ok(*tx.tx_hash())
-        } else {
-            let tx = contract.transfer(to, amount).send().await?;
-            Ok(*tx.tx_hash())
-        }
-    }
-
-    pub async fn erc20_approve(
-        &self,
-        token: Address,
-        spender: Address,
-        amount: U256,
-        signer: Option<foundry_wallets::WalletSigner>,
-    ) -> Result<TxHash> {
-        let contract = IERC20::new(token, &self.provider);
-
-        if let Some(signer) = signer {
-            let tx = contract.approve(spender, amount).from(signer.address()).send().await?;
-            Ok(*tx.tx_hash())
-        } else {
-            let tx = contract.approve(spender, amount).send().await?;
-            Ok(*tx.tx_hash())
-        }
     }
 }
 
@@ -2401,7 +2325,7 @@ impl SimpleCast {
     }
 }
 
-fn strip_0x(s: &str) -> &str {
+pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
