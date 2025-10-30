@@ -193,8 +193,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
         DynSolType::Int(_)
         | DynSolType::Uint(_)
         | DynSolType::FixedBytes(_)
-        | DynSolType::Bytes => {
-        }
+        | DynSolType::Bytes => {}
         _ => {}
     }
     None
