@@ -10,7 +10,7 @@ mod anvil_const {
     pub const ADDR1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
     /// Second Anvil account
-    pub const PK2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    pub const _PK2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
     pub const ADDR2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
     /// Contract address deploying from ADDR1 with nonce 0
@@ -116,63 +116,18 @@ forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
     assert_eq!(addr2_balance_after, addr2_balance_before + transfer_amount);
 });
 
-// tests that `balance`, `approve`, `allowance`, and `transfer-from` commands works correctly
-forgetest_async!(erc20_transfer_from_success, |prj, cmd| {
+// tests that `approve` and `allowance` commands works correctly
+forgetest_async!(erc20_approval_allowance, |prj, cmd| {
     let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
 
-    // Test constants
-    let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens
-
-    // Transfer tokens from ADDR1 to ADDR2
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "transfer",
-            &token,
-            anvil_const::ADDR2,
-            &transfer_amount.to_string(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            anvil_const::PK1,
-        ])
-        .assert_success();
-
-    // Verify ADDR2 received the tokens
-    let addr2_balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
-    assert_eq!(addr2_balance, transfer_amount);
-
-    // ADDR2 approves ADDR1 to spend their tokens
+    // ADDR1 approves ADDR2 to spend their tokens
     let approve_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
     cmd.cast_fuse()
         .args([
             "erc20",
             "approve",
             &token,
-            anvil_const::ADDR1,
-            &approve_amount.to_string(),
-            "--rpc-url",
-            &rpc,
-            "--private-key",
-            anvil_const::PK2,
-        ])
-        .assert_success();
-
-    // Verify allowance was set
-    let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR2, anvil_const::ADDR1, &rpc);
-    assert_eq!(allowance, approve_amount);
-
-    // ADDR1 uses transferFrom to move tokens from ADDR2 to ADDR1
-    let addr1_balance_before = get_balance(&mut cmd, &token, anvil_const::ADDR1, &rpc);
-    let addr2_balance_before = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
-
-    cmd.cast_fuse()
-        .args([
-            "erc20",
-            "transfer-from",
-            &token,
             anvil_const::ADDR2,
-            anvil_const::ADDR1,
             &approve_amount.to_string(),
             "--rpc-url",
             &rpc,
@@ -181,16 +136,9 @@ forgetest_async!(erc20_transfer_from_success, |prj, cmd| {
         ])
         .assert_success();
 
-    // Verify balance changes
-    let addr1_balance_after = get_balance(&mut cmd, &token, anvil_const::ADDR1, &rpc);
-    let addr2_balance_after = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
-    assert_eq!(addr1_balance_after, addr1_balance_before + approve_amount);
-    assert_eq!(addr2_balance_after, addr2_balance_before - approve_amount);
-
-    // Verify allowance decreased
-    let allowance_after =
-        get_allowance(&mut cmd, &token, anvil_const::ADDR2, anvil_const::ADDR1, &rpc);
-    assert_eq!(allowance_after, U256::ZERO);
+    // Verify allowance was set
+    let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
+    assert_eq!(allowance, approve_amount);
 });
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly

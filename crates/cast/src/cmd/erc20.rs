@@ -27,7 +27,6 @@ sol! {
         function transfer(address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);
         function allowance(address owner, address spender) external view returns (uint256);
-        function transferFrom(address from, address to, uint256 amount) external returns (bool);
         function mint(address to, uint256 amount) external;
         function burn(uint256 amount) external;
     }
@@ -180,33 +179,6 @@ pub enum Erc20Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Transfer ERC20 tokens from one address to another (requires approval).
-    #[command(visible_alias = "tf")]
-    TransferFrom {
-        /// The ERC20 token contract address.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        token: NameOrAddress,
-
-        /// The address to transfer from.
-        ///
-        /// Can't be `from` as it conflicts with the flattened `WalletOpts.from`
-        #[arg(value_parser = NameOrAddress::from_str)]
-        owner: NameOrAddress,
-
-        /// The recipient address.
-        #[arg(value_parser = NameOrAddress::from_str)]
-        to: NameOrAddress,
-
-        /// The amount to transfer.
-        amount: String,
-
-        #[command(flatten)]
-        rpc: RpcOpts,
-
-        #[command(flatten)]
-        wallet: WalletOpts,
-    },
-
     /// Mint ERC20 tokens (if the token supports minting).
     #[command(visible_alias = "m")]
     Mint {
@@ -257,7 +229,6 @@ impl Erc20Subcommand {
             Self::Symbol { rpc, .. } => rpc,
             Self::Decimals { rpc, .. } => rpc,
             Self::TotalSupply { rpc, .. } => rpc,
-            Self::TransferFrom { rpc, .. } => rpc,
             Self::Mint { rpc, .. } => rpc,
             Self::Burn { rpc, .. } => rpc,
         }
@@ -350,17 +321,6 @@ impl Erc20Subcommand {
 
                 let provider = signing_provider(wallet, &provider).await?;
                 let tx = IERC20::new(token, &provider).approve(spender, amount).send().await?;
-                sh_println!("{}", tx.tx_hash())?
-            }
-            Self::TransferFrom { token, owner, to, amount, wallet, .. } => {
-                let token = token.resolve(&provider).await?;
-                let owner = owner.resolve(&provider).await?;
-                let to = to.resolve(&provider).await?;
-                let amount = U256::from_str(&amount)?;
-
-                let provider = signing_provider(wallet, &provider).await?;
-                let tx =
-                    IERC20::new(token, &provider).transferFrom(owner, to, amount).send().await?;
                 sh_println!("{}", tx.tx_hash())?
             }
             Self::Mint { token, to, amount, wallet, .. } => {
