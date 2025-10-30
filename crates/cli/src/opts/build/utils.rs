@@ -7,11 +7,13 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, semver::Version};
 use rayon::prelude::*;
-use solar::sema::ParsingContext;
+use solar::{interface::MIN_SOLIDITY_VERSION as MSV, sema::ParsingContext};
 use std::{
     collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
 };
+
+const MIN_SUPPORTED_VERSION: Version = Version::new(MSV.0, MSV.1, MSV.2);
 
 /// Configures a [`ParsingContext`] from [`Config`].
 ///
@@ -49,7 +51,7 @@ pub fn configure_pcx(
 
     // Only process sources with latest Solidity version to avoid conflicts.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let (version, sources, _) = graph
+    let (version, sources) = graph
         // Resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
         .sources
@@ -59,9 +61,15 @@ pub fn configure_pcx(
         .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
         .1
         .into_iter()
+        // Filter unsupported versions
+        .filter(|(v, _, _)| v >= &MIN_SUPPORTED_VERSION)
         // Always pick the latest version
         .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .unwrap();
+        .map_or((MIN_SUPPORTED_VERSION, Sources::default()), |(v, s, _)| (v, s));
+
+    if sources.is_empty() {
+        sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
+    }
 
     let solc = SolcVersionedInput::build(
         sources,
@@ -75,18 +83,17 @@ pub fn configure_pcx(
     Ok(())
 }
 
-/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`] and [`SolcVersionedInput`].
+/// Extracts Solar-compatible sources from a [`ProjectCompileOutput`].
 ///
 /// # Note:
 /// uses `output.graph().source_files()` and `output.artifact_ids()` rather than `output.sources()`
 /// because sources aren't populated when build is skipped when there are no changes in the source
 /// code. <https://github.com/foundry-rs/foundry/issues/12018>
-pub fn configure_pcx_from_compile_output(
-    pcx: &mut ParsingContext<'_>,
+pub fn get_solar_sources_from_compile_output(
     config: &Config,
     output: &ProjectCompileOutput,
     target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
+) -> Result<SolcVersionedInput> {
     let is_solidity_file = |path: &Path| -> bool {
         path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
     };
@@ -125,12 +132,14 @@ pub fn configure_pcx_from_compile_output(
 
     // Read all sources and find the latest version.
     let (version, sources) = {
-        let (mut max_version, mut sources) = (Version::new(0, 0, 0), Sources::new());
+        let (mut max_version, mut sources) = (MIN_SUPPORTED_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
             if let Ok(path) = dunce::canonicalize(&id.source)
                 && source_paths.remove(&path)
             {
-                if id.version > max_version {
+                if id.version < MIN_SUPPORTED_VERSION {
+                    continue;
+                } else if max_version < id.version {
                     max_version = id.version;
                 };
 
@@ -149,6 +158,17 @@ pub fn configure_pcx_from_compile_output(
         version,
     );
 
+    Ok(solc)
+}
+
+/// Configures a [`ParsingContext`] from a [`ProjectCompileOutput`].
+pub fn configure_pcx_from_compile_output(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    output: &ProjectCompileOutput,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<()> {
+    let solc = get_solar_sources_from_compile_output(config, output, target_paths)?;
     configure_pcx_from_solc(pcx, &config.project_paths(), &solc, true);
     Ok(())
 }

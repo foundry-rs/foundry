@@ -8,6 +8,7 @@ use foundry_common::{
         inline_config::{InlineConfig, InlineConfigItem},
     },
     errors::convert_solar_errors,
+    sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::{DenyLevel, lint::Severity};
@@ -258,7 +259,10 @@ impl<'a> Linter for SolidityLinter<'a> {
             input.par_iter().for_each(|path| {
                 let path = &self.path_config.root.join(path);
                 let Some((_, ast_source)) = gcx.get_ast_source(path) else {
-                    panic!("AST source not found for {}", path.display());
+                    // issue a warning rather than panicking, in case that some (but not all) of the
+                    // input files have old solidity versions which are not supported by solar.
+                    _ = sh_warn!("AST source not found for {}", path.display());
+                    return;
                 };
                 let Some(ast) = &ast_source.ast else {
                     panic!("AST missing for {}", path.display());

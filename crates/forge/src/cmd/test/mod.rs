@@ -509,7 +509,8 @@ impl TestArgs {
             return Ok(TestOutcome::new(Some(runner), results, self.allow_failure));
         }
 
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
+        let remote_chain =
+            if runner.fork.is_some() { runner.env.tx.chain_id.map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
@@ -529,7 +530,7 @@ impl TestArgs {
         // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive.
         if !self.gas_report {
-            identifier = identifier.with_external(&config, remote_chain_id)?;
+            identifier = identifier.with_external(&config, remote_chain)?;
         }
 
         // Build the trace decoder.

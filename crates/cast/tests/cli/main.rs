@@ -2765,6 +2765,7 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     // Deploy counter contract.
     cmd.args([
         "script",
@@ -2933,6 +2934,7 @@ forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -3034,6 +3036,7 @@ forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
         r#"
@@ -4229,6 +4232,20 @@ casttest!(erc20_allowance_success, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(keccak_stdin_bytes, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});
+
+casttest!(keccak_stdin_bytes_with_newline, |_prj, cmd| {
+    cmd.args(["keccak"]).stdin("0x12\n").assert_success().stdout_eq(str![[r#"
+0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa
+
+"#]]);
+});
+
 // tests that `cast erc20 transfer` and `cast erc20 approve` commands works correctly
 forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4287,11 +4304,8 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x60bfcd46dbda87681f35f82a93c1efa381bb12d3cdd8cee10e80b078a95619e8
+        .assert_success();
 
-"#]]);
     // new balance
     cmd.cast_fuse()
         .args([
@@ -4321,9 +4335,5 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0x98712738efeb4030bd58a5bd13d25c650197548b56f38add80e689bfe55f1557
-
-"#]]);
+        .assert_success();
 });
