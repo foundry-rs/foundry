@@ -14,7 +14,7 @@ use serde::Serialize;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint URL.
-    #[arg(long, short, visible_alias = "rpc-url", value_name = "URL")]
+    #[arg(long, visible_alias = "rpc-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 
