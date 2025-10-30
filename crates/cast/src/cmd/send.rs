@@ -42,7 +42,7 @@ pub struct SendTxArgs {
     confirmations: u64,
 
     /// Polling interval for transaction receipts (in seconds).
-    #[arg(long, env = "ETH_POLL_INTERVAL")]
+    #[arg(long, alias = "poll-interval", env = "ETH_POLL_INTERVAL")]
     poll_interval: Option<u64>,
 
     #[command(subcommand)]
