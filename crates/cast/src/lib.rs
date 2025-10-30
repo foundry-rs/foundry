@@ -18,7 +18,8 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, Log, TransactionRequest,
+    state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use base::{Base, NumberWithBase, ToBase};
@@ -943,9 +944,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         ))
     }
 
-    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
-        let logs = self.provider.get_logs(&filter).await?;
+    pub async fn get_logs(&self, filter: Filter) -> Result<Vec<Log>> {
+        Ok(self.provider.get_logs(&filter).await?)
+    }
 
+    pub async fn format_logs(&self, logs: Vec<Log>) -> Result<String> {
         let res = if shell::is_json() {
             serde_json::to_string(&logs)?
         } else {
@@ -960,6 +963,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             s.join("\n")
         };
         Ok(res)
+    }
+
+    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
+        let logs = self.get_logs(filter).await?;
+        self.format_logs(logs).await
     }
 
     /// Converts a block identifier into a block number.
