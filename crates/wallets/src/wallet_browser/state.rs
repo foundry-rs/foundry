@@ -14,15 +14,38 @@ pub(crate) struct BrowserWalletState {
     connection: Arc<Mutex<Option<Connection>>>,
     /// Request/response queue for transactions.
     transactions: Arc<Mutex<RequestQueue<BrowserTransaction, TransactionResponse>>>,
+    /// Unique session token for the wallet browser instance.
+    /// The CSP on the served page prevents this token from being loaded by other origins.
+    session_token: String,
+    /// If true, the server is running in development mode.
+    /// This relaxes certain security restrictions for local development.
+    ///
+    /// **WARNING**: This should only be used in a development environment.
+    development: bool,
 }
 
 impl BrowserWalletState {
     /// Create a new browser wallet state.
-    pub fn new() -> Self {
+    pub fn new(session_token: String, development: bool) -> Self {
         Self {
             connection: Arc::new(Mutex::new(None)),
             transactions: Arc::new(Mutex::new(RequestQueue::new())),
+            session_token,
+            development,
         }
+    }
+
+    /// Get the session token.
+    pub fn session_token(&self) -> &str {
+        &self.session_token
+    }
+
+    /// Check if in development mode.
+    /// This relaxes certain security restrictions for local development.
+    ///
+    /// **WARNING**: This should only be used in a development environment.
+    pub fn is_development(&self) -> bool {
+        self.development
     }
 
     /// Check if wallet is connected.

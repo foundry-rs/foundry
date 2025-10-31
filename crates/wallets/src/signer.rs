@@ -56,10 +56,11 @@ impl WalletSigner {
         Ok(Self::Trezor(trezor))
     }
 
-    pub async fn from_browser(port: u16, open_browser: bool) -> Result<Self> {
-        let browser_signer = BrowserSigner::new(port, open_browser, Duration::from_secs(300))
-            .await
-            .map_err(|e| WalletSignerError::Browser(e.into()))?;
+    pub async fn from_browser(port: u16, open_browser: bool, development: bool) -> Result<Self> {
+        let browser_signer =
+            BrowserSigner::new(port, open_browser, Duration::from_secs(300), development)
+                .await
+                .map_err(|e| WalletSignerError::Browser(e.into()))?;
         Ok(Self::Browser(browser_signer))
     }
 

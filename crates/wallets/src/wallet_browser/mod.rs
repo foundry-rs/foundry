@@ -15,7 +15,7 @@ mod tests {
 
     use alloy_primitives::{Address, TxHash, TxKind, U256, address};
     use alloy_rpc_types::TransactionRequest;
-    use axum::http::HeaderMap;
+    use axum::http::{HeaderMap, HeaderValue};
     use tokio::task::JoinHandle;
     use uuid::Uuid;
 
@@ -29,11 +29,12 @@ mod tests {
     const BOB: Address = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1);
+    const DEFAULT_DEVELOPMENT: bool = false;
 
     #[tokio::test]
     async fn test_setup_server() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
 
         // Check initial state
         assert!(!server.is_connected());
@@ -52,8 +53,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_disconnect_wallet() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Check that the transaction request queue is empty
@@ -89,8 +90,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_switch_wallet() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Connect Alice, assert connected
@@ -112,8 +113,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_both_hash_and_error_rejected() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
@@ -147,8 +148,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_neither_hash_nor_error_rejected() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
@@ -177,8 +178,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_response_zero_hash_rejected() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
@@ -212,8 +213,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_accept() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Connect Alice's wallet
@@ -255,8 +256,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_not_requested() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Connect Alice's wallet
@@ -293,8 +294,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_invalid_response_format() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Connect Alice's wallet
@@ -321,8 +322,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_client_reject() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
 
         // Connect Alice's wallet
@@ -365,8 +366,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_multiple_transaction_requests() {
-        let mut server = BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT);
-        let client = client_with_headers();
+        let mut server = create_server();
+        let client = client_with_token(&server);
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
@@ -474,9 +475,15 @@ mod tests {
         server.stop().await.unwrap();
     }
 
+    /// Helper to create a default browser wallet server.
+    fn create_server() -> BrowserWalletServer {
+        BrowserWalletServer::new(0, false, DEFAULT_TIMEOUT, DEFAULT_DEVELOPMENT)
+    }
+
     /// Helper to create a reqwest client with the session token header.
-    fn client_with_headers() -> reqwest::Client {
-        let headers = HeaderMap::new();
+    fn client_with_token(server: &BrowserWalletServer) -> reqwest::Client {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Session-Token", HeaderValue::from_str(server.session_token()).unwrap());
         reqwest::Client::builder().default_headers(headers).build().unwrap()
     }
 

@@ -40,7 +40,12 @@ pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
     (headers, contents::STYLES_CSS)
 }
 
-pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
+pub(crate) async fn serve_js(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> impl axum::response::IntoResponse {
+    let token = state.session_token();
+    let js = format!("window.__SESSION_TOKEN__ = \"{}\";\n{}", token, contents::MAIN_JS);
+
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/javascript; charset=utf-8"));
     headers.insert(
@@ -49,7 +54,7 @@ pub(crate) async fn serve_js() -> impl axum::response::IntoResponse {
     );
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     headers.insert(EXPIRES, HeaderValue::from_static("0"));
-    (headers, contents::MAIN_JS)
+    (headers, js)
 }
 
 pub(crate) async fn serve_banner_png() -> impl axum::response::IntoResponse {

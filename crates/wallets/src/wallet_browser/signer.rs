@@ -25,8 +25,13 @@ pub struct BrowserSigner {
 }
 
 impl BrowserSigner {
-    pub async fn new(port: u16, open_browser: bool, timeout: Duration) -> Result<Self> {
-        let mut server = BrowserWalletServer::new(port, open_browser, timeout);
+    pub async fn new(
+        port: u16,
+        open_browser: bool,
+        timeout: Duration,
+        development: bool,
+    ) -> Result<Self> {
+        let mut server = BrowserWalletServer::new(port, open_browser, timeout, development);
 
         server.start().await.map_err(alloy_signer::Error::other)?;
 
@@ -60,7 +65,7 @@ impl BrowserSigner {
             && from != self.address
         {
             return Err(alloy_signer::Error::other(
-                "Transaction 'from' address does not match connected wallet address",
+                "Transaction `from` address does not match connected wallet address",
             ));
         }
 
@@ -68,7 +73,7 @@ impl BrowserSigner {
             && chain_id != self.chain_id
         {
             return Err(alloy_signer::Error::other(
-                "Transaction 'chainId' does not match connected wallet chain ID",
+                "Transaction `chainId` does not match connected wallet chain ID",
             ));
         }
 

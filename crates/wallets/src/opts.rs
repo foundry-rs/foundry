@@ -115,6 +115,13 @@ pub struct WalletOpts {
         requires = "browser"
     )]
     pub disable_browser_open: bool,
+
+    /// Enable development mode for the browser wallet.
+    /// This relaxes certain security features for local development.
+    ///
+    /// **WARNING**: This should only be used in a development environment.
+    #[arg(long, help_heading = "Wallet options - browser", hide = true)]
+    pub development: bool,
 }
 
 impl WalletOpts {
@@ -145,7 +152,12 @@ impl WalletOpts {
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
         } else if self.browser {
-            WalletSigner::from_browser(self.browser_port, !self.disable_browser_open).await?
+            WalletSigner::from_browser(
+                self.browser_port,
+                !self.disable_browser_open,
+                self.development,
+            )
+            .await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -252,6 +264,7 @@ mod tests {
             browser: false,
             browser_port: 9545,
             disable_browser_open: false,
+            development: false,
         };
         match wallet.signer().await {
             Ok(_) => {

@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    http::{HeaderValue, Method, header},
+    extract::{Request, State},
+    http::{HeaderValue, Method, StatusCode, header},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
 };
 use tower::ServiceBuilder;
@@ -16,7 +19,15 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         .route("/transaction/response", post(handlers::post_transaction_response))
         .route("/connection", get(handlers::get_connection_info))
         .route("/connection", post(handlers::post_connection_update))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_session_token))
         .with_state(state.clone());
+
+    let mut origins = vec![format!("http://127.0.0.1:{port}").parse().unwrap()];
+
+    // Allow default port of 5173 in development mode.
+    if state.is_development() {
+        origins.push("https://localhost:5173".to_string().parse().unwrap());
+    }
 
     let security_headers = ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -46,11 +57,7 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         ))
         .layer(
             CorsLayer::new()
-                .allow_origin([
-                    format!("http://127.0.0.1:{port}").parse().unwrap(),
-                    // TODO(zerosnacks): Remove this in production.
-                    "https://localhost:5173".to_string().parse().unwrap(),
-                ])
+                .allow_origin(origins)
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
                 .allow_headers([header::CONTENT_TYPE])
                 .allow_credentials(false),
@@ -65,4 +72,32 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
         .nest("/api", api)
         .layer(security_headers)
         .with_state(state)
+}
+
+async fn require_session_token(
+    State(state): State<Arc<BrowserWalletState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if req.method() == Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
+    // In development mode, skip session token check.
+    if state.is_development() {
+        return Ok(next.run(req).await);
+    }
+
+    let expected = state.session_token();
+    let provided = req
+        .headers()
+        .get("X-Session-Token")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::FORBIDDEN)?;
+
+    if provided != expected {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    Ok(next.run(req).await)
 }
