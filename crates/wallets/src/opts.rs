@@ -114,14 +114,14 @@ pub struct WalletOpts {
         default_value_t = false,
         requires = "browser"
     )]
-    pub disable_browser_open: bool,
+    pub browser_disable_open: bool,
 
     /// Enable development mode for the browser wallet.
     /// This relaxes certain security features for local development.
     ///
     /// **WARNING**: This should only be used in a development environment.
     #[arg(long, help_heading = "Wallet options - browser", hide = true)]
-    pub development: bool,
+    pub browser_development: bool,
 }
 
 impl WalletOpts {
@@ -154,8 +154,8 @@ impl WalletOpts {
         } else if self.browser {
             WalletSigner::from_browser(
                 self.browser_port,
-                !self.disable_browser_open,
-                self.development,
+                !self.browser_disable_open,
+                self.browser_development,
             )
             .await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
@@ -263,8 +263,8 @@ mod tests {
             gcp: false,
             browser: false,
             browser_port: 9545,
-            disable_browser_open: false,
-            development: false,
+            browser_development: false,
+            browser_disable_open: false,
         };
         match wallet.signer().await {
             Ok(_) => {
