@@ -3,7 +3,7 @@
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, TxHash, TxKind, U256, b256};
+use alloy_primitives::{Address, TxHash, TxKind, U256, b256, Bloom};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -228,18 +228,11 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
 
 #[test]
 fn preserves_op_fields_in_convert_to_anvil_receipt() {
-    fn zero_bloom_hex() -> String {
-        let mut s = String::with_capacity(2 + 512);
-        s.push_str("0x");
-        s.extend(std::iter::repeat_n('0', 512));
-        s
-    }
-
     let receipt_json = json!({
         "status": "0x1",
         "cumulativeGasUsed": "0x74e483",
         "logs": [],
-        "logsBloom": zero_bloom_hex(),
+        "logsBloom": Bloom::default(),
         "type": "0x2",
         "transactionHash": "0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d",
         "transactionIndex": "0x10",
