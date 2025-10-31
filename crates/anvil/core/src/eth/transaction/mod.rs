@@ -1486,7 +1486,7 @@ impl Decodable2718 for TypedReceipt {
     }
 }
 
-pub type ReceiptResponse = TransactionReceipt<TypedReceiptRpc>;
+pub type ReceiptResponse = WithOtherFields<TransactionReceipt<TypedReceiptRpc>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {
@@ -1508,51 +1508,56 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         other,
     } = receipt;
 
-    Some(TransactionReceipt {
-        transaction_hash,
-        transaction_index,
-        block_hash,
-        block_number,
-        gas_used,
-        contract_address,
-        effective_gas_price,
-        from,
-        to,
-        blob_gas_price,
-        blob_gas_used,
-        inner: match r#type {
-            0x00 => TypedReceiptRpc::Legacy(receipt_with_bloom),
-            0x01 => TypedReceiptRpc::EIP2930(receipt_with_bloom),
-            0x02 => TypedReceiptRpc::EIP1559(receipt_with_bloom),
-            0x03 => TypedReceiptRpc::EIP4844(receipt_with_bloom),
-            0x04 => TypedReceiptRpc::EIP7702(receipt_with_bloom),
-            0x7E => TypedReceiptRpc::Deposit(OpDepositReceiptWithBloom {
-                receipt: OpDepositReceipt {
-                    inner: Receipt {
-                        status: alloy_consensus::Eip658Value::Eip658(receipt_with_bloom.status()),
-                        cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
-                        logs: receipt_with_bloom
-                            .receipt
-                            .logs
-                            .into_iter()
-                            .map(|l| l.inner)
-                            .collect(),
+    Some(WithOtherFields {
+        inner: TransactionReceipt {
+            transaction_hash,
+            transaction_index,
+            block_hash,
+            block_number,
+            gas_used,
+            contract_address,
+            effective_gas_price,
+            from,
+            to,
+            blob_gas_price,
+            blob_gas_used,
+            inner: match r#type {
+                0x00 => TypedReceiptRpc::Legacy(receipt_with_bloom),
+                0x01 => TypedReceiptRpc::EIP2930(receipt_with_bloom),
+                0x02 => TypedReceiptRpc::EIP1559(receipt_with_bloom),
+                0x03 => TypedReceiptRpc::EIP4844(receipt_with_bloom),
+                0x04 => TypedReceiptRpc::EIP7702(receipt_with_bloom),
+                0x7E => TypedReceiptRpc::Deposit(OpDepositReceiptWithBloom {
+                    receipt: OpDepositReceipt {
+                        inner: Receipt {
+                            status: alloy_consensus::Eip658Value::Eip658(
+                                receipt_with_bloom.status(),
+                            ),
+                            cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
+                            logs: receipt_with_bloom
+                                .receipt
+                                .logs
+                                .into_iter()
+                                .map(|l| l.inner)
+                                .collect(),
+                        },
+                        deposit_nonce: other
+                            .get_deserialized::<U64>("depositNonce")
+                            .transpose()
+                            .ok()?
+                            .map(|v| v.to()),
+                        deposit_receipt_version: other
+                            .get_deserialized::<U64>("depositReceiptVersion")
+                            .transpose()
+                            .ok()?
+                            .map(|v| v.to()),
                     },
-                    deposit_nonce: other
-                        .get_deserialized::<U64>("depositNonce")
-                        .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
-                    deposit_receipt_version: other
-                        .get_deserialized::<U64>("depositReceiptVersion")
-                        .transpose()
-                        .ok()?
-                        .map(|v| v.to()),
-                },
-                logs_bloom: receipt_with_bloom.logs_bloom,
-            }),
-            _ => return None,
+                    logs_bloom: receipt_with_bloom.logs_bloom,
+                }),
+                _ => return None,
+            },
         },
+        other,
     })
 }
 
