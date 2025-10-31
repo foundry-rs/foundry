@@ -990,7 +990,7 @@ impl Backend {
                 // Keep previous `beneficiary` and `basefee` value
                 beneficiary: env.evm_env.block_env.beneficiary,
                 basefee: env.evm_env.block_env.basefee,
-                ..Default::default()
+                ..env.evm_env.block_env.clone()
             }
         }
         Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
@@ -3207,6 +3207,7 @@ impl Backend {
             blob_gas_used,
         };
 
+        let inner = WithOtherFields { inner, other: Default::default() };
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
