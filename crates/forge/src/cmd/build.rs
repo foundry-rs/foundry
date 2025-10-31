@@ -225,32 +225,24 @@ impl BuildArgs {
         let deps_dir = config.root.join("dependencies");
         for entry in &lockfile.entries {
             let dep_name = entry.name();
-            let dep_path = deps_dir.join(format!("{}-{}", dep_name, entry.version()));
-
-            if !dep_path.exists() {
-                continue;
-            }
 
             // Use soldeer_core's integrity check
             match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
                 Ok(status) => {
                     use soldeer_core::install::DependencyStatus;
                     // Check if status indicates a problem
-                    if matches!(status, DependencyStatus::Missing) {
+                    if matches!(
+                        status,
+                        DependencyStatus::Missing | DependencyStatus::FailedIntegrity
+                    ) {
                         sh_warn!("Dependency '{}' integrity check failed: {:?}", dep_name, status)
                             .ok();
-                        continue;
                     }
                 }
                 Err(e) => {
                     sh_warn!("Dependency '{}' integrity check error: {}", dep_name, e).ok();
-                    continue;
                 }
             }
-
-            // For git dependencies, check revision from source URL
-            // LockEntry doesn't expose source directly, so we'll skip git revision check
-            // The integrity check above should be sufficient
         }
     }
 }
