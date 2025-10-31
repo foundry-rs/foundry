@@ -18,7 +18,10 @@ use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
-use foundry_common::fmt::format_tokens;
+use foundry_common::{
+    fmt::format_tokens,
+    provider::{RetryProvider, RetryProviderWithSigner},
+};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;
@@ -470,4 +473,16 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         return Ok(Some(decoded_error));
     }
     Ok(None)
+}
+
+/// Creates a provider with wallet for signing transactions locally.
+pub async fn signing_provider(
+    wallet: WalletOpts,
+    provider: &RetryProvider,
+) -> eyre::Result<RetryProviderWithSigner> {
+    let wallet = alloy_network::EthereumWallet::from(wallet.signer().await?);
+    Ok(alloy_provider::ProviderBuilder::default()
+        .with_recommended_fillers()
+        .wallet(wallet)
+        .connect_provider(provider.clone()))
 }

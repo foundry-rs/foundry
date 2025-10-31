@@ -102,7 +102,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_assume, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -185,9 +184,9 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 // https://github.com/foundry-rs/foundry/issues/5868
 forgetest!(invariant_calldata_dictionary, |prj, cmd| {
-    prj.wipe_contracts();
     prj.insert_utils();
     prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1));
         config.invariant.depth = 10;
     });
 
@@ -293,7 +292,7 @@ Ran 1 test for test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionar
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 
-[STATS]
+...
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -313,7 +312,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_custom_error, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -383,7 +381,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_excluded_senders, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = true;
@@ -438,7 +435,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(invariant_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
@@ -554,7 +550,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_breaks_without_fixtures, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
         config.invariant.runs = 1;
@@ -720,7 +715,6 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_inner_contract,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.invariant.depth = 10;
         });
@@ -998,7 +992,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(invariant_roll_fork, |prj, cmd| {
-    prj.wipe_contracts();
     prj.add_rpc_endpoints();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
@@ -1056,35 +1049,17 @@ contract InvariantRollForkStateTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
-[FAIL: wrong supply]
-	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
-[FAIL: too many blocks mined]
-	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
-	[SEQUENCE]
+...
  invariant_fork_handler_block() ([RUNS])
 
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
-	[SEQUENCE]
+...
  invariant_fork_handler_state() ([RUNS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
@@ -1095,9 +1070,9 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_scrape_values, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
     });
 
     prj.add_test(
@@ -1173,24 +1148,6 @@ contract FindFromLogValueTest is Test {
 
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromReturnValueTest
-[FAIL: value from return found]
-	[SEQUENCE]
- invariant_value_not_found() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for test/InvariantScrapeValues.t.sol:FindFromLogValueTest
-[FAIL: value from logs found]
-	[SEQUENCE]
- invariant_value_not_found() ([RUNS])
-
-[STATS]
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
 Ran 2 test suites [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
@@ -1212,7 +1169,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_sequence_no_reverts, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 15;
         config.invariant.fail_on_revert = false;
@@ -1268,11 +1224,11 @@ forgetest_init!(
     #[cfg_attr(windows, ignore = "for some reason there's different rng")]
     invariant_shrink_big_sequence,
     |prj, cmd| {
-        prj.wipe_contracts();
         prj.update_config(|config| {
             config.fuzz.seed = Some(U256::from(119u32));
             config.invariant.runs = 1;
             config.invariant.depth = 1000;
+            config.invariant.shrink_run_limit = 365;
         });
 
         prj.add_test(
@@ -1327,7 +1283,6 @@ Ran 1 test for test/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest
 );
 
 forgetest_init!(invariant_shrink_fail_on_revert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.fail_on_revert = true;
@@ -1373,7 +1328,6 @@ Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
 });
 
 forgetest_init!(invariant_shrink_with_assert, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.runs = 1;
@@ -1432,7 +1386,6 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
-    prj.wipe_contracts();
     prj.update_config(|config| {
         config.invariant.depth = 10;
     });

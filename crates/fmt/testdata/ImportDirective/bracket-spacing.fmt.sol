@@ -19,3 +19,8 @@ import {
     symbol3 as alias3,
     symbol4
 } from "File2.sol";
+
+// Single import that exceeds line length (121 chars)
+import {
+    ITransparentUpgradeableProxy
+} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";

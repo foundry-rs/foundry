@@ -1,4 +1,4 @@
-// config: call_compact_args = false
+// config: prefer_compact = "events_errors"
 // config: bracket_spacing = true
 contract RevertNamedArgsStatement {
     error EmptyError();

@@ -31,31 +31,6 @@ use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
-/// Extension trait for `BlobTransactionSidecarVariant` to provide convenient blob access
-pub trait BlobTransactionSidecarVariantExt {
-    /// Get a reference to the blobs
-    fn blobs(&self) -> &[alloy_consensus::Blob];
-
-    /// Consume self and return the blobs
-    fn into_blobs(self) -> Vec<alloy_consensus::Blob>;
-}
-
-impl BlobTransactionSidecarVariantExt for BlobTransactionSidecarVariant {
-    fn blobs(&self) -> &[alloy_consensus::Blob] {
-        match self {
-            Self::Eip4844(sidecar) => &sidecar.blobs,
-            Self::Eip7594(sidecar) => &sidecar.blobs,
-        }
-    }
-
-    fn into_blobs(self) -> Vec<alloy_consensus::Blob> {
-        match self {
-            Self::Eip4844(sidecar) => sidecar.blobs,
-            Self::Eip7594(sidecar) => sidecar.blobs,
-        }
-    }
-}
-
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
 pub fn transaction_request_to_typed(
@@ -264,6 +239,44 @@ impl MaybeImpersonatedTransaction {
         }
         self.transaction.hash()
     }
+
+    /// Converts the transaction into an [`alloy_rpc_types::Transaction`]
+    pub fn into_rpc_transaction(self) -> alloy_rpc_types::Transaction<TypedTransaction> {
+        let hash = self.hash();
+        let from = self.recover().unwrap_or_default();
+        let envelope = self.transaction.try_into_eth().expect("cant build deposit transactions");
+
+        let inner_envelope = match envelope {
+            TxEnvelope::Legacy(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip2930(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip1559(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip4844(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip7702(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash))
+            }
+        };
+
+        alloy_rpc_types::Transaction {
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            inner: Recovered::new_unchecked(inner_envelope.into(), from),
+        }
+    }
 }
 
 impl Encodable for MaybeImpersonatedTransaction {
@@ -306,80 +319,7 @@ impl Deref for MaybeImpersonatedTransaction {
 
 impl From<MaybeImpersonatedTransaction> for alloy_rpc_types::Transaction<TypedTransaction> {
     fn from(value: MaybeImpersonatedTransaction) -> Self {
-        let hash = value.hash();
-        let sender = value.recover().unwrap_or_default();
-        to_alloy_transaction_with_hash_and_sender(value.transaction, hash, sender)
-    }
-}
-
-pub fn to_alloy_transaction_with_hash_and_sender(
-    transaction: TypedTransaction,
-    hash: B256,
-    from: Address,
-) -> alloy_rpc_types::Transaction<TypedTransaction> {
-    match transaction {
-        TypedTransaction::Legacy(t) => {
-            let (tx, sig, _) = t.into_parts();
-            alloy_rpc_types::Transaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TypedTransaction::Legacy(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP2930(t) => {
-            let (tx, sig, _) = t.into_parts();
-            alloy_rpc_types::Transaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TypedTransaction::EIP2930(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP1559(t) => {
-            let (tx, sig, _) = t.into_parts();
-            alloy_rpc_types::Transaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TypedTransaction::EIP1559(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP4844(t) => alloy_rpc_types::Transaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            effective_gas_price: None,
-            inner: Recovered::new_unchecked(TypedTransaction::EIP4844(t), from),
-        },
-        TypedTransaction::EIP7702(t) => {
-            let (tx, sig, _) = t.into_parts();
-            alloy_rpc_types::Transaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TypedTransaction::EIP7702(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::Deposit(_t) => {
-            unreachable!("cannot reach here, handled in `transaction_build` ")
-        }
+        value.into_rpc_transaction()
     }
 }
 
@@ -692,6 +632,50 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 }
 
 impl TypedTransaction {
+    /// Converts the transaction into a [`TxEnvelope`].
+    ///
+    /// Returns an error if the transaction is a Deposit transaction, which is not part of the
+    /// standard Ethereum transaction types.
+    pub fn try_into_eth(self) -> Result<TxEnvelope, Self> {
+        match self {
+            Self::Legacy(tx) => Ok(TxEnvelope::Legacy(tx)),
+            Self::EIP2930(tx) => Ok(TxEnvelope::Eip2930(tx)),
+            Self::EIP1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
+            Self::EIP4844(tx) => {
+                // Convert from TxEip4844Variant<BlobTransactionSidecarVariant> to TxEip4844Variant
+                let (variant, sig, hash) = tx.into_parts();
+                let blob_variant = match variant {
+                    TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                        match tx_with_sidecar.sidecar {
+                            BlobTransactionSidecarVariant::Eip4844(sidecar) => {
+                                TxEip4844Variant::TxEip4844WithSidecar(
+                                    TxEip4844WithSidecar::from_tx_and_sidecar(
+                                        tx_with_sidecar.tx,
+                                        sidecar,
+                                    ),
+                                )
+                            }
+                            BlobTransactionSidecarVariant::Eip7594(_) => {
+                                // EIP7594 sidecars are not supported in TxEnvelope, recreate self
+                                // and return error
+                                let tx = Signed::new_unchecked(
+                                    TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar),
+                                    sig,
+                                    hash,
+                                );
+                                return Err(Self::EIP4844(tx));
+                            }
+                        }
+                    }
+                };
+                Ok(TxEnvelope::Eip4844(Signed::new_unchecked(blob_variant, sig, hash)))
+            }
+            Self::EIP7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
+            Self::Deposit(_) => Err(self),
+        }
+    }
+
     /// Returns true if the transaction uses dynamic fees: EIP1559, EIP4844 or EIP7702
     pub fn is_dynamic_fee(&self) -> bool {
         matches!(self, Self::EIP1559(_) | Self::EIP4844(_) | Self::EIP7702(_))

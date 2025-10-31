@@ -210,7 +210,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
 
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
-            build_logs_bloom(logs.clone(), &mut bloom);
+            build_logs_bloom(&logs, &mut bloom);
 
             let contract_address = out.as_ref().and_then(|out| {
                 if let Output::Create(_, contract_address) = out {
@@ -264,7 +264,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions.clone());
+        let block = Block::new(partial_header, transactions);
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
@@ -451,7 +451,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 }
 
 /// Inserts all logs into the bloom
-fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
+fn build_logs_bloom(logs: &[Log], bloom: &mut Bloom) {
     for log in logs {
         bloom.accrue(BloomInput::Raw(&log.address[..]));
         for topic in log.topics() {

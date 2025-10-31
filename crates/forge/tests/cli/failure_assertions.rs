@@ -199,6 +199,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests);
 
     cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...

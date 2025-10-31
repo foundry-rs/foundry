@@ -21,7 +21,6 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -72,14 +71,6 @@ extern crate tracing;
 extern crate foundry_common;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
-
-sol! {
-    #[sol(rpc)]
-    interface IERC20 {
-        #[derive(Debug)]
-        function balanceOf(address owner) external view returns (uint256);
-    }
-}
 
 pub struct Cast<P> {
     provider: P,
@@ -1111,19 +1102,6 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         Ok(())
     }
-
-    pub async fn erc20_balance(
-        &self,
-        token: Address,
-        owner: Address,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(IERC20::new(token, &self.provider)
-            .balanceOf(owner)
-            .block(block.unwrap_or_default())
-            .call()
-            .await?)
-    }
 }
 
 pub struct SimpleCast;
@@ -1319,7 +1297,7 @@ impl SimpleCast {
         let mut out = String::new();
         for s in values {
             let s = s.as_ref();
-            out.push_str(s.strip_prefix("0x").unwrap_or(s))
+            out.push_str(strip_0x(s))
         }
         format!("0x{out}")
     }
@@ -2041,8 +2019,11 @@ impl SimpleCast {
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
         // Hex-decode if data starts with 0x.
-        let hash =
-            if data.starts_with("0x") { keccak256(hex::decode(data)?) } else { keccak256(data) };
+        let hash = if data.starts_with("0x") {
+            keccak256(hex::decode(data.trim_end())?)
+        } else {
+            keccak256(data)
+        };
         Ok(hash.to_string())
     }
 
@@ -2344,7 +2325,7 @@ impl SimpleCast {
     }
 }
 
-fn strip_0x(s: &str) -> &str {
+pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
 
