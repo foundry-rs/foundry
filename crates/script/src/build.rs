@@ -47,7 +47,7 @@ impl BuildData {
 
             !deployer_code.is_empty()
         } else {
-            // If --fork-url is not provided, we are just simulating the script.
+            // If --rpc-url is not provided, we are just simulating the script.
             true
         };
 
@@ -259,7 +259,7 @@ impl CompiledState {
         let chain = if self.args.multi {
             None
         } else {
-            let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --fork-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
+            let fork_url = self.script_config.evm_opts.fork_url.clone().ok_or_eyre("Missing --rpc-url field, if you were trying to broadcast a multi-chain sequence, please use --multi flag")?;
             let provider = Arc::new(try_get_http_provider(fork_url)?);
             Some(provider.get_chain_id().await?)
         };
