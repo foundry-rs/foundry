@@ -32,9 +32,9 @@ impl Block {
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let transactions1: Vec<super::transaction::TypedTransaction> =
-            transactions.clone().into_iter().map(Into::into).collect();
-        let transactions_root = calculate_transaction_root(&transactions1);
+        let transactions_for_root: Vec<_> =
+            transactions.iter().map(|t| t.transaction.clone()).collect();
+        let transactions_root = calculate_transaction_root(&transactions_for_root);
 
         Self {
             header: Header {
