@@ -85,7 +85,7 @@ impl EthApi {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
-            && !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status()
+            && !receipt.inner.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status()
         {
             return Ok(receipt.out.unwrap_or_default());
         }
@@ -379,7 +379,7 @@ impl EthApi {
             if let Ok(Some(r)) = r.await {
                 let block = self.block_by_number(r.block_number.unwrap().into()).await?;
                 let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
-                let receipt = r.map_inner(OtsReceipt::from);
+                let receipt = r.inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
                 Err(BlockchainError::BlockNotFound)
@@ -420,7 +420,7 @@ impl EthApi {
             if let Ok(Some(r)) = r.await {
                 let block = self.block_by_number(r.block_number.unwrap().into()).await?;
                 let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
-                let receipt = r.map_inner(OtsReceipt::from);
+                let receipt = r.inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
                 Err(BlockchainError::BlockNotFound)
