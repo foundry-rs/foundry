@@ -3207,6 +3207,7 @@ impl Backend {
             blob_gas_used,
         };
 
+        let inner = WithOtherFields { inner, other: Default::default() };
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
