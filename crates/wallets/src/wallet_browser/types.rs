@@ -57,6 +57,7 @@ pub(crate) struct BrowserTransactionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum SignType {
     /// Standard personal sign: `eth_sign` / `personal_sign`
     PersonalSign,
@@ -65,6 +66,7 @@ pub enum SignType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignRequest {
     /// The message to be signed.
     pub message: String,
@@ -74,12 +76,11 @@ pub struct SignRequest {
 
 /// Represents a signing request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BrowserSignRequest {
     /// The unique identifier for the signing request.
     pub id: Uuid,
     /// The type of signing operation.
-    #[serde(rename = "type")]
     pub sign_type: SignType,
     /// The sign request details.
     pub request: SignRequest,
@@ -87,6 +88,7 @@ pub struct BrowserSignRequest {
 
 /// Represents a typed data signing request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BrowserSignTypedDataRequest {
     /// The unique identifier for the signing request.
     pub id: Uuid,
@@ -98,6 +100,7 @@ pub struct BrowserSignTypedDataRequest {
 
 /// Represents a signing response sent from the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BrowserSignResponse {
     /// The unique identifier for the signing request, must match the request ID sent earlier.
     pub id: Uuid,
