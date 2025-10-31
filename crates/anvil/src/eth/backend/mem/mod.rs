@@ -3851,9 +3851,9 @@ pub fn transaction_build(
         }
     }
 
-    let mut transaction: Transaction = eth_transaction.clone().into();
+    let mut transaction = eth_transaction.into_rpc_transaction();
 
-    let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
+    let effective_gas_price = if !transaction.inner.is_dynamic_fee() {
         transaction.effective_gas_price(base_fee)
     } else if block.is_none() && info.is_none() {
         // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
@@ -3870,6 +3870,7 @@ pub fn transaction_build(
     transaction.effective_gas_price = Some(effective_gas_price);
 
     let envelope = transaction.inner;
+    let from = envelope.signer();
 
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
@@ -3907,10 +3908,7 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: Recovered::new_unchecked(
-            envelope,
-            eth_transaction.recover().expect("can recover signed tx"),
-        ),
+        inner: Recovered::new_unchecked(envelope, from),
         block_hash: block
             .as_ref()
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),

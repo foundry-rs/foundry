@@ -237,6 +237,46 @@ impl MaybeImpersonatedTransaction {
         }
         self.transaction.hash()
     }
+
+    /// Converts the transaction into an [`RpcTransaction`]
+    pub fn into_rpc_transaction(self) -> RpcTransaction {
+        let hash = self.hash();
+        let from = self.recover().unwrap_or_default();
+        let envelope = self.transaction.try_into_eth().expect("cant build deposit transactions");
+
+        // NOTE: we must update the hash because the tx can be impersonated, this requires forcing
+        // the hash
+        let inner_envelope = match envelope {
+            TxEnvelope::Legacy(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip2930(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip1559(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip4844(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash))
+            }
+            TxEnvelope::Eip7702(t) => {
+                let (tx, sig, _) = t.into_parts();
+                TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash))
+            }
+        };
+
+        RpcTransaction {
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            inner: Recovered::new_unchecked(inner_envelope, from),
+        }
+    }
 }
 
 impl Encodable for MaybeImpersonatedTransaction {
@@ -279,86 +319,7 @@ impl Deref for MaybeImpersonatedTransaction {
 
 impl From<MaybeImpersonatedTransaction> for RpcTransaction {
     fn from(value: MaybeImpersonatedTransaction) -> Self {
-        let hash = value.hash();
-        let sender = value.recover().unwrap_or_default();
-        to_alloy_transaction_with_hash_and_sender(value.transaction, hash, sender)
-    }
-}
-
-pub fn to_alloy_transaction_with_hash_and_sender(
-    transaction: TypedTransaction,
-    hash: B256,
-    from: Address,
-) -> RpcTransaction {
-    match transaction {
-        TypedTransaction::Legacy(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP2930(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP1559(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP4844(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::EIP7702(t) => {
-            let (tx, sig, _) = t.into_parts();
-            RpcTransaction {
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                effective_gas_price: None,
-                inner: Recovered::new_unchecked(
-                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
-                    from,
-                ),
-            }
-        }
-        TypedTransaction::Deposit(_t) => {
-            unreachable!("cannot reach here, handled in `transaction_build` ")
-        }
+        value.into_rpc_transaction()
     }
 }
 
@@ -655,6 +616,21 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 }
 
 impl TypedTransaction {
+    /// Converts the transaction into a [`TxEnvelope`].
+    ///
+    /// Returns an error if the transaction is a Deposit transaction, which is not part of the
+    /// standard Ethereum transaction types.
+    pub fn try_into_eth(self) -> Result<TxEnvelope, Self> {
+        match self {
+            Self::Legacy(tx) => Ok(TxEnvelope::Legacy(tx)),
+            Self::EIP2930(tx) => Ok(TxEnvelope::Eip2930(tx)),
+            Self::EIP1559(tx) => Ok(TxEnvelope::Eip1559(tx)),
+            Self::EIP4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
+            Self::EIP7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
+            Self::Deposit(_) => Err(self),
+        }
+    }
+
     /// Returns true if the transaction uses dynamic fees: EIP1559, EIP4844 or EIP7702
     pub fn is_dynamic_fee(&self) -> bool {
         matches!(self, Self::EIP1559(_) | Self::EIP4844(_) | Self::EIP7702(_))
