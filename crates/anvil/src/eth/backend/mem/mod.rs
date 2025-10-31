@@ -3851,23 +3851,8 @@ pub fn transaction_build(
         }
     }
 
-    let mut transaction = eth_transaction.into_rpc_transaction();
-
-    let effective_gas_price = if !transaction.inner.is_dynamic_fee() {
-        transaction.effective_gas_price(base_fee)
-    } else if block.is_none() && info.is_none() {
-        // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-        transaction.max_fee_per_gas()
-    } else {
-        // if transaction is already mined, gas price is considered base fee + priority
-        // fee: the effective gas price.
-        let base_fee = base_fee.map_or(0u128, |g| g as u128);
-        let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
-
-        base_fee.saturating_add(max_priority_fee_per_gas)
-    };
-
-    transaction.effective_gas_price = Some(effective_gas_price);
+    let transaction = eth_transaction.into_rpc_transaction();
+    let effective_gas_price = transaction.effective_gas_price(base_fee);
 
     let envelope = transaction.inner;
     let from = envelope.signer();
@@ -3909,9 +3894,7 @@ pub fn transaction_build(
 
     let tx = Transaction {
         inner: Recovered::new_unchecked(envelope, from),
-        block_hash: block
-            .as_ref()
-            .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+        block_hash: block.as_ref().map(|block| block.header.hash_slow()),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated
