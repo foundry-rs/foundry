@@ -262,4 +262,190 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_split_first_word() {
+        // Normal case with space
+        let comment = Comment::new(CommentTag::Param, "paramName description".to_owned());
+        assert_eq!(comment.split_first_word(), Some(("paramName", "description")));
+
+        // Multiple spaces are handled by split_once (splits on first)
+        let comment = Comment::new(CommentTag::Param, "paramName   description".to_owned());
+        assert_eq!(comment.split_first_word(), Some(("paramName", "  description")));
+
+        // Leading whitespace is trimmed
+        let comment = Comment::new(CommentTag::Param, "  paramName description".to_owned());
+        assert_eq!(comment.split_first_word(), Some(("paramName", "description")));
+
+        // No space - should return None
+        let comment = Comment::new(CommentTag::Param, "paramName".to_owned());
+        assert_eq!(comment.split_first_word(), None);
+
+        // Empty string - should return None
+        let comment = Comment::new(CommentTag::Param, String::new());
+        assert_eq!(comment.split_first_word(), None);
+
+        // Only whitespace - should return None
+        let comment = Comment::new(CommentTag::Param, "   ".to_owned());
+        assert_eq!(comment.split_first_word(), None);
+
+        // Return tag
+        let comment = Comment::new(CommentTag::Return, "value description".to_owned());
+        assert_eq!(comment.split_first_word(), Some(("value", "description")));
+    }
+
+    #[test]
+    fn test_match_first_word() {
+        // Successful match
+        let comment = Comment::new(CommentTag::Param, "addr The address to process".to_owned());
+        assert_eq!(comment.match_first_word("addr"), Some("The address to process"));
+
+        // Mismatch
+        let comment = Comment::new(CommentTag::Param, "addr The address".to_owned());
+        assert_eq!(comment.match_first_word("value"), None);
+
+        // Comment without space - should return None
+        let comment = Comment::new(CommentTag::Param, "addr".to_owned());
+        assert_eq!(comment.match_first_word("addr"), None);
+
+        // Empty comment - should return None
+        let comment = Comment::new(CommentTag::Param, String::new());
+        assert_eq!(comment.match_first_word("addr"), None);
+
+        // Multiple spaces in the middle
+        let comment = Comment::new(CommentTag::Param, "addr   description with spaces".to_owned());
+        assert_eq!(comment.match_first_word("addr"), Some("  description with spaces"));
+
+        // Leading whitespace
+        let comment = Comment::new(CommentTag::Param, "  addr description".to_owned());
+        assert_eq!(comment.match_first_word("addr"), Some("description"));
+    }
+
+    #[test]
+    fn test_contains_tag() {
+        let comments = Comments(vec![
+            Comment::new(CommentTag::Param, "addr The address".to_owned()),
+            Comment::new(CommentTag::Param, "value The value".to_owned()),
+            Comment::new(CommentTag::Return, "result The result".to_owned()),
+            Comment::new(CommentTag::Notice, "Some notice".to_owned()),
+            Comment::new(CommentTag::Inheritdoc, "BaseContract".to_owned()),
+        ]);
+
+        // Param tags match by first word
+        let target = Comment::new(CommentTag::Param, "addr Different description".to_owned());
+        assert!(comments.contains_tag(&target), "Param comments with same first word should match");
+
+        let target = Comment::new(CommentTag::Param, "other The other param".to_owned());
+        assert!(
+            !comments.contains_tag(&target),
+            "Param comments with different first word should not match"
+        );
+
+        // Return tags match by first word
+        let target = Comment::new(CommentTag::Return, "result Different description".to_owned());
+        assert!(
+            comments.contains_tag(&target),
+            "Return comments with same first word should match"
+        );
+
+        // Inheritdoc tags match by full value
+        let target = Comment::new(CommentTag::Inheritdoc, "BaseContract".to_owned());
+        assert!(comments.contains_tag(&target), "Inheritdoc comments with same value should match");
+
+        let target = Comment::new(CommentTag::Inheritdoc, "OtherContract".to_owned());
+        assert!(
+            !comments.contains_tag(&target),
+            "Inheritdoc comments with different value should not match"
+        );
+
+        // Other tags match by tag type
+        let target = Comment::new(CommentTag::Notice, "Different notice".to_owned());
+        assert!(comments.contains_tag(&target), "Comments with same tag type should match");
+
+        let target = Comment::new(CommentTag::Dev, "Some dev comment".to_owned());
+        assert!(
+            !comments.contains_tag(&target),
+            "Comments with different tag type should not match"
+        );
+
+        // Param/Return without space - both return None, so they match
+        let comment1 = Comment::new(CommentTag::Param, "paramName".to_owned());
+        let comment2 = Comment::new(CommentTag::Param, "paramName".to_owned());
+        let comments = Comments(vec![comment1]);
+        assert!(
+            comments.contains_tag(&comment2),
+            "Param comments without space with same value should match"
+        );
+    }
+
+    #[test]
+    fn test_merge_inheritdoc() {
+        // Basic merge - comments from base are added
+        let base_comments = Comments(vec![
+            Comment::new(CommentTag::Notice, "Base notice".to_owned()),
+            Comment::new(CommentTag::Param, "baseParam Base param".to_owned()),
+        ]);
+
+        let derived_comments = Comments(vec![
+            Comment::new(CommentTag::Inheritdoc, "BaseContract".to_owned()),
+            Comment::new(CommentTag::Dev, "Derived dev".to_owned()),
+        ]);
+
+        let mut inheritdocs = HashMap::default();
+        inheritdocs.insert("BaseContract.functionName".to_owned(), base_comments.clone());
+
+        let merged = derived_comments.merge_inheritdoc("functionName", Some(inheritdocs));
+
+        // Should contain derived comments
+        assert!(merged.contains_tag(&Comment::new(CommentTag::Dev, "Derived dev".to_owned())));
+        // Should contain inherited comments
+        assert!(merged.contains_tag(&Comment::new(CommentTag::Notice, "Base notice".to_owned())));
+        assert!(
+            merged
+                .contains_tag(&Comment::new(CommentTag::Param, "baseParam Base param".to_owned()))
+        );
+
+        // Duplicate prevention - if derived already has a comment, don't add from base
+        let derived_with_notice = Comments(vec![
+            Comment::new(CommentTag::Inheritdoc, "BaseContract".to_owned()),
+            Comment::new(CommentTag::Notice, "Derived notice".to_owned()),
+        ]);
+
+        let merged = derived_with_notice.merge_inheritdoc(
+            "functionName",
+            Some({
+                let mut map = HashMap::default();
+                map.insert("BaseContract.functionName".to_owned(), base_comments);
+                map
+            }),
+        );
+
+        // Should still have only one Notice (the derived one)
+        let notice_count = merged.iter().filter(|c| matches!(c.tag, CommentTag::Notice)).count();
+        assert_eq!(notice_count, 1);
+
+        // No inheritdocs - should return original
+        let original = Comments(vec![Comment::new(CommentTag::Notice, "Original".to_owned())]);
+        let merged = original.merge_inheritdoc("functionName", None);
+        assert_eq!(merged.len(), 1);
+        assert!(merged.contains_tag(&Comment::new(CommentTag::Notice, "Original".to_owned())));
+
+        // No inheritdoc tag - should return original
+        let original = Comments(vec![Comment::new(CommentTag::Notice, "Original".to_owned())]);
+        let merged = original.merge_inheritdoc("functionName", Some(HashMap::default()));
+        assert_eq!(merged.len(), 1);
+        assert!(merged.contains_tag(&Comment::new(CommentTag::Notice, "Original".to_owned())));
+    }
+
+    #[test]
+    fn test_custom_param_tag() {
+        // Custom param tag is parsed as Param
+        let tag = CommentTag::from_str("custom:param");
+        assert_eq!(tag, Some(CommentTag::Param));
+
+        // Can be used with split_first_word and match_first_word
+        let comment = Comment::new(CommentTag::Param, "paramName description".to_owned());
+        assert_eq!(comment.split_first_word(), Some(("paramName", "description")));
+        assert_eq!(comment.match_first_word("paramName"), Some("description"));
+    }
 }
