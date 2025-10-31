@@ -206,6 +206,12 @@ pub struct MaybeImpersonatedTransaction {
     pub impersonated_sender: Option<Address>,
 }
 
+impl Typed2718 for MaybeImpersonatedTransaction {
+    fn ty(&self) -> u8 {
+        self.transaction.ty()
+    }
+}
+
 impl MaybeImpersonatedTransaction {
     /// Creates a new wrapper for the given transaction
     pub fn new(transaction: TypedTransaction) -> Self {
@@ -276,6 +282,16 @@ impl MaybeImpersonatedTransaction {
             effective_gas_price: None,
             inner: Recovered::new_unchecked(inner_envelope, from),
         }
+    }
+}
+
+impl Encodable2718 for MaybeImpersonatedTransaction {
+    fn encode_2718_len(&self) -> usize {
+        self.transaction.encode_2718_len()
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        self.transaction.encode_2718(out)
     }
 }
 
