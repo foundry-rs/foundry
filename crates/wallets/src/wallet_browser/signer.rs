@@ -35,6 +35,7 @@ impl BrowserSigner {
 
         server.start().await.map_err(alloy_signer::Error::other)?;
 
+        let _ = sh_warn!("Browser wallet is still in early development. Use with caution!");
         let _ = sh_println!("Opening browser for wallet connection...");
         let _ = sh_println!("Waiting for wallet connection...");
 
