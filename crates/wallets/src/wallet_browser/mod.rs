@@ -24,7 +24,7 @@ mod tests {
         server::BrowserWalletServer,
         types::{
             BrowserApiResponse, BrowserSignRequest, BrowserSignResponse, BrowserTransactionRequest,
-            BrowserTransactionResponse, Connection, SignType,
+            BrowserTransactionResponse, Connection, SignRequest, SignType,
         },
     };
 
@@ -693,13 +693,10 @@ mod tests {
                 panic!("expected BrowserApiResponse::Ok with a pending sign request");
             };
 
-            assert_eq!(
-                pending_sign.id, sign_request_id1,
-                "expected the first sign request to be at the front of the queue"
-            );
-            assert_eq!(pending_sign.address, sign_request1.address);
-            assert_eq!(pending_sign.message, sign_request1.message);
+            assert_eq!(pending_sign.id, sign_request_id1);
             assert_eq!(pending_sign.sign_type, sign_request1.sign_type);
+            assert_eq!(pending_sign.request.address, sign_request1.request.address);
+            assert_eq!(pending_sign.request.message, sign_request1.request.message);
         }
 
         // Simulate the wallet accepting and signing the first sign request
@@ -737,13 +734,10 @@ mod tests {
                 panic!("expected BrowserApiResponse::Ok with a pending sign request");
             };
 
-            assert_eq!(
-                pending_sign.id, sign_request_id2,
-                "expected the second sign request to be pending after the first one completed"
-            );
-            assert_eq!(pending_sign.address, sign_request2.address);
-            assert_eq!(pending_sign.message, sign_request2.message);
+            assert_eq!(pending_sign.id, sign_request_id2,);
             assert_eq!(pending_sign.sign_type, sign_request2.sign_type);
+            assert_eq!(pending_sign.request.address, sign_request2.request.address);
+            assert_eq!(pending_sign.request.message, sign_request2.request.message);
         }
 
         // Simulate the wallet rejecting the second sign request
@@ -874,9 +868,8 @@ mod tests {
         let id = Uuid::new_v4();
         let req = BrowserSignRequest {
             id,
-            address: ALICE,
-            message: "Hello, world!".into(),
             sign_type: SignType::PersonalSign,
+            request: SignRequest { message: "Hello, world!".into(), address: ALICE },
         };
         (id, req)
     }
@@ -886,9 +879,8 @@ mod tests {
         let id = Uuid::new_v4();
         let req = BrowserSignRequest {
             id,
-            address: BOB,
-            message: "Different message".into(),
             sign_type: SignType::SignTypedDataV4,
+            request: SignRequest { message: "Different message".into(), address: BOB },
         };
         (id, req)
     }
@@ -976,8 +968,8 @@ mod tests {
         };
 
         assert_eq!(pending_req.id, sign_request_id);
-        assert_eq!(pending_req.address, ALICE);
-        assert_eq!(pending_req.message, "Hello, world!");
         assert_eq!(pending_req.sign_type, SignType::PersonalSign);
+        assert_eq!(pending_req.request.address, ALICE);
+        assert_eq!(pending_req.request.message, "Hello, world!");
     }
 }

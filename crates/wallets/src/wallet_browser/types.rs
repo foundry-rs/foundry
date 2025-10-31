@@ -64,17 +64,25 @@ pub enum SignType {
     SignTypedDataV4,
 }
 
-/// Represents a signing request sent to the browser wallet.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrowserSignRequest {
-    /// The unique identifier for the signing request.
-    pub id: Uuid,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignRequest {
     /// The message to be signed.
     pub message: String,
     /// The address that should sign the message.
     pub address: Address,
+}
+
+/// Represents a signing request sent to the browser wallet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSignRequest {
+    /// The unique identifier for the signing request.
+    pub id: Uuid,
+    /// The type of signing operation.
     #[serde(rename = "type")]
     pub sign_type: SignType,
+    /// The sign request details.
+    pub request: SignRequest,
 }
 
 /// Represents a typed data signing request sent to the browser wallet.

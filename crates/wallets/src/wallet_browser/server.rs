@@ -18,7 +18,7 @@ use crate::wallet_browser::{
     state::BrowserWalletState,
     types::{
         BrowserSignRequest, BrowserSignTypedDataRequest, BrowserTransactionRequest, Connection,
-        SignType,
+        SignRequest, SignType,
     },
 };
 
@@ -205,11 +205,13 @@ impl BrowserWalletServer {
 
         let sign_request = BrowserSignRequest {
             id: request.id,
-            message: serde_json::to_string(&request.typed_data).map_err(|e| {
-                BrowserWalletError::ServerError(format!("Failed to serialize typed data: {e}"))
-            })?,
-            address: request.address,
             sign_type: SignType::SignTypedDataV4,
+            request: SignRequest {
+                message: serde_json::to_string(&request.typed_data).map_err(|e| {
+                    BrowserWalletError::ServerError(format!("Failed to serialize typed data: {e}"))
+                })?,
+                address: request.address,
+            },
         };
 
         self.request_signing(sign_request).await

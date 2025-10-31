@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::wallet_browser::{
     server::BrowserWalletServer,
-    types::{BrowserSignRequest, BrowserTransactionRequest, Connection, SignType},
+    types::{BrowserSignRequest, BrowserTransactionRequest, Connection, SignRequest, SignType},
 };
 
 #[derive(Clone, Debug)]
@@ -135,9 +135,8 @@ impl Signer for BrowserSigner {
     async fn sign_message(&self, message: &[u8]) -> Result<Signature> {
         let request = BrowserSignRequest {
             id: Uuid::new_v4(),
-            address: self.address,
-            message: hex::encode_prefixed(message),
             sign_type: SignType::PersonalSign,
+            request: SignRequest { message: hex::encode_prefixed(message), address: self.address },
         };
 
         let server = self.server.lock().await;
