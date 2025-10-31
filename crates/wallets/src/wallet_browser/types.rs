@@ -1,4 +1,5 @@
-use alloy_primitives::{Address, ChainId, TxHash};
+use alloy_dyn_abi::TypedData;
+use alloy_primitives::{Address, Bytes, ChainId, TxHash};
 use alloy_rpc_types::TransactionRequest;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -36,7 +37,7 @@ impl<T> BrowserApiResponse<T> {
 /// Represents a transaction request sent to the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BrowserTransaction {
+pub struct BrowserTransactionRequest {
     /// The unique identifier for the transaction.
     pub id: Uuid,
     /// The transaction request details.
@@ -46,12 +47,55 @@ pub struct BrowserTransaction {
 /// Represents a transaction response sent from the browser wallet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TransactionResponse {
+pub(crate) struct BrowserTransactionResponse {
     /// The unique identifier for the transaction, must match the request ID sent earlier.
     pub id: Uuid,
     /// The transaction hash if the transaction was successful.
     pub hash: Option<TxHash>,
     /// The error message if the transaction failed.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SignType {
+    /// Standard personal sign: `eth_sign` / `personal_sign`
+    PersonalSign,
+    /// EIP-712 typed data sign: `eth_signTypedData_v4`
+    SignTypedDataV4,
+}
+
+/// Represents a signing request sent to the browser wallet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserSignRequest {
+    /// The unique identifier for the signing request.
+    pub id: Uuid,
+    /// The message to be signed.
+    pub message: String,
+    /// The address that should sign the message.
+    pub address: Address,
+    #[serde(rename = "type")]
+    pub sign_type: SignType,
+}
+
+/// Represents a typed data signing request sent to the browser wallet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserSignTypedDataRequest {
+    /// The unique identifier for the signing request.
+    pub id: Uuid,
+    /// The address that should sign the typed data.
+    pub address: Address,
+    /// The typed data to be signed.
+    pub typed_data: TypedData,
+}
+
+/// Represents a signing response sent from the browser wallet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct BrowserSignResponse {
+    /// The unique identifier for the signing request, must match the request ID sent earlier.
+    pub id: Uuid,
+    /// The signature if the signing was successful.
+    pub signature: Option<Bytes>,
+    /// The error message if the signing failed.
     pub error: Option<String>,
 }
 

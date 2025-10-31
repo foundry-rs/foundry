@@ -13,7 +13,7 @@ mod types;
 mod tests {
     use std::time::Duration;
 
-    use alloy_primitives::{Address, TxHash, TxKind, U256, address};
+    use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, address};
     use alloy_rpc_types::TransactionRequest;
     use axum::http::{HeaderMap, HeaderValue};
     use tokio::task::JoinHandle;
@@ -22,7 +22,10 @@ mod tests {
     use crate::wallet_browser::{
         error::BrowserWalletError,
         server::BrowserWalletServer,
-        types::{BrowserApiResponse, BrowserTransaction, Connection, TransactionResponse},
+        types::{
+            BrowserApiResponse, BrowserSignRequest, BrowserSignResponse, BrowserTransactionRequest,
+            BrowserTransactionResponse, Connection, SignType,
+        },
     };
 
     const ALICE: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
@@ -119,14 +122,14 @@ mod tests {
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Enqueue a tx
-        let (tx_request_id, tx_request) = create_browser_transaction();
-        let _handle = wait_for_signing(&server, tx_request).await;
+        let (tx_request_id, tx_request) = create_browser_transaction_request();
+        let _handle = wait_for_transaction_signing(&server, tx_request).await;
         check_transaction_request_content(&client, &server, tx_request_id).await;
 
         // Wallet posts both hash and error -> should be rejected
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id,
                 hash: Some(TxHash::random()),
                 error: Some("should not have both".into()),
@@ -153,14 +156,14 @@ mod tests {
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
-        let (tx_request_id, tx_request) = create_browser_transaction();
-        let _handle = wait_for_signing(&server, tx_request).await;
+        let (tx_request_id, tx_request) = create_browser_transaction_request();
+        let _handle = wait_for_transaction_signing(&server, tx_request).await;
         check_transaction_request_content(&client, &server, tx_request_id).await;
 
         // Neither hash nor error -> rejected
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse { id: tx_request_id, hash: None, error: None })
+            .json(&BrowserTransactionResponse { id: tx_request_id, hash: None, error: None })
             .send()
             .await
             .unwrap()
@@ -183,15 +186,15 @@ mod tests {
         server.start().await.unwrap();
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
-        let (tx_request_id, tx_request) = create_browser_transaction();
-        let _handle = wait_for_signing(&server, tx_request).await;
+        let (tx_request_id, tx_request) = create_browser_transaction_request();
+        let _handle = wait_for_transaction_signing(&server, tx_request).await;
         check_transaction_request_content(&client, &server, tx_request_id).await;
 
         // Zero hash -> rejected
         let zero = TxHash::new([0u8; 32]);
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse { id: tx_request_id, hash: Some(zero), error: None })
+            .json(&BrowserTransactionResponse { id: tx_request_id, hash: Some(zero), error: None })
             .send()
             .await
             .unwrap()
@@ -216,23 +219,16 @@ mod tests {
         let mut server = create_server();
         let client = client_with_token(&server);
         server.start().await.unwrap();
-
-        // Connect Alice's wallet
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
-        // Create a browser transaction request
-        let (tx_request_id, tx_request) = create_browser_transaction();
-
-        // Spawn the signing flow in the background
-        let handle = wait_for_signing(&server, tx_request).await;
-
-        // Check transaction request
+        let (tx_request_id, tx_request) = create_browser_transaction_request();
+        let handle = wait_for_transaction_signing(&server, tx_request).await;
         check_transaction_request_content(&client, &server, tx_request_id).await;
 
         // Simulate the wallet accepting and signing the tx
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id,
                 hash: Some(TxHash::random()),
                 error: None,
@@ -259,8 +255,6 @@ mod tests {
         let mut server = create_server();
         let client = client_with_token(&server);
         server.start().await.unwrap();
-
-        // Connect Alice's wallet
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Create a random transaction response without a matching request
@@ -269,7 +263,7 @@ mod tests {
         // Simulate the wallet sending a response for an unknown request
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id,
                 hash: Some(TxHash::random()),
                 error: None,
@@ -297,8 +291,6 @@ mod tests {
         let mut server = create_server();
         let client = client_with_token(&server);
         server.start().await.unwrap();
-
-        // Connect Alice's wallet
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Simulate the wallet sending a response with an invalid UUID
@@ -325,15 +317,13 @@ mod tests {
         let mut server = create_server();
         let client = client_with_token(&server);
         server.start().await.unwrap();
-
-        // Connect Alice's wallet
         connect_wallet(&client, &server, Connection(ALICE, 1)).await;
 
         // Create a browser transaction request
-        let (tx_request_id, tx_request) = create_browser_transaction();
+        let (tx_request_id, tx_request) = create_browser_transaction_request();
 
-        // Spawn the signing flow in the background
-        let handle = wait_for_signing(&server, tx_request).await;
+        // Spawn the transaction signing flow in the background
+        let handle = wait_for_transaction_signing(&server, tx_request).await;
 
         // Check transaction request
         check_transaction_request_content(&client, &server, tx_request_id).await;
@@ -341,7 +331,7 @@ mod tests {
         // Simulate the wallet rejecting the tx
         let resp = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id,
                 hash: None,
                 error: Some("User rejected the transaction".into()),
@@ -372,12 +362,12 @@ mod tests {
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Create multiple browser transaction requests
-        let (tx_request_id1, tx_request1) = create_browser_transaction();
-        let (tx_request_id2, tx_request2) = create_different_browser_transaction();
+        let (tx_request_id1, tx_request1) = create_browser_transaction_request();
+        let (tx_request_id2, tx_request2) = create_different_browser_transaction_request();
 
         // Spawn signing flows for both transactions concurrently
-        let handle1 = wait_for_signing(&server, tx_request1).await;
-        let handle2 = wait_for_signing(&server, tx_request2).await;
+        let handle1 = wait_for_transaction_signing(&server, tx_request1.clone()).await;
+        let handle2 = wait_for_transaction_signing(&server, tx_request2.clone()).await;
 
         // Check first transaction request
         {
@@ -388,7 +378,7 @@ mod tests {
                 .unwrap();
 
             let BrowserApiResponse::Ok(pending_tx) =
-                resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+                resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
             else {
                 panic!("expected BrowserApiResponse::Ok with a pending transaction");
             };
@@ -397,15 +387,15 @@ mod tests {
                 pending_tx.id, tx_request_id1,
                 "expected the first transaction to be at the front of the queue"
             );
-            assert_eq!(pending_tx.request.from, Some(ALICE));
-            assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
-            assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+            assert_eq!(pending_tx.request.from, tx_request1.request.from);
+            assert_eq!(pending_tx.request.to, tx_request1.request.to);
+            assert_eq!(pending_tx.request.value, tx_request1.request.value);
         }
 
         // Simulate the wallet accepting and signing the first transaction
         let resp1 = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id1,
                 hash: Some(TxHash::random()),
                 error: None,
@@ -432,7 +422,7 @@ mod tests {
                 .unwrap();
 
             let BrowserApiResponse::Ok(pending_tx) =
-                resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+                resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
             else {
                 panic!("expected BrowserApiResponse::Ok with a pending transaction");
             };
@@ -441,15 +431,15 @@ mod tests {
                 pending_tx.id, tx_request_id2,
                 "expected the second transaction to be pending after the first one completed"
             );
-            assert_eq!(pending_tx.request.from, Some(BOB));
-            assert_eq!(pending_tx.request.to, Some(TxKind::Call(ALICE)));
-            assert_eq!(pending_tx.request.value, Some(U256::from(2000)));
+            assert_eq!(pending_tx.request.from, tx_request2.request.from);
+            assert_eq!(pending_tx.request.to, tx_request2.request.to);
+            assert_eq!(pending_tx.request.value, tx_request2.request.value);
         }
 
         // Simulate the wallet rejecting the second transaction
         let resp2 = client
             .post(format!("http://localhost:{}/api/transaction/response", server.port()))
-            .json(&TransactionResponse {
+            .json(&BrowserTransactionResponse {
                 id: tx_request_id2,
                 hash: None,
                 error: Some("User rejected the transaction".into()),
@@ -471,6 +461,316 @@ mod tests {
         }
 
         check_transaction_request_queue_empty(&client, &server).await;
+
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_response_both_signature_and_error_rejected() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        let (sign_request_id, sign_request) = create_browser_sign_request();
+        let _handle = wait_for_message_signing(&server, sign_request).await;
+        check_sign_request_content(&client, &server, sign_request_id).await;
+
+        // Both signature and error -> should be rejected
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id,
+                signature: Some(Bytes::from("Hello World")),
+                error: Some("Should not have both".into()),
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+
+        let api: BrowserApiResponse<()> = resp.json().await.unwrap();
+        match api {
+            BrowserApiResponse::Error { message } => {
+                assert_eq!(message, "Only one of signature or error can be provided");
+            }
+            _ => panic!("expected error response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_response_neither_hash_nor_error_rejected() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        let (sign_request_id, sign_request) = create_browser_sign_request();
+        let _handle = wait_for_message_signing(&server, sign_request).await;
+        check_sign_request_content(&client, &server, sign_request_id).await;
+
+        // Neither signature nor error -> rejected
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse { id: sign_request_id, signature: None, error: None })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+
+        let api: BrowserApiResponse<()> = resp.json().await.unwrap();
+        match api {
+            BrowserApiResponse::Error { message } => {
+                assert_eq!(message, "Either signature or error must be provided");
+            }
+            _ => panic!("expected error response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_client_accept() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        let (sign_request_id, sign_request) = create_browser_sign_request();
+        let handle = wait_for_message_signing(&server, sign_request).await;
+        check_sign_request_content(&client, &server, sign_request_id).await;
+
+        // Simulate the wallet accepting and signing the message
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id,
+                signature: Some(Bytes::from("FakeSignature")),
+                error: None,
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        // The join handle should now return the signature
+        let res = handle.await.expect("task panicked");
+        match res {
+            Ok(signature) => {
+                assert_eq!(signature, Bytes::from("FakeSignature"));
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_client_not_requested() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        // Create a random signing response without a matching request
+        let sign_request_id = Uuid::new_v4();
+
+        // Simulate the wallet sending a response for an unknown request
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id,
+                signature: Some(Bytes::from("FakeSignature")),
+                error: None,
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        // Assert that no signing response without a matching request is accepted
+        let api: BrowserApiResponse<()> = resp.json().await.unwrap();
+        match api {
+            BrowserApiResponse::Error { message } => {
+                assert_eq!(message, "Unknown signing request id");
+            }
+            _ => panic!("expected error response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_invalid_response_format() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        // Simulate the wallet sending a response with an invalid UUID
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .body(
+                r#"{
+                "id": "invalid-uuid",
+                "signature": "invalid-signature",
+                "error": null
+            }"#,
+            )
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap();
+
+        // The server should respond with a 422 Unprocessable Entity status
+        assert_eq!(resp.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_send_sign_client_reject() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        let (sign_request_id, sign_request) = create_browser_sign_request();
+        let handle = wait_for_message_signing(&server, sign_request).await;
+        check_sign_request_content(&client, &server, sign_request_id).await;
+
+        // Simulate the wallet rejecting the signing request
+        let resp = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id,
+                signature: None,
+                error: Some("User rejected the signing request".into()),
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        // The join handle should now return a rejection error
+        let res = handle.await.expect("task panicked");
+        match res {
+            Err(BrowserWalletError::Rejected { operation, reason }) => {
+                assert_eq!(operation, "Signing");
+                assert_eq!(reason, "User rejected the signing request");
+            }
+            other => panic!("expected rejection, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_multiple_sign_requests() {
+        let mut server = create_server();
+        let client = client_with_token(&server);
+        server.start().await.unwrap();
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
+
+        // Create multiple browser sign requests
+        let (sign_request_id1, sign_request1) = create_browser_sign_request();
+        let (sign_request_id2, sign_request2) = create_different_browser_sign_request();
+
+        // Spawn signing flows for both sign requests concurrently
+        let handle1 = wait_for_message_signing(&server, sign_request1.clone()).await;
+        let handle2 = wait_for_message_signing(&server, sign_request2.clone()).await;
+
+        // Check first sign request
+        {
+            let resp = client
+                .get(format!("http://localhost:{}/api/signing/request", server.port()))
+                .send()
+                .await
+                .unwrap();
+
+            let BrowserApiResponse::Ok(pending_sign) =
+                resp.json::<BrowserApiResponse<BrowserSignRequest>>().await.unwrap()
+            else {
+                panic!("expected BrowserApiResponse::Ok with a pending sign request");
+            };
+
+            assert_eq!(
+                pending_sign.id, sign_request_id1,
+                "expected the first sign request to be at the front of the queue"
+            );
+            assert_eq!(pending_sign.address, sign_request1.address);
+            assert_eq!(pending_sign.message, sign_request1.message);
+            assert_eq!(pending_sign.sign_type, sign_request1.sign_type);
+        }
+
+        // Simulate the wallet accepting and signing the first sign request
+        let resp1 = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id1,
+                signature: Some(Bytes::from("Signature1")),
+                error: None,
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(resp1.status(), reqwest::StatusCode::OK);
+
+        let res1 = handle1.await.expect("first signing flow panicked");
+        match res1 {
+            Ok(signature) => assert_eq!(signature, Bytes::from("Signature1")),
+            other => panic!("expected success, got {other:?}"),
+        }
+
+        // Check second sign request
+        {
+            let resp = client
+                .get(format!("http://localhost:{}/api/signing/request", server.port()))
+                .send()
+                .await
+                .unwrap();
+
+            let BrowserApiResponse::Ok(pending_sign) =
+                resp.json::<BrowserApiResponse<BrowserSignRequest>>().await.unwrap()
+            else {
+                panic!("expected BrowserApiResponse::Ok with a pending sign request");
+            };
+
+            assert_eq!(
+                pending_sign.id, sign_request_id2,
+                "expected the second sign request to be pending after the first one completed"
+            );
+            assert_eq!(pending_sign.address, sign_request2.address);
+            assert_eq!(pending_sign.message, sign_request2.message);
+            assert_eq!(pending_sign.sign_type, sign_request2.sign_type);
+        }
+
+        // Simulate the wallet rejecting the second sign request
+        let resp2 = client
+            .post(format!("http://localhost:{}/api/signing/response", server.port()))
+            .json(&BrowserSignResponse {
+                id: sign_request_id2,
+                signature: None,
+                error: Some("User rejected the signing request".into()),
+            })
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(resp2.status(), reqwest::StatusCode::OK);
+
+        let res2 = handle2.await.expect("second signing flow panicked");
+        match res2 {
+            Err(BrowserWalletError::Rejected { operation, reason }) => {
+                assert_eq!(operation, "Signing");
+                assert_eq!(reason, "User rejected the signing request");
+            }
+            other => panic!("expected BrowserWalletError::Rejected, got {other:?}"),
+        }
+
+        check_sign_request_queue_empty(&client, &server).await;
 
         server.stop().await.unwrap();
     }
@@ -509,10 +809,10 @@ mod tests {
         assert!(resp.await.is_ok());
     }
 
-    /// Spawn the signing flow in the background and return the join handle.
-    async fn wait_for_signing(
+    /// Spawn the transaction signing flow in the background and return the join handle.
+    async fn wait_for_transaction_signing(
         server: &BrowserWalletServer,
-        tx_request: BrowserTransaction,
+        tx_request: BrowserTransactionRequest,
     ) -> JoinHandle<Result<TxHash, BrowserWalletError>> {
         // Spawn the signing flow in the background
         let browser_server = server.clone();
@@ -524,10 +824,25 @@ mod tests {
         join_handle
     }
 
+    /// Spawn the message signing flow in the background and return the join handle.
+    async fn wait_for_message_signing(
+        server: &BrowserWalletServer,
+        sign_request: BrowserSignRequest,
+    ) -> JoinHandle<Result<Bytes, BrowserWalletError>> {
+        // Spawn the signing flow in the background
+        let browser_server = server.clone();
+        let join_handle =
+            tokio::spawn(async move { browser_server.request_signing(sign_request).await });
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        join_handle
+    }
+
     /// Create a simple browser transaction request.
-    fn create_browser_transaction() -> (Uuid, BrowserTransaction) {
+    fn create_browser_transaction_request() -> (Uuid, BrowserTransactionRequest) {
         let id = Uuid::new_v4();
-        let tx = BrowserTransaction {
+        let tx = BrowserTransactionRequest {
             id,
             request: TransactionRequest {
                 from: Some(ALICE),
@@ -540,9 +855,9 @@ mod tests {
     }
 
     /// Create a different browser transaction request (from the first one).
-    fn create_different_browser_transaction() -> (Uuid, BrowserTransaction) {
+    fn create_different_browser_transaction_request() -> (Uuid, BrowserTransactionRequest) {
         let id = Uuid::new_v4();
-        let tx = BrowserTransaction {
+        let tx = BrowserTransactionRequest {
             id,
             request: TransactionRequest {
                 from: Some(BOB),
@@ -552,6 +867,30 @@ mod tests {
             },
         };
         (id, tx)
+    }
+
+    /// Create a simple browser sign request.
+    fn create_browser_sign_request() -> (Uuid, BrowserSignRequest) {
+        let id = Uuid::new_v4();
+        let req = BrowserSignRequest {
+            id,
+            address: ALICE,
+            message: "Hello, world!".into(),
+            sign_type: SignType::PersonalSign,
+        };
+        (id, req)
+    }
+
+    /// Create a different browser sign request (from the first one).
+    fn create_different_browser_sign_request() -> (Uuid, BrowserSignRequest) {
+        let id = Uuid::new_v4();
+        let req = BrowserSignRequest {
+            id,
+            address: BOB,
+            message: "Different message".into(),
+            sign_type: SignType::SignTypedDataV4,
+        };
+        (id, req)
     }
 
     /// Check that the transaction request queue is empty, if not panic.
@@ -566,12 +905,12 @@ mod tests {
             .unwrap();
 
         let BrowserApiResponse::Error { message } =
-            resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+            resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
         else {
             panic!("expected BrowserApiResponse::Error (no pending transaction), but got Ok");
         };
 
-        assert_eq!(message, "No pending transaction");
+        assert_eq!(message, "No pending transaction request");
     }
 
     /// Check that the transaction request matches the expected request ID and fields.
@@ -587,7 +926,7 @@ mod tests {
             .unwrap();
 
         let BrowserApiResponse::Ok(pending_tx) =
-            resp.json::<BrowserApiResponse<BrowserTransaction>>().await.unwrap()
+            resp.json::<BrowserApiResponse<BrowserTransactionRequest>>().await.unwrap()
         else {
             panic!("expected BrowserApiResponse::Ok with a pending transaction");
         };
@@ -596,5 +935,49 @@ mod tests {
         assert_eq!(pending_tx.request.from, Some(ALICE));
         assert_eq!(pending_tx.request.to, Some(TxKind::Call(BOB)));
         assert_eq!(pending_tx.request.value, Some(U256::from(1000)));
+    }
+
+    /// Check that the sign request queue is empty, if not panic.
+    async fn check_sign_request_queue_empty(
+        client: &reqwest::Client,
+        server: &BrowserWalletServer,
+    ) {
+        let resp = client
+            .get(format!("http://localhost:{}/api/signing/request", server.port()))
+            .send()
+            .await
+            .unwrap();
+
+        let BrowserApiResponse::Error { message } =
+            resp.json::<BrowserApiResponse<BrowserSignRequest>>().await.unwrap()
+        else {
+            panic!("expected BrowserApiResponse::Error (no pending signing request), but got Ok");
+        };
+
+        assert_eq!(message, "No pending signing request");
+    }
+
+    /// Check that the sign request matches the expected request ID and fields.
+    async fn check_sign_request_content(
+        client: &reqwest::Client,
+        server: &BrowserWalletServer,
+        sign_request_id: Uuid,
+    ) {
+        let resp = client
+            .get(format!("http://localhost:{}/api/signing/request", server.port()))
+            .send()
+            .await
+            .unwrap();
+
+        let BrowserApiResponse::Ok(pending_req) =
+            resp.json::<BrowserApiResponse<BrowserSignRequest>>().await.unwrap()
+        else {
+            panic!("expected BrowserApiResponse::Ok with a pending signing request");
+        };
+
+        assert_eq!(pending_req.id, sign_request_id);
+        assert_eq!(pending_req.address, ALICE);
+        assert_eq!(pending_req.message, "Hello, world!");
+        assert_eq!(pending_req.sign_type, SignType::PersonalSign);
     }
 }

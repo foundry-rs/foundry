@@ -17,6 +17,8 @@ pub async fn build_router(state: Arc<BrowserWalletState>, port: u16) -> Router {
     let api = Router::new()
         .route("/transaction/request", get(handlers::get_next_transaction_request))
         .route("/transaction/response", post(handlers::post_transaction_response))
+        .route("/signing/request", get(handlers::get_next_signing_request))
+        .route("/signing/response", post(handlers::post_signing_response))
         .route("/connection", get(handlers::get_connection_info))
         .route("/connection", post(handlers::post_connection_update))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_session_token))

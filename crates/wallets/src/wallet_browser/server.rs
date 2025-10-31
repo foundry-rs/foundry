@@ -4,7 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::TxHash;
+use alloy_dyn_abi::TypedData;
+use alloy_primitives::{Address, Bytes, TxHash};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, oneshot},
@@ -15,7 +16,10 @@ use crate::wallet_browser::{
     error::BrowserWalletError,
     router::build_router,
     state::BrowserWalletState,
-    types::{BrowserTransaction, Connection},
+    types::{
+        BrowserSignRequest, BrowserSignTypedDataRequest, BrowserTransactionRequest, Connection,
+        SignType,
+    },
 };
 
 /// Browser wallet server.
@@ -114,7 +118,7 @@ impl BrowserWalletServer {
     /// Request a transaction to be signed and sent via the browser wallet.
     pub async fn request_transaction(
         &self,
-        request: BrowserTransaction,
+        request: BrowserTransactionRequest,
     ) -> Result<TxHash, BrowserWalletError> {
         if !self.is_connected() {
             return Err(BrowserWalletError::NotConnected);
@@ -149,5 +153,65 @@ impl BrowserWalletServer {
 
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    /// Request a message to be signed via the browser wallet.
+    pub async fn request_signing(
+        &self,
+        request: BrowserSignRequest,
+    ) -> Result<Bytes, BrowserWalletError> {
+        if !self.is_connected() {
+            return Err(BrowserWalletError::NotConnected);
+        }
+
+        let tx_id = request.id;
+
+        self.state.add_signing_request(request);
+
+        let start = Instant::now();
+
+        loop {
+            if let Some(response) = self.state.get_signing_response(&tx_id) {
+                if let Some(signature) = response.signature {
+                    return Ok(signature);
+                } else if let Some(error) = response.error {
+                    return Err(BrowserWalletError::Rejected {
+                        operation: "Signing",
+                        reason: error,
+                    });
+                } else {
+                    return Err(BrowserWalletError::ServerError(
+                        "Signing response missing both signature and error".to_string(),
+                    ));
+                }
+            }
+
+            if start.elapsed() > self.timeout {
+                self.state.remove_signing_request(&tx_id);
+                return Err(BrowserWalletError::Timeout { operation: "Signing" });
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Request EIP-712 typed data signing via the browser wallet.
+    pub async fn request_typed_data_signing(
+        &self,
+        address: Address,
+        typed_data: TypedData,
+    ) -> Result<Bytes, BrowserWalletError> {
+        let request = BrowserSignTypedDataRequest { id: Uuid::new_v4(), address, typed_data };
+
+        let sign_request = BrowserSignRequest {
+            id: request.id,
+            message: serde_json::to_string(&request.typed_data).map_err(|e| {
+                BrowserWalletError::ServerError(format!("Failed to serialize typed data: {e}"))
+            })?,
+            address: request.address,
+            sign_type: SignType::SignTypedDataV4,
+        };
+
+        self.request_signing(sign_request).await
     }
 }

@@ -13,9 +13,13 @@ use axum::{
 use crate::wallet_browser::{
     app::contents,
     state::BrowserWalletState,
-    types::{BrowserApiResponse, BrowserTransaction, Connection, TransactionResponse},
+    types::{
+        BrowserApiResponse, BrowserSignRequest, BrowserSignResponse, BrowserTransactionRequest,
+        BrowserTransactionResponse, Connection,
+    },
 };
 
+/// Serve index.html
 pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
@@ -28,6 +32,7 @@ pub(crate) async fn serve_index() -> impl axum::response::IntoResponse {
     (headers, Html(contents::INDEX_HTML))
 }
 
+/// Serve styles.css
 pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
@@ -40,6 +45,7 @@ pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
     (headers, contents::STYLES_CSS)
 }
 
+/// Serve main.js with injected session token.
 pub(crate) async fn serve_js(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> impl axum::response::IntoResponse {
@@ -57,6 +63,7 @@ pub(crate) async fn serve_js(
     (headers, js)
 }
 
+/// Serve banner.png
 pub(crate) async fn serve_banner_png() -> impl axum::response::IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
@@ -64,6 +71,7 @@ pub(crate) async fn serve_banner_png() -> impl axum::response::IntoResponse {
     (headers, contents::BANNER_PNG)
 }
 
+/// Serve logo.png
 pub(crate) async fn serve_logo_png() -> impl axum::response::IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
@@ -75,10 +83,10 @@ pub(crate) async fn serve_logo_png() -> impl axum::response::IntoResponse {
 /// Route: GET /api/transaction/request
 pub(crate) async fn get_next_transaction_request(
     State(state): State<Arc<BrowserWalletState>>,
-) -> Json<BrowserApiResponse<BrowserTransaction>> {
+) -> Json<BrowserApiResponse<BrowserTransactionRequest>> {
     match state.read_next_transaction_request() {
         Some(tx) => Json(BrowserApiResponse::with_data(tx)),
-        None => Json(BrowserApiResponse::error("No pending transaction")),
+        None => Json(BrowserApiResponse::error("No pending transaction request")),
     }
 }
 
@@ -86,7 +94,7 @@ pub(crate) async fn get_next_transaction_request(
 /// Route: POST /api/transaction/response
 pub(crate) async fn post_transaction_response(
     State(state): State<Arc<BrowserWalletState>>,
-    Json(body): Json<TransactionResponse>,
+    Json(body): Json<BrowserTransactionResponse>,
 ) -> Json<BrowserApiResponse> {
     // Ensure that the transaction request exists.
     if !state.has_transaction_request(&body.id) {
@@ -120,6 +128,46 @@ pub(crate) async fn post_transaction_response(
     }
 
     state.add_transaction_response(body);
+
+    Json(BrowserApiResponse::ok())
+}
+
+/// Get the next pending signing request.
+/// Route: GET /api/signing/request
+pub(crate) async fn get_next_signing_request(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> Json<BrowserApiResponse<BrowserSignRequest>> {
+    match state.read_next_signing_request() {
+        Some(req) => Json(BrowserApiResponse::with_data(req)),
+        None => Json(BrowserApiResponse::error("No pending signing request")),
+    }
+}
+
+/// Post a signing response (signature or error).
+/// Route: POST /api/signing/response
+pub(crate) async fn post_signing_response(
+    State(state): State<Arc<BrowserWalletState>>,
+    Json(body): Json<BrowserSignResponse>,
+) -> Json<BrowserApiResponse> {
+    // Ensure that the signing request exists.
+    if !state.has_signing_request(&body.id) {
+        return Json(BrowserApiResponse::error("Unknown signing request id"));
+    }
+
+    // Ensure that exactly one of signature or error is provided.
+    match (&body.signature, &body.error) {
+        (None, None) => {
+            return Json(BrowserApiResponse::error("Either signature or error must be provided"));
+        }
+        (Some(_), Some(_)) => {
+            return Json(BrowserApiResponse::error(
+                "Only one of signature or error can be provided",
+            ));
+        }
+        _ => {}
+    }
+
+    state.add_signing_response(body);
 
     Json(BrowserApiResponse::ok())
 }

@@ -4,17 +4,19 @@ use std::{
 };
 
 use alloy_consensus::SignableTransaction;
+use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, B256, ChainId};
+use alloy_primitives::{Address, B256, ChainId, hex};
 use alloy_rpc_types::TransactionRequest;
-use alloy_signer::{Result, Signature, Signer};
+use alloy_signer::{Result, Signature, Signer, SignerSync};
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::wallet_browser::{
     server::BrowserWalletServer,
-    types::{BrowserTransaction, Connection},
+    types::{BrowserSignRequest, BrowserTransactionRequest, Connection, SignType},
 };
 
 #[derive(Clone, Debug)]
@@ -78,7 +80,7 @@ impl BrowserSigner {
             ));
         }
 
-        let request = BrowserTransaction { id: Uuid::new_v4(), request: tx_request };
+        let request = BrowserTransactionRequest { id: Uuid::new_v4(), request: tx_request };
 
         let server = self.server.lock().await;
         let tx_hash =
@@ -90,12 +92,72 @@ impl BrowserSigner {
     }
 }
 
+impl SignerSync for BrowserSigner {
+    fn sign_hash_sync(&self, _hash: &B256) -> Result<Signature> {
+        Err(alloy_signer::Error::other(
+            "Browser wallets cannot sign raw hashes. Use sign_message or send_transaction instead.",
+        ))
+    }
+
+    fn sign_message_sync(&self, _message: &[u8]) -> Result<Signature> {
+        Err(alloy_signer::Error::other(
+            "Browser signer requires async operations. Use sign_message instead.",
+        ))
+    }
+
+    fn chain_id_sync(&self) -> Option<ChainId> {
+        Some(self.chain_id)
+    }
+}
+
 #[async_trait]
 impl Signer for BrowserSigner {
     async fn sign_hash(&self, _hash: &B256) -> Result<Signature> {
         Err(alloy_signer::Error::other(
             "Browser wallets sign and send transactions in one step. Use eth_sendTransaction instead.",
         ))
+    }
+
+    async fn sign_typed_data<T: SolStruct + Send + Sync>(
+        &self,
+        _payload: &T,
+        _domain: &Eip712Domain,
+    ) -> Result<Signature>
+    where
+        Self: Sized,
+    {
+        // Not directly supported - use sign_dynamic_typed_data instead
+        Err(alloy_signer::Error::other(
+            "Browser wallets cannot sign typed data directly. Use sign_dynamic_typed_data instead.",
+        ))
+    }
+
+    async fn sign_message(&self, message: &[u8]) -> Result<Signature> {
+        let request = BrowserSignRequest {
+            id: Uuid::new_v4(),
+            address: self.address,
+            message: hex::encode_prefixed(message),
+            sign_type: SignType::PersonalSign,
+        };
+
+        let server = self.server.lock().await;
+        let signature =
+            server.request_signing(request).await.map_err(alloy_signer::Error::other)?;
+
+        Signature::try_from(signature.as_ref())
+            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
+    }
+
+    async fn sign_dynamic_typed_data(&self, payload: &TypedData) -> Result<Signature> {
+        let server = self.server.lock().await;
+        let signature = server
+            .request_typed_data_signing(self.address, payload.clone())
+            .await
+            .map_err(alloy_signer::Error::other)?;
+
+        // Parse the signature
+        Signature::try_from(signature.as_ref())
+            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
     }
 
     fn address(&self) -> Address {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use uuid::Uuid;
 
-use crate::wallet_browser::types::BrowserTransaction;
+use crate::wallet_browser::types::{BrowserSignRequest, BrowserTransactionRequest};
 
 #[derive(Debug)]
 pub(crate) struct RequestQueue<Req, Res> {
@@ -69,7 +69,13 @@ pub(crate) trait HasId {
     fn id(&self) -> &Uuid;
 }
 
-impl HasId for BrowserTransaction {
+impl HasId for BrowserTransactionRequest {
+    fn id(&self) -> &Uuid {
+        &self.id
+    }
+}
+
+impl HasId for BrowserSignRequest {
     fn id(&self) -> &Uuid {
         &self.id
     }
