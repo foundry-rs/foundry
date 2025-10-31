@@ -15,6 +15,7 @@ import { colors } from '#const.mjs'
  *  platform: Platform
  *  arch: Arch
  *  packagePath: string
+ * registry?: 'github' | 'npm'
  * }} GenerateOptions
  */
 
@@ -45,8 +46,14 @@ export async function generateBinaryPackageJson({
   tool,
   platform,
   arch,
-  packagePath
+  packagePath,
+  registry
 }) {
+  const registryUrl = registry
+    ? (registry === 'github'
+      ? 'https://npm.pkg.github.com'
+      : 'https://registry.npmjs.org')
+    : 'https://registry.npmjs.org'
   const packageJsonPath = NodePath.join(packagePath, 'package.json')
 
   const cpu = arch === 'amd64' ? 'x64' : 'arm64'
@@ -68,11 +75,16 @@ export async function generateBinaryPackageJson({
     engines: { node: '>=20' },
     license: 'MIT OR Apache-2.0',
     repository: {
+      type: 'git',
       directory: 'npm',
       url: 'https://github.com/foundry-rs/foundry'
     },
     keywords: ['foundry', 'testing', 'ethereum', 'solidity', 'blockchain', 'smart-contracts'],
-    publishConfig: { provenance: true }
+    publishConfig: {
+      access: 'public',
+      provenance: true,
+      url: registryUrl
+    }
   }
 
   await Bun.write(packageJsonPath, JSON.stringify(pkg, null, 2))

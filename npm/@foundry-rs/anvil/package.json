@@ -28,6 +28,7 @@
   },
   "license": "MIT OR Apache-2.0",
   "repository": {
+    "type": "git",
     "directory": "npm",
     "url": "https://github.com/foundry-rs/foundry"
   }
