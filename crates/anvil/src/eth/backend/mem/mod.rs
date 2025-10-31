@@ -990,7 +990,7 @@ impl Backend {
                 // Keep previous `beneficiary` and `basefee` value
                 beneficiary: env.evm_env.block_env.beneficiary,
                 basefee: env.evm_env.block_env.basefee,
-                ..env.evm_env.block_env.clone()
+                ..Default::default()
             }
         }
         Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
