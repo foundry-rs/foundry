@@ -25,6 +25,15 @@ Before running the benchmarks, ensure you have the following installed:
 
 5. **Node.js and npm** - Some repositories require npm dependencies
 
+## System Requirements
+
+Before running benchmarks, ensure your system meets the following requirements:
+
+- **Rust**: Version 1.89 or later (check with `rustc --version`)
+- **Node.js**: Version 20 or later (Node.js 24+ recommended)
+- **Disk space**: At least 5-10 GB free space for cloning repositories, building projects, and storing Foundry versions
+- **Execution time**: A full benchmark run with 2 versions and 2 repositories typically takes 10-30 minutes depending on your system. Note that `forge_fuzz_test` and `forge_coverage` benchmarks are slower and may take significantly longer.
+
 ## Running Benchmarks
 
 Build and install the benchmark runner:
@@ -86,7 +95,7 @@ foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 #### Command-line Options
 
 - `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
-- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format (default: ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22)
+- `--repos <REPOS>` - Comma-separated list of repos in `org/repo[:rev]` format (default: ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22)
 - `--benchmarks <BENCHMARKS>` - Comma-separated list of benchmarks to run
 - `--force-install` - Force installation of Foundry versions
 - `--verbose` - Show detailed benchmark output
@@ -108,7 +117,7 @@ The benchmark binary uses command-line arguments to configure which repositories
 - `ithacaxyz/account:v0.3.2`
 - `Vectorized/solady:v0.1.22`
 
-You can override these using the `--repos` flag with the format `org/repo[:rev]`.
+You can override these using the `--repos` flag with the format ``org/repo[:rev]``.
 
 ## Results
 
