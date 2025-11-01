@@ -1,6 +1,7 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, Signed, TxEip4844Variant, TxEip4844WithSidecar};
 use alloy_dyn_abi::TypedData;
+use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
@@ -131,7 +132,23 @@ pub fn build_typed_transaction(
             TypedTransaction::EIP7702(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP4844(tx) => {
-            TypedTransaction::EIP4844(tx.into_signed(signature))
+            let signed = tx.into_signed(signature);
+            // Convert from standard TxEip4844Variant to BlobTransactionSidecarVariant
+            let (variant, sig, hash) = signed.into_parts();
+            let blob_variant = match variant {
+                TxEip4844Variant::TxEip4844(tx) => TxEip4844Variant::TxEip4844(tx),
+                TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                    TxEip4844Variant::TxEip4844WithSidecar(
+                        TxEip4844WithSidecar::from_tx_and_sidecar(
+                            tx_with_sidecar.tx().clone(),
+                            BlobTransactionSidecarVariant::Eip4844(
+                                tx_with_sidecar.sidecar().clone(),
+                            ),
+                        ),
+                    )
+                }
+            };
+            TypedTransaction::EIP4844(Signed::new_unchecked(blob_variant, sig, hash))
         }
         TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
     };
