@@ -128,21 +128,27 @@ impl Stream for EthFilter {
         match pin {
             Self::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
             Self::Blocks(blocks) => {
-                let mut new_blocks = Vec::new();
-                while let Poll::Ready(Some(block)) = blocks.poll_next_unpin(cx) {
-                    new_blocks.push(block.hash);
-                }
+                let new_blocks = collect_ready_items(blocks, cx, |block| block.hash);
                 Poll::Ready(Some(Ok(new_blocks).to_rpc_result()))
             }
             Self::PendingTransactions(tx) => {
-                let mut new_txs = Vec::new();
-                while let Poll::Ready(Some(tx_hash)) = tx.poll_next_unpin(cx) {
-                    new_txs.push(tx_hash);
-                }
+                let new_txs = collect_ready_items(tx, cx, |tx_hash| tx_hash);
                 Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
             }
         }
     }
+}
+
+fn collect_ready_items<S, T, R, F>(stream: &mut S, cx: &mut Context<'_>, mut map: F) -> Vec<R>
+where
+    S: Stream<Item = T> + Unpin,
+    F: FnMut(T) -> R,
+{
+    let mut items = Vec::new();
+    while let Poll::Ready(Some(item)) = stream.poll_next_unpin(cx) {
+        items.push(map(item));
+    }
+    items
 }
 
 /// Listens for new blocks and matching logs emitted in that block
@@ -173,4 +179,6 @@ impl LogsFilter {
         }
         logs
     }
+}
+
 }
