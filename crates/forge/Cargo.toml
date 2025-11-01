@@ -94,6 +94,7 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
+soldeer-core.workspace = true
 quick-junit = "0.5.1"
 
 [dev-dependencies]

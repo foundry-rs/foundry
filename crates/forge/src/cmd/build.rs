@@ -80,6 +80,8 @@ impl BuildArgs {
             config = self.load_config()?;
         }
 
+        self.check_soldeer_lock_consistency(&config).await;
+
         let project = config.project()?;
 
         // Collect sources to compile if build subdirectories specified.
@@ -227,6 +229,42 @@ impl BuildArgs {
             let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
             Ok([config.src, config.test, config.script, foundry_toml])
         })
+    }
+
+    /// Check soldeer.lock file consistency using soldeer_core APIs
+    async fn check_soldeer_lock_consistency(&self, config: &Config) {
+        let soldeer_lock_path = config.root.join("soldeer.lock");
+        if !soldeer_lock_path.exists() {
+            return;
+        }
+
+        let lockfile = match soldeer_core::lock::read_lockfile(&soldeer_lock_path) {
+            Ok(lock) => lock,
+            Err(_) => return,
+        };
+
+        let deps_dir = config.root.join("dependencies");
+        for entry in &lockfile.entries {
+            let dep_name = entry.name();
+
+            // Use soldeer_core's integrity check
+            match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
+                Ok(status) => {
+                    use soldeer_core::install::DependencyStatus;
+                    // Check if status indicates a problem
+                    if matches!(
+                        status,
+                        DependencyStatus::Missing | DependencyStatus::FailedIntegrity
+                    ) {
+                        sh_warn!("Dependency '{}' integrity check failed: {:?}", dep_name, status)
+                            .ok();
+                    }
+                }
+                Err(e) => {
+                    sh_warn!("Dependency '{}' integrity check error: {}", dep_name, e).ok();
+                }
+            }
+        }
     }
 }
 
