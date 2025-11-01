@@ -813,8 +813,8 @@ impl Backend {
         precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
-            for (precompile, _) in &factory.precompiles() {
-                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            for (address, _) in &factory.precompiles() {
+                precompiles_map.insert(format!("custom_{address:?}"), *address);
             }
         }
 
