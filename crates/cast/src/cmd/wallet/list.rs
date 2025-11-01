@@ -4,7 +4,7 @@ use std::env;
 
 use foundry_common::{fs, sh_err, sh_println};
 use foundry_config::Config;
-use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
+use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]

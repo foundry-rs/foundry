@@ -1,6 +1,6 @@
 use crate::{
+    signer::{PendingSigner, WalletSigner},
     utils,
-    wallet_signer::{PendingSigner, WalletSigner},
 };
 use alloy_primitives::map::AddressHashMap;
 use alloy_signer::Signer;
