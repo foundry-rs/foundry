@@ -47,6 +47,13 @@ impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
         let Self { to, sig, args, tx, eth, block } = self;
 
+        // Validate that args are not provided without a function signature
+        if sig.is_none() && !args.is_empty() {
+            eyre::bail!(
+                "Arguments provided without function signature. Provide a function signature or remove the arguments."
+            );
+        }
+
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
