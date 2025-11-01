@@ -30,7 +30,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Account, Blob,
+    Account, Blob, Transaction,
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
@@ -2783,7 +2783,7 @@ impl EthApi {
             let gas_price = tx.gas_price();
             let value = tx.value();
             let gas = tx.gas_limit();
-            TxpoolInspectSummary { to, value, gas, gas_price }
+            TxpoolInspectSummary { to, value, gas, gas_price: gas_price.unwrap_or(0) }
         }
 
         // Note: naming differs geth vs anvil:

@@ -15,7 +15,8 @@ use crate::{
     mem::inspector::AnvilInspector,
 };
 use alloy_consensus::{
-    Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
+    Receipt, ReceiptWithBloom, Transaction, constants::EMPTY_WITHDRAWALS,
+    proofs::calculate_receipt_root,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
 use alloy_evm::{

@@ -1,4 +1,5 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     Address, TxHash,
@@ -39,7 +40,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fees => TransactionPriority(tx.gas_price().unwrap_or(0)),
         }
     }
 }
@@ -95,13 +96,13 @@ impl PoolTransaction {
     }
 
     /// Returns the gas pric of this transaction
-    pub fn gas_price(&self) -> u128 {
+    pub fn gas_price(&self) -> Option<u128> {
         self.pending_transaction.transaction.gas_price()
     }
 
     /// Returns the type of the transaction
     pub fn tx_type(&self) -> u8 {
-        self.pending_transaction.transaction.r#type().unwrap_or_default()
+        self.pending_transaction.transaction.ty()
     }
 }
 
@@ -711,7 +712,7 @@ impl ReadyTransaction {
         &self.transaction.transaction.provides
     }
 
-    pub fn gas_price(&self) -> u128 {
+    pub fn gas_price(&self) -> Option<u128> {
         self.transaction.transaction.gas_price()
     }
 }
