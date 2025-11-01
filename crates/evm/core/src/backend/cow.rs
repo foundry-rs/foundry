@@ -50,6 +50,10 @@ pub struct CowBackend<'a> {
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
     /// The [SpecId] of the current backend.
+    ///
+    /// This tracks the EVM specification version used for the last initialization.
+    /// If the spec_id changes between inspect calls, the backend will be reinitialized
+    /// to ensure compatibility with the new EVM version.
     spec_id: SpecId,
 }
 
@@ -71,8 +75,15 @@ impl<'a> CowBackend<'a> {
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
-        self.is_initialized = false;
-        self.spec_id = env.evm_env.cfg_env.spec;
+        let new_spec_id = env.evm_env.cfg_env.spec;
+
+        // Reset initialization if spec_id changed to ensure backend is reinitialized with correct
+        // spec
+        if self.is_initialized && self.spec_id != new_spec_id {
+            self.is_initialized = false;
+        }
+
+        self.spec_id = new_spec_id;
 
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
