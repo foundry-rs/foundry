@@ -124,6 +124,7 @@ impl DocBuilder {
             .collect::<Vec<_>>();
 
         let out_dir = self.out_dir()?;
+        let out_target_dir = out_dir.clone();
         let documents = compiler.enter_mut(|compiler| -> eyre::Result<Vec<Vec<Document>>> {
             let gcx = compiler.gcx();
             let documents = combined_sources
@@ -197,7 +198,7 @@ impl DocBuilder {
                                     path.clone(),
                                     target_path,
                                     from_library,
-                                    self.config.out.clone(),
+                                    out_target_dir.clone(),
                                 )
                                 .with_content(DocumentContent::Single(item), ident))
                             })
@@ -231,7 +232,7 @@ impl DocBuilder {
                                     path.clone(),
                                     target_path,
                                     from_library,
-                                    self.config.out.clone(),
+                                    out_target_dir.clone(),
                                 )
                                 .with_content(DocumentContent::Constants(consts), identity),
                             )
@@ -250,7 +251,7 @@ impl DocBuilder {
                                         path.clone(),
                                         target_path,
                                         from_library,
-                                        self.config.out.clone(),
+                                        out_target_dir.clone(),
                                     )
                                     .with_content(
                                         DocumentContent::OverloadedFunctions(funcs),
