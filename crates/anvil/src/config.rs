@@ -1211,7 +1211,6 @@ impl NodeConfig {
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(self.fork_request_retries)
-                .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
