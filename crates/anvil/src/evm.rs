@@ -35,7 +35,8 @@ mod tests {
 
     use crate::{PrecompileFactory, inject_custom_precompiles};
     use alloy_evm::{
-        EthEvm, Evm, EvmEnv, eth::EthEvmContext,
+        EthEvm, Evm, EvmEnv,
+        eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
     use alloy_op_evm::OpEvm;
