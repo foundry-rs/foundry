@@ -30,7 +30,6 @@ use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
-use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
@@ -321,6 +320,10 @@ impl<'a> InvariantExecutor<'a> {
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
         }
+    }
+
+    pub fn config(self) -> InvariantConfig {
+        self.config
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`.
