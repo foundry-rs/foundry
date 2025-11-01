@@ -1324,46 +1324,23 @@ impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceiptRpc {
 impl Encodable for TypedReceipt {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         match self {
-            Self::Legacy(r) => r.encode(out),
-            receipt => {
-                let payload_len = match receipt {
-                    Self::EIP2930(r) => r.length() + 1,
-                    Self::EIP1559(r) => r.length() + 1,
-                    Self::EIP4844(r) => r.length() + 1,
-                    Self::EIP7702(r) => r.length() + 1,
-                    Self::Deposit(r) => r.length() + 1,
-                    _ => unreachable!("receipt already matched"),
-                };
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => r.encode(out),
+            Self::Deposit(r) => r.encode(out),
+        }
+    }
 
-                match receipt {
-                    Self::EIP2930(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        1u8.encode(out);
-                        r.encode(out);
-                    }
-                    Self::EIP1559(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        2u8.encode(out);
-                        r.encode(out);
-                    }
-                    Self::EIP4844(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        3u8.encode(out);
-                        r.encode(out);
-                    }
-                    Self::EIP7702(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        4u8.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Deposit(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        0x7Eu8.encode(out);
-                        r.encode(out);
-                    }
-                    _ => unreachable!("receipt already matched"),
-                }
-            }
+    fn length(&self) -> usize {
+        match self {
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => r.length(),
+            Self::Deposit(r) => r.length(),
         }
     }
 }
@@ -1432,11 +1409,10 @@ impl Typed2718 for TypedReceipt {
 impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
         match self {
-            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
-            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718_len(),
-            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718_len(),
-            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718_len(),
-            Self::EIP7702(r) => 1 + r.length(),
+            Self::Legacy(r) => r.length(),
+            Self::EIP2930(r) | Self::EIP1559(r) | Self::EIP4844(r) | Self::EIP7702(r) => {
+                1 + r.length()
+            }
             Self::Deposit(r) => 1 + r.length(),
         }
     }
