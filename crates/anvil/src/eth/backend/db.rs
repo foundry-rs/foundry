@@ -427,9 +427,10 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
                 .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
-                .or_else(|| {
-                    Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
-                }),
+                .or(Some(BlobExcessGasAndPrice::new(
+                    0,
+                    BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+                ))),
         })
     }
 }
