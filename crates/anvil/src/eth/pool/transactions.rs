@@ -639,11 +639,11 @@ impl ReadyTransactions {
 
                 // remove from unlocks
                 for mark in &tx.transaction.transaction.requires {
-                    if let Some(hash) = self.provided_markers.get(mark)
-                        && let Some(tx) = ready.get_mut(hash)
-                        && let Some(idx) = tx.unlocks.iter().position(|i| i == hash)
+                    if let Some(provider_hash) = self.provided_markers.get(mark)
+                        && let Some(provider_tx) = ready.get_mut(provider_hash)
+                        && let Some(idx) = provider_tx.unlocks.iter().position(|i| i == &hash)
                     {
-                        tx.unlocks.swap_remove(idx);
+                        provider_tx.unlocks.swap_remove(idx);
                     }
                 }
 
@@ -719,11 +719,77 @@ impl ReadyTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::{Signed, TxLegacy};
+    use alloy_primitives::{B256, Bytes, TxKind, U256};
 
     #[test]
     fn can_id_txs() {
         let addr = Address::random();
         assert_eq!(to_marker(1, addr), to_marker(1, addr));
         assert_ne!(to_marker(2, addr), to_marker(1, addr));
+    }
+
+    #[test]
+    fn removes_child_from_provider_unlocks_in_remove_with_markers() {
+        fn mk_typed_legacy(
+            nonce: u64,
+            to: Address,
+        ) -> anvil_core::eth::transaction::TypedTransaction {
+            let legacy = TxLegacy {
+                nonce,
+                gas_price: 1,
+                gas_limit: 21_000,
+                value: U256::ZERO,
+                input: Bytes::new(),
+                to: TxKind::Call(to),
+                chain_id: None,
+            };
+            let sig = alloy_primitives::Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                false,
+            );
+            let signed = Signed::new_unchecked(legacy, sig, B256::with_last_byte(1));
+            anvil_core::eth::transaction::TypedTransaction::Legacy(signed)
+        }
+
+        let mut ready = ReadyTransactions::default();
+
+        let sender_a = Address::random();
+        let m1 = to_marker(0, sender_a);
+        let tx_a_typed = mk_typed_legacy(0, Address::random());
+        let pending_a = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
+            tx_a_typed, sender_a,
+        );
+        let mut pool_tx_a = PoolTransaction::new(pending_a);
+        pool_tx_a.provides = vec![m1.clone()];
+
+        let ppta = PendingPoolTransaction::new(pool_tx_a, ready.provided_markers());
+        assert!(ppta.is_ready());
+        let a_hash = ppta.transaction.hash();
+        ready.add_transaction(ppta).unwrap();
+
+        let sender_b = Address::random();
+        let tx_b_typed = mk_typed_legacy(0, Address::random());
+        let pending_b = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
+            tx_b_typed, sender_b,
+        );
+        let mut pool_tx_b = PoolTransaction::new(pending_b);
+        pool_tx_b.requires = vec![m1];
+
+        let pptb = PendingPoolTransaction::new(pool_tx_b, ready.provided_markers());
+        assert!(pptb.is_ready());
+        let b_hash = pptb.transaction.hash();
+        ready.add_transaction(pptb).unwrap();
+
+        {
+            let a = ready.get(&a_hash).expect("A must exist");
+            assert!(a.unlocks.contains(&b_hash));
+        }
+
+        let _removed = ready.remove_with_markers(vec![b_hash], None);
+
+        let a_after = ready.get(&a_hash).expect("A must still exist");
+        assert!(!a_after.unlocks.contains(&b_hash));
     }
 }
