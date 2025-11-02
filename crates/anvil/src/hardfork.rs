@@ -54,11 +54,10 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Cancun => SpecId::CANCUN,
         EthereumHardfork::Prague => SpecId::PRAGUE,
         EthereumHardfork::Osaka => SpecId::OSAKA,
-        EthereumHardfork::Bpo1
-        | EthereumHardfork::Bpo2
-        | EthereumHardfork::Bpo3
-        | EthereumHardfork::Bpo4
-        | EthereumHardfork::Bpo5 => unimplemented!(),
+        EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2 => SpecId::OSAKA,
+        EthereumHardfork::Bpo3 | EthereumHardfork::Bpo4 | EthereumHardfork::Bpo5 => {
+            unimplemented!()
+        }
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -75,7 +74,7 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
         OpHardfork::Holocene => OpSpecId::HOLOCENE,
         OpHardfork::Isthmus => OpSpecId::ISTHMUS,
         OpHardfork::Interop => OpSpecId::INTEROP,
-        OpHardfork::Jovian => OpSpecId::ISTHMUS,
+        OpHardfork::Jovian => OpSpecId::JOVIAN,
         f => unreachable!("unimplemented {}", f),
     }
 }

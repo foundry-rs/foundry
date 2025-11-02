@@ -944,30 +944,16 @@ impl TypedReceipt {
 fn convert_receipt_to_rpc(
     receipt: ReceiptWithBloom<Receipt<alloy_primitives::Log>>,
 ) -> ReceiptWithBloom<Receipt<alloy_rpc_types::Log>> {
-    let rpc_logs: Vec<alloy_rpc_types::Log> = receipt
-        .receipt
-        .logs
-        .into_iter()
-        .map(|log| alloy_rpc_types::Log {
-            inner: log,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        })
-        .collect();
-
-    ReceiptWithBloom {
-        receipt: Receipt {
-            status: receipt.receipt.status,
-            cumulative_gas_used: receipt.receipt.cumulative_gas_used,
-            logs: rpc_logs,
-        },
-        logs_bloom: receipt.logs_bloom,
-    }
+    receipt.map_logs(|log| alloy_rpc_types::Log {
+        inner: log,
+        block_hash: None,
+        block_number: None,
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: None,
+        removed: false,
+    })
 }
 
 impl TypedReceiptRpc {
