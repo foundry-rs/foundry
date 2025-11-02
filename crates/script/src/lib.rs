@@ -377,16 +377,17 @@ impl ScriptArgs {
                 .find(|&abi_func| abi_func.selector() == func.selector())
                 .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
         } else {
-            let matching_functions =
-                abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
-            match matching_functions.len() {
-                0 => eyre::bail!("Function `{}` not found in the ABI", self.sig),
-                1 => matching_functions[0],
-                2.. => eyre::bail!(
+            let mut matching_functions = abi.functions().filter(|func| func.name == self.sig);
+            let Some(func) = matching_functions.next() else {
+                eyre::bail!("Function `{}` not found in the ABI", self.sig);
+            };
+            if matching_functions.next().is_some() {
+                eyre::bail!(
                     "Multiple functions with the same name `{}` found in the ABI",
                     self.sig
-                ),
+                );
             }
+            func
         };
         let data = encode_function_args(func, &self.args)?;
 
