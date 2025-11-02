@@ -663,7 +663,7 @@ impl TypedTransaction {
     /// and if the transaction is EIP-4844, the result of (total blob gas cost * max fee per blob
     /// gas) is also added
     pub fn max_cost(&self) -> u128 {
-        let mut max_cost = (self.gas_limit() as u128).saturating_mul(self.gas_price().unwrap_or(0));
+        let mut max_cost = (self.gas_limit() as u128).saturating_mul(self.max_fee_per_gas());
 
         if self.is_eip4844() {
             max_cost = max_cost.saturating_add(

@@ -3727,10 +3727,8 @@ impl TransactionValidator for Backend {
 
             // EIP-1559 fee validation (London hard fork and later).
             if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-                if tx.gas_price().unwrap_or(0) < env.evm_env.block_env.basefee.into()
-                    && !is_deposit_tx
-                {
-                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}", tx.gas_price().unwrap_or(0), env.evm_env.block_env.basefee);
+                if tx.max_fee_per_gas() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}", tx.max_fee_per_gas(), env.evm_env.block_env.basefee);
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
 
