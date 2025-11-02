@@ -186,16 +186,6 @@ pub fn has_optimism_fields(other: &OtherFields) -> bool {
         && other.contains_key("isSystemTx")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TypedTransactionRequest {
-    Legacy(TxLegacy),
-    EIP2930(TxEip2930),
-    EIP1559(TxEip1559),
-    EIP7702(TxEip7702),
-    EIP4844(TxEip4844Variant),
-    Deposit(TxDeposit),
-}
-
 /// A wrapper for [TypedTransaction] that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
@@ -585,6 +575,7 @@ impl PendingTransaction {
 #[envelope(
     alloy_consensus = alloy_consensus,
     tx_type_name = TxType,
+    typed = TypedTransactionRequest,
     serde_cfg(all()),
 )]
 pub enum TypedTransaction {
