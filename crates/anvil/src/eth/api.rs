@@ -2657,6 +2657,7 @@ impl EthApi {
                         if !receipt
                             .inner
                             .inner
+                            .inner
                             .as_receipt_with_bloom()
                             .receipt
                             .status
