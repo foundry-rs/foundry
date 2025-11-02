@@ -6,8 +6,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_primitives::{Address, B256, Bytes};
-use foundry_compilers::{
-    Artifact, ArtifactId,
+use foundry_compilers::{ Artifact, ArtifactId,
     artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
 };
