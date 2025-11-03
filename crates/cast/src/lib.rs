@@ -35,7 +35,6 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
-pub use foundry_evm::*;
 use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
@@ -49,6 +48,8 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
+
+pub use foundry_evm::*;
 
 pub mod args;
 pub mod cmd;
