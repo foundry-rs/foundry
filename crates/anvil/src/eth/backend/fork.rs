@@ -372,7 +372,7 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self.provider().trace_transaction(hash).await?.into_iter().collect::<Vec<_>>();
+        let traces = self.provider().trace_transaction(hash).await?;
 
         let mut storage = self.storage_write();
         storage.transaction_traces.insert(hash, traces.clone());
@@ -410,9 +410,8 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces =
-            self.provider().trace_block(number.into()).await?.into_iter().collect::<Vec<_>>();
-
+        let traces = self.provider().trace_block(number.into()).await?;
+        
         let mut storage = self.storage_write();
         storage.block_traces.insert(number, traces.clone());
 
