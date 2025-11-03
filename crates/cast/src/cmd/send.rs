@@ -140,7 +140,9 @@ impl SendTxArgs {
         let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
 
-        if let Some(interval) = poll_interval { provider.client().set_poll_interval(Duration::from_secs(interval)) }
+        if let Some(interval) = poll_interval {
+            provider.client().set_poll_interval(Duration::from_secs(interval))
+        }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
