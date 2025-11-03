@@ -8,7 +8,7 @@ const PROMPT: &str = "➜ ";
 /// Testing session for Chisel.
 pub struct ChiselSession {
     session: Box<PtySession>,
-    project: Box<TestProject>,
+    _project: Box<TestProject>,
     is_repl: bool,
 }
 
@@ -19,7 +19,6 @@ fn is_repl(args: &[String]) -> bool {
         || !SUBCOMMANDS.iter().any(|subcommand| args.iter().any(|arg| arg == subcommand))
 }
 
-#[allow(dead_code)]
 impl ChiselSession {
     pub fn new(name: &str, flags: &str, init: bool) -> Self {
         let project = foundry_test_utils::TestProject::new(name, PathStyle::Dapptools);
