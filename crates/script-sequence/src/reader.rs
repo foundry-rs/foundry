@@ -67,12 +67,12 @@ impl BroadcastReader {
                     // Parse as MultiScriptSequence
 
                     let broadcast = fs::read_json_file::<serde_json::Value>(path)?;
-                    let multichain_deployments = broadcast
+                    let deployments_value = broadcast
                         .get("deployments")
-                        .and_then(|deployments| {
-                            serde_json::from_value::<Vec<ScriptSequence>>(deployments.clone()).ok()
-                        })
-                        .unwrap_or_default();
+                        .ok_or_else(|| eyre::eyre!("missing 'deployments' field in multichain broadcast file: {}", path.display()))?;
+                    
+                    let multichain_deployments: Vec<ScriptSequence> = serde_json::from_value(deployments_value.clone())
+                        .map_err(|e| eyre::eyre!("failed to parse 'deployments' field in multichain broadcast file {}: {}", path.display(), e))?;
 
                     broadcasts.extend(multichain_deployments);
                     continue;
