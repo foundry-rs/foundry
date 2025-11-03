@@ -120,7 +120,7 @@ pub fn execute_assertion(
 
     // Prepare assertion store
 
-    let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 100_000 };
+    let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 300_000 };
 
     let store = AssertionStore::new_ephemeral().expect("Failed to create assertion store");
 
