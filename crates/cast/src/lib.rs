@@ -48,7 +48,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use tracing::field::FieldSet;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -368,7 +367,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         Ok(if raw {
             let header: Header = block.into_inner().header.inner.try_into_header()?;
             format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
-        } else if fields.len() > 0 {
+        } else if !fields.is_empty() {
             let mut result = String::new();
             for field in fields {
                 result.push_str(

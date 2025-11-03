@@ -9,8 +9,7 @@ use crate::cmd::{
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
-use clap::ArgAction;
-use clap::{Parser, Subcommand, ValueHint};
+use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
