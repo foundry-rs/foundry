@@ -5020,7 +5020,6 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-config",
- "parking_lot",
  "reqwest",
  "rpassword",
  "serde",

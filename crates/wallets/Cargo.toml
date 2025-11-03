@@ -31,7 +31,6 @@ axum.workspace = true
 foundry-common.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros"] }
-parking_lot.workspace = true
 uuid.workspace = true
 webbrowser = "1.0.6"
 

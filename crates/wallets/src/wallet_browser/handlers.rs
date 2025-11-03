@@ -84,7 +84,7 @@ pub(crate) async fn serve_logo_png() -> impl axum::response::IntoResponse {
 pub(crate) async fn get_next_transaction_request(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<BrowserTransactionRequest>> {
-    match state.read_next_transaction_request() {
+    match state.read_next_transaction_request().await {
         Some(tx) => Json(BrowserApiResponse::with_data(tx)),
         None => Json(BrowserApiResponse::error("No pending transaction request")),
     }
@@ -97,7 +97,7 @@ pub(crate) async fn post_transaction_response(
     Json(body): Json<BrowserTransactionResponse>,
 ) -> Json<BrowserApiResponse> {
     // Ensure that the transaction request exists.
-    if !state.has_transaction_request(&body.id) {
+    if !state.has_transaction_request(&body.id).await {
         return Json(BrowserApiResponse::error("Unknown transaction id"));
     }
 
@@ -127,7 +127,7 @@ pub(crate) async fn post_transaction_response(
         }
     }
 
-    state.add_transaction_response(body);
+    state.add_transaction_response(body).await;
 
     Json(BrowserApiResponse::ok())
 }
@@ -137,7 +137,7 @@ pub(crate) async fn post_transaction_response(
 pub(crate) async fn get_next_signing_request(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<BrowserSignRequest>> {
-    match state.read_next_signing_request() {
+    match state.read_next_signing_request().await {
         Some(req) => Json(BrowserApiResponse::with_data(req)),
         None => Json(BrowserApiResponse::error("No pending signing request")),
     }
@@ -150,7 +150,7 @@ pub(crate) async fn post_signing_response(
     Json(body): Json<BrowserSignResponse>,
 ) -> Json<BrowserApiResponse> {
     // Ensure that the signing request exists.
-    if !state.has_signing_request(&body.id) {
+    if !state.has_signing_request(&body.id).await {
         return Json(BrowserApiResponse::error("Unknown signing request id"));
     }
 
@@ -167,7 +167,7 @@ pub(crate) async fn post_signing_response(
         _ => {}
     }
 
-    state.add_signing_response(body);
+    state.add_signing_response(body).await;
 
     Json(BrowserApiResponse::ok())
 }
@@ -177,7 +177,7 @@ pub(crate) async fn post_signing_response(
 pub(crate) async fn get_connection_info(
     State(state): State<Arc<BrowserWalletState>>,
 ) -> Json<BrowserApiResponse<Option<Connection>>> {
-    let connection = state.get_connection();
+    let connection = state.get_connection().await;
 
     Json(BrowserApiResponse::with_data(connection))
 }
@@ -188,7 +188,7 @@ pub(crate) async fn post_connection_update(
     State(state): State<Arc<BrowserWalletState>>,
     Json(body): Json<Option<Connection>>,
 ) -> Json<BrowserApiResponse> {
-    state.set_connection(body);
+    state.set_connection(body).await;
 
     Json(BrowserApiResponse::ok())
 }

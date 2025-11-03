@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::wallet_browser::{
@@ -14,7 +14,7 @@ use crate::wallet_browser::{
 #[derive(Debug, Clone)]
 pub(crate) struct BrowserWalletState {
     /// Current information about the wallet connection.
-    connection: Arc<Mutex<Option<Connection>>>,
+    connection: Arc<RwLock<Option<Connection>>>,
     /// Request/response queue for transactions.
     transactions: Arc<Mutex<RequestQueue<BrowserTransactionRequest, BrowserTransactionResponse>>>,
     /// Request/response queue for signings.
@@ -33,7 +33,7 @@ impl BrowserWalletState {
     /// Create a new browser wallet state.
     pub fn new(session_token: String, development: bool) -> Self {
         Self {
-            connection: Arc::new(Mutex::new(None)),
+            connection: Arc::new(RwLock::new(None)),
             transactions: Arc::new(Mutex::new(RequestQueue::new())),
             signings: Arc::new(Mutex::new(RequestQueue::new())),
             session_token,
@@ -55,83 +55,83 @@ impl BrowserWalletState {
     }
 
     /// Check if wallet is connected.
-    pub fn is_connected(&self) -> bool {
-        self.connection.lock().is_some()
+    pub async fn is_connected(&self) -> bool {
+        self.connection.read().await.is_some()
     }
 
     /// Get current connection information.
-    pub fn get_connection(&self) -> Option<Connection> {
-        *self.connection.lock()
+    pub async fn get_connection(&self) -> Option<Connection> {
+        *self.connection.read().await
     }
 
     /// Set connection information.
-    pub fn set_connection(&self, connection: Option<Connection>) {
-        *self.connection.lock() = connection;
+    pub async fn set_connection(&self, connection: Option<Connection>) {
+        *self.connection.write().await = connection;
     }
 
     /// Add a transaction request.
-    pub fn add_transaction_request(&self, request: BrowserTransactionRequest) {
-        self.transactions.lock().add_request(request);
+    pub async fn add_transaction_request(&self, request: BrowserTransactionRequest) {
+        self.transactions.lock().await.add_request(request);
     }
 
     /// Check if a transaction request exists.
-    pub fn has_transaction_request(&self, id: &Uuid) -> bool {
-        self.transactions.lock().has_request(id)
+    pub async fn has_transaction_request(&self, id: &Uuid) -> bool {
+        self.transactions.lock().await.has_request(id)
     }
 
     /// Read the next transaction request.
-    pub fn read_next_transaction_request(&self) -> Option<BrowserTransactionRequest> {
-        self.transactions.lock().read_request().cloned()
+    pub async fn read_next_transaction_request(&self) -> Option<BrowserTransactionRequest> {
+        self.transactions.lock().await.read_request().cloned()
     }
 
     // Remove a transaction request.
-    pub fn remove_transaction_request(&self, id: &Uuid) {
-        self.transactions.lock().remove_request(id);
+    pub async fn remove_transaction_request(&self, id: &Uuid) {
+        self.transactions.lock().await.remove_request(id);
     }
 
     /// Add transaction response.
-    pub fn add_transaction_response(&self, response: BrowserTransactionResponse) {
+    pub async fn add_transaction_response(&self, response: BrowserTransactionResponse) {
         let id = response.id;
-        let mut transactions = self.transactions.lock();
+        let mut transactions = self.transactions.lock().await;
         transactions.add_response(id, response);
         transactions.remove_request(&id);
     }
 
     /// Get transaction response, removing it from the queue.
-    pub fn get_transaction_response(&self, id: &Uuid) -> Option<BrowserTransactionResponse> {
-        self.transactions.lock().get_response(id)
+    pub async fn get_transaction_response(&self, id: &Uuid) -> Option<BrowserTransactionResponse> {
+        self.transactions.lock().await.get_response(id)
     }
 
     /// Add a signing request.
-    pub fn add_signing_request(&self, request: BrowserSignRequest) {
-        self.signings.lock().add_request(request);
+    pub async fn add_signing_request(&self, request: BrowserSignRequest) {
+        self.signings.lock().await.add_request(request);
     }
 
     /// Check if a signing request exists.
-    pub fn has_signing_request(&self, id: &Uuid) -> bool {
-        self.signings.lock().has_request(id)
+    pub async fn has_signing_request(&self, id: &Uuid) -> bool {
+        self.signings.lock().await.has_request(id)
     }
 
     /// Read the next signing request.
-    pub fn read_next_signing_request(&self) -> Option<BrowserSignRequest> {
-        self.signings.lock().read_request().cloned()
+    pub async fn read_next_signing_request(&self) -> Option<BrowserSignRequest> {
+        self.signings.lock().await.read_request().cloned()
     }
 
     /// Remove a signing request.
-    pub fn remove_signing_request(&self, id: &Uuid) {
-        self.signings.lock().remove_request(id);
+    pub async fn remove_signing_request(&self, id: &Uuid) {
+        self.signings.lock().await.remove_request(id);
     }
 
     /// Add signing response.
-    pub fn add_signing_response(&self, response: BrowserSignResponse) {
+    pub async fn add_signing_response(&self, response: BrowserSignResponse) {
         let id = response.id;
-        let mut signings = self.signings.lock();
+        let mut signings = self.signings.lock().await;
         signings.add_response(id, response);
         signings.remove_request(&id);
     }
 
     /// Get signing response, removing it from the queue.
-    pub fn get_signing_response(&self, id: &Uuid) -> Option<BrowserSignResponse> {
-        self.signings.lock().get_response(id)
+    pub async fn get_signing_response(&self, id: &Uuid) -> Option<BrowserSignResponse> {
+        self.signings.lock().await.get_response(id)
     }
 }

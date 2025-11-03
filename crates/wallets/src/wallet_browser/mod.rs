@@ -40,7 +40,7 @@ mod tests {
         let client = client_with_token(&server);
 
         // Check initial state
-        assert!(!server.is_connected());
+        assert!(!server.is_connected().await);
         assert!(!server.open_browser());
         assert!(server.timeout() == DEFAULT_TIMEOUT);
 
@@ -68,7 +68,7 @@ mod tests {
 
         // Check connection state
         let Connection { address, chain_id } =
-            server.get_connection().expect("expected an active wallet connection");
+            server.get_connection().await.expect("expected an active wallet connection");
         assert_eq!(address, ALICE);
         assert_eq!(chain_id, 1);
 
@@ -76,14 +76,14 @@ mod tests {
         disconnect_wallet(&client, &server).await;
 
         // Check disconnected state
-        assert!(!server.is_connected());
+        assert!(!server.is_connected().await);
 
         // Connect Bob's wallet
         connect_wallet(&client, &server, Connection::new(BOB, 42)).await;
 
         // Check connection state
         let Connection { address, chain_id } =
-            server.get_connection().expect("expected an active wallet connection");
+            server.get_connection().await.expect("expected an active wallet connection");
         assert_eq!(address, BOB);
         assert_eq!(chain_id, 42);
 
@@ -100,14 +100,14 @@ mod tests {
         // Connect Alice, assert connected
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
         let Connection { address, chain_id } =
-            server.get_connection().expect("expected an active wallet connection");
+            server.get_connection().await.expect("expected an active wallet connection");
         assert_eq!(address, ALICE);
         assert_eq!(chain_id, 1);
 
         // Connect Bob, assert switched
         connect_wallet(&client, &server, Connection::new(BOB, 42)).await;
         let Connection { address, chain_id } =
-            server.get_connection().expect("expected an active wallet connection");
+            server.get_connection().await.expect("expected an active wallet connection");
         assert_eq!(address, BOB);
         assert_eq!(chain_id, 42);
 
