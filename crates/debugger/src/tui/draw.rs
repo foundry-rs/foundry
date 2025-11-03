@@ -460,9 +460,7 @@ impl TUIContext<'_> {
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
-        if stack_len > 0
-            && let Some(stack) = step.stack.as_ref()
+        if let Some(stack) = step.stack.as_ref()
             && let Some(accesses) = get_buffer_accesses(step.op.get(), stack)
         {
             if let Some(read_access) = accesses.read {
