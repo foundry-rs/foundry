@@ -44,7 +44,7 @@ impl BrowserSigner {
         let start = Instant::now();
 
         loop {
-            if let Some(Connection(address, chain_id)) = server.get_connection() {
+            if let Some(Connection { address, chain_id }) = server.get_connection() {
                 let _ = sh_println!("Wallet connected: {}", address);
                 let _ = sh_println!("Chain ID: {}", chain_id);
 

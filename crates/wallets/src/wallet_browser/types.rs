@@ -112,11 +112,16 @@ pub(crate) struct BrowserSignResponse {
 
 /// Represents an active connection to a browser wallet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Connection(pub Address, pub ChainId);
+pub struct Connection {
+    /// The address of the connected wallet.
+    pub address: Address,
+    /// The chain ID of the connected wallet.
+    pub chain_id: ChainId,
+}
 
 impl Connection {
     /// Create a new connection instance.
     pub fn new(address: Address, chain_id: ChainId) -> Self {
-        Self(address, chain_id)
+        Self { address, chain_id }
     }
 }

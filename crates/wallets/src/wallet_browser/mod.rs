@@ -67,7 +67,7 @@ mod tests {
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Check connection state
-        let Connection(address, chain_id) =
+        let Connection { address, chain_id } =
             server.get_connection().expect("expected an active wallet connection");
         assert_eq!(address, ALICE);
         assert_eq!(chain_id, 1);
@@ -82,7 +82,7 @@ mod tests {
         connect_wallet(&client, &server, Connection::new(BOB, 42)).await;
 
         // Check connection state
-        let Connection(address, chain_id) =
+        let Connection { address, chain_id } =
             server.get_connection().expect("expected an active wallet connection");
         assert_eq!(address, BOB);
         assert_eq!(chain_id, 42);
@@ -99,14 +99,14 @@ mod tests {
 
         // Connect Alice, assert connected
         connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
-        let Connection(address, chain_id) =
+        let Connection { address, chain_id } =
             server.get_connection().expect("expected an active wallet connection");
         assert_eq!(address, ALICE);
         assert_eq!(chain_id, 1);
 
         // Connect Bob, assert switched
         connect_wallet(&client, &server, Connection::new(BOB, 42)).await;
-        let Connection(address, chain_id) =
+        let Connection { address, chain_id } =
             server.get_connection().expect("expected an active wallet connection");
         assert_eq!(address, BOB);
         assert_eq!(chain_id, 42);
@@ -317,7 +317,7 @@ mod tests {
         let mut server = create_server();
         let client = client_with_token(&server);
         server.start().await.unwrap();
-        connect_wallet(&client, &server, Connection(ALICE, 1)).await;
+        connect_wallet(&client, &server, Connection::new(ALICE, 1)).await;
 
         // Create a browser transaction request
         let (tx_request_id, tx_request) = create_browser_transaction_request();
