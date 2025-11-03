@@ -379,7 +379,7 @@ pub enum CastSubcommand {
         block: Option<BlockId>,
 
         /// If specified, only get the given field of the block.
-        #[arg(short, long,num_args = 1..,action = ArgAction::Append,value_delimiter = ',')]
+        #[arg(short, long,num_args = 0..,action = ArgAction::Append,value_delimiter = ',')]
         fields: Vec<String>,
 
         /// Print the raw RLP encoded block header.
