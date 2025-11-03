@@ -417,6 +417,16 @@ impl ReadyTransactions {
         self.ready_tx.read().contains_key(hash)
     }
 
+    /// Returns the number of ready transactions without cloning the snapshot
+    pub fn len(&self) -> usize {
+        self.ready_tx.read().len()
+    }
+
+    /// Returns true if there are no ready transactions
+    pub fn is_empty(&self) -> bool {
+        self.ready_tx.read().is_empty()
+    }
+
     /// Returns the transaction for the hash if it's in the ready pool but not yet mined
     pub fn get(&self, hash: &TxHash) -> Option<ReadyTransaction> {
         self.ready_tx.read().get(hash).cloned()
