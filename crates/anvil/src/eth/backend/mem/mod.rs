@@ -813,8 +813,8 @@ impl Backend {
         precompiles_map.extend(self.env.read().networks.precompiles());
 
         if let Some(factory) = &self.precompile_factory {
-            for (precompile, _) in &factory.precompiles() {
-                precompiles_map.insert(precompile.id().name().to_string(), *precompile.address());
+            for (address, precompile) in factory.precompiles() {
+                precompiles_map.insert(precompile.precompile_id().to_string(), address);
             }
         }
 
@@ -3207,6 +3207,7 @@ impl Backend {
             blob_gas_used,
         };
 
+        let inner = WithOtherFields { inner, other: Default::default() };
         Some(MinedTransactionReceipt { inner, out: info.out })
     }
 

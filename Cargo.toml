@@ -260,8 +260,8 @@ alloy-transport = { version = "1.0.42", default-features = false }
 alloy-transport-http = { version = "1.0.42", default-features = false }
 alloy-transport-ipc = { version = "1.0.42", default-features = false }
 alloy-transport-ws = { version = "1.0.42", default-features = false }
-alloy-hardforks = { version = "0.4.0", default-features = false }
-alloy-op-hardforks = { version = "0.4.0", default-features = false }
+alloy-hardforks = { version = "0.4.3", default-features = false }
+alloy-op-hardforks = { version = "0.4.3", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "1.4.1"
@@ -288,10 +288,10 @@ op-alloy-flz = "0.13.1"
 ## revm
 revm = { version = "30.2.0", default-features = false }
 revm-inspectors = { version = "0.31.2", features = ["serde"] }
-op-revm = { version = "11.1.2", default-features = false }
+op-revm = { version = "11.3.0", default-features = false }
 ## alloy-evm
-alloy-evm = "0.22.3"
-alloy-op-evm = "0.22.3"
+alloy-evm = "0.22.6"
+alloy-op-evm = "0.22.6"
 
 ## cli
 anstream = "0.6"
@@ -344,7 +344,7 @@ mesc = "0.3"
 memchr = "2.7"
 num-format = "0.4"
 parking_lot = "0.12"
-proptest = "1.8.0"
+proptest = "1.9.0"
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 rand_chacha = "0.9.0"
