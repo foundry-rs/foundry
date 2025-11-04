@@ -70,10 +70,7 @@ pub(crate) fn version_without_build(version: &str) -> Option<&str> {
 /// Returns an empty string if the version cannot be normalized.
 /// Example: "v0.8.26+commit.abcdef" -> "0.8.26"
 pub(crate) fn normalize_compiler_version_str(version: &str) -> String {
-    version_without_build(version)
-        .unwrap_or("")
-        .trim_start_matches('v')
-        .to_string()
+    version_without_build(version).unwrap_or("").trim_start_matches('v').to_string()
 }
 
 pub fn match_bytecodes(
