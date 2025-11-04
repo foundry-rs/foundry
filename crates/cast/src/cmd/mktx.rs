@@ -98,7 +98,10 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
+        let missing_nonce_required =
+            raw_unsigned && eth.wallet.from.is_none() && tx.nonce.is_none();
+
+        let tx_builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
@@ -110,7 +113,7 @@ impl MakeTxArgs {
             // Build unsigned raw tx
             // Check if nonce is provided when --from is not specified
             // See: <https://github.com/foundry-rs/foundry/issues/11110>
-            if eth.wallet.from.is_none() && tx.nonce.is_none() {
+            if missing_nonce_required {
                 eyre::bail!(
                     "Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce"
                 );
