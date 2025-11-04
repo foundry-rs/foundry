@@ -128,9 +128,10 @@ async fn evaluate_prelude(
         let prelude_sources = fs::files_with_ext(&prelude_dir, "sol");
         let mut print_success_msg = false;
         for source_file in prelude_sources {
-            print_success_msg = true;
             sh_println!("{} {}", "Loading prelude source file:".yellow(), source_file.display())?;
             try_cf!(load_prelude_file(dispatcher, source_file).await?);
+            // Only set flag after successful load (try_cf! returns early on Break)
+            print_success_msg = true;
         }
 
         if print_success_msg {
