@@ -289,7 +289,7 @@ impl UIfmt for OtherFields {
             s.push('\n');
         }
         for (key, value) in self {
-            let val = EthValue::from(value.clone()).pretty();
+            let val = EthValue::from(value).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
             s.extend(std::iter::repeat_n(' ', offset + 1));
@@ -795,6 +795,12 @@ impl From<serde_json::Value> for EthValue {
     }
 }
 
+impl From<&serde_json::Value> for EthValue {
+    fn from(val: &serde_json::Value) -> Self {
+        serde_json::from_value(val.clone()).expect("infallible")
+    }
+}
+
 impl UIfmt for EthValue {
     fn pretty(&self) -> String {
         match self {
@@ -880,7 +886,7 @@ pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> 
         "requestsHash" | "requests_hash" => Some(block.header.requests_hash.pretty()),
         other => {
             if let Some(value) = block.other.get(other) {
-                let val = EthValue::from(value.clone());
+                let val = EthValue::from(value);
                 return Some(val.pretty());
             }
             None
