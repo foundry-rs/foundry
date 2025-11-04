@@ -28,7 +28,14 @@ if (!platformPackage) {
   process.exit(1)
 }
 
-NodeChildProcess.spawn(selectBinaryPath(), process.argv.slice(2), { stdio: 'inherit' })
+const child = NodeChildProcess.spawn(
+    selectBinaryPath(),
+    process.argv.slice(2),
+    { stdio: 'inherit' }
+)
+
+process.on('SIGINT', killChild)
+process.on('SIGTERM', killChild)
 
 /**
  * Determines which tool wrapper is executing.
@@ -116,4 +123,11 @@ function selectBinaryPath() {
   }
 
   return NodePath.join(__dirname, '..', 'dist', binaryName)
+}
+
+/**
+ * Kills the child process.
+ */
+function killChild() {
+    child.kill()
 }
