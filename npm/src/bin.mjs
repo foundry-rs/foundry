@@ -29,13 +29,21 @@ if (!platformPackage) {
 }
 
 const child = NodeChildProcess.spawn(
-    selectBinaryPath(),
-    process.argv.slice(2),
-    { stdio: 'inherit' }
+  selectBinaryPath(),
+  process.argv.slice(2),
+  { stdio: 'inherit' }
 )
 
-process.on('SIGINT', killChild)
-process.on('SIGTERM', killChild)
+/**
+ * @type {Record<'SIGINT' | 'SIGTERM', () => void>}
+ */
+const signalHandlers = {
+  SIGINT: () => forwardSignal('SIGINT'),
+  SIGTERM: () => forwardSignal('SIGTERM')
+}
+
+for (const [signal, handler] of Object.entries(signalHandlers))
+  process.on(signal, handler)
 
 /**
  * Determines which tool wrapper is executing.
@@ -126,8 +134,19 @@ function selectBinaryPath() {
 }
 
 /**
- * Kills the child process.
+ * Forwards a received signal to the child process, then re-emits it locally to
+ * preserve Node.js default exit semantics.
+ * @param {'SIGINT' | 'SIGTERM'} signal
  */
-function killChild() {
-    child.kill()
+function forwardSignal(signal) {
+  try {
+    if (!child.killed)
+      child.kill(signal)
+  } catch (error) {
+    if (!error || error.code !== 'ESRCH')
+      throw error
+  }
+
+  process.off(signal, signalHandlers[signal])
+  process.kill(process.pid, signal)
 }
