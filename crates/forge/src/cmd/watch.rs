@@ -254,8 +254,7 @@ fn end_of_process(state: &CommandState) {
     };
 
     let duration = *finished - *started;
-    let timings = true;
-    let timing = if timings { format!(", lasted {duration:?}") } else { String::new() };
+    let timing = format!(", lasted {duration:?}");
     let (msg, fg) = match status {
         ProcessEnd::ExitError(code) => (format!("Command exited with {code}{timing}"), Color::Red),
         ProcessEnd::ExitSignal(sig) => {
@@ -269,10 +268,7 @@ fn end_of_process(state: &CommandState) {
         ProcessEnd::Success => (format!("Command was successful{timing}"), Color::Green),
     };
 
-    let quiet = false;
-    if !quiet {
-        let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
-    }
+    let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
 }
 
 /// Runs the given [`watchexec::Config`].
