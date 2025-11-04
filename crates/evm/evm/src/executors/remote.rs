@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use alloy_provider::{Provider, ext::TraceApi, network::AnyNetwork};
+use alloy_provider::{Provider, ext::DebugApi, network::AnyNetwork};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_rpc_types::trace::geth::{
     CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
