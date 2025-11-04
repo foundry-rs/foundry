@@ -44,10 +44,11 @@ impl fmt::Display for FormatSpec {
     }
 }
 
+/// Error returned when parsing a format specifier argument.
 enum ParseArgError {
     /// Failed to parse the argument.
     Err,
-    /// Escape `%%`.
+    /// Encountered `%%` (escaped percent sign), should be skipped.
     Skip,
 }
 
@@ -115,6 +116,8 @@ impl<'a> Parser<'a> {
         Err(ParseArgError::Err)
     }
 
+    /// Parses an ASCII decimal integer from the input starting at `start`.
+    /// Returns `None` if no digits are found or parsing fails.
     fn integer(&mut self, start: usize) -> Option<usize> {
         let mut end = start;
         while let Some((pos, ch)) = self.peek() {
@@ -366,7 +369,8 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
     let mut values = values.iter().copied();
     let mut result = String::with_capacity(spec.len());
 
-    // for the first space
+    // Controls whether to add a space before appending remaining unformatted values.
+    // If the format string produced output, we need a space separator before extra values.
     let mut write_space = if spec.is_empty() {
         false
     } else {
@@ -374,7 +378,7 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
         true
     };
 
-    // append any remaining values with the standard format
+    // Append any remaining values with the standard format, separated by spaces.
     for v in values {
         let fmt = v.fmt(FormatSpec::String);
         if write_space {
