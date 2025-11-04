@@ -59,6 +59,14 @@ pub struct JsonResult {
     pub message: Option<String>,
 }
 
+pub fn version_without_build(version: &str) -> String {
+    version.split('+').next().unwrap_or("").to_string()
+}
+
+pub fn normalize_compiler_version_str(version: &str) -> String {
+    version_without_build(version).trim_start_matches('v').to_string()
+}
+
 pub fn match_bytecodes(
     local_bytecode: &[u8],
     bytecode: &[u8],
@@ -113,8 +121,8 @@ pub fn build_using_cache(
         if version.starts_with("vyper:") {
             eyre::bail!("Vyper contracts are not supported")
         }
-        // Parse etherscan version string
-        let version = version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
+        // Parse etherscan version string using a shared normalizer
+        let version = normalize_compiler_version_str(&version);
 
         // Check if `out/directory` name matches the contract name
         if key.ends_with(name.as_str()) {
