@@ -59,16 +59,10 @@ pub struct JsonResult {
     pub message: Option<String>,
 }
 
-/// Returns the version string without build metadata part after '+'.
-/// Returns `None` if the version string is empty or contains only '+'.
-/// Example: "0.8.26+commit.abcdef" -> Some("0.8.26")
 pub(crate) fn version_without_build(version: &str) -> Option<&str> {
     version.split('+').next().filter(|s| !s.is_empty())
 }
 
-/// Normalizes a compiler version string by dropping build metadata and a leading 'v'.
-/// Returns an empty string if the version cannot be normalized.
-/// Example: "v0.8.26+commit.abcdef" -> "0.8.26"
 pub(crate) fn normalize_compiler_version_str(version: &str) -> String {
     version_without_build(version).unwrap_or("").trim_start_matches('v').to_string()
 }
